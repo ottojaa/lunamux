@@ -122,6 +122,32 @@ import se.soderbjorn.lunamux.client.viewmodel.OverviewBackingViewModel.OverviewT
 import se.soderbjorn.lunamux.client.viewmodel.OverviewBackingViewModel.UnlistedTab
 
 /**
+ * Fraction of the switcher row's width one card occupies. What is left over is
+ * the peek of the neighbouring cards on both sides — the switcher's cue that
+ * there is more to fling to — so this is the one dimension not spent on the
+ * preview.
+ *
+ * Also the horizontal end scale of the return gesture's flight when no card has
+ * been measured yet (see `returnFlight`).
+ */
+internal const val SWITCHER_CARD_FRACTION = 0.76f
+
+/**
+ * Fraction of the switcher row's height one card occupies.
+ *
+ * Nearly all of it, deliberately. The height used to be derived from the card's
+ * width and the row's aspect, which left a phone-shaped card floating in a
+ * quarter of empty row — wasted screen in an app whose cards are terminals, and
+ * a needless gap between the cards and the dock beneath them. A card is now the
+ * tallest thing that fits, and the preview fills that height with the session's
+ * rows (see [TerminalThumbnail]).
+ */
+internal const val SWITCHER_CARD_HEIGHT_FRACTION = 0.95f
+
+/** Corner radius of a switcher card, and of the return gesture's shrinking screen. */
+internal val SwitcherCardCorner = 20.dp
+
+/**
  * The overview content: the switcher card row + bottom tab dock (or, while
  * editing a layout, that tab's full-surface exposé canvas) + window-management
  * affordances.
@@ -133,17 +159,6 @@ import se.soderbjorn.lunamux.client.viewmodel.OverviewBackingViewModel.UnlistedT
  * @param onOpenGit         drill-in callback for a git pane (by pane id).
  * @param modifier          layout modifier from [TreeScreen].
  */
-/**
- * Fraction of the switcher row's width one card occupies. Also the end scale of
- * the return gesture's shrink (see `LunamuxApp`'s return overlay): the card the
- * gesture flies back to *is* a screen at this scale, so the two must agree or
- * the flight lands off-target.
- */
-internal const val SWITCHER_CARD_FRACTION = 0.7f
-
-/** Corner radius of a switcher card, and of the return gesture's shrinking screen. */
-internal val SwitcherCardCorner = 20.dp
-
 @Composable
 fun OverviewContent(
     vm: OverviewBackingViewModel,
@@ -442,9 +457,7 @@ private fun SwitcherCardRow(
 ) {
     BoxWithConstraints(modifier) {
         val cardWidth = maxWidth * SWITCHER_CARD_FRACTION
-        // Cards keep the surface's aspect: a card is a uniformly scaled-down
-        // screen, which is also the geometry the dive transition flies between.
-        val cardHeight = cardWidth * (maxHeight / maxWidth)
+        val cardHeight = maxHeight * SWITCHER_CARD_HEIGHT_FRACTION
         val sidePadding = (maxWidth - cardWidth) / 2
         val cardShape = RoundedCornerShape(SwitcherCardCorner)
 
@@ -485,13 +498,13 @@ private fun SwitcherCardRow(
                         }
                         .clip(cardShape)
                         .background(SidebarSurface.copy(alpha = 0.35f))
+                        // A hairline, never the accent: the panes inside draw
+                        // their own outline (accented when focused), so an
+                        // accent ring around the card read as a double border.
+                        // Which tab is server-active is said by its dock chip.
                         .border(
-                            width = if (tab.isActive) 2.dp else 1.dp,
-                            color = if (tab.isActive) {
-                                SidebarAccent
-                            } else {
-                                SidebarTextSecondary.copy(alpha = 0.25f)
-                            },
+                            width = 1.dp,
+                            color = SidebarTextSecondary.copy(alpha = 0.22f),
                             shape = cardShape,
                         ),
                 ) {
