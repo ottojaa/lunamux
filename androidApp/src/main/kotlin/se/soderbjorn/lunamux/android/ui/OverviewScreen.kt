@@ -70,7 +70,6 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -134,6 +133,17 @@ import se.soderbjorn.lunamux.client.viewmodel.OverviewBackingViewModel.UnlistedT
  * @param onOpenGit         drill-in callback for a git pane (by pane id).
  * @param modifier          layout modifier from [TreeScreen].
  */
+/**
+ * Fraction of the switcher row's width one card occupies. Also the end scale of
+ * the return gesture's shrink (see `LunamuxApp`'s return overlay): the card the
+ * gesture flies back to *is* a screen at this scale, so the two must agree or
+ * the flight lands off-target.
+ */
+internal const val SWITCHER_CARD_FRACTION = 0.7f
+
+/** Corner radius of a switcher card, and of the return gesture's shrinking screen. */
+internal val SwitcherCardCorner = 20.dp
+
 @Composable
 fun OverviewContent(
     vm: OverviewBackingViewModel,
@@ -141,6 +151,7 @@ fun OverviewContent(
     onOpenFileBrowser: (String) -> Unit,
     onOpenGit: (String) -> Unit,
     modifier: Modifier = Modifier,
+    onBrowsedTabChanged: (String?) -> Unit = {},
 ) {
     val client = ConnectionHolder.client()
     if (client == null) {
@@ -213,12 +224,24 @@ fun OverviewContent(
 
     // One-way server→row sync: an external active-tab change (desktop, another
     // phone) re-centers the row, but never mid-gesture — a fling in progress
-    // wins over a remote echo.
-    LaunchedEffect(activeIndex) {
-        if (activeIndex in tabs.indices && !rowListState.isScrollInProgress && centeredIndex != activeIndex) {
-            rowListState.animateScrollToItem(activeIndex)
+    // wins over a remote echo. Keyed on WHICH tab is active, not on its index:
+    // closing a tab ahead of the active one shifts that index without changing
+    // what is active, and re-centering then would yank the row away from the
+    // card the user had browsed to.
+    val activeTabId = tabs.firstOrNull { it.isActive }?.id
+    LaunchedEffect(activeTabId) {
+        val index = tabs.indexOfFirst { it.id == activeTabId }
+        if (index >= 0 && !rowListState.isScrollInProgress && centeredIndex != index) {
+            rowListState.animateScrollToItem(index)
         }
     }
+
+    // Publish the browsed card so the screen's toolbar actions (new pane,
+    // layout preset) target what the user is looking at. Browsing deliberately
+    // never activates a tab server-side, so the active tab is NOT that target.
+    val browsedTabId = tabs.getOrNull(centeredIndex)?.id
+    LaunchedEffect(browsedTabId) { onBrowsedTabChanged(browsedTabId) }
+    DisposableEffect(Unit) { onDispose { onBrowsedTabChanged(null) } }
 
     // While editing layout, Back leaves edit mode rather than the screen.
     BackHandler(enabled = editTabId != null) { vm.exitEdit() }
@@ -304,7 +327,15 @@ fun OverviewContent(
                     onDive = { tab ->
                         val target = tab.panes.firstOrNull { it.isFocused }
                             ?: tab.panes.maxByOrNull { it.z }
-                        if (target != null) divePane(tab, target)
+                        if (target != null) {
+                            divePane(tab, target)
+                        } else if (!tab.isActive) {
+                            // Every pane is docked, so there is nothing to dive
+                            // into — activate the tab instead, or the chip reads
+                            // as a dead button. Restoring a pane is one tap away
+                            // on the card's dock strip.
+                            scope.launch { vm.setActiveTab(tab.id) }
+                        }
                     },
                     onActivateUnlisted = { id -> scope.launch { vm.setActiveTab(id) } },
                     onRename = { tab -> renameTabTarget = tab },
@@ -410,12 +441,12 @@ private fun SwitcherCardRow(
     cardContent: @Composable (OverviewTab) -> Unit,
 ) {
     BoxWithConstraints(modifier) {
-        val cardWidth = maxWidth * 0.7f
+        val cardWidth = maxWidth * SWITCHER_CARD_FRACTION
         // Cards keep the surface's aspect: a card is a uniformly scaled-down
         // screen, which is also the geometry the dive transition flies between.
         val cardHeight = cardWidth * (maxHeight / maxWidth)
         val sidePadding = (maxWidth - cardWidth) / 2
-        val cardShape = RoundedCornerShape(20.dp)
+        val cardShape = RoundedCornerShape(SwitcherCardCorner)
 
         LazyRow(
             state = rowListState,
