@@ -145,7 +145,11 @@ private fun drawFrame(canvas: android.graphics.Canvas, frame: TerminalFrame, met
         }
     }
 
-    // Cursor block under the text, like the real renderer's block cursor.
+    // Cursor block under the text, like the real renderer's block cursor. The
+    // real renderer also inverts the glyph inside a block cursor; splitting a
+    // run to repaint that one cell is not worth it at thumbnail scale, so a
+    // theme whose cursor color equals its foreground hides that character
+    // behind a solid block — which still reads correctly as a cursor.
     if (frame.cursorRow in 0 until frame.rows) {
         rectPaint.color = frame.cursorColor
         val left = frame.cursorCol * cellW

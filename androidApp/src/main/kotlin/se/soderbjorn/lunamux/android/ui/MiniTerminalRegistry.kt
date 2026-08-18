@@ -20,10 +20,20 @@
  *
  * The registry is created by [OverviewContent], provided via
  * [LocalMiniTerminalRegistry], and [close]d when the overview leaves
- * composition. [OverviewContent] also pushes the resolved theme's default
- * colors through [setDefaultColors] — the headless emulators otherwise keep
- * the Termux stock palette for the default fg/bg/cursor slots, which the
- * full-screen terminal overrides via `applyTerminalColors`.
+ * composition. [OverviewContent] also pushes the resolved theme through
+ * [setDefaultColors] — the headless emulators otherwise keep the Termux stock
+ * palette for the default fg/bg/cursor slots, which the full-screen terminal
+ * overrides via `applyTerminalColors`. Because every server attach redraw (and
+ * every reconnect) starts with RIS, which resets the emulator's color table,
+ * the theme is re-applied whenever a reset passes through — the same rule the
+ * full-screen path follows via `containsTerminalReset`.
+ *
+ * Snapshots are gated twice, so a publisher only ever does work that shows up
+ * on screen: nothing is published before the attach redraw lands (a snapshot of
+ * the fresh 80×24 emulator is a blank frame that would replace real content),
+ * and nothing is published while no thumbnail is collecting the flow (an
+ * offscreen switcher card keeps its socket, not its snapshot cost) — a deferred
+ * snapshot is re-armed the moment someone collects again.
  *
  * Read-only invariant: like [MiniTerminalPane], entries never call
  * [se.soderbjorn.lunamux.client.PtySocket.resize]/`send`, so a thumbnail can
@@ -38,7 +48,6 @@ package se.soderbjorn.lunamux.android.ui
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.mutableStateOf
 import com.termux.terminal.TerminalEmulator
-import com.termux.terminal.TextStyle
 import com.termux.view.TerminalView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -51,10 +60,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.asCoroutineDispatcher
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import se.soderbjorn.lunamux.client.PtyEvent
 import se.soderbjorn.lunamux.client.PtySocket
 import se.soderbjorn.lunamux.client.LunamuxClient
+import se.soderbjorn.lunula.core.ResolvedTheme
 
 /**
  * Minimum interval between published frames per session (~10 fps). Bursty
@@ -93,6 +104,7 @@ class MiniTerminalRegistry(
         val dispatcher: kotlinx.coroutines.ExecutorCoroutineDispatcher,
         val job: Job,
         val publishJob: Job,
+        val resubscribeJob: Job,
         val dirty: Channel<Unit>,
         val frame: MutableStateFlow<TerminalFrame?>,
     )
@@ -102,33 +114,34 @@ class MiniTerminalRegistry(
     private var closed = false
 
     /**
-     * The resolved theme's default fg/bg/cursor, applied to every entry's
-     * emulator (see [setDefaultColors]). Null until the theme first resolves;
-     * entries created before that keep the Termux defaults until it lands.
+     * The resolved theme applied to every entry's emulator (see
+     * [setDefaultColors]) and re-applied after every terminal reset. Null until
+     * the theme first resolves; entries created before that keep the Termux
+     * defaults until it lands.
      */
     @Volatile
-    private var defaultColors: IntArray? = null
+    private var theme: ResolvedTheme? = null
 
     /**
-     * Set the default foreground/background/cursor colors on every live
-     * emulator (present and future) — the same three palette slots the
-     * full-screen terminal overrides via `applyTerminalColors` — and republish
-     * each session's frame so already-rendered thumbnails repaint.
+     * Theme every live emulator (present and future) via [applyDefaultColors] —
+     * the same three palette slots the full-screen terminal overrides through
+     * `applyTerminalColors` — and republish each session's frame so
+     * already-rendered thumbnails repaint.
      *
-     * Called by [OverviewContent] whenever the resolved theme changes.
+     * Called by [OverviewContent] whenever the resolved theme changes. The theme
+     * is also remembered here, both for entries created later and for the
+     * re-apply after a terminal reset.
      *
-     * @param fg     resolved ARGB default foreground.
-     * @param bg     resolved ARGB default background.
-     * @param cursor resolved ARGB cursor color.
+     * @param resolved the theme whose text/bg/accent become the emulators'
+     *   default fg/bg/cursor.
      */
-    fun setDefaultColors(fg: Int, bg: Int, cursor: Int) {
-        val trio = intArrayOf(fg, bg, cursor)
-        defaultColors = trio
+    fun setDefaultColors(resolved: ResolvedTheme) {
+        theme = resolved
         val snapshot = synchronized(lock) { entries.values.toList() }
         for (entry in snapshot) {
             scope.launch {
                 withContext(entry.dispatcher) {
-                    synchronized(entry.emulator) { applyDefaultColors(entry.emulator, trio) }
+                    synchronized(entry.emulator) { applyDefaultColors(entry.emulator, resolved) }
                 }
                 entry.dirty.trySend(Unit)
             }
@@ -175,12 +188,20 @@ class MiniTerminalRegistry(
         val frame = MutableStateFlow<TerminalFrame?>(null)
         val dirty = Channel<Unit>(Channel.CONFLATED)
         val revision = AtomicLong(0)
+        // Nothing is worth snapshotting until the server's attach redraw lands:
+        // a fresh emulator is a blank 80x24 grid, and the theme/size signals
+        // below both fire long before the socket's first bytes (each entry opens
+        // its own socket, so the replay is a connect + RTT away).
+        val hasContent = AtomicBoolean(false)
+        // Set while a dirty signal went unpublished because nothing was
+        // collecting the flow; cleared when the deferred snapshot is taken.
+        val deferred = AtomicBoolean(false)
 
         // Theme the fresh emulator if the resolved theme already landed; a
         // theme arriving later reaches it via setDefaultColors.
-        defaultColors?.let { trio ->
+        theme?.let { resolved ->
             scope.launch {
-                withContext(dispatcher) { synchronized(emulator) { applyDefaultColors(emulator, trio) } }
+                withContext(dispatcher) { synchronized(emulator) { applyDefaultColors(emulator, resolved) } }
                 dirty.trySend(Unit)
             }
         }
@@ -201,7 +222,18 @@ class MiniTerminalRegistry(
                                 runCatching {
                                     emulator.resize(ev.cols, ev.rows, 1, 1)
                                 }
-                            is PtyEvent.Bytes -> emulator.append(ev.data, ev.data.size)
+                            is PtyEvent.Bytes -> {
+                                emulator.append(ev.data, ev.data.size)
+                                hasContent.set(true)
+                                // The attach redraw is RIS-prefixed, and a real
+                                // `reset` in the shell sends one too. RIS resets
+                                // the color table to the Termux stock palette, so
+                                // the phone theme has to be written back or the
+                                // thumbnail renders stock-black from the first
+                                // attach onwards (the full-screen path re-applies
+                                // on the same detection).
+                                if (containsTerminalReset(ev.data)) reapplyTheme(emulator)
+                            }
                             // A thumbnail renders at whatever width the server sends and
                             // never votes, so it is never the governor and has nothing to
                             // change when governance moves.
@@ -209,6 +241,7 @@ class MiniTerminalRegistry(
                             PtyEvent.Reset -> {
                                 val ris = byteArrayOf(0x1b, 'c'.code.toByte())
                                 emulator.append(ris, ris.size)
+                                reapplyTheme(emulator)
                             }
                         }
                     }
@@ -223,13 +256,42 @@ class MiniTerminalRegistry(
         // the mutations above, so the published DTO is a consistent copy.
         val publishJob = scope.launch {
             for (unit in dirty) {
+                if (!hasContent.get()) continue
+                // Mark the signal deferred before testing the subscriber count,
+                // so a collector that arrives in between is seen by the watcher
+                // below rather than falling between the two.
+                deferred.set(true)
+                if (frame.subscriptionCount.value == 0) continue
+                deferred.set(false)
                 frame.value = withContext(dispatcher) {
                     synchronized(emulator) { snapshotFrame(emulator, revision.incrementAndGet()) }
                 }
                 delay(THUMB_FRAME_MIN_INTERVAL_MS)
             }
         }
-        return Entry(socket, emulator, dispatcher, job, publishJob, dirty, frame)
+
+        // A card scrolled back into the switcher row (or a tab returned to) has
+        // to show the session as it is now, not as it was when the last
+        // collector went away — re-arm the deferred snapshot on resubscribe.
+        val resubscribeJob = scope.launch {
+            frame.subscriptionCount.collect { count ->
+                if (count > 0 && deferred.get()) dirty.trySend(Unit)
+            }
+        }
+        return Entry(socket, emulator, dispatcher, job, publishJob, resubscribeJob, dirty, frame)
+    }
+
+    /**
+     * Re-write the resolved theme into [emulator]'s color table after a
+     * terminal reset wiped it. No-op until the theme resolves.
+     *
+     * Called from the event collector, which already holds the emulator lock on
+     * its dispatcher — the contract [applyDefaultColors] requires.
+     *
+     * @param emulator the entry's headless emulator, freshly reset.
+     */
+    private fun reapplyTheme(emulator: TerminalEmulator) {
+        theme?.let { applyDefaultColors(emulator, it) }
     }
 
     /**
@@ -249,24 +311,10 @@ class MiniTerminalRegistry(
         for (entry in toClose) {
             entry.job.cancel()
             entry.publishJob.cancel()
+            entry.resubscribeJob.cancel()
             entry.dirty.close()
             entry.socket.closeDetached()
             runCatching { entry.dispatcher.close() }
         }
     }
-}
-
-/**
- * Write the resolved theme's default fg/bg/cursor into [emulator]'s color
- * table — the exact mutation `applyTerminalColors` performs for the
- * full-screen view's emulator. Must be called on the emulator's dispatcher
- * under its lock.
- *
- * @param emulator the headless emulator to theme.
- * @param trio     `[fg, bg, cursor]` resolved ARGB values.
- */
-private fun applyDefaultColors(emulator: TerminalEmulator, trio: IntArray) {
-    emulator.mColors.mCurrentColors[TextStyle.COLOR_INDEX_FOREGROUND] = trio[0]
-    emulator.mColors.mCurrentColors[TextStyle.COLOR_INDEX_BACKGROUND] = trio[1]
-    emulator.mColors.mCurrentColors[TextStyle.COLOR_INDEX_CURSOR] = trio[2]
 }

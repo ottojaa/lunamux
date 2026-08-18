@@ -159,11 +159,7 @@ fun OverviewContent(
     // changes so existing thumbnails repaint.
     val thumbnailTheme = rememberTerminalPalette(client, "overview-thumbnails")
     LaunchedEffect(miniTerminals, thumbnailTheme) {
-        miniTerminals.setDefaultColors(
-            fg = thumbnailTheme.text.toInt(),
-            bg = thumbnailTheme.bg.toInt(),
-            cursor = thumbnailTheme.accent.toInt(),
-        )
+        miniTerminals.setDefaultColors(thumbnailTheme)
     }
 
     // Rename / close dialog targets raised from a pane's context menu.

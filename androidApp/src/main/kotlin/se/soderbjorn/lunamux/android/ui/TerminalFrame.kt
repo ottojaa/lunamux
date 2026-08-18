@@ -10,13 +10,16 @@
  * emulator is only touched inside [snapshotFrame], which the caller must run
  * on the emulator's own dispatcher under its lock (see [MiniTerminalRegistry]).
  *
- * The run extraction mirrors the server's `GridSerializer.rowRuns` (walk
- * columns, split when the packed style long changes, read cell text through
- * `findStartOfColumn` so surrogates/combining marks/wide glyphs stay intact,
- * trim trailing default-styled blanks). The color resolution is a port of the
- * vendored `TerminalRenderer.drawTextRun` (terminal-view) — ported rather than
- * referenced because that code is welded to its Canvas pass and vendored files
- * stay unmodified.
+ * The run extraction follows the server's `GridSerializer.rowRuns` rules
+ * (split when the packed style long changes, keep surrogates/combining marks/
+ * wide glyphs intact, trim trailing default-styled blanks) but not its code:
+ * the server asks `findStartOfColumn` per cell, which restarts from column 0
+ * on every call, while this walk carries a running char index — a snapshot
+ * runs at up to 10 fps per visible session here, so the per-row cost has to be
+ * linear. The color resolution is a port of the vendored
+ * `TerminalRenderer.drawTextRun` (terminal-view) including DECSCNM reverse
+ * video — ported rather than referenced because that code is welded to its
+ * Canvas pass and vendored files stay unmodified.
  *
  * @see MiniTerminalRegistry
  * @see TerminalThumbnail
@@ -66,7 +69,8 @@ data class ThumbRun(
  *   authoritative PTY width — a thumbnail never votes its own).
  * @property rows        the grid height the frame was captured at.
  * @property defaultBg   resolved ARGB default background; fills the letterbox
- *   and every cell no run covers.
+ *   and every cell no run covers (the default *foreground* when the session
+ *   has DECSCNM reverse video on, mirroring the real renderer's canvas fill).
  * @property lines       exactly [rows] entries; each row's runs are ordered by
  *   [ThumbRun.startCol] with trailing default-styled blanks trimmed (an empty
  *   list is a blank row).
@@ -86,10 +90,29 @@ data class TerminalFrame(
     val cursorColor: Int,
     val revision: Long,
 ) {
-    /** Cheap equality via [revision]: two frames of one session never share a revision. */
+    /**
+     * Cheap equality via [revision]: two frames published by one session's
+     * publisher never share a revision, so identity of stamp implies identity
+     * of content — which is what the frame [kotlinx.coroutines.flow.StateFlow]
+     * conflates on.
+     *
+     * Valid only *within* one publisher's stream. Revisions restart at 0 for a
+     * rebuilt registry entry and two sessions number theirs independently, so
+     * never compare frames across sessions or registry generations (no such
+     * comparison exists today — see [MiniTerminalRegistry.frameFor], which
+     * hands every generation its own flow).
+     *
+     * @param other the value to compare against.
+     * @return true when [other] is a frame with the same revision and grid size.
+     */
     override fun equals(other: Any?): Boolean =
         other is TerminalFrame && other.revision == revision && other.cols == cols && other.rows == rows
 
+    /**
+     * Hash consistent with [equals] — the revision alone, for the same reason.
+     *
+     * @return the revision's hash.
+     */
     override fun hashCode(): Int = revision.hashCode()
 }
 
@@ -107,14 +130,21 @@ data class TerminalFrame(
  */
 internal fun snapshotFrame(emulator: TerminalEmulator, revision: Long): TerminalFrame {
     val palette = emulator.mColors.mCurrentColors
-    val defaultBg = palette[TextStyle.COLOR_INDEX_BACKGROUND]
+    // DECSCNM (`ESC [ ?5h`, replayed by the server's attach epilogue) is a
+    // whole-screen fg/bg swap. The vendored renderer applies it by filling the
+    // canvas with the default *foreground* and flipping every run's inverse
+    // bit (TerminalRenderer.drawText/drawTextRun); the snapshot does the same,
+    // or a reverse-video session thumbnails as its own negative.
+    val reverseVideo = emulator.isReverseVideo
+    val defaultBg =
+        palette[if (reverseVideo) TextStyle.COLOR_INDEX_FOREGROUND else TextStyle.COLOR_INDEX_BACKGROUND]
     val rows = emulator.mRows
     val cols = emulator.mColumns
     val screen = emulator.screen
     val lines = ArrayList<List<ThumbRun>>(rows)
     for (y in 0 until rows) {
         val row = runCatching { screen.getRow(y) }.getOrNull()
-        lines.add(if (row == null) emptyList() else rowRuns(row, cols, palette, defaultBg))
+        lines.add(if (row == null) emptyList() else rowRuns(row, cols, palette, reverseVideo))
     }
     val cursorVisible = emulator.shouldCursorBeVisible()
     return TerminalFrame(
@@ -130,38 +160,78 @@ internal fun snapshotFrame(emulator: TerminalEmulator, revision: Long): Terminal
 }
 
 /**
- * Convert one screen row into resolved [ThumbRun]s: walk columns, split when
- * the packed style changes, trim trailing default-styled blanks (padding, not
- * content — a styled trailing space such as a colored status bar is kept).
+ * Convert one screen row into resolved [ThumbRun]s in a single left-to-right
+ * pass: split when the packed style changes, and emit each run only up to its
+ * last content cell so trailing default-styled blanks (padding) are dropped. A
+ * styled trailing space — a colored status bar, say — is content: a
+ * non-default style makes every cell in the run count.
  *
- * @param row       the live row to read.
- * @param cols      the emulator's width, clamped to what the row actually has
+ * The walk carries a running char index instead of calling
+ * `TerminalRow.findStartOfColumn` per cell. That lookup restarts from column 0
+ * on every call, which made a row O(cols²) — millions of codepoint-width steps
+ * per second across the overview at 10 fps and 200+ server columns, all while
+ * holding the emulator lock the PTY collector needs. The vendored
+ * `TerminalRenderer`'s own row loop keeps the same running index.
+ *
+ * @param row          the live row to read.
+ * @param cols         the emulator's width, clamped to what the row actually has
  *   (a mid-reflow row can be narrower; degrade to a short row, never throw).
- * @param palette   the emulator's current 256+3 color table.
- * @param defaultBg resolved default background, for the trailing-blank rule.
+ * @param palette      the emulator's current 256+3 color table.
+ * @param reverseVideo whether DECSCNM is set, flipping every run's inverse bit.
  * @return the row's runs, empty for a blank row.
  */
-private fun rowRuns(row: TerminalRow, cols: Int, palette: IntArray, defaultBg: Int): List<ThumbRun> {
+private fun rowRuns(row: TerminalRow, cols: Int, palette: IntArray, reverseVideo: Boolean): List<ThumbRun> {
     val width = minOf(cols, row.columnCount)
-    val lastCol = lastContentColumn(row, width)
-    if (lastCol < 0) return emptyList()
+    if (width <= 0) return emptyList()
+    val text = row.mText
+    val charLimit = row.spaceUsed
     val runs = ArrayList<ThumbRun>()
     val sb = StringBuilder()
     var runStyle = row.getStyle(0)
+    var runIsDefaultStyle = isDefaultStyle(runStyle)
     var runStartCol = 0
+    // The current run's last content cell: its exclusive end column and the
+    // matching prefix length of [sb]. Both stay 0 for an all-blank run, which
+    // is then never emitted.
+    var contentEndCol = 0
+    var contentLen = 0
     var col = 0
-    while (col <= lastCol) {
+    var charIndex = 0
+    while (col < width && charIndex < charLimit) {
         val style = row.getStyle(col)
-        if (style != runStyle && sb.isNotEmpty()) {
-            runs.add(resolveRun(runStartCol, col - runStartCol, sb.toString(), runStyle, palette))
+        if (style != runStyle) {
+            if (contentLen > 0) {
+                runs.add(resolveRun(runStartCol, contentEndCol - runStartCol, sb.substring(0, contentLen), runStyle, palette, reverseVideo))
+            }
             sb.setLength(0)
+            contentLen = 0
+            contentEndCol = 0
             runStartCol = col
+            runStyle = style
+            runIsDefaultStyle = isDefaultStyle(style)
         }
-        runStyle = style
-        col += emitCell(sb, row, col, width)
+        // One cell: its code point plus the zero-width combining marks that
+        // follow it, so surrogate pairs and marks stay welded to their glyph
+        // (and a mark is never read as the next cell's content).
+        val cellStart = charIndex
+        val first = text[charIndex]
+        val isHighSurrogate = Character.isHighSurrogate(first)
+        val cp = if (isHighSurrogate) Character.toCodePoint(first, text[charIndex + 1]) else first.code
+        charIndex += if (isHighSurrogate) 2 else 1
+        while (charIndex < charLimit && WcWidth.width(text, charIndex) <= 0) {
+            charIndex += if (Character.isHighSurrogate(text[charIndex])) 2 else 1
+        }
+        var w = WcWidth.width(cp)
+        if (w < 1) w = 1
+        sb.append(text, cellStart, charIndex - cellStart)
+        col += w
+        if (cp != ' '.code || !runIsDefaultStyle) {
+            contentEndCol = col
+            contentLen = sb.length
+        }
     }
-    if (sb.isNotEmpty()) {
-        runs.add(resolveRun(runStartCol, col - runStartCol, sb.toString(), runStyle, palette))
+    if (contentLen > 0) {
+        runs.add(resolveRun(runStartCol, contentEndCol - runStartCol, sb.substring(0, contentLen), runStyle, palette, reverseVideo))
     }
     return runs
 }
@@ -170,16 +240,25 @@ private fun rowRuns(row: TerminalRow, cols: Int, palette: IntArray, defaultBg: I
  * Resolve one run's packed style long into a [ThumbRun] with final ARGB
  * colors. Port of the color pipeline in `TerminalRenderer.drawTextRun`
  * (terminal-view): indexed → palette with bright-bold promotion, inverse
- * fg/bg swap, xterm dim (×2/3 RGB), invisible → empty text.
+ * fg/bg swap (SGR 7 xor DECSCNM, as the renderer's `reverseVideoHere`), xterm
+ * dim (×2/3 RGB), invisible → empty text.
  *
- * @param startCol  grid column the run starts at.
- * @param widthCols grid cells the run covers.
- * @param text      the run's characters.
- * @param style     the packed Termux style long shared by every cell in the run.
- * @param palette   the emulator's current color table.
+ * @param startCol     grid column the run starts at.
+ * @param widthCols    grid cells the run covers.
+ * @param text         the run's characters.
+ * @param style        the packed Termux style long shared by every cell in the run.
+ * @param palette      the emulator's current color table.
+ * @param reverseVideo whether DECSCNM is set, flipping the run's inverse bit.
  * @return the resolved run.
  */
-private fun resolveRun(startCol: Int, widthCols: Int, text: String, style: Long, palette: IntArray): ThumbRun {
+private fun resolveRun(
+    startCol: Int,
+    widthCols: Int,
+    text: String,
+    style: Long,
+    palette: IntArray,
+    reverseVideo: Boolean,
+): ThumbRun {
     var fg = TextStyle.decodeForeColor(style)
     var bg = TextStyle.decodeBackColor(style)
     val effect = TextStyle.decodeEffect(style)
@@ -194,7 +273,7 @@ private fun resolveRun(startCol: Int, widthCols: Int, text: String, style: Long,
     if ((bg and -0x1000000) != -0x1000000) {
         bg = palette[bg]
     }
-    if ((effect and TextStyle.CHARACTER_ATTRIBUTE_INVERSE) != 0) {
+    if (((effect and TextStyle.CHARACTER_ATTRIBUTE_INVERSE) != 0) xor reverseVideo) {
         val tmp = fg
         fg = bg
         bg = tmp
@@ -215,51 +294,6 @@ private fun resolveRun(startCol: Int, widthCols: Int, text: String, style: Long,
         bold = bold,
         underline = underline,
     )
-}
-
-/**
- * Append the cell at [col] to [sb] and return its width in columns. Reads the
- * cell's chars through `findStartOfColumn` so surrogate pairs, combining marks
- * and wide glyphs come out intact (same walk as the server's serializer).
- *
- * @param sb    receives the cell's characters (a space for a zero-length cell).
- * @param row   the row being read.
- * @param col   the cell's column.
- * @param width the row's readable width, for clamping the end lookup.
- * @return the number of columns the cell spans (≥ 1).
- */
-private fun emitCell(sb: StringBuilder, row: TerminalRow, col: Int, width: Int): Int {
-    val text = row.mText
-    val start = row.findStartOfColumn(col)
-    val cp = Character.codePointAt(text, start)
-    var w = WcWidth.width(cp)
-    if (w < 1) w = 1
-    val end = row.findStartOfColumn(minOf(col + w, width))
-    val len = end - start
-    if (len <= 0) {
-        sb.append(' ')
-    } else {
-        sb.append(String(text, start, len))
-    }
-    return w
-}
-
-/**
- * Last column (0-based) that is not a default-styled space; -1 if the row is
- * entirely blank. Mirrors the server serializer's trailing-blank rule.
- *
- * @param row   the row to scan.
- * @param width the row's readable width.
- * @return the last content column, or -1.
- */
-private fun lastContentColumn(row: TerminalRow, width: Int): Int {
-    var c = width - 1
-    while (c >= 0) {
-        val cp = Character.codePointAt(row.mText, row.findStartOfColumn(c))
-        if (cp != ' '.code || !isDefaultStyle(row.getStyle(c))) return c
-        c--
-    }
-    return -1
 }
 
 /** Whether [style] is the default style (default fg/bg indices, no effects). */
