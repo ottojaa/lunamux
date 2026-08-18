@@ -29,6 +29,7 @@ package se.soderbjorn.lunamux.android.ui
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -55,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlin.math.abs
 import se.soderbjorn.lunamux.client.viewmodel.OverviewBackingViewModel.OverviewTab
 import se.soderbjorn.lunamux.client.viewmodel.OverviewBackingViewModel.UnlistedTab
 
@@ -101,9 +103,24 @@ fun TabDock(
     if (tabs.isEmpty()) return
 
     val listState = rememberLazyListState()
-    // Keep the centered tab's chip in view as the card row is flung.
+    // Keep the centered tab's chip in the MIDDLE of the dock as the card row is
+    // flung, the way the OS switcher keeps the current app's icon centred under
+    // its card. animateScrollToItem alone parks the item against the left edge,
+    // which read as a row that had simply scrolled away; centring needs the
+    // item's measured width, so bring it into view first and then centre it.
     LaunchedEffect(centeredIndex, tabs.size) {
-        if (centeredIndex in tabs.indices) listState.animateScrollToItem(centeredIndex)
+        if (centeredIndex !in tabs.indices) return@LaunchedEffect
+        if (listState.layoutInfo.visibleItemsInfo.none { it.index == centeredIndex }) {
+            listState.animateScrollToItem(centeredIndex)
+        }
+        val info = listState.layoutInfo
+        val item = info.visibleItemsInfo.firstOrNull { it.index == centeredIndex }
+            ?: return@LaunchedEffect
+        val viewportCenter = (info.viewportStartOffset + info.viewportEndOffset) / 2f
+        val delta = item.offset + item.size / 2f - viewportCenter
+        // A dock whose chips all fit is centred by the arrangement below and
+        // cannot scroll, so this is a no-op there.
+        if (abs(delta) > 1f) listState.animateScrollBy(delta)
     }
 
     // The tab chip whose context menu is currently open (by tab id).
@@ -114,7 +131,7 @@ fun TabDock(
         modifier = Modifier
             .fillMaxWidth()
             .background(SidebarBackground)
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            .padding(horizontal = 8.dp, vertical = 2.dp),
         // spacedBy + CenterHorizontally centers the chips when they all fit and
         // degrades to a natural start-aligned scroll when they don't.
         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
@@ -140,7 +157,16 @@ fun TabDock(
                         leadingIcon = { StatusDot(state = tab.aggregateState, boxDp = 12) },
                         colors = FilterChipDefaults.filterChipColors(
                             containerColor = SidebarBackground,
-                            labelColor = SidebarTextSecondary,
+                            // The server-active tab's label carries the accent even
+                            // when the row is browsing elsewhere — the only cue left
+                            // for it once the cards stopped ringing themselves in
+                            // accent, and distinct from the centred chip's filled
+                            // container + accent border.
+                            labelColor = if (tab.isActive) {
+                                SidebarAccent
+                            } else {
+                                SidebarTextSecondary
+                            },
                             selectedContainerColor = SidebarAccent.copy(alpha = 0.18f),
                             selectedLabelColor = SidebarAccent,
                         ),
