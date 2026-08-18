@@ -64,6 +64,8 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -71,6 +73,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -475,6 +478,17 @@ fun TerminalScreen(
         }
     }
 
+    // Whether the view has painted this session's own output yet. Until it has,
+    // the last known screen is painted over it (see the dive placeholder below).
+    var firstOutputPainted by remember(sessionId) { mutableStateOf(false) }
+
+    // Safety net for the placeholder: a session that sends nothing at all after
+    // attach must not keep a stale screen on top of the live (blank) one.
+    LaunchedEffect(sessionId) {
+        delay(1500)
+        firstOutputPainted = true
+    }
+
     // Scroll-pause: whether the user has scrolled up off the bottom (drives the
     // floating "jump to bottom" pill) and whether fresh output arrived while
     // they were scrolled up (switches the pill to a "New output" hint).
@@ -658,6 +672,10 @@ fun TerminalScreen(
                 } else {
                     view.onScreenUpdated()
                 }
+                // The view has this session's content now, so the placeholder can
+                // go. Released from inside the post (not from the collector) so it
+                // never uncovers a view that has not drawn yet.
+                firstOutputPainted = true
             }
             // Debounce a resume-restore: re-armed on every chunk, it fires once
             // output goes quiet so we land after the whole replay has been fed.
@@ -1011,6 +1029,37 @@ fun TerminalScreen(
                         if (view.topRow < 0) view.invalidate() else view.onScreenUpdated()
                     },
                 )
+
+                // The session's last known screen, painted OVER the still-empty
+                // TerminalView until its own output lands. Two things needed it:
+                // the dive transition grew an empty box (the card's thumbnail fades
+                // out while the destination has nothing to show yet, so the text
+                // only appeared once the flight was over), and a terminal opened
+                // cold showed a blank screen for the whole attach round trip. The
+                // thumbnail shares the mirror's fit — fill the height, crop the
+                // overflow — so the live view takes over at nearly the same
+                // geometry, and the cache is fresh: the overview publishes while it
+                // is on screen, and the return gesture snapshots on the way out.
+                val divePlaceholder = remember(sessionId) {
+                    MiniTerminalRegistry.lastFrameFor(sessionId)
+                }
+                // Held at full opacity until the view has content, then faded out
+                // rather than cut, so the handoff is a dissolve between two
+                // renderings of the same screen instead of a visible swap.
+                val placeholderAlpha by animateFloatAsState(
+                    targetValue = if (divePlaceholder != null && !firstOutputPainted) 1f else 0f,
+                    animationSpec = tween(durationMillis = 120),
+                    label = "divePlaceholder",
+                )
+                if (divePlaceholder != null && placeholderAlpha > 0f) {
+                    TerminalThumbnail(
+                        frame = divePlaceholder,
+                        fallbackBackground = bgComposeColor,
+                        modifier = Modifier
+                            .matchParentSize()
+                            .graphicsLayer { alpha = placeholderAlpha },
+                    )
+                }
 
                 // Take-over badge: shown while another device drives the PTY (this
                 // phone is passive). Tapping it is an explicit, input-free take-over

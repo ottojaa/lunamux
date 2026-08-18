@@ -314,6 +314,18 @@ class MiniTerminalRegistry(
         private val lastFrames = android.util.LruCache<String, TerminalFrame>(16)
 
         /**
+         * The last frame published for [sessionId] by any registry, or `null`.
+         *
+         * Read by `TerminalScreen`, which paints it over its still-empty view
+         * until the session's own output lands — the dive transition would
+         * otherwise grow an empty box.
+         *
+         * @param sessionId the session whose frame to look up.
+         * @return the cached frame, or `null` if none was ever published.
+         */
+        internal fun lastFrameFor(sessionId: String): TerminalFrame? = lastFrames.get(sessionId)
+
+        /**
          * Drop every cached frame. Called when the app disconnects from a host
          * (see [se.soderbjorn.lunamux.android.net.ConnectionHolder.disconnect]):
          * the cache is process-wide and keyed by bare session id, so without
