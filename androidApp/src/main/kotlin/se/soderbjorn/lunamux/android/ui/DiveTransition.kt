@@ -3,9 +3,8 @@
  * and the full-screen terminal.
  *
  * Tapping a terminal card in the overview should feel like diving into it: the
- * card's bounds morph into the terminal screen's content box while the truthful
- * thumbnail crossfades into the live [com.termux.view.TerminalView], and the
- * reverse plays on back. This file carries the two composition locals the
+ * card's bounds morph into the terminal screen's content box, and the reverse
+ * plays on back. This file carries the two composition locals the
  * transition needs ([LunamuxApp] provides them: the app-level
  * [SharedTransitionScope] around the NavHost and each involved destination's
  * [AnimatedVisibilityScope]) and the [diveSharedBounds] modifier both ends
@@ -28,8 +27,12 @@
 package se.soderbjorn.lunamux.android.ui
 
 import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Modifier
@@ -62,13 +65,36 @@ val LocalNavAnimatedVisibilityScope = compositionLocalOf<AnimatedVisibilityScope
 fun diveKey(sessionId: String): String = "terminal-dive/$sessionId"
 
 /**
+ * How long the bounds take to fly, and on what curve. A tween rather than the
+ * default spring, and the same duration as the routes' own fades in
+ * [LunamuxApp], so the card's flight and the chrome swapping around it read as
+ * one movement instead of two overlapping ones.
+ */
+private const val DIVE_DURATION_MS = 300
+
+/**
+ * How long the *outgoing* end stays visible. Both ends of the dive render the
+ * same session, but not identically framed — the card shows it inside a mini
+ * pane with a title bar, the terminal shows it in the full content box — so the
+ * default half-second crossfade drew two copies of the same text at two scales
+ * through each other for the whole flight, which is the "double image" the
+ * transition looked wrong for. The incoming end is instead opaque from the first
+ * frame and the outgoing one is gone within a couple of frames, leaving a single
+ * rendering to scale up.
+ */
+private const val DIVE_HANDOFF_MS = 70
+
+/**
  * Attach `sharedBounds` for [key] when composed inside a live shared-transition
  * scope AND a nav destination scope; a no-op otherwise, so call sites degrade
  * gracefully wherever the transition can't run (sidebar-originated opens, host
  * previews, tests).
  *
- * Uses the default fade crossfade and the default `ScaleToBounds` resize mode —
- * see the file header for why that default is load-bearing.
+ * Keeps the default `ScaleToBounds` resize mode — see the file header for why
+ * that default is load-bearing — and replaces the default crossfade with an
+ * immediate handoff (see [DIVE_HANDOFF_MS]). The same spec serves both
+ * directions: whichever end is entering appears at once, whichever is leaving
+ * fades out immediately.
  *
  * @param key a [diveKey]; the same key must be attached on both ends.
  * @return this modifier, with `sharedBounds` appended when the scopes exist.
@@ -82,6 +108,11 @@ fun Modifier.diveSharedBounds(key: String): Modifier {
         this@diveSharedBounds.sharedBounds(
             sharedContentState = rememberSharedContentState(key),
             animatedVisibilityScope = navScope,
+            enter = EnterTransition.None,
+            exit = fadeOut(tween(durationMillis = DIVE_HANDOFF_MS)),
+            boundsTransform = { _, _ ->
+                tween(durationMillis = DIVE_DURATION_MS, easing = FastOutSlowInEasing)
+            },
         )
     }
 }
