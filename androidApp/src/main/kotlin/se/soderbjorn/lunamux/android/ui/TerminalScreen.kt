@@ -830,7 +830,13 @@ fun TerminalScreen(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                    // Terminal end of the dive: the overview card's bounds morph
+                    // into this box. ScaleToBounds (the helper's default) means
+                    // the AndroidView below is measured once at final bounds —
+                    // the flight only scales the layer, so the layout listener
+                    // (and its size vote) fires exactly as often as today.
+                    .diveSharedBounds(diveKey(sessionId)),
             ) {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),

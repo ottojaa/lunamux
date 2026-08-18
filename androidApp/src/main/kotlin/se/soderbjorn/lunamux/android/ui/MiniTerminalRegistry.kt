@@ -185,13 +185,19 @@ class MiniTerminalRegistry(
             handleInput = {},
         )
         val emulator = createSyncedEmulator(session)
-        val frame = MutableStateFlow<TerminalFrame?>(null)
+        // Seed from the process-wide last-frame cache: a registry rebuilt after
+        // navigation (tree → terminal → back) shows each session's last-known
+        // screen instantly while its socket reattaches, instead of a blank box —
+        // which is also what the dive transition's reverse flight renders.
+        val frame = MutableStateFlow<TerminalFrame?>(lastFrames.get(sessionId))
         val dirty = Channel<Unit>(Channel.CONFLATED)
-        val revision = AtomicLong(0)
+        val revision = AtomicLong(frame.value?.revision ?: 0)
         // Nothing is worth snapshotting until the server's attach redraw lands:
         // a fresh emulator is a blank 80x24 grid, and the theme/size signals
         // below both fire long before the socket's first bytes (each entry opens
-        // its own socket, so the replay is a connect + RTT away).
+        // its own socket, so the replay is a connect + RTT away) — publishing
+        // that blank would replace the seeded last-known screen and poison the
+        // cache the dive transition flies back to.
         val hasContent = AtomicBoolean(false)
         // Set while a dirty signal went unpublished because nothing was
         // collecting the flow; cleared when the deferred snapshot is taken.
@@ -263,9 +269,11 @@ class MiniTerminalRegistry(
                 deferred.set(true)
                 if (frame.subscriptionCount.value == 0) continue
                 deferred.set(false)
-                frame.value = withContext(dispatcher) {
+                val next = withContext(dispatcher) {
                     synchronized(emulator) { snapshotFrame(emulator, revision.incrementAndGet()) }
                 }
+                frame.value = next
+                lastFrames.put(sessionId, next)
                 delay(THUMB_FRAME_MIN_INTERVAL_MS)
             }
         }
@@ -292,6 +300,18 @@ class MiniTerminalRegistry(
      */
     private fun reapplyTheme(emulator: TerminalEmulator) {
         theme?.let { applyDefaultColors(emulator, it) }
+    }
+
+    companion object {
+        /**
+         * Process-wide cache of each session's most recent frame, surviving
+         * registry teardown (the overview closes all sockets whenever the tree
+         * leaves composition). Seeds fresh entries so returning to the overview
+         * — including the dive transition's reverse flight — paints the
+         * last-known screen immediately. Sixteen entries comfortably covers a
+         * world's visible panes; stale sessions age out.
+         */
+        private val lastFrames = android.util.LruCache<String, TerminalFrame>(16)
     }
 
     /**
