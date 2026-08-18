@@ -31,6 +31,7 @@ package se.soderbjorn.lunamux.android.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.rememberSplineBasedDecay
 import androidx.compose.foundation.gestures.TargetedFlingBehavior
@@ -82,12 +83,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -103,10 +104,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import kotlin.math.abs
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import kotlin.math.roundToInt
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import se.soderbjorn.lunamux.FileBrowserContent
@@ -221,19 +222,23 @@ fun OverviewContent(
         rememberLazyListState(initialFirstVisibleItemIndex = activeIndex)
     }
 
-    // The card currently snapped to (or nearest) the viewport center. Browsing
-    // is centering, not committing: unlike the old pager, scrolling the row
-    // NEVER sends setActiveTab — only diving into a pane commits the tab (see
-    // divePane below), matching the app-switcher idiom this row replicates.
-    val centeredIndex by remember(rowListState) {
-        derivedStateOf {
-            val info = rowListState.layoutInfo
-            val visible = info.visibleItemsInfo
-            if (visible.isEmpty()) {
-                0
-            } else {
-                val center = (info.viewportStartOffset + info.viewportEndOffset) / 2
-                visible.minByOrNull { abs(it.offset + it.size / 2 - center) }?.index ?: 0
+    // The card the row has SETTLED on. Browsing is centering, not committing:
+    // unlike the old pager, scrolling the row NEVER sends setActiveTab — only
+    // diving into a pane commits the tab (see divePane below), matching the
+    // app-switcher idiom this row replicates.
+    //
+    // Sampled when the scroll stops rather than derived continuously. Everything
+    // that reads it — a card's tap gate, the dock chip's dive-vs-centre split, the
+    // browsed-tab report — only matters once the row is at rest, while a
+    // continuously derived value recomposed this entire screen (every card, its
+    // canvas, its live thumbnails) each time a fling crossed a card, which is what
+    // a multi-card fling stuttered on. The dock's motion never needed it: it
+    // follows the row's fractional position at draw time.
+    var centeredIndex by remember(rowListState) { mutableStateOf(0) }
+    LaunchedEffect(rowListState) {
+        snapshotFlow { rowListState.isScrollInProgress }.collect { scrolling ->
+            if (!scrolling) {
+                centeredIndex = switcherFocusIndex(rowListState).roundToInt()
             }
         }
     }
@@ -337,6 +342,7 @@ fun OverviewContent(
                 TabDock(
                     tabs = tabs,
                     unlistedTabs = state.unlistedTabs,
+                    focusIndex = { switcherFocusIndex(rowListState) },
                     centeredIndex = centeredIndex,
                     closeEnabled = tabs.size > 1,
                     onCenter = { index -> scope.launch { rowListState.animateScrollToItem(index) } },
@@ -453,7 +459,7 @@ fun OverviewContent(
  * push, and a row that instead rubber-banded back to where you started felt
  * like it was refusing the gesture.
  */
-private const val SWITCHER_FLICK_INTENT_DP = 80f
+internal const val SWITCHER_FLICK_INTENT_DP = 80f
 
 /**
  * The velocity a flick is reported as when it clears [SWITCHER_FLICK_INTENT_DP]
@@ -468,7 +474,7 @@ private const val SWITCHER_ADVANCE_VELOCITY_DP = 400f
  * very-low 50 a first pass tried: 50 glided so long it felt weightless, 400
  * arrived before the gesture was over.
  */
-private const val SWITCHER_SNAP_STIFFNESS = 150f
+internal const val SWITCHER_SNAP_STIFFNESS = 150f
 
 /**
  * The card row's fling: the platform's own momentum, an edge-aware approach, and
@@ -496,10 +502,27 @@ private const val SWITCHER_SNAP_STIFFNESS = 150f
 @Composable
 private fun rememberSwitcherFlingBehavior(rowListState: LazyListState): TargetedFlingBehavior {
     val density = LocalDensity.current
-    val decay = rememberSplineBasedDecay<Float>()
-    return remember(rowListState, density, decay) {
+    val splineDecay = rememberSplineBasedDecay<Float>()
+    // Every value below is a debug slider (SwitcherTuning) seeded from the
+    // constants above, so reading them here also makes them the remember keys:
+    // moving a slider rebuilds the behaviour mid-gesture.
+    val stiffness = SwitcherTuning.snapStiffness
+    val damping = SwitcherTuning.snapDamping
+    val platformDecay = SwitcherTuning.platformDecay
+    val friction = SwitcherTuning.decayFriction
+    val flickIntentDp = SwitcherTuning.flickIntentDp
+    return remember(
+        rowListState,
+        density,
+        splineDecay,
+        stiffness,
+        damping,
+        platformDecay,
+        friction,
+        flickIntentDp,
+    ) {
         val base = SnapLayoutInfoProvider(rowListState, SnapPosition.Center)
-        val intentPx = with(density) { SWITCHER_FLICK_INTENT_DP.dp.toPx() }
+        val intentPx = with(density) { flickIntentDp.dp.toPx() }
         val advancePx = with(density) { SWITCHER_ADVANCE_VELOCITY_DP.dp.toPx() }
         val provider = object : SnapLayoutInfoProvider {
             override fun calculateSnapOffset(velocity: Float): Float {
@@ -527,10 +550,49 @@ private fun rememberSwitcherFlingBehavior(rowListState: LazyListState): Targeted
         }
         snapFlingBehavior(
             snapLayoutInfoProvider = provider,
-            decayAnimationSpec = decay,
-            snapAnimationSpec = spring(dampingRatio = 1f, stiffness = SWITCHER_SNAP_STIFFNESS),
+            decayAnimationSpec = if (platformDecay) {
+                splineDecay
+            } else {
+                exponentialDecay(frictionMultiplier = friction)
+            },
+            snapAnimationSpec = spring(dampingRatio = damping, stiffness = stiffness),
         )
     }
+}
+
+/**
+ * The row's position as a *fractional* card index — 1.4 meaning "40% of the way
+ * from card 1 to card 2".
+ *
+ * The cards are uniform, so this is just the scroll position over the stride. Read
+ * at draw time by [TabDock], whose chips follow the row continuously rather than
+ * animating when the centred card changes.
+ *
+ * @param rowListState the row's list state.
+ * @return the fractional index, or 0 while the row has no layout yet.
+ */
+private fun switcherFocusIndex(rowListState: LazyListState): Float {
+    val stride = switcherStride(rowListState) ?: return 0f
+    return rowListState.firstVisibleItemIndex + rowListState.firstVisibleItemScrollOffset / stride
+}
+
+/**
+ * The distance from one card's start to the next, in px, or `null` before the row
+ * has been laid out. Cards are all one width, so a single visible pair (or a
+ * single item) is enough to know it.
+ *
+ * @param rowListState the row's list state.
+ * @return the stride in px, or `null` when it cannot be known yet.
+ */
+private fun switcherStride(rowListState: LazyListState): Float? {
+    val visible = rowListState.layoutInfo.visibleItemsInfo
+    if (visible.isEmpty()) return null
+    val stride = if (visible.size >= 2) {
+        (visible[1].offset - visible[0].offset).toFloat()
+    } else {
+        visible[0].size.toFloat()
+    }
+    return stride.takeIf { it > 0f }
 }
 
 /**
@@ -549,14 +611,8 @@ private fun rememberSwitcherFlingBehavior(rowListState: LazyListState): Targeted
  */
 private fun roomToEdge(rowListState: LazyListState, forward: Boolean): Float? {
     val info = rowListState.layoutInfo
-    val visible = info.visibleItemsInfo
-    if (visible.isEmpty() || info.totalItemsCount <= 1) return null
-    val stride = if (visible.size >= 2) {
-        (visible[1].offset - visible[0].offset).toFloat()
-    } else {
-        visible[0].size.toFloat()
-    }
-    if (stride <= 0f) return null
+    if (info.totalItemsCount <= 1) return null
+    val stride = switcherStride(rowListState) ?: return null
     val position = rowListState.firstVisibleItemIndex * stride +
         rowListState.firstVisibleItemScrollOffset
     val range = (info.totalItemsCount - 1) * stride

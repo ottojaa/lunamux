@@ -29,46 +29,78 @@ package se.soderbjorn.lunamux.android.ui
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.Text
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
+import se.soderbjorn.lunamux.android.BuildConfig
 import se.soderbjorn.lunamux.client.viewmodel.OverviewBackingViewModel.OverviewTab
 import se.soderbjorn.lunamux.client.viewmodel.OverviewBackingViewModel.UnlistedTab
 
 /**
+ * How far an off-focus chip is drawn toward the focused one, as a fraction of
+ * its distance from it. Small on purpose: enough to cluster the strip behind the
+ * front chip, not enough to stack the chips on top of one another.
+ */
+internal const val DOCK_INWARD_PULL = 0.10f
+
+/** Scale of a chip a full card away from the focus. */
+internal const val DOCK_SIBLING_SCALE = 0.78f
+
+/** Opacity of a chip a full card away from the focus. */
+internal const val DOCK_SIBLING_ALPHA = 0.45f
+
+/** Layout gap between chips, in dp, before the inward pull eats into it. */
+internal const val DOCK_CHIP_GAP_DP = 14f
+
+/**
+ * How quickly focus falls off with distance, per card. 1 hands the emphasis over
+ * completely across one card's worth of row movement.
+ */
+internal const val DOCK_FALLOFF = 1f
+
+/**
  * The switcher's bottom tab dock: one chip per tab (status dot + title), the
- * centered tab highlighted in the accent color, with the tab context menu on
- * long-press and the unlisted-tabs `⋮` at the end.
+ * focused tab at the front, with the tab context menu on long-press and the
+ * unlisted-tabs `⋮` at the end.
+ *
+ * The strip is not a scroller. It follows the card row's *continuous* position:
+ * the chip under the visible card sits in the middle of the dock, and while a
+ * drag or fling is in flight the whole strip slides with it, the focus handing
+ * over between two chips fractionally rather than jumping when the centred card
+ * changes. That is what the OS switcher does, and it is why this is a plain [Row]
+ * translated at draw time rather than a lazy row being animate-scrolled: one
+ * scroll animation per centred-card change was both the snappiness and the
+ * stutter a multi-card fling showed.
  *
  * Composed by [OverviewContent] below the card row (hidden while editing a
  * layout, whose gestures own the screen).
@@ -76,8 +108,11 @@ import se.soderbjorn.lunamux.client.viewmodel.OverviewBackingViewModel.UnlistedT
  * @param tabs           the visible tabs, in row order.
  * @param unlistedTabs   hidden tabs not in [tabs]; surfaced via the trailing
  *   `⋮` menu so they can be re-activated. Empty hides the menu.
- * @param centeredIndex  index of the card-row's centered tab; its chip is
- *   highlighted and its tap dives instead of centering.
+ * @param focusIndex     the card row's position as a *fractional* tab index, read
+ *   at draw time so following it costs no recomposition. 1.4 means "40% of the way
+ *   from tab 1 to tab 2".
+ * @param centeredIndex  index of the card-row's centered tab; its chip's tap
+ *   dives instead of centering.
  * @param closeEnabled   whether "Close tab" is offered (false for the last tab).
  * @param onCenter       center the card at the given index (no server command).
  * @param onDive         dive into the given tab's focused pane (commits the tab).
@@ -90,18 +125,12 @@ import se.soderbjorn.lunamux.client.viewmodel.OverviewBackingViewModel.UnlistedT
  *   flag (also hides it from the sessions list, which mirrors the sidebar).
  * @param onClose        confirm + close the long-pressed tab.
  */
-/**
- * How far an off-centre chip is drawn toward the middle, as a fraction of its
- * distance from it. Small on purpose: enough to cluster the strip behind the
- * centred chip, not enough to stack the chips on top of one another.
- */
-private const val DOCK_INWARD_PULL = 0.10f
-
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun TabDock(
     tabs: List<OverviewTab>,
     unlistedTabs: List<UnlistedTab>,
+    focusIndex: () -> Float,
     centeredIndex: Int,
     closeEnabled: Boolean,
     onCenter: (Int) -> Unit,
@@ -114,79 +143,76 @@ fun TabDock(
 ) {
     if (tabs.isEmpty()) return
 
-    val listState = rememberLazyListState()
-    // Keep the centered tab's chip in the MIDDLE of the dock as the card row is
-    // flung, the way the OS switcher keeps the current app's icon centred under
-    // its card. animateScrollToItem alone parks the item against the left edge,
-    // which read as a row that had simply scrolled away; centring needs the
-    // item's measured width, so bring it into view first and then centre it.
-    LaunchedEffect(centeredIndex, tabs.size) {
-        if (centeredIndex !in tabs.indices) return@LaunchedEffect
-        if (listState.layoutInfo.visibleItemsInfo.none { it.index == centeredIndex }) {
-            listState.animateScrollToItem(centeredIndex)
-        }
-        val info = listState.layoutInfo
-        val item = info.visibleItemsInfo.firstOrNull { it.index == centeredIndex }
-            ?: return@LaunchedEffect
-        val viewportCenter = (info.viewportStartOffset + info.viewportEndOffset) / 2f
-        val delta = item.offset + item.size / 2f - viewportCenter
-        // A dock whose chips all fit is centred by the arrangement below and
-        // cannot scroll, so this is a no-op there.
-        if (abs(delta) > 1f) listState.animateScrollBy(delta)
-    }
-
     // The tab chip whose context menu is currently open (by tab id).
     var menuTabId by remember { mutableStateOf<String?>(null) }
+    // Debug-only motion sliders (see SwitcherTuning); never composed in release.
+    var tuningOpen by remember { mutableStateOf(false) }
+
+    // Where each chip's centre sits inside the strip, reported as they are placed.
+    // The strip is positioned by translating it until the focused chip's centre
+    // meets the dock's, and the chips are not uniform — their titles differ — so
+    // there is nothing to derive this from.
+    val chipCentres = remember(tabs.size) { mutableStateListOf<Float>() }
+    if (chipCentres.size != tabs.size) {
+        chipCentres.clear()
+        repeat(tabs.size) { chipCentres.add(0f) }
+    }
 
     BoxWithConstraints(
         Modifier
             .fillMaxWidth()
-            .background(SidebarBackground),
+            .background(SidebarBackground)
+            .clipToBounds(),
     ) {
-    LazyRow(
-        state = listState,
+        val dockCentre = with(LocalDensity.current) { maxWidth.toPx() } / 2f
+        // The focused point in strip coordinates: the centre of the chip the row
+        // is on, or a blend of two while it is between cards.
+        val focusCentre: () -> Float = {
+            val position = focusIndex().coerceIn(0f, (tabs.size - 1).toFloat())
+            val low = kotlin.math.floor(position).toInt().coerceIn(0, tabs.size - 1)
+            val high = (low + 1).coerceAtMost(tabs.size - 1)
+            val fraction = position - low
+            chipCentres[low] * (1f - fraction) + chipCentres[high] * fraction
+        }
+
+    Row(
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp),
-        // Half the dock's width of empty space at each end. Without it the row
-        // cannot scroll left of its first chip, so "centre the centred chip" was
-        // silently a no-op for the first tab and the strip just sat against the
-        // left edge — which is what it looked like on device.
-        contentPadding = PaddingValues(horizontal = maxWidth / 2),
-        // Wide enough that the inward pull below still leaves air around the
-        // centred chip: the pull eats into this gap, and at 2dp it closed it
-        // completely and the neighbours crowded the front chip.
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+            .wrapContentWidth(align = Alignment.Start, unbounded = true)
+            .padding(vertical = 2.dp)
+            .graphicsLayer { translationX = dockCentre - focusCentre() },
+        horizontalArrangement = Arrangement.spacedBy(SwitcherTuning.dockGapDp.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        itemsIndexed(tabs, key = { _, tab -> tab.id }) { index, tab ->
+        tabs.forEachIndexed { index, tab ->
             val centered = index == centeredIndex
-            // Depth: the centred chip stands at the front, full size and
-            // brightness; the others sit back — smaller, dimmer, and drawn in
-            // towards the centre, so the strip reads as a row receding behind the
-            // one chip whose tap dives. The inward pull is computed at draw time
-            // from the live layout, so it tracks a fling frame by frame, while the
-            // size/brightness step animates as the emphasis hands over.
-            val emphasis by animateFloatAsState(
-                targetValue = if (centered) 1f else 0f,
-                animationSpec = tween(durationMillis = 160),
-                label = "dockChipEmphasis",
-            )
+            // Depth, computed entirely at draw time from the row's fractional
+            // position: the chip the row is on stands at the front, full size and
+            // brightness, and the further a chip is from it the further back it
+            // sits — smaller, dimmer, drawn in towards the focus. Nothing here
+            // animates on its own; the motion *is* the row's, which is why it can
+            // neither lag the drag nor fight the settle.
             Box(
-                Modifier.graphicsLayer {
-                    val chipScale = 0.78f + 0.22f * emphasis
-                    scaleX = chipScale
-                    scaleY = chipScale
-                    alpha = 0.45f + 0.55f * emphasis
-                    val info = listState.layoutInfo
-                    val item = info.visibleItemsInfo.firstOrNull { it.index == index }
-                    if (item != null) {
-                        val viewportCenter =
-                            (info.viewportStartOffset + info.viewportEndOffset) / 2f
-                        translationX =
-                            -DOCK_INWARD_PULL * (item.offset + item.size / 2f - viewportCenter)
+                Modifier
+                    .onPlaced { coords ->
+                        val centre = coords.positionInParent().x + coords.size.width / 2f
+                        if (index < chipCentres.size && chipCentres[index] != centre) {
+                            chipCentres[index] = centre
+                        }
                     }
-                },
+                    .graphicsLayer {
+                        val distance = abs(index - focusIndex()) * SwitcherTuning.dockFalloff
+                        val emphasis = (1f - distance).coerceIn(0f, 1f)
+                        val siblingScale = SwitcherTuning.dockSiblingScale
+                        val siblingAlpha = SwitcherTuning.dockSiblingAlpha
+                        val chipScale = siblingScale + (1f - siblingScale) * emphasis
+                        scaleX = chipScale
+                        scaleY = chipScale
+                        alpha = siblingAlpha + (1f - siblingAlpha) * emphasis
+                        if (index < chipCentres.size) {
+                            translationX =
+                                -SwitcherTuning.dockInwardPull * (chipCentres[index] - focusCentre())
+                        }
+                    },
             ) {
                 CompositionLocalProvider(
                     LocalMinimumInteractiveComponentSize provides 0.dp,
@@ -259,10 +285,33 @@ fun TabDock(
         // OverviewBackingViewModel.project). Mirrors the web/Mac far-right
         // overflow menu. Only rendered when some tabs are unlisted.
         if (unlistedTabs.isNotEmpty()) {
-            item(key = "__unlisted__") {
-                UnlistedTabsMenu(unlistedTabs = unlistedTabs, onSelect = onActivateUnlisted)
-            }
+            UnlistedTabsMenu(unlistedTabs = unlistedTabs, onSelect = onActivateUnlisted)
         }
     }
+
+        // Debug-only handle onto the motion sliders, pinned to the dock's corner
+        // so it never travels with the strip: tap opens them, long-press resets.
+        // Compiled into debug builds only — see SwitcherTuning, which goes away
+        // with them.
+        if (BuildConfig.DEBUG) {
+            Text(
+                "◍",
+                fontSize = 13.sp,
+                color = SidebarTextSecondary,
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(SidebarBackground)
+                    .combinedClickable(
+                        onClick = { tuningOpen = true },
+                        onLongClick = { SwitcherTuning.reset() },
+                    )
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+        }
+    }
+
+    if (tuningOpen) {
+        SwitcherTuningSheet(onDismiss = { tuningOpen = false })
     }
 }
