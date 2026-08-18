@@ -312,6 +312,18 @@ class MiniTerminalRegistry(
          * world's visible panes; stale sessions age out.
          */
         private val lastFrames = android.util.LruCache<String, TerminalFrame>(16)
+
+        /**
+         * Drop every cached frame. Called when the app disconnects from a host
+         * (see [se.soderbjorn.lunamux.android.net.ConnectionHolder.disconnect]):
+         * the cache is process-wide and keyed by bare session id, so without
+         * this it would both keep up to sixteen rendered screens of a host the
+         * user has left in memory, and — if two hosts ever mint the same id —
+         * seed the next host's overview with the previous host's screen.
+         */
+        fun clearFrameCache() {
+            lastFrames.evictAll()
+        }
     }
 
     /**
