@@ -97,6 +97,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import se.soderbjorn.lunamux.android.net.ConnectionHolder
 import se.soderbjorn.lunamux.client.MirrorFit
@@ -777,6 +778,25 @@ fun TerminalScreen(
     val returnCommitDistancePx = with(LocalDensity.current) {
         configuration.screenHeightDp.dp.toPx() * RETURN_COMMIT_DISTANCE_FRACTION
     }
+    val returnFrameRevision = remember(sessionId) { AtomicLong(0) }
+    // The gesture's card paints from the shared thumbnail-frame cache, which
+    // only the overview's registry writes to — and that registry is torn down
+    // for as long as a terminal is on screen. So the card would show the screen
+    // as it was before the dive (or, for a terminal opened from list view,
+    // nothing but a flat background). This terminal owns the live emulator, so
+    // it snapshots the real screen into the cache as each gesture starts.
+    //
+    // Deliberately synchronous, on the caller's thread: the card takes over the
+    // screen in the same frame the gesture commits (the app-bar button commits
+    // immediately), so a snapshot dispatched onto the emulator's own thread
+    // could not land in time. The lock is held for one pass over the screen
+    // grid — the price is waiting out at most one in-flight output chunk.
+    val publishReturnFrame: () -> Unit = {
+        val frame = synchronized(emulator) {
+            snapshotFrame(emulator, returnFrameRevision.incrementAndGet())
+        }
+        MiniTerminalRegistry.putFrame(sessionId, frame)
+    }
 
     Scaffold(
         topBar = {
@@ -822,6 +842,7 @@ fun TerminalScreen(
                     if (returnGesture != null) {
                         IconButton(onClick = {
                             keyboard?.hide()
+                            publishReturnFrame()
                             returnGesture.open(sessionId)
                         }) {
                             Icon(
@@ -1179,12 +1200,14 @@ fun TerminalScreen(
                     SwitcherGrabHandle(
                         onDragStart = {
                             keyboard?.hide()
+                            publishReturnFrame()
                             returnGesture.beginDrag(sessionId)
                         },
                         onDrag = { dy -> returnGesture.dragBy(dy, returnCommitDistancePx) },
                         onDragStopped = { velocity -> returnGesture.endDrag(velocity) },
                         onTap = {
                             keyboard?.hide()
+                            publishReturnFrame()
                             returnGesture.open(sessionId)
                         },
                         modifier = Modifier.align(Alignment.BottomCenter),

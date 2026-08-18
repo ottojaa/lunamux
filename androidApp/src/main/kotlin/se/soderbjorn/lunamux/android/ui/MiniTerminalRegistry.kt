@@ -346,6 +346,22 @@ class MiniTerminalRegistry(
          * @return the cached frame, or `null` if none was ever published.
          */
         internal fun lastFrameFor(sessionId: String): TerminalFrame? = lastFrames.get(sessionId)
+
+        /**
+         * Publish a frame captured outside any registry.
+         *
+         * Called by `TerminalScreen` when the swipe-up return gesture starts: the
+         * full-screen terminal owns a live emulator, and it is the only thing
+         * that knows the session's current screen while the overview's registry
+         * is torn down — without this the gesture's card would paint whatever the
+         * overview last saw, which is the screen as it was before the dive.
+         *
+         * @param sessionId the session the frame belongs to.
+         * @param frame     the snapshot to cache.
+         */
+        internal fun putFrame(sessionId: String, frame: TerminalFrame) {
+            lastFrames.put(sessionId, frame)
+        }
     }
 
     /**

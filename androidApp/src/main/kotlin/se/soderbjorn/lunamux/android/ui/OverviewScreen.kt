@@ -92,10 +92,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -259,19 +263,23 @@ fun OverviewContent(
     // Arrival centering after a committed swipe-up return: center the row on
     // the tab the user came from, which the active-tab seed above may miss
     // when the terminal was entered without activating its tab (sidebar/list
-    // opens). Consumed once, snapped (not animated) — the return overlay card
-    // is still covering the screen when this runs.
+    // opens). Snapped, not animated — the return overlay card is still covering
+    // the screen when this runs. Taken in an effect rather than in remember:
+    // consuming is a mutation, and a remember whose composition is abandoned
+    // would swallow the handoff.
     val returnGesture = LocalReturnGesture.current
-    val returnSessionId = remember { returnGesture?.consumePendingCenterSession() }
-    var returnCenterHandled by remember { mutableStateOf(returnSessionId == null) }
+    var returnSessionId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(returnGesture) {
+        returnSessionId = returnGesture?.consumePendingCenterSession()
+    }
     LaunchedEffect(returnSessionId, tabs) {
-        if (!returnCenterHandled && tabs.isNotEmpty()) {
-            returnCenterHandled = true
-            val index = tabs.indexOfFirst { tab ->
-                tab.panes.any { it.leaf.sessionId == returnSessionId }
-            }
-            if (index >= 0) rowListState.scrollToItem(index)
+        val target = returnSessionId ?: return@LaunchedEffect
+        if (tabs.isEmpty()) return@LaunchedEffect
+        returnSessionId = null
+        val index = tabs.indexOfFirst { tab ->
+            tab.panes.any { it.leaf.sessionId == target }
         }
+        if (index >= 0) rowListState.scrollToItem(index)
     }
 
     // While editing layout, Back leaves edit mode rather than the screen.
@@ -477,6 +485,19 @@ private fun SwitcherCardRow(
         val sidePadding = (maxWidth - cardWidth) / 2
         val cardShape = RoundedCornerShape(SwitcherCardCorner)
 
+        // Tell the return gesture where a card at rest sits (this box's center,
+        // at card size), so its commit flight lands on the real card instead of
+        // an estimate assembled from screen chrome heights. Reported from the
+        // row's own bounds rather than a card's: those move under a fling, and
+        // the landing rect must be the resting one.
+        val returnGesture = LocalReturnGesture.current
+        val cardWidthPx: Float
+        val cardHeightPx: Float
+        with(LocalDensity.current) {
+            cardWidthPx = cardWidth.toPx()
+            cardHeightPx = cardHeight.toPx()
+        }
+
         LazyRow(
             state = rowListState,
             flingBehavior = rememberSnapFlingBehavior(rowListState),
@@ -486,7 +507,20 @@ private fun SwitcherCardRow(
             // centered position, so snap positions and scrollToItem(i) both
             // land cards dead-center — including the first and last.
             contentPadding = PaddingValues(horizontal = sidePadding),
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .onGloballyPositioned { coords ->
+                    val box = coords.boundsInRoot()
+                    returnGesture?.reportCardBounds(
+                        Rect(
+                            Offset(
+                                box.center.x - cardWidthPx / 2f,
+                                box.center.y - cardHeightPx / 2f,
+                            ),
+                            Size(cardWidthPx, cardHeightPx),
+                        ),
+                    )
+                },
         ) {
             itemsIndexed(tabs, key = { _, tab -> tab.id }) { index, tab ->
                 Box(

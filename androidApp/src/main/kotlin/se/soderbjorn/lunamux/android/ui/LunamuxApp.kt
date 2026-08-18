@@ -35,14 +35,12 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -155,16 +153,17 @@ fun LunamuxApp(applicationContext: Context) {
     // pops underneath with transitions suppressed (any nav animation would
     // play a second, visible motion beneath the card).
     val returnScope = rememberCoroutineScope()
-    val suppressNavTransitions = remember { mutableStateOf(false) }
     val returnGesture = remember {
         ReturnGestureState(returnScope) {
-            suppressNavTransitions.value = true
             navController.popBackStack("tree", inclusive = false)
         }
     }
-    LaunchedEffect(returnGesture.mode) {
-        if (returnGesture.mode == ReturnMode.Idle) suppressNavTransitions.value = false
-    }
+    // A committed return owns the screen with its own choreography, so every
+    // nav leg it causes must be silent — a slide underneath the covering card
+    // would be a second, contradicting motion. Derived from the gesture's mode
+    // rather than mirrored in a flag: the commit pops synchronously, so
+    // "Committing" already means "the pop is this gesture's".
+    val suppressNavTransitions = returnGesture.mode == ReturnMode.Committing
 
     // The editable canonical theme selection (dual-slot + appearance). Created
     // once per connection; seeded from the server and then *owned* locally so
@@ -279,7 +278,14 @@ fun LunamuxApp(applicationContext: Context) {
     ) {
       CompositionLocalProvider(LocalUiSettings provides theme) {
       CompositionLocalProvider(LocalReturnGesture provides returnGesture) {
-      Box(Modifier.fillMaxSize()) {
+      Box(
+          Modifier
+              .fillMaxSize()
+              // The moving layers below live in this box's coordinate space,
+              // while the switcher reports its card rect in root coordinates —
+              // the system-bar insets between the two are this origin.
+              .onGloballyPositioned { returnGesture.reportContentOrigin(it.positionInRoot()) },
+      ) {
        // Backdrop the return gesture reveals behind the shrinking screen: the
        // theme surface plus a progress-proportional dim. Composed only while
        // a gesture is in flight.
@@ -306,16 +312,20 @@ fun LunamuxApp(applicationContext: Context) {
            Modifier
                .fillMaxSize()
                .graphicsLayer {
-                   val shrinking =
-                       returnGesture.mode != ReturnMode.Idle && !returnGesture.poppedUnderOverlay
-                   if (shrinking) {
+                   // Only while the finger owns the gesture: once it commits,
+                   // the thumbnail card takes over the motion and the NavHost
+                   // must sit at identity so the arriving overview renders
+                   // full-size beneath it.
+                   if (returnGesture.mode == ReturnMode.Dragging) {
                        val p = returnGesture.progress.value
-                       val scale = 1f - 0.3f * p
-                       scaleX = scale
-                       scaleY = scale
+                       val flight = returnFlight(p, size, returnGesture.cardBounds)
+                       scaleX = flight.scaleX
+                       scaleY = flight.scaleY
+                       translationX = flight.translationX
+                       translationY = flight.translationY
                        if (p > 0f) {
                            clip = true
-                           shape = RoundedCornerShape(20.dp * p)
+                           shape = RoundedCornerShape(SwitcherCardCorner * p)
                        }
                    }
                },
@@ -329,7 +339,7 @@ fun LunamuxApp(applicationContext: Context) {
             navController = navController,
             startDestination = "hosts",
             enterTransition = {
-                if (suppressNavTransitions.value) {
+                if (suppressNavTransitions) {
                     EnterTransition.None
                 } else {
                     slideInHorizontally(
@@ -339,7 +349,7 @@ fun LunamuxApp(applicationContext: Context) {
                 }
             },
             exitTransition = {
-                if (suppressNavTransitions.value) {
+                if (suppressNavTransitions) {
                     ExitTransition.None
                 } else {
                     slideOutHorizontally(
@@ -349,7 +359,7 @@ fun LunamuxApp(applicationContext: Context) {
                 }
             },
             popEnterTransition = {
-                if (suppressNavTransitions.value) {
+                if (suppressNavTransitions) {
                     EnterTransition.None
                 } else {
                     slideInHorizontally(
@@ -359,7 +369,7 @@ fun LunamuxApp(applicationContext: Context) {
                 }
             },
             popExitTransition = {
-                if (suppressNavTransitions.value) {
+                if (suppressNavTransitions) {
                     ExitTransition.None
                 } else {
                     slideOutHorizontally(
@@ -397,7 +407,7 @@ fun LunamuxApp(applicationContext: Context) {
                     when {
                         // A committed swipe-up return arrives under the overlay
                         // card — the tree must appear instantly beneath it.
-                        suppressNavTransitions.value -> EnterTransition.None
+                        suppressNavTransitions -> EnterTransition.None
                         initialState.destination.route?.startsWith("terminal/") == true ->
                             fadeIn(tween(durationMillis = 300))
                         else -> null
@@ -441,7 +451,7 @@ fun LunamuxApp(applicationContext: Context) {
                 popExitTransition = {
                     // Instant unmount under a committed swipe-up return's
                     // overlay card; the normal back path keeps the fade.
-                    if (suppressNavTransitions.value) {
+                    if (suppressNavTransitions) {
                         ExitTransition.None
                     } else {
                         fadeOut(tween(durationMillis = 300))
@@ -542,32 +552,39 @@ fun LunamuxApp(applicationContext: Context) {
        }
        }
 
-       // Committed return: a last-frame thumbnail card rides the settle from
-       // wherever the finger left off to the switcher's centered-card rect,
-       // covering the route swap underneath, then fades out. The geometry
-       // mirrors the shrink transform above (uniform scale, centered), so the
-       // live→thumbnail swap at commit happens at identical bounds.
+       // Committed return: a thumbnail card of the screen the gesture started
+       // from rides the settle from wherever the finger left off to the
+       // switcher's centered-card rect, covering the route swap underneath,
+       // then fades out. It is a full-screen box under the SAME flight
+       // transform as the shrinking layer above, so the live→thumbnail swap at
+       // commit happens at identical bounds, the settle ends on the real card
+       // rect the row reported, and every frame of it is a layer transform —
+       // no recomposition, no relayout of the thumbnail's grid.
        if (returnGesture.mode == ReturnMode.Committing) {
            val originSessionId = returnGesture.originSessionId
            val cardFrame = remember(originSessionId) {
                originSessionId?.let { MiniTerminalRegistry.lastFrameFor(it) }
            }
-           BoxWithConstraints(Modifier.fillMaxSize()) {
-               val p = returnGesture.progress.value
-               val scale = 1f - 0.3f * p
-               Box(
-                   Modifier
-                       .size(maxWidth * scale, maxHeight * scale)
-                       .align(Alignment.Center)
-                       .graphicsLayer { alpha = returnGesture.overlayAlpha.value }
-                       .clip(RoundedCornerShape(20.dp * p)),
-               ) {
-                   TerminalThumbnail(
-                       frame = cardFrame,
-                       fallbackBackground = Color(theme.bg.toInt()),
-                       modifier = Modifier.fillMaxSize(),
-                   )
-               }
+           Box(
+               Modifier
+                   .fillMaxSize()
+                   .graphicsLayer {
+                       val p = returnGesture.progress.value
+                       val flight = returnFlight(p, size, returnGesture.cardBounds)
+                       scaleX = flight.scaleX
+                       scaleY = flight.scaleY
+                       translationX = flight.translationX
+                       translationY = flight.translationY
+                       alpha = returnGesture.overlayAlpha.value
+                       clip = true
+                       shape = RoundedCornerShape(SwitcherCardCorner * p)
+                   },
+           ) {
+               TerminalThumbnail(
+                   frame = cardFrame,
+                   fallbackBackground = Color(theme.bg.toInt()),
+                   modifier = Modifier.fillMaxSize(),
+               )
            }
        }
       }

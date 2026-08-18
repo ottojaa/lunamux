@@ -11,12 +11,15 @@
  *
  * This class owns the pure gesture state: mode, the 0→1 progress
  * ([progress]; 0 = full screen, 1 = card rect), the commit thresholds and
- * springs, and the handoff flags the host reads. All drawing — the scrim, the
- * NavHost's graphicsLayer transform, the thumbnail card — lives in
- * [LunamuxApp]'s overlay; the entry affordances live in `TerminalScreen`
- * (grab handle + app-bar button). Everything here animates layers only: the
- * live terminal is never relaid out (a relayout would fire its size vote to
- * the server — see `TerminalScreen`'s layout listener).
+ * springs, and the card rect the flight aims at ([cardBounds], reported by the
+ * switcher row itself so the landing is the real card and not an estimate).
+ * [returnFlight] turns progress into the one transform both moving layers use,
+ * which is what makes the live→thumbnail handoff at commit invisible. All
+ * drawing — the scrim, the NavHost's graphicsLayer transform, the thumbnail
+ * card — lives in [LunamuxApp]'s overlay; the entry affordances live in
+ * `TerminalScreen` (grab handle + app-bar button). Everything here animates
+ * layers only: the live terminal is never relaid out (a relayout would fire its
+ * size vote to the server — see `TerminalScreen`'s layout listener).
  *
  * @see LunamuxApp
  * @see SwitcherGrabHandle
@@ -31,6 +34,9 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -96,13 +102,46 @@ class ReturnGestureState(
     var originSessionId: String? = null
         private set
 
+    /** Where a resting switcher card sits, in root coordinates. */
+    private var cardBoundsInRoot by mutableStateOf<Rect?>(null)
+
+    /** Where [LunamuxApp]'s content box sits, in root coordinates. */
+    private var contentOriginInRoot by mutableStateOf(Offset.Zero)
+
     /**
-     * True once [onCommitNavigate] has run for the in-flight commit: the
-     * NavHost must render at identity (the overview is composing underneath
-     * the overlay card).
+     * The switcher's centered-card rect in the coordinate space of the moving
+     * layers — [LunamuxApp]'s content box — or `null` until a card row has
+     * measured (a terminal opened from list view, on a cold start).
+     *
+     * Read by [returnFlight] as the flight's landing rect. The two halves are
+     * reported from different composables, so they are combined on read rather
+     * than at report time.
      */
-    var poppedUnderOverlay by mutableStateOf(false)
-        private set
+    val cardBounds: Rect?
+        get() = cardBoundsInRoot?.translate(-contentOriginInRoot)
+
+    /**
+     * Report where a resting card sits. Called by `SwitcherCardRow` on every
+     * layout of the row: the switcher knows its own geometry, and having it say
+     * so is what lets the flight land on the card the user is about to see
+     * instead of on an estimate derived from screen chrome.
+     *
+     * @param boundsInRoot the centered card's rect in root coordinates.
+     */
+    fun reportCardBounds(boundsInRoot: Rect) {
+        cardBoundsInRoot = boundsInRoot
+    }
+
+    /**
+     * Report where the app's content box sits, so a card rect in root
+     * coordinates can be expressed in the moving layers' own space (the content
+     * box is inset from the root by the system bars).
+     *
+     * @param originInRoot the content box's top-left in root coordinates.
+     */
+    fun reportContentOrigin(originInRoot: Offset) {
+        contentOriginInRoot = originInRoot
+    }
 
     /** Raw (un-rubber-banded) drag progress since the gesture began. */
     private var rawDrag = 0f
@@ -162,9 +201,14 @@ class ReturnGestureState(
         if (mode != ReturnMode.Dragging) return
         val flingUp = velocityPxPerS <= -COMMIT_VELOCITY_PX_PER_S
         val flingDown = velocityPxPerS >= COMMIT_VELOCITY_PX_PER_S
+        // [rawDrag] is up to date with the last pointer delta; progress.value
+        // lags it by however many deltas the deferred snapTo has not applied
+        // yet, which is exactly the batch of the frame the finger left in — so
+        // a release right at the threshold would decide on stale distance.
+        val shown = rubberBand(rawDrag)
         when {
             flingDown -> cancel()
-            flingUp || progress.value >= 0.5f -> commit()
+            flingUp || shown >= 0.5f -> commit()
             else -> cancel()
         }
     }
@@ -190,20 +234,26 @@ class ReturnGestureState(
     private fun commit() {
         mode = ReturnMode.Committing
         pendingCenterSessionId = originSessionId
+        // Both happen before any frame can be composed: the card (drawn by
+        // LunamuxApp while Committing) takes over the screen at exactly the
+        // geometry the live layer had, and the route pops underneath it with
+        // nav transitions suppressed. Popping here rather than from the settle
+        // coroutine keeps "Committing" and "already popped" the same fact, so
+        // the overlay needs no second flag to tell them apart.
+        onCommitNavigate()
         settleJob = scope.launch {
-            // The card (drawn by LunamuxApp while Committing) now covers the
-            // live screen at identical geometry, so the route swap under it is
-            // invisible. Pop first, then settle: the overview gets the whole
-            // settle+fade duration to compose and paint its cached thumbnails.
-            poppedUnderOverlay = true
-            onCommitNavigate()
+            // The overview now has the whole settle+fade duration to compose
+            // and paint its cached thumbnails underneath the card.
             progress.animateTo(1f, spring(dampingRatio = 0.85f, stiffness = 380f))
             overlayAlpha.animateTo(0f, tween(durationMillis = 120))
             progress.snapTo(0f)
             overlayAlpha.snapTo(1f)
-            poppedUnderOverlay = false
             originSessionId = null
             rawDrag = 0f
+            // Nothing consumed the arrival handoff (a return into list view, or
+            // a tab that has since gone): drop it rather than leave it armed for
+            // whenever the overview next composes.
+            pendingCenterSessionId = null
             mode = ReturnMode.Idle
         }
     }
@@ -227,4 +277,60 @@ class ReturnGestureState(
      */
     private fun rubberBand(raw: Float): Float =
         if (raw <= 1f) raw else 1f + 0.15f * (raw - 1f) / (1f + (raw - 1f))
+}
+
+/**
+ * The draw-time transform of one flight step: how far the full-screen content
+ * has shrunk toward the card, and how far it has slid to reach the card's
+ * center.
+ *
+ * @property scaleX       horizontal scale to apply to the full-screen layer.
+ * @property scaleY       vertical scale (equal to [scaleX] only when the card
+ *   shares the screen's aspect).
+ * @property translationX horizontal slide, in px, applied after the scale.
+ * @property translationY vertical slide, in px, applied after the scale.
+ */
+internal data class ReturnFlight(
+    val scaleX: Float,
+    val scaleY: Float,
+    val translationX: Float,
+    val translationY: Float,
+)
+
+/**
+ * Interpolate the flight from "fills the screen" ([p] = 0) to "is the switcher's
+ * centered card" ([p] = 1).
+ *
+ * Called from the `graphicsLayer` blocks of both moving layers — the live
+ * shrinking screen and the thumbnail card that replaces it at commit — so the
+ * handoff happens at identical bounds whatever the progress, and the settle ends
+ * on the card the user is about to see rather than near it.
+ *
+ * @param p         gesture progress; may overshoot 1 slightly (rubber-banding).
+ * @param appSize   the app content box's size in px.
+ * @param cardRect  the card's rect in that box, or `null` to fall back to a
+ *   centered rect at [SWITCHER_CARD_FRACTION] of the screen (no card row has
+ *   measured yet — a terminal opened from list view). A rect that cannot fit in
+ *   [appSize] is treated as absent: it was measured for a layout that no longer
+ *   exists, e.g. before a rotation.
+ * @return the transform for this step; identity when [appSize] is empty.
+ */
+internal fun returnFlight(p: Float, appSize: Size, cardRect: Rect?): ReturnFlight {
+    if (appSize.width <= 0f || appSize.height <= 0f) return ReturnFlight(1f, 1f, 0f, 0f)
+    val usable = cardRect?.takeIf {
+        it.left >= 0f && it.top >= 0f && it.right <= appSize.width && it.bottom <= appSize.height
+    }
+    val target = usable ?: Rect(
+        offset = Offset(
+            appSize.width * (1f - SWITCHER_CARD_FRACTION) / 2f,
+            appSize.height * (1f - SWITCHER_CARD_FRACTION) / 2f,
+        ),
+        size = Size(appSize.width * SWITCHER_CARD_FRACTION, appSize.height * SWITCHER_CARD_FRACTION),
+    )
+    return ReturnFlight(
+        scaleX = 1f - p * (1f - target.width / appSize.width),
+        scaleY = 1f - p * (1f - target.height / appSize.height),
+        translationX = p * (target.center.x - appSize.width / 2f),
+        translationY = p * (target.center.y - appSize.height / 2f),
+    )
 }
