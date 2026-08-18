@@ -31,9 +31,8 @@ package se.soderbjorn.lunamux.android.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.rememberSplineBasedDecay
 import androidx.compose.foundation.gestures.TargetedFlingBehavior
 import androidx.compose.foundation.gestures.snapping.SnapLayoutInfoProvider
 import androidx.compose.foundation.gestures.snapping.SnapPosition
@@ -465,38 +464,40 @@ private const val SWITCHER_FLICK_INTENT_DP = 80f
 private const val SWITCHER_ADVANCE_VELOCITY_DP = 400f
 
 /**
- * Friction applied to the row's momentum, relative to the platform default.
- *
- * Below 1 the row coasts further for the same push, which is the "a little more
- * force gets you a few cards further" mapping the OS switcher has; the default
- * made every extra card cost a noticeably harder fling.
+ * Stiffness of the settle. Between Foundation's default (400) and the
+ * very-low 50 a first pass tried: 50 glided so long it felt weightless, 400
+ * arrived before the gesture was over.
  */
-private const val SWITCHER_DECAY_FRICTION = 0.55f
+private const val SWITCHER_SNAP_STIFFNESS = 150f
 
 /**
- * The card row's fling: long, low-friction momentum into a very soft settle.
+ * The card row's fling: the platform's own momentum, an edge-aware approach, and
+ * a settle stiff enough to feel like it has weight.
  *
- * Measured against a screen recording of the OS app switcher, whose fling and
- * settle together run about 1.25s and end with a long asymptotic tail. Foundation's
- * defaults settle in roughly a quarter of that, which is what read as snapping into
- * place rather than gliding to rest, so the snap spring here is critically damped at
- * [Spring.StiffnessVeryLow] — no overshoot, and a tail long enough that the row is
- * never seen arriving.
+ * The decay is the platform spline — the same friction every Android scroller
+ * uses, which is what the OS switcher is being compared against; a lower-friction
+ * decay tried earlier coasted further than any of them. What is *not* borrowed is
+ * the ending: Foundation's snap would let the decay target a position past the
+ * first or last card and leave the scroll container to clamp it, which arrives as
+ * a wall. [calculateApproachOffset] instead never proposes more than the distance
+ * that actually remains, so a fling toward either end decays into the edge card
+ * and the spring lands it.
  *
- * The two decisions are separate: how *far* a fling travels is the decay's job
- * (see [SWITCHER_DECAY_FRICTION]), while whether a release advances at all is the
- * snap's, and any deliberate flick advances (see [SWITCHER_FLICK_INTENT_DP]). Only
- * a release with essentially no velocity falls back to "whichever card is nearest",
- * which is what a slow drag deserves.
+ * The two decisions stay separate: how *far* a fling travels is the decay's job,
+ * while whether a release advances at all is the snap's — and any deliberate flick
+ * advances (see [SWITCHER_FLICK_INTENT_DP]). Only a release with essentially no
+ * velocity falls back to "whichever card is nearest", which is what a slow drag
+ * deserves.
  *
  * @param rowListState the row's list state, whose centred snap positions the
- *   behaviour snaps to.
+ *   behaviour snaps to and whose layout tells it how much room is left.
  * @return the fling behaviour to hand [LazyRow].
  */
 @Composable
 private fun rememberSwitcherFlingBehavior(rowListState: LazyListState): TargetedFlingBehavior {
     val density = LocalDensity.current
-    return remember(rowListState, density) {
+    val decay = rememberSplineBasedDecay<Float>()
+    return remember(rowListState, density, decay) {
         val base = SnapLayoutInfoProvider(rowListState, SnapPosition.Center)
         val intentPx = with(density) { SWITCHER_FLICK_INTENT_DP.dp.toPx() }
         val advancePx = with(density) { SWITCHER_ADVANCE_VELOCITY_DP.dp.toPx() }
@@ -513,15 +514,54 @@ private fun rememberSwitcherFlingBehavior(rowListState: LazyListState): Targeted
                 return base.calculateSnapOffset(reported)
             }
 
-            override fun calculateApproachOffset(velocity: Float, decayOffset: Float): Float =
-                base.calculateApproachOffset(velocity, decayOffset)
+            override fun calculateApproachOffset(velocity: Float, decayOffset: Float): Float {
+                val proposed = base.calculateApproachOffset(velocity, decayOffset)
+                val room = roomToEdge(rowListState, forward = proposed >= 0f)
+                    ?: return proposed
+                // Cards are uniform, so "how far can the row still scroll" is
+                // exact rather than estimated. Never propose more than that: the
+                // decay then eases into the first or last card instead of running
+                // at speed into the scroll container's clamp.
+                return if (proposed >= 0f) proposed.coerceAtMost(room) else proposed.coerceAtLeast(-room)
+            }
         }
         snapFlingBehavior(
             snapLayoutInfoProvider = provider,
-            decayAnimationSpec = exponentialDecay(frictionMultiplier = SWITCHER_DECAY_FRICTION),
-            snapAnimationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessVeryLow),
+            decayAnimationSpec = decay,
+            snapAnimationSpec = spring(dampingRatio = 1f, stiffness = SWITCHER_SNAP_STIFFNESS),
         )
     }
+}
+
+/**
+ * How much further the row can scroll before the first or last card is centred,
+ * in px.
+ *
+ * The cards are all one width, so the row's scrollable range is exactly
+ * `(count - 1) × stride` and its position `index × stride + offset` — no
+ * estimation, and no need to have the far end composed. Used by
+ * [rememberSwitcherFlingBehavior] to keep a fling from targeting past an end.
+ *
+ * @param rowListState the row's list state.
+ * @param forward whether to measure toward the last card (true) or the first.
+ * @return the remaining distance, or `null` while the row has no layout yet (in
+ *   which case a caller should not clamp anything).
+ */
+private fun roomToEdge(rowListState: LazyListState, forward: Boolean): Float? {
+    val info = rowListState.layoutInfo
+    val visible = info.visibleItemsInfo
+    if (visible.isEmpty() || info.totalItemsCount <= 1) return null
+    val stride = if (visible.size >= 2) {
+        (visible[1].offset - visible[0].offset).toFloat()
+    } else {
+        visible[0].size.toFloat()
+    }
+    if (stride <= 0f) return null
+    val position = rowListState.firstVisibleItemIndex * stride +
+        rowListState.firstVisibleItemScrollOffset
+    val range = (info.totalItemsCount - 1) * stride
+    val room = if (forward) range - position else position
+    return room.coerceAtLeast(0f)
 }
 
 @Composable
