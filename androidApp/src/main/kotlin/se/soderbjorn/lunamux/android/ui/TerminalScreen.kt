@@ -768,8 +768,6 @@ fun TerminalScreen(
         terminalViewRef.value?.requestLayout()
     }
 
-    BackHandler { onBack() }
-
     // Swipe-up return gesture wiring (see ReturnGestureState): the grab handle
     // over the terminal and the app-bar switcher button both route through the
     // app-provided state; null (previews/tests) hides both affordances.
@@ -798,11 +796,22 @@ fun TerminalScreen(
         MiniTerminalRegistry.putFrame(sessionId, frame)
     }
 
+    // Leaving the terminal any other way — system back, the app bar's arrow —
+    // snapshots the screen too. The overview seeds each card from this cache, so
+    // without it the card the reverse flight lands on shows the session as it was
+    // before the dive until its socket has reattached.
+    val leaveTerminal: () -> Unit = {
+        publishReturnFrame()
+        onBack()
+    }
+
+    BackHandler { leaveTerminal() }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = leaveTerminal) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",
