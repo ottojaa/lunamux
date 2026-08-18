@@ -122,27 +122,25 @@ import se.soderbjorn.lunamux.client.viewmodel.OverviewBackingViewModel.OverviewT
 import se.soderbjorn.lunamux.client.viewmodel.OverviewBackingViewModel.UnlistedTab
 
 /**
- * Fraction of the switcher row's width one card occupies. What is left over is
- * the peek of the neighbouring cards on both sides — the switcher's cue that
- * there is more to fling to — so this is the one dimension not spent on the
- * preview.
+ * Fraction of the switcher row's width one card occupies.
+ *
+ * Nearly all of it. The OS switcher spends a fifth of its width on peeking
+ * neighbours because its cards are app screenshots you recognise at a glance; a
+ * card here is a terminal you have to *read*, so the screen goes to the text and
+ * the neighbours are reduced to a sliver at the edges. The row still snaps and
+ * flings the same way.
  *
  * Also the horizontal end scale of the return gesture's flight when no card has
  * been measured yet (see `returnFlight`).
  */
-internal const val SWITCHER_CARD_FRACTION = 0.76f
+internal const val SWITCHER_CARD_FRACTION = 0.94f
 
 /**
- * Fraction of the switcher row's height one card occupies.
- *
- * Nearly all of it, deliberately. The height used to be derived from the card's
- * width and the row's aspect, which left a phone-shaped card floating in a
- * quarter of empty row — wasted screen in an app whose cards are terminals, and
- * a needless gap between the cards and the dock beneath them. A card is now the
- * tallest thing that fits, and the preview fills that height with the session's
- * rows (see [TerminalThumbnail]).
+ * Fraction of the switcher row's height one card occupies. As with the width:
+ * the height used to be derived from the card's width and the row's aspect,
+ * which left a phone-shaped card floating in a quarter of empty row.
  */
-internal const val SWITCHER_CARD_HEIGHT_FRACTION = 0.95f
+internal const val SWITCHER_CARD_HEIGHT_FRACTION = 0.99f
 
 /** Corner radius of a switcher card, and of the return gesture's shrinking screen. */
 internal val SwitcherCardCorner = 20.dp

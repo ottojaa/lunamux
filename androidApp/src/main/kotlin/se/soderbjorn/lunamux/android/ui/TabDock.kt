@@ -32,6 +32,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
@@ -44,6 +46,8 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.Text
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -54,6 +58,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
@@ -126,20 +131,44 @@ fun TabDock(
     // The tab chip whose context menu is currently open (by tab id).
     var menuTabId by remember { mutableStateOf<String?>(null) }
 
+    BoxWithConstraints(
+        Modifier
+            .fillMaxWidth()
+            .background(SidebarBackground),
+    ) {
     LazyRow(
         state = listState,
         modifier = Modifier
             .fillMaxWidth()
-            .background(SidebarBackground)
-            .padding(horizontal = 8.dp, vertical = 2.dp),
-        // spacedBy + CenterHorizontally centers the chips when they all fit and
-        // degrades to a natural start-aligned scroll when they don't.
-        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            .padding(vertical = 2.dp),
+        // Half the dock's width of empty space at each end. Without it the row
+        // cannot scroll left of its first chip, so "centre the centred chip" was
+        // silently a no-op for the first tab and the strip just sat against the
+        // left edge — which is what it looked like on device.
+        contentPadding = PaddingValues(horizontal = maxWidth / 2),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         itemsIndexed(tabs, key = { _, tab -> tab.id }) { index, tab ->
             val centered = index == centeredIndex
-            Box {
+            // Depth cue: the centred chip stands at full size and brightness
+            // while its neighbours sit slightly back, so the chip under the
+            // visible card — the one whose tap dives — is the one that looks
+            // nearest. Animated so a fling reads as the emphasis travelling
+            // along the strip.
+            val emphasis by animateFloatAsState(
+                targetValue = if (centered) 1f else 0f,
+                animationSpec = tween(durationMillis = 160),
+                label = "dockChipEmphasis",
+            )
+            Box(
+                Modifier.graphicsLayer {
+                    val chipScale = 0.88f + 0.12f * emphasis
+                    scaleX = chipScale
+                    scaleY = chipScale
+                    alpha = 0.68f + 0.32f * emphasis
+                },
+            ) {
                 CompositionLocalProvider(
                     LocalMinimumInteractiveComponentSize provides 0.dp,
                 ) {
@@ -215,5 +244,6 @@ fun TabDock(
                 UnlistedTabsMenu(unlistedTabs = unlistedTabs, onSelect = onActivateUnlisted)
             }
         }
+    }
     }
 }
