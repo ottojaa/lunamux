@@ -484,10 +484,12 @@ fun TerminalScreen(
     var firstOutputPainted by remember(sessionId) { mutableStateOf(false) }
 
     // Safety net for the placeholder: a session that sends nothing at all after
-    // attach must not keep a stale screen on top of the live (blank) one.
+    // attach — or whose attach never completes — must not keep a stale screen on
+    // top of the live one for ever.
+    var placeholderExpired by remember(sessionId) { mutableStateOf(false) }
     LaunchedEffect(sessionId) {
         delay(1500)
-        firstOutputPainted = true
+        placeholderExpired = true
     }
 
     // Scroll-pause: whether the user has scrolled up off the bottom (drives the
@@ -1063,11 +1065,86 @@ fun TerminalScreen(
                 val divePlaceholder = remember(sessionId) {
                     MiniTerminalRegistry.lastFrameFor(sessionId)
                 }
-                // Held at full opacity until the view has content, then faded out
-                // rather than cut, so the handoff is a dissolve between two
-                // renderings of the same screen instead of a visible swap.
+                // Pin the placeholder to the geometry the live view will draw at.
+                // Both fill the height, but the view's font size is an integer px
+                // with up to a line of slack centred around it, while a fitted
+                // thumbnail scales continuously — and those couple of percent were
+                // exactly what shifted and resized at the handoff.
+                //
+                // Until the server's Size frame lands there is no mirror window to
+                // read, so the fit is predicted from the cached frame's own grid:
+                // a session's width almost never changes between leaving it and
+                // coming back, so the prediction is the answer the real window
+                // gives moments later. A grid this phone's own width is not
+                // mirrored at all and keeps the user's font.
+                val placeholderGeometry: ThumbViewGeometry? = remember(
+                    divePlaceholder,
+                    viewBox,
+                    mirrorWindow,
+                    localGrid,
+                    userFontSize,
+                ) {
+                    val frame = divePlaceholder
+                    val box = viewBox
+                    if (frame == null || box == null) {
+                        null
+                    } else {
+                        val metricsFor = cellMetricsProvider(TerminalFont.typeface(ctx))
+                        val window = mirrorWindow
+                        val predictedPassive = PtyPresentation.isPassive(
+                            naturalCols = localGrid?.cols ?: 0,
+                            serverCols = frame.cols,
+                        )
+                        val fontPx = when {
+                            window != null -> window.fontPx
+                            predictedPassive -> MirrorFit.solveFillHeightFont(
+                                viewHeightPx = box.second,
+                                serverRows = frame.rows,
+                                minPx = MIRROR_FONT_MIN_PX,
+                                maxPx = MIRROR_FONT_MAX_PX,
+                                metrics = metricsFor,
+                            )
+                            else -> userFontSize
+                        }
+                        val cell = metricsFor(fontPx)
+                        val offsetY = when {
+                            window != null -> window.offsetY
+                            predictedPassive -> MirrorFit.centreOffsetY(box.second, frame.rows, cell)
+                            else -> 0f
+                        }
+                        if (cell.lineSpacingPx <= 0) {
+                            null
+                        } else {
+                            ThumbViewGeometry(
+                                fontPx = fontPx,
+                                cellWidthPx = cell.cellWidthPx,
+                                lineSpacingPx = cell.lineSpacingPx,
+                                lineSpacingAndAscentPx = cell.lineSpacingAndAscentPx,
+                                contentOffsetY = offsetY,
+                                // A terminal is always freshly opened while its
+                                // placeholder is up, so the view has not panned.
+                                panX = 0f,
+                            )
+                        }
+                    }
+                }
+                // Held until the view has content AND is showing its final font,
+                // then faded out rather than cut. The mirror's fitted size arrives
+                // one recomposition after the server's Size frame, so releasing on
+                // content alone could uncover a frame or two at the user's own
+                // (larger) font — a rescale at exactly the end of the dive.
+                val placeholderPredictedPassive = divePlaceholder?.let { frame ->
+                    PtyPresentation.isPassive(
+                        naturalCols = localGrid?.cols ?: 0,
+                        serverCols = frame.cols,
+                    )
+                } ?: false
+                val viewFontSettled = mirrorWindow != null || !placeholderPredictedPassive
+                val placeholderVisible = divePlaceholder != null &&
+                    !placeholderExpired &&
+                    !(firstOutputPainted && viewFontSettled)
                 val placeholderAlpha by animateFloatAsState(
-                    targetValue = if (divePlaceholder != null && !firstOutputPainted) 1f else 0f,
+                    targetValue = if (placeholderVisible) 1f else 0f,
                     animationSpec = tween(durationMillis = 120),
                     label = "divePlaceholder",
                 )
@@ -1078,6 +1155,7 @@ fun TerminalScreen(
                         modifier = Modifier
                             .matchParentSize()
                             .graphicsLayer { alpha = placeholderAlpha },
+                        pinnedTo = placeholderGeometry,
                     )
                 }
 
