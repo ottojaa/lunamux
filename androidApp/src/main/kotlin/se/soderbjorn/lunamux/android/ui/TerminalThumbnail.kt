@@ -179,6 +179,11 @@ private fun drawFrame(canvas: android.graphics.Canvas, frame: TerminalFrame, met
             textPaint.color = run.fg
             textPaint.isFakeBoldText = run.bold
             textPaint.isUnderlineText = run.underline
+            // Same skew the real renderer uses for SGR 3; a preview that dropped
+            // it lost the distinction between an agent's italic asides and its
+            // ordinary output.
+            textPaint.textSkewX = if (run.italic) -0.35f else 0f
+            textPaint.isStrikeThruText = run.strikethrough
             canvas.drawText(run.text, run.startCol * cellW, y, textPaint)
         }
     }

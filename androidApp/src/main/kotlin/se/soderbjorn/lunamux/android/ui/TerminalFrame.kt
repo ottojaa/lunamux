@@ -47,8 +47,10 @@ import com.termux.terminal.WcWidth
  * @property fg        resolved ARGB foreground (bright-bold, inverse and dim
  *   already applied).
  * @property bg        resolved ARGB background (inverse already applied).
- * @property bold      whether to draw with fake-bold.
- * @property underline whether to underline.
+ * @property bold          whether to draw with fake-bold.
+ * @property underline     whether to underline.
+ * @property italic        whether to skew the glyphs (SGR 3).
+ * @property strikethrough whether to strike the glyphs through (SGR 9).
  */
 data class ThumbRun(
     val startCol: Int,
@@ -58,6 +60,8 @@ data class ThumbRun(
     val bg: Int,
     val bold: Boolean,
     val underline: Boolean,
+    val italic: Boolean,
+    val strikethrough: Boolean,
 )
 
 /**
@@ -241,7 +245,8 @@ private fun rowRuns(row: TerminalRow, cols: Int, palette: IntArray, reverseVideo
  * colors. Port of the color pipeline in `TerminalRenderer.drawTextRun`
  * (terminal-view): indexed → palette with bright-bold promotion, inverse
  * fg/bg swap (SGR 7 xor DECSCNM, as the renderer's `reverseVideoHere`), xterm
- * dim (×2/3 RGB), invisible → empty text.
+ * dim (×2/3 RGB), invisible → empty text, and the bold/underline/italic/
+ * strikethrough flags the painter applies verbatim.
  *
  * @param startCol     grid column the run starts at.
  * @param widthCols    grid cells the run covers.
@@ -264,6 +269,8 @@ private fun resolveRun(
     val effect = TextStyle.decodeEffect(style)
     val bold = (effect and (TextStyle.CHARACTER_ATTRIBUTE_BOLD or TextStyle.CHARACTER_ATTRIBUTE_BLINK)) != 0
     val underline = (effect and TextStyle.CHARACTER_ATTRIBUTE_UNDERLINE) != 0
+    val italic = (effect and TextStyle.CHARACTER_ATTRIBUTE_ITALIC) != 0
+    val strikethrough = (effect and TextStyle.CHARACTER_ATTRIBUTE_STRIKETHROUGH) != 0
     val invisible = (effect and TextStyle.CHARACTER_ATTRIBUTE_INVISIBLE) != 0
     if ((fg and -0x1000000) != -0x1000000) {
         // Indexed color; bold promotes the first 8 to their bright variants.
@@ -293,6 +300,8 @@ private fun resolveRun(
         bg = bg,
         bold = bold,
         underline = underline,
+        italic = italic,
+        strikethrough = strikethrough,
     )
 }
 
