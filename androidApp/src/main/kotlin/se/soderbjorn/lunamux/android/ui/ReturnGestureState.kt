@@ -310,7 +310,8 @@ internal data class ReturnFlight(
  * @param appSize   the app content box's size in px.
  * @param cardRect  the card's rect in that box, or `null` to fall back to a
  *   centered rect at [SWITCHER_CARD_FRACTION] of the screen (no card row has
- *   measured yet — a terminal opened from list view). A rect that cannot fit in
+ *   measured yet — a terminal opened from list view; the estimate uses the card
+ *   fractions, so it is the right shape even without a measurement). A rect that cannot fit in
  *   [appSize] is treated as absent: it was measured for a layout that no longer
  *   exists, e.g. before a rotation.
  * @return the transform for this step; identity when [appSize] is empty.
@@ -323,9 +324,12 @@ internal fun returnFlight(p: Float, appSize: Size, cardRect: Rect?): ReturnFligh
     val target = usable ?: Rect(
         offset = Offset(
             appSize.width * (1f - SWITCHER_CARD_FRACTION) / 2f,
-            appSize.height * (1f - SWITCHER_CARD_FRACTION) / 2f,
+            appSize.height * (1f - SWITCHER_CARD_HEIGHT_FRACTION) / 2f,
         ),
-        size = Size(appSize.width * SWITCHER_CARD_FRACTION, appSize.height * SWITCHER_CARD_FRACTION),
+        size = Size(
+            appSize.width * SWITCHER_CARD_FRACTION,
+            appSize.height * SWITCHER_CARD_HEIGHT_FRACTION,
+        ),
     )
     return ReturnFlight(
         scaleX = 1f - p * (1f - target.width / appSize.width),

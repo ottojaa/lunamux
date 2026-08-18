@@ -317,8 +317,10 @@ class MiniTerminalRegistry(
          * The last frame published for [sessionId] by any registry, or `null`.
          *
          * Read by `TerminalScreen`, which paints it over its still-empty view
-         * until the session's own output lands — the dive transition would
-         * otherwise grow an empty box.
+         * until the session's own output lands (the dive transition would
+         * otherwise grow an empty box), and by the swipe-up return gesture's
+         * overlay card, which paints the terminal's screen while the route swap
+         * happens underneath.
          *
          * @param sessionId the session whose frame to look up.
          * @return the cached frame, or `null` if none was ever published.
@@ -336,16 +338,6 @@ class MiniTerminalRegistry(
         fun clearFrameCache() {
             lastFrames.evictAll()
         }
-
-        /**
-         * The last frame published for [sessionId] by any registry, or `null`.
-         * Used by the swipe-up return gesture's overlay card, which must paint
-         * the terminal's screen while the route swap happens underneath.
-         *
-         * @param sessionId the session whose frame to look up.
-         * @return the cached frame, or `null` if none was ever published.
-         */
-        internal fun lastFrameFor(sessionId: String): TerminalFrame? = lastFrames.get(sessionId)
 
         /**
          * Publish a frame captured outside any registry.
