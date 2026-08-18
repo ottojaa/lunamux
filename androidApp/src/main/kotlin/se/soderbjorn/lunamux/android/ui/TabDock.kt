@@ -95,7 +95,7 @@ import se.soderbjorn.lunamux.client.viewmodel.OverviewBackingViewModel.UnlistedT
  * distance from it. Small on purpose: enough to cluster the strip behind the
  * centred chip, not enough to stack the chips on top of one another.
  */
-private const val DOCK_INWARD_PULL = 0.14f
+private const val DOCK_INWARD_PULL = 0.10f
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -153,10 +153,10 @@ fun TabDock(
         // silently a no-op for the first tab and the strip just sat against the
         // left edge — which is what it looked like on device.
         contentPadding = PaddingValues(horizontal = maxWidth / 2),
-        // Tight: the chips off centre are scaled down and pulled inwards, so the
-        // layout gap has to be small for them to end up sitting *close* to the
-        // centred one rather than floating away from it.
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        // Wide enough that the inward pull below still leaves air around the
+        // centred chip: the pull eats into this gap, and at 2dp it closed it
+        // completely and the neighbours crowded the front chip.
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         itemsIndexed(tabs, key = { _, tab -> tab.id }) { index, tab ->
