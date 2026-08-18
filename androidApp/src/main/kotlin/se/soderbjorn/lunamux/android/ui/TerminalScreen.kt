@@ -94,6 +94,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import se.soderbjorn.lunamux.android.net.ConnectionHolder
 import se.soderbjorn.lunamux.client.MirrorFit
@@ -764,13 +765,32 @@ fun TerminalScreen(
         terminalViewRef.value?.requestLayout()
     }
 
-    BackHandler { onBack() }
+    // Leaving the terminal snapshots its screen into the shared frame cache. The
+    // overview seeds every card from that cache, so this is what makes the
+    // reverse flight land on the screen the user was just looking at instead of
+    // the one from before the dive — the registry is closed the whole time a
+    // terminal is on screen, so nothing else can publish it.
+    //
+    // Deliberately synchronous, on the caller's thread: the flight starts in the
+    // same frame, so a snapshot dispatched onto the emulator's own thread could
+    // not land in time. The lock is held for one pass over the screen grid — the
+    // price is waiting out at most one in-flight output chunk.
+    val leaveFrameRevision = remember(sessionId) { AtomicLong(0) }
+    val leaveTerminal: () -> Unit = {
+        val frame = synchronized(emulator) {
+            snapshotFrame(emulator, leaveFrameRevision.incrementAndGet())
+        }
+        MiniTerminalRegistry.putFrame(sessionId, frame)
+        onBack()
+    }
+
+    BackHandler { leaveTerminal() }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = leaveTerminal) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",

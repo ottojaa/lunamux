@@ -326,6 +326,22 @@ class MiniTerminalRegistry(
         internal fun lastFrameFor(sessionId: String): TerminalFrame? = lastFrames.get(sessionId)
 
         /**
+         * Publish a frame captured outside any registry.
+         *
+         * Called by `TerminalScreen` as the user leaves a terminal: the
+         * full-screen view owns a live emulator, and it is the only thing that
+         * knows the session's current screen while the overview's registry is
+         * torn down. Without it the card the reverse flight lands on shows the
+         * session as it was before the dive, until its socket has reattached.
+         *
+         * @param sessionId the session the frame belongs to.
+         * @param frame     the snapshot to cache.
+         */
+        internal fun putFrame(sessionId: String, frame: TerminalFrame) {
+            lastFrames.put(sessionId, frame)
+        }
+
+        /**
          * Drop every cached frame. Called when the app disconnects from a host
          * (see [se.soderbjorn.lunamux.android.net.ConnectionHolder.disconnect]):
          * the cache is process-wide and keyed by bare session id, so without

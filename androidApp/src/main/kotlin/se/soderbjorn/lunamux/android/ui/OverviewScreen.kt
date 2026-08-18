@@ -437,7 +437,19 @@ private fun ExposeCanvas(
                                 } else {
                                     Modifier
                                 }
-                            MiniPane(pane = pane, raised = draggingThis, modifier = diveModifier)
+                            // The anchor goes on the pane's CONTENT, not the whole
+                            // card: the other end of the flight is the terminal's
+                            // content box, and a card rect that also contains a
+                            // title bar and a border is a different rectangle. Fly
+                            // the whole card and the text lands a title-bar's height
+                            // off and a few percent small, which is exactly the jump
+                            // the transition looked broken for. The card's chrome
+                            // stays behind and fades with the route.
+                            MiniPane(
+                                pane = pane,
+                                raised = draggingThis,
+                                contentModifier = diveModifier,
+                            )
 
                             if (editing) {
                                 // Whole-pane move drag.
@@ -757,17 +769,21 @@ private fun leafKindOf(leaf: LeafNode): LeafKind = when (leaf.content) {
  * type-specific live miniature, and the focused/accent outline. Purely visual —
  * input is layered on by [ExposeCanvas].
  *
- * @param pane     the projected pane.
- * @param raised   whether to lift the card (used for the pane being dragged).
- * @param modifier outermost modifier on the card's root box — [ExposeCanvas]
- *   uses it to attach the dive transition's shared bounds, which must wrap the
- *   whole card (shadow/clip/border included) so the entire card flies.
+ * @param pane            the projected pane.
+ * @param raised          whether to lift the card (used for the pane being
+ *   dragged).
+ * @param modifier        outermost modifier on the card's root box.
+ * @param contentModifier modifier on the miniature *inside* the chrome —
+ *   [ExposeCanvas] attaches the dive transition's shared bounds here, because
+ *   the far end of that flight is the terminal's content box and only this box
+ *   is the same rectangle.
  */
 @Composable
 private fun MiniPane(
     pane: OverviewPane,
     raised: Boolean,
     modifier: Modifier = Modifier,
+    contentModifier: Modifier = Modifier,
 ) {
     val focused = pane.isFocused
     val borderColor = if (focused || raised) SidebarAccent else SidebarTextSecondary.copy(alpha = 0.35f)
@@ -809,7 +825,7 @@ private fun MiniPane(
             }
             HorizontalDivider(thickness = 1.dp, color = SidebarBorder)
             Box(
-                modifier = Modifier
+                modifier = contentModifier
                     .weight(1f)
                     .fillMaxWidth()
                     .clipToBounds(),
