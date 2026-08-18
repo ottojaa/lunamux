@@ -59,6 +59,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.KeyboardHide
+import androidx.compose.material.icons.filled.ViewCarousel
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.DisposableEffect
@@ -76,6 +77,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -766,6 +769,15 @@ fun TerminalScreen(
 
     BackHandler { onBack() }
 
+    // Swipe-up return gesture wiring (see ReturnGestureState): the grab handle
+    // over the terminal and the app-bar switcher button both route through the
+    // app-provided state; null (previews/tests) hides both affordances.
+    val returnGesture = LocalReturnGesture.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val returnCommitDistancePx = with(LocalDensity.current) {
+        configuration.screenHeightDp.dp.toPx() * RETURN_COMMIT_DISTANCE_FRACTION
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -805,6 +817,20 @@ fun TerminalScreen(
                     }
                 },
                 actions = {
+                    // Discoverable fallback for the swipe-up gesture: opens the
+                    // switcher outright (same commit path, no drag).
+                    if (returnGesture != null) {
+                        IconButton(onClick = {
+                            keyboard?.hide()
+                            returnGesture.open(sessionId)
+                        }) {
+                            Icon(
+                                Icons.Filled.ViewCarousel,
+                                contentDescription = "Tab switcher",
+                                tint = HeaderAccent,
+                            )
+                        }
+                    }
                     IconButton(onClick = { swipeInputActive = !swipeInputActive }) {
                         // Material extended's KeyboardHide (a keyboard with a
                         // downward chevron) mirrors the iOS toolbar's
@@ -1142,6 +1168,27 @@ fun TerminalScreen(
                             fontSize = 13.sp,
                         )
                     }
+                }
+
+                // Grab handle for the swipe-up return-to-switcher gesture. It
+                // hit-tests above the TerminalView (which consumes every touch
+                // in its box) and sits above the nav-bar inset, clear of the
+                // system gesture area. The IME is hidden on gesture start so
+                // the adjustResize inset shift can't hop the shrinking layer.
+                if (returnGesture != null) {
+                    SwitcherGrabHandle(
+                        onDragStart = {
+                            keyboard?.hide()
+                            returnGesture.beginDrag(sessionId)
+                        },
+                        onDrag = { dy -> returnGesture.dragBy(dy, returnCommitDistancePx) },
+                        onDragStopped = { velocity -> returnGesture.endDrag(velocity) },
+                        onTap = {
+                            keyboard?.hide()
+                            returnGesture.open(sessionId)
+                        },
+                        modifier = Modifier.align(Alignment.BottomCenter),
+                    )
                 }
             }
 

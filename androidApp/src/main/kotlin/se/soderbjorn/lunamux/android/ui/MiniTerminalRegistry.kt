@@ -336,6 +336,16 @@ class MiniTerminalRegistry(
         fun clearFrameCache() {
             lastFrames.evictAll()
         }
+
+        /**
+         * The last frame published for [sessionId] by any registry, or `null`.
+         * Used by the swipe-up return gesture's overlay card, which must paint
+         * the terminal's screen while the route swap happens underneath.
+         *
+         * @param sessionId the session whose frame to look up.
+         * @return the cached frame, or `null` if none was ever published.
+         */
+        internal fun lastFrameFor(sessionId: String): TerminalFrame? = lastFrames.get(sessionId)
     }
 
     /**

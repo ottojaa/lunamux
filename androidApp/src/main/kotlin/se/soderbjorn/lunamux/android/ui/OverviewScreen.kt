@@ -256,6 +256,24 @@ fun OverviewContent(
     LaunchedEffect(browsedTabId) { onBrowsedTabChanged(browsedTabId) }
     DisposableEffect(Unit) { onDispose { onBrowsedTabChanged(null) } }
 
+    // Arrival centering after a committed swipe-up return: center the row on
+    // the tab the user came from, which the active-tab seed above may miss
+    // when the terminal was entered without activating its tab (sidebar/list
+    // opens). Consumed once, snapped (not animated) — the return overlay card
+    // is still covering the screen when this runs.
+    val returnGesture = LocalReturnGesture.current
+    val returnSessionId = remember { returnGesture?.consumePendingCenterSession() }
+    var returnCenterHandled by remember { mutableStateOf(returnSessionId == null) }
+    LaunchedEffect(returnSessionId, tabs) {
+        if (!returnCenterHandled && tabs.isNotEmpty()) {
+            returnCenterHandled = true
+            val index = tabs.indexOfFirst { tab ->
+                tab.panes.any { it.leaf.sessionId == returnSessionId }
+            }
+            if (index >= 0) rowListState.scrollToItem(index)
+        }
+    }
+
     // While editing layout, Back leaves edit mode rather than the screen.
     BackHandler(enabled = editTabId != null) { vm.exitEdit() }
 
