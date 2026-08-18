@@ -31,8 +31,9 @@ package se.soderbjorn.lunamux.android.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.rememberSplineBasedDecay
 import androidx.compose.foundation.gestures.TargetedFlingBehavior
 import androidx.compose.foundation.gestures.snapping.SnapLayoutInfoProvider
 import androidx.compose.foundation.gestures.snapping.SnapPosition
@@ -448,27 +449,45 @@ fun OverviewContent(
  */
 @OptIn(ExperimentalFoundationApi::class)
 /**
- * Velocity a flick must reach before it counts as "go to the next card" rather
- * than "settle back to the nearest one", in dp/s.
- *
- * Foundation's own threshold is 400 dp/s, which on a phone is barely a nudge —
- * brushing the row jumped a whole card. A card here is a full screen of terminal,
- * so moving one deserves either real distance (past half a card, which the snap
- * decides positionally) or a deliberate flick.
+ * Velocity, in dp/s, above which a release is a *flick* rather than a let-go.
+ * Deliberately tiny: the OS switcher moves on with the smallest deliberate
+ * push, and a row that instead rubber-banded back to where you started felt
+ * like it was refusing the gesture.
  */
-private const val SWITCHER_FLING_VELOCITY_DP = 1300f
+private const val SWITCHER_FLICK_INTENT_DP = 80f
 
 /**
- * The card row's fling: platform-native momentum into a soft spring settle,
- * with a raised flick threshold.
+ * The velocity a flick is reported as when it clears [SWITCHER_FLICK_INTENT_DP]
+ * but falls under Foundation's own "advance a card" threshold (400 dp/s). Raising
+ * it to exactly that line is what turns every deliberate flick into one card
+ * forward instead of a bounce back.
+ */
+private const val SWITCHER_ADVANCE_VELOCITY_DP = 400f
+
+/**
+ * Friction applied to the row's momentum, relative to the platform default.
  *
- * Foundation's default snap fling settles on a stiffer spring and advances a card
- * on any flick over 400 dp/s, which together felt abrupt — the row arrived before
- * the finger had finished the gesture. This keeps the same spline decay (so
- * momentum through several cards still feels like the platform) but lands on a low
- * -stiffness, near-critically-damped spring, and treats anything gentler than
- * [SWITCHER_FLING_VELOCITY_DP] as no flick at all so the row returns to the card
- * it was on.
+ * Below 1 the row coasts further for the same push, which is the "a little more
+ * force gets you a few cards further" mapping the OS switcher has; the default
+ * made every extra card cost a noticeably harder fling.
+ */
+private const val SWITCHER_DECAY_FRICTION = 0.55f
+
+/**
+ * The card row's fling: long, low-friction momentum into a very soft settle.
+ *
+ * Measured against a screen recording of the OS app switcher, whose fling and
+ * settle together run about 1.25s and end with a long asymptotic tail. Foundation's
+ * defaults settle in roughly a quarter of that, which is what read as snapping into
+ * place rather than gliding to rest, so the snap spring here is critically damped at
+ * [Spring.StiffnessVeryLow] — no overshoot, and a tail long enough that the row is
+ * never seen arriving.
+ *
+ * The two decisions are separate: how *far* a fling travels is the decay's job
+ * (see [SWITCHER_DECAY_FRICTION]), while whether a release advances at all is the
+ * snap's, and any deliberate flick advances (see [SWITCHER_FLICK_INTENT_DP]). Only
+ * a release with essentially no velocity falls back to "whichever card is nearest",
+ * which is what a slow drag deserves.
  *
  * @param rowListState the row's list state, whose centred snap positions the
  *   behaviour snaps to.
@@ -477,24 +496,30 @@ private const val SWITCHER_FLING_VELOCITY_DP = 1300f
 @Composable
 private fun rememberSwitcherFlingBehavior(rowListState: LazyListState): TargetedFlingBehavior {
     val density = LocalDensity.current
-    val decay = rememberSplineBasedDecay<Float>()
-    return remember(rowListState, density, decay) {
+    return remember(rowListState, density) {
         val base = SnapLayoutInfoProvider(rowListState, SnapPosition.Center)
-        val minFlingPx = with(density) { SWITCHER_FLING_VELOCITY_DP.dp.toPx() }
+        val intentPx = with(density) { SWITCHER_FLICK_INTENT_DP.dp.toPx() }
+        val advancePx = with(density) { SWITCHER_ADVANCE_VELOCITY_DP.dp.toPx() }
         val provider = object : SnapLayoutInfoProvider {
-            override fun calculateSnapOffset(velocity: Float): Float =
-                // Below the threshold the velocity is dropped, not the gesture:
-                // the underlying provider then snaps to whichever card is nearest,
-                // which is the next one only if the drag really crossed half way.
-                base.calculateSnapOffset(if (abs(velocity) < minFlingPx) 0f else velocity)
+            override fun calculateSnapOffset(velocity: Float): Float {
+                // A flick keeps its direction and is reported as at least fast
+                // enough to count; only a genuine let-go reports nothing and lets
+                // position decide.
+                val reported = when {
+                    velocity > intentPx -> maxOf(velocity, advancePx)
+                    velocity < -intentPx -> minOf(velocity, -advancePx)
+                    else -> 0f
+                }
+                return base.calculateSnapOffset(reported)
+            }
 
             override fun calculateApproachOffset(velocity: Float, decayOffset: Float): Float =
                 base.calculateApproachOffset(velocity, decayOffset)
         }
         snapFlingBehavior(
             snapLayoutInfoProvider = provider,
-            decayAnimationSpec = decay,
-            snapAnimationSpec = spring(dampingRatio = 0.9f, stiffness = 220f),
+            decayAnimationSpec = exponentialDecay(frictionMultiplier = SWITCHER_DECAY_FRICTION),
+            snapAnimationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessVeryLow),
         )
     }
 }
