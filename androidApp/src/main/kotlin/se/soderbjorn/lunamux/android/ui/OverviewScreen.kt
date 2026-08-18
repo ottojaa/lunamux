@@ -31,12 +31,17 @@ package se.soderbjorn.lunamux.android.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.rememberSplineBasedDecay
+import androidx.compose.foundation.gestures.TargetedFlingBehavior
+import androidx.compose.foundation.gestures.snapping.SnapLayoutInfoProvider
+import androidx.compose.foundation.gestures.snapping.SnapPosition
+import androidx.compose.foundation.gestures.snapping.snapFlingBehavior
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -93,14 +98,12 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import kotlin.math.abs
-import kotlin.math.min
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -444,6 +447,58 @@ fun OverviewContent(
  * @param cardContent   the card's content for a tab (the tab's exposé canvas).
  */
 @OptIn(ExperimentalFoundationApi::class)
+/**
+ * Velocity a flick must reach before it counts as "go to the next card" rather
+ * than "settle back to the nearest one", in dp/s.
+ *
+ * Foundation's own threshold is 400 dp/s, which on a phone is barely a nudge —
+ * brushing the row jumped a whole card. A card here is a full screen of terminal,
+ * so moving one deserves either real distance (past half a card, which the snap
+ * decides positionally) or a deliberate flick.
+ */
+private const val SWITCHER_FLING_VELOCITY_DP = 1300f
+
+/**
+ * The card row's fling: platform-native momentum into a soft spring settle,
+ * with a raised flick threshold.
+ *
+ * Foundation's default snap fling settles on a stiffer spring and advances a card
+ * on any flick over 400 dp/s, which together felt abrupt — the row arrived before
+ * the finger had finished the gesture. This keeps the same spline decay (so
+ * momentum through several cards still feels like the platform) but lands on a low
+ * -stiffness, near-critically-damped spring, and treats anything gentler than
+ * [SWITCHER_FLING_VELOCITY_DP] as no flick at all so the row returns to the card
+ * it was on.
+ *
+ * @param rowListState the row's list state, whose centred snap positions the
+ *   behaviour snaps to.
+ * @return the fling behaviour to hand [LazyRow].
+ */
+@Composable
+private fun rememberSwitcherFlingBehavior(rowListState: LazyListState): TargetedFlingBehavior {
+    val density = LocalDensity.current
+    val decay = rememberSplineBasedDecay<Float>()
+    return remember(rowListState, density, decay) {
+        val base = SnapLayoutInfoProvider(rowListState, SnapPosition.Center)
+        val minFlingPx = with(density) { SWITCHER_FLING_VELOCITY_DP.dp.toPx() }
+        val provider = object : SnapLayoutInfoProvider {
+            override fun calculateSnapOffset(velocity: Float): Float =
+                // Below the threshold the velocity is dropped, not the gesture:
+                // the underlying provider then snaps to whichever card is nearest,
+                // which is the next one only if the drag really crossed half way.
+                base.calculateSnapOffset(if (abs(velocity) < minFlingPx) 0f else velocity)
+
+            override fun calculateApproachOffset(velocity: Float, decayOffset: Float): Float =
+                base.calculateApproachOffset(velocity, decayOffset)
+        }
+        snapFlingBehavior(
+            snapLayoutInfoProvider = provider,
+            decayAnimationSpec = decay,
+            snapAnimationSpec = spring(dampingRatio = 0.9f, stiffness = 220f),
+        )
+    }
+}
+
 @Composable
 private fun SwitcherCardRow(
     tabs: List<OverviewTab>,
@@ -461,7 +516,7 @@ private fun SwitcherCardRow(
 
         LazyRow(
             state = rowListState,
-            flingBehavior = rememberSnapFlingBehavior(rowListState),
+            flingBehavior = rememberSwitcherFlingBehavior(rowListState),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.CenterVertically,
             // Symmetric padding of (viewport - card)/2 makes item offset 0 the
@@ -471,29 +526,14 @@ private fun SwitcherCardRow(
             modifier = Modifier.fillMaxSize(),
         ) {
             itemsIndexed(tabs, key = { _, tab -> tab.id }) { index, tab ->
+                // No distance-from-centre scale or fade: the carousel effect was
+                // one more thing moving during a fling, and it read as the row
+                // fighting its own settle rather than as depth. Cards are flat and
+                // identical; the dock carries the depth cue instead.
                 Box(
                     modifier = Modifier
                         .width(cardWidth)
                         .height(cardHeight)
-                        .graphicsLayer {
-                            // Distance-from-center parallax, computed at draw
-                            // time from the live layout so it costs no
-                            // recomposition while flinging.
-                            val info = rowListState.layoutInfo
-                            val item = info.visibleItemsInfo.firstOrNull { it.index == index }
-                            val viewportWidth =
-                                (info.viewportEndOffset - info.viewportStartOffset).toFloat()
-                            if (item != null && viewportWidth > 0f) {
-                                val center = info.viewportStartOffset + viewportWidth / 2f
-                                val distance =
-                                    (item.offset + item.size / 2f - center) / viewportWidth
-                                val falloff = min(1f, abs(distance))
-                                val scale = 1f - 0.08f * falloff
-                                scaleX = scale
-                                scaleY = scale
-                                alpha = 1f - 0.15f * falloff
-                            }
-                        }
                         .clip(cardShape)
                         .background(SidebarSurface.copy(alpha = 0.35f))
                         // A hairline, never the accent: the panes inside draw
