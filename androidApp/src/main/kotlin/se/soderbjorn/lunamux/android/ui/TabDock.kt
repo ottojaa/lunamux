@@ -90,6 +90,13 @@ import se.soderbjorn.lunamux.client.viewmodel.OverviewBackingViewModel.UnlistedT
  *   flag (also hides it from the sessions list, which mirrors the sidebar).
  * @param onClose        confirm + close the long-pressed tab.
  */
+/**
+ * How far an off-centre chip is drawn toward the middle, as a fraction of its
+ * distance from it. Small on purpose: enough to cluster the strip behind the
+ * centred chip, not enough to stack the chips on top of one another.
+ */
+private const val DOCK_INWARD_PULL = 0.14f
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun TabDock(
@@ -146,16 +153,20 @@ fun TabDock(
         // silently a no-op for the first tab and the strip just sat against the
         // left edge — which is what it looked like on device.
         contentPadding = PaddingValues(horizontal = maxWidth / 2),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        // Tight: the chips off centre are scaled down and pulled inwards, so the
+        // layout gap has to be small for them to end up sitting *close* to the
+        // centred one rather than floating away from it.
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         itemsIndexed(tabs, key = { _, tab -> tab.id }) { index, tab ->
             val centered = index == centeredIndex
-            // Depth cue: the centred chip stands at full size and brightness
-            // while its neighbours sit slightly back, so the chip under the
-            // visible card — the one whose tap dives — is the one that looks
-            // nearest. Animated so a fling reads as the emphasis travelling
-            // along the strip.
+            // Depth: the centred chip stands at the front, full size and
+            // brightness; the others sit back — smaller, dimmer, and drawn in
+            // towards the centre, so the strip reads as a row receding behind the
+            // one chip whose tap dives. The inward pull is computed at draw time
+            // from the live layout, so it tracks a fling frame by frame, while the
+            // size/brightness step animates as the emphasis hands over.
             val emphasis by animateFloatAsState(
                 targetValue = if (centered) 1f else 0f,
                 animationSpec = tween(durationMillis = 160),
@@ -163,10 +174,18 @@ fun TabDock(
             )
             Box(
                 Modifier.graphicsLayer {
-                    val chipScale = 0.88f + 0.12f * emphasis
+                    val chipScale = 0.78f + 0.22f * emphasis
                     scaleX = chipScale
                     scaleY = chipScale
-                    alpha = 0.68f + 0.32f * emphasis
+                    alpha = 0.45f + 0.55f * emphasis
+                    val info = listState.layoutInfo
+                    val item = info.visibleItemsInfo.firstOrNull { it.index == index }
+                    if (item != null) {
+                        val viewportCenter =
+                            (info.viewportStartOffset + info.viewportEndOffset) / 2f
+                        translationX =
+                            -DOCK_INWARD_PULL * (item.offset + item.size / 2f - viewportCenter)
+                    }
                 },
             ) {
                 CompositionLocalProvider(

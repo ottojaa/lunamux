@@ -133,14 +133,14 @@ import se.soderbjorn.lunamux.client.viewmodel.OverviewBackingViewModel.UnlistedT
  * Also the horizontal end scale of the return gesture's flight when no card has
  * been measured yet (see `returnFlight`).
  */
-internal const val SWITCHER_CARD_FRACTION = 0.94f
+internal const val SWITCHER_CARD_FRACTION = 0.89f
 
 /**
  * Fraction of the switcher row's height one card occupies. As with the width:
  * the height used to be derived from the card's width and the row's aspect,
  * which left a phone-shaped card floating in a quarter of empty row.
  */
-internal const val SWITCHER_CARD_HEIGHT_FRACTION = 0.99f
+internal const val SWITCHER_CARD_HEIGHT_FRACTION = 0.94f
 
 /** Corner radius of a switcher card, and of the return gesture's shrinking screen. */
 internal val SwitcherCardCorner = 20.dp
