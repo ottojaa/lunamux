@@ -3,10 +3,18 @@
  *
  * [TerminalThumbnail] draws a [TerminalFrame] as the terminal's exact colored
  * cell grid — the server's cols×rows, the session's real wrapping, per-run
- * ANSI colors and the cursor — uniformly scaled down to fit its box and
- * letterboxed with the terminal background. The result reads like the OS app
- * switcher's live app cards: truthful over legible (text may be tiny; layout
- * and color are exact).
+ * ANSI colors and the cursor — scaled to *fill the height* with every row, with
+ * the columns that do not fit cropped away.
+ *
+ * That fit is not a choice about looks; it is parity with the full-screen
+ * terminal. A phone mirroring a laptop-width session fills its height with the
+ * session's rows and pans over the overflowing columns
+ * (`MirrorFit.solveFillHeightFont` in TerminalScreen). A thumbnail that fitted
+ * *both* axes instead squeezed those same 200 columns into a card's width,
+ * leaving a thin band of unreadable text between two empty halves — and the dive
+ * transition then had to jump from that band to the height-filled real thing.
+ * Cropping from the right matches where the mirror's pan starts, so a preview
+ * and the terminal it dives into show the same window of the session.
  *
  * Drawing goes straight to the native canvas with a pair of remembered
  * [android.graphics.Paint]s: glyph metrics are measured once per typeface at a
@@ -103,11 +111,17 @@ fun TerminalThumbnail(
 
             val gridW = frame.cols * metrics.cellW
             val gridH = frame.rows * metrics.cellH
-            val scale = minOf(size.width / gridW, size.height / gridH)
+            // Every row, filling the height — the full-screen mirror's own fit.
+            val scale = size.height / gridH
+            val scaledW = gridW * scale
+            // Wider than the box: keep the left edge, crop the overflow, which is
+            // the window the mirror's pan opens on. Narrower (a session at this
+            // phone's own width): center it, so the letterbox is symmetric.
+            val dx = if (scaledW <= size.width) (size.width - scaledW) / 2f else 0f
             val save = canvas.save()
             try {
-                // Center the scaled grid; the surrounding letterbox stays defaultBg.
-                canvas.translate((size.width - gridW * scale) / 2f, (size.height - gridH * scale) / 2f)
+                canvas.clipRect(0f, 0f, size.width, size.height)
+                canvas.translate(dx, 0f)
                 canvas.scale(scale, scale)
                 drawFrame(canvas, frame, metrics)
             } finally {
