@@ -71,10 +71,10 @@ import se.soderbjorn.lunamux.client.viewmodel.OverviewBackingViewModel.UnlistedT
 internal const val DOCK_SIBLING_SCALE = 0.78f
 
 /** Opacity of a chip a full card away from the focus. */
-internal const val DOCK_SIBLING_ALPHA = 0.45f
+internal const val DOCK_SIBLING_ALPHA = 0.50f
 
-/** Layout gap between chips, in dp, before the inward pull eats into it. */
-internal const val DOCK_CHIP_GAP_DP = 14f
+/** Gap between chips, in dp. Uniform whatever their scale — see [TabDock]. */
+internal const val DOCK_CHIP_GAP_DP = 6f
 
 /**
  * How quickly focus falls off with distance, per card. 1 hands the emphasis over

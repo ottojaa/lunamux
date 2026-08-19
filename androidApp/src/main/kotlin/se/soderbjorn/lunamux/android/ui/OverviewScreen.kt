@@ -278,6 +278,21 @@ fun OverviewContent(
         openPane(pane.leaf, onOpenTerminal, onOpenFileBrowser, onOpenGit)
     }
 
+    // Diving into a tab rather than a specific pane: its focused pane, or the
+    // topmost one. Shared by the dock's centred chip and by a tap on a card the
+    // row has not finished settling on — both mean "open the tab I can see".
+    val diveIntoTab: (OverviewTab) -> Unit = { tab ->
+        val target = tab.panes.firstOrNull { it.isFocused } ?: tab.panes.maxByOrNull { it.z }
+        if (target != null) {
+            divePane(tab, target)
+        } else if (!tab.isActive) {
+            // Every pane is docked, so there is nothing to dive into — activate
+            // the tab instead, or the tap reads as a dead button. Restoring a
+            // pane is one tap away on the card's dock strip.
+            scope.launch { vm.setActiveTab(tab.id) }
+        }
+    }
+
     // One canvas parameterization shared by the two hosts below (a switcher
     // card, or the full-screen edit surface), so the 12 callbacks stay in sync.
     val canvasFor: @Composable (OverviewTab, Boolean) -> Unit = { tab, editing ->
@@ -331,6 +346,7 @@ fun OverviewContent(
                     rowListState = rowListState,
                     centeredIndex = centeredIndex,
                     onCenter = { index -> scope.launch { rowListState.animateScrollToItem(index) } },
+                    onDiveTab = diveIntoTab,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 ) { tab -> canvasFor(tab, false) }
 
@@ -343,19 +359,7 @@ fun OverviewContent(
                     centeredIndex = centeredIndex,
                     closeEnabled = tabs.size > 1,
                     onCenter = { index -> scope.launch { rowListState.animateScrollToItem(index) } },
-                    onDive = { tab ->
-                        val target = tab.panes.firstOrNull { it.isFocused }
-                            ?: tab.panes.maxByOrNull { it.z }
-                        if (target != null) {
-                            divePane(tab, target)
-                        } else if (!tab.isActive) {
-                            // Every pane is docked, so there is nothing to dive
-                            // into — activate the tab instead, or the chip reads
-                            // as a dead button. Restoring a pane is one tap away
-                            // on the card's dock strip.
-                            scope.launch { vm.setActiveTab(tab.id) }
-                        }
-                    },
+                    onDive = diveIntoTab,
                     onActivateUnlisted = { id -> scope.launch { vm.setActiveTab(id) } },
                     onRename = { tab -> renameTabTarget = tab },
                     onToggleHidden = { tab ->
@@ -467,15 +471,20 @@ internal const val SWITCHER_FLICK_INTENT_DP = 80f
 private const val SWITCHER_ADVANCE_VELOCITY_DP = 400f
 
 /**
- * Stiffness of the settle. Between Foundation's default (400) and the
- * very-low 50 a first pass tried: 50 glided so long it felt weightless, 400
- * arrived before the gesture was over.
+ * Stiffness of the settle, and its damping ratio. Chosen on the device with the
+ * tuning sliders: a very soft spring, but *overdamped*, so it eases to a stop
+ * without ever looking pulled into place. Foundation's default (400, damping 1)
+ * arrived before the gesture felt finished, and the same softness at damping 1
+ * felt weightless.
  */
-internal const val SWITCHER_SNAP_STIFFNESS = 150f
+internal const val SWITCHER_SNAP_STIFFNESS = 50f
+
+/** Damping ratio of the settle; above 1 approaches the target without overshoot. */
+internal const val SWITCHER_SNAP_DAMPING = 1.2f
 
 /**
- * The card row's fling: the platform's own momentum, an edge-aware approach, and
- * a settle stiff enough to feel like it has weight.
+ * The card row's fling: the platform's own momentum, an edge-aware approach, and a
+ * soft overdamped settle.
  *
  * The decay is the platform spline — the same friction every Android scroller
  * uses, which is what the OS switcher is being compared against; a lower-friction
@@ -558,6 +567,32 @@ private fun rememberSwitcherFlingBehavior(rowListState: LazyListState): Targeted
 }
 
 /**
+ * How much of a card has to be on screen for a tap on it to open it rather than
+ * merely centre it. Above half, it is the card the user is looking at.
+ */
+private const val CARD_TAP_DIVE_FRACTION = 0.55f
+
+/**
+ * How much of the card at [index] is inside the row's viewport, 0..1.
+ *
+ * Measured at tap time rather than tracked, because it only matters then: it is
+ * what tells a deliberate tap on the incoming card of a settle apart from a tap on
+ * a sliver peeking at the edge.
+ *
+ * @param rowListState the row's list state.
+ * @param index the card's index.
+ * @return the visible fraction, or 0 when the card is not laid out.
+ */
+private fun visibleFraction(rowListState: LazyListState, index: Int): Float {
+    val info = rowListState.layoutInfo
+    val item = info.visibleItemsInfo.firstOrNull { it.index == index } ?: return 0f
+    if (item.size <= 0) return 0f
+    val start = maxOf(item.offset, info.viewportStartOffset)
+    val end = minOf(item.offset + item.size, info.viewportEndOffset)
+    return ((end - start).toFloat() / item.size).coerceIn(0f, 1f)
+}
+
+/**
  * The row's position as a *fractional* card index — 1.4 meaning "40% of the way
  * from card 1 to card 2".
  *
@@ -623,6 +658,7 @@ private fun SwitcherCardRow(
     rowListState: LazyListState,
     centeredIndex: Int,
     onCenter: (Int) -> Unit,
+    onDiveTab: (OverviewTab) -> Unit,
     modifier: Modifier = Modifier,
     cardContent: @Composable (OverviewTab) -> Unit,
 ) {
@@ -666,14 +702,25 @@ private fun SwitcherCardRow(
                 ) {
                     cardContent(tab)
                     if (index != centeredIndex) {
-                        // Peeking cards only center on any interaction — the
-                        // gate also swallows long-presses so a pane's context
-                        // menu can't open on a card you haven't centered.
+                        // A card that is not the centred one still gets a gate, so
+                        // a pane's own taps and long-press menu cannot fire on a
+                        // card the row is not on. What the gate DOES depends on how
+                        // much of that card you can see: a sliver at the edge only
+                        // centres, but a card already filling most of the screen —
+                        // which is what the incoming card looks like for the whole
+                        // length of a settle — opens, because tapping the thing you
+                        // are looking at should not have to wait for an animation.
                         Box(
                             Modifier
                                 .matchParentSize()
                                 .combinedClickable(
-                                    onClick = { onCenter(index) },
+                                    onClick = {
+                                        if (visibleFraction(rowListState, index) >= CARD_TAP_DIVE_FRACTION) {
+                                            onDiveTab(tab)
+                                        } else {
+                                            onCenter(index)
+                                        }
+                                    },
                                     onLongClick = { onCenter(index) },
                                 ),
                         )

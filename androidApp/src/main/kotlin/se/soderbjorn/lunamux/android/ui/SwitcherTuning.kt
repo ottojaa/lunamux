@@ -55,7 +55,7 @@ object SwitcherTuning {
     var snapStiffness by mutableStateOf(SWITCHER_SNAP_STIFFNESS)
 
     /** Damping ratio of the row's settle spring; below 1 overshoots. */
-    var snapDamping by mutableStateOf(1f)
+    var snapDamping by mutableStateOf(SWITCHER_SNAP_DAMPING)
 
     /**
      * Whether the row's momentum uses the platform's spline decay (the same
@@ -99,7 +99,7 @@ object SwitcherTuning {
     /** Put every value back to the constant that seeds it. */
     fun reset() {
         snapStiffness = SWITCHER_SNAP_STIFFNESS
-        snapDamping = 1f
+        snapDamping = SWITCHER_SNAP_DAMPING
         platformDecay = true
         decayFriction = 1f
         flickIntentDp = SWITCHER_FLICK_INTENT_DP
