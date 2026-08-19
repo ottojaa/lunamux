@@ -62,16 +62,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
+import kotlin.math.floor
 import se.soderbjorn.lunamux.android.BuildConfig
 import se.soderbjorn.lunamux.client.viewmodel.OverviewBackingViewModel.OverviewTab
 import se.soderbjorn.lunamux.client.viewmodel.OverviewBackingViewModel.UnlistedTab
-
-/**
- * How far an off-focus chip is drawn toward the focused one, as a fraction of
- * its distance from it. Small on purpose: enough to cluster the strip behind the
- * front chip, not enough to stack the chips on top of one another.
- */
-internal const val DOCK_INWARD_PULL = 0.10f
 
 /** Scale of a chip a full card away from the focus. */
 internal const val DOCK_SIBLING_SCALE = 0.78f
@@ -87,6 +81,32 @@ internal const val DOCK_CHIP_GAP_DP = 14f
  * completely across one card's worth of row movement.
  */
 internal const val DOCK_FALLOFF = 1f
+
+/**
+ * How far out of focus the chip at [index] is when the row sits at [focus], as
+ * 1 (fully focused) down to 0.
+ *
+ * @param index the chip's index.
+ * @param focus the row's fractional card index.
+ * @return the emphasis, 0..1.
+ */
+private fun dockChipEmphasis(index: Int, focus: Float): Float =
+    (1f - abs(index - focus) * SwitcherTuning.dockFalloff).coerceIn(0f, 1f)
+
+/**
+ * The scale the chip at [index] is drawn at when the row sits at [focus]: full
+ * size at the focus, [SwitcherTuning.dockSiblingScale] a card away.
+ *
+ * Also what the strip's layout is computed from, so the two can never disagree.
+ *
+ * @param index the chip's index.
+ * @param focus the row's fractional card index.
+ * @return the scale factor.
+ */
+private fun dockChipScale(index: Int, focus: Float): Float {
+    val sibling = SwitcherTuning.dockSiblingScale
+    return sibling + (1f - sibling) * dockChipEmphasis(index, focus)
+}
 
 /**
  * The switcher's bottom tab dock: one chip per tab (status dot + title), the
@@ -148,14 +168,20 @@ fun TabDock(
     // Debug-only motion sliders (see SwitcherTuning); never composed in release.
     var tuningOpen by remember { mutableStateOf(false) }
 
-    // Where each chip's centre sits inside the strip, reported as they are placed.
-    // The strip is positioned by translating it until the focused chip's centre
-    // meets the dock's, and the chips are not uniform — their titles differ — so
-    // there is nothing to derive this from.
-    val chipCentres = remember(tabs.size) { mutableStateListOf<Float>() }
-    if (chipCentres.size != tabs.size) {
-        chipCentres.clear()
-        repeat(tabs.size) { chipCentres.add(0f) }
+    // Each chip's measured width and the centre the Row placed it at, reported as
+    // they are placed. Both are needed because the chips are drawn somewhere else
+    // than they are laid out: the widths drive the scaled-width walk that decides
+    // where a chip *should* appear, and the layout centres say how far to slide it
+    // from where it actually is.
+    val chipWidths = remember(tabs.size) { mutableStateListOf<Float>() }
+    val chipLayoutCentres = remember(tabs.size) { mutableStateListOf<Float>() }
+    if (chipWidths.size != tabs.size) {
+        chipWidths.clear()
+        chipLayoutCentres.clear()
+        repeat(tabs.size) {
+            chipWidths.add(0f)
+            chipLayoutCentres.add(0f)
+        }
     }
 
     BoxWithConstraints(
@@ -164,22 +190,40 @@ fun TabDock(
             .background(SidebarBackground)
             .clipToBounds(),
     ) {
-        val dockCentre = with(LocalDensity.current) { maxWidth.toPx() } / 2f
-        // The focused point in strip coordinates: the centre of the chip the row
-        // is on, or a blend of two while it is between cards.
-        val focusCentre: () -> Float = {
+        val density = LocalDensity.current
+        val dockCentre = with(density) { maxWidth.toPx() } / 2f
+        val gapPx = with(density) { SwitcherTuning.dockGapDp.dp.toPx() }
+        // Where every chip should *appear*, given that the out-of-focus ones are
+        // drawn smaller. Laying the strip out from scaled widths is the whole
+        // point: a chip shrunk about its own centre leaves half its lost width as
+        // a hole on each side, and since the titles differ in length a wide chip
+        // left a bigger hole than a narrow one — the gaps came out uneven. Walking
+        // the scaled widths instead keeps every visible gap equal to [gapPx].
+        val visualCentres: () -> FloatArray = {
+            val focus = focusIndex()
+            val centres = FloatArray(tabs.size)
+            var left = 0f
+            for (i in tabs.indices) {
+                val scaled = chipWidths.getOrElse(i) { 0f } * dockChipScale(i, focus)
+                centres[i] = left + scaled / 2f
+                left += scaled + gapPx
+            }
+            centres
+        }
+        // The point the dock centres on: one chip's visual centre, or a blend of
+        // two while the row is between cards.
+        val focusCentre: (FloatArray) -> Float = { centres ->
             val position = focusIndex().coerceIn(0f, (tabs.size - 1).toFloat())
-            val low = kotlin.math.floor(position).toInt().coerceIn(0, tabs.size - 1)
+            val low = floor(position).toInt().coerceIn(0, tabs.size - 1)
             val high = (low + 1).coerceAtMost(tabs.size - 1)
             val fraction = position - low
-            chipCentres[low] * (1f - fraction) + chipCentres[high] * fraction
+            centres[low] * (1f - fraction) + centres[high] * fraction
         }
 
     Row(
         modifier = Modifier
             .wrapContentWidth(align = Alignment.Start, unbounded = true)
-            .padding(vertical = 2.dp)
-            .graphicsLayer { translationX = dockCentre - focusCentre() },
+            .padding(vertical = 2.dp),
         horizontalArrangement = Arrangement.spacedBy(SwitcherTuning.dockGapDp.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -194,23 +238,29 @@ fun TabDock(
             Box(
                 Modifier
                     .onPlaced { coords ->
-                        val centre = coords.positionInParent().x + coords.size.width / 2f
-                        if (index < chipCentres.size && chipCentres[index] != centre) {
-                            chipCentres[index] = centre
+                        val width = coords.size.width.toFloat()
+                        val centre = coords.positionInParent().x + width / 2f
+                        if (index < chipWidths.size) {
+                            if (chipWidths[index] != width) chipWidths[index] = width
+                            if (chipLayoutCentres[index] != centre) {
+                                chipLayoutCentres[index] = centre
+                            }
                         }
                     }
                     .graphicsLayer {
-                        val distance = abs(index - focusIndex()) * SwitcherTuning.dockFalloff
-                        val emphasis = (1f - distance).coerceIn(0f, 1f)
-                        val siblingScale = SwitcherTuning.dockSiblingScale
+                        val focus = focusIndex()
+                        val scale = dockChipScale(index, focus)
+                        scaleX = scale
+                        scaleY = scale
                         val siblingAlpha = SwitcherTuning.dockSiblingAlpha
-                        val chipScale = siblingScale + (1f - siblingScale) * emphasis
-                        scaleX = chipScale
-                        scaleY = chipScale
-                        alpha = siblingAlpha + (1f - siblingAlpha) * emphasis
-                        if (index < chipCentres.size) {
-                            translationX =
-                                -SwitcherTuning.dockInwardPull * (chipCentres[index] - focusCentre())
+                        alpha = siblingAlpha + (1f - siblingAlpha) * dockChipEmphasis(index, focus)
+                        // Slide from where the Row placed this chip to where the
+                        // scaled-width walk says it belongs, with the focus point
+                        // parked in the dock's middle.
+                        val centres = visualCentres()
+                        if (index < centres.size && index < chipLayoutCentres.size) {
+                            translationX = dockCentre - focusCentre(centres) + centres[index] -
+                                chipLayoutCentres[index]
                         }
                     },
             ) {

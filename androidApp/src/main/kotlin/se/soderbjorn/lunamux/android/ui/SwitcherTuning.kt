@@ -78,9 +78,6 @@ object SwitcherTuning {
     /** Opacity of a dock chip that is fully out of focus. */
     var dockSiblingAlpha by mutableStateOf(DOCK_SIBLING_ALPHA)
 
-    /** How far dock chips are drawn toward the focused one, as a fraction. */
-    var dockInwardPull by mutableStateOf(DOCK_INWARD_PULL)
-
     /** Layout gap between dock chips, in dp. */
     var dockGapDp by mutableStateOf(DOCK_CHIP_GAP_DP)
 
@@ -96,8 +93,8 @@ object SwitcherTuning {
         get() = "stiffness=${snapStiffness.toInt()} damping=${"%.2f".format(snapDamping)} " +
             "decay=${if (platformDecay) "platform" else "friction " + "%.2f".format(decayFriction)} " +
             "flick=${flickIntentDp.toInt()}dp/s | dock scale=${"%.2f".format(dockSiblingScale)} " +
-            "alpha=${"%.2f".format(dockSiblingAlpha)} pull=${"%.2f".format(dockInwardPull)} " +
-            "gap=${dockGapDp.toInt()}dp falloff=${"%.2f".format(dockFalloff)}"
+            "alpha=${"%.2f".format(dockSiblingAlpha)} gap=${dockGapDp.toInt()}dp " +
+            "falloff=${"%.2f".format(dockFalloff)}"
 
     /** Put every value back to the constant that seeds it. */
     fun reset() {
@@ -108,7 +105,6 @@ object SwitcherTuning {
         flickIntentDp = SWITCHER_FLICK_INTENT_DP
         dockSiblingScale = DOCK_SIBLING_SCALE
         dockSiblingAlpha = DOCK_SIBLING_ALPHA
-        dockInwardPull = DOCK_INWARD_PULL
         dockGapDp = DOCK_CHIP_GAP_DP
         dockFalloff = DOCK_FALLOFF
     }
@@ -208,13 +204,6 @@ fun SwitcherTuningSheet(onDismiss: () -> Unit) {
                 range = 0.15f..1f,
                 format = { "%.2f".format(it) },
                 onChange = { SwitcherTuning.dockSiblingAlpha = it },
-            )
-            TuningSlider(
-                label = "Inward pull",
-                value = SwitcherTuning.dockInwardPull,
-                range = 0f..0.4f,
-                format = { "%.2f".format(it) },
-                onChange = { SwitcherTuning.dockInwardPull = it },
             )
             TuningSlider(
                 label = "Chip gap (dp)",

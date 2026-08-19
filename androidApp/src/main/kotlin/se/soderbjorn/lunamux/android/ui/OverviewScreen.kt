@@ -222,25 +222,22 @@ fun OverviewContent(
         rememberLazyListState(initialFirstVisibleItemIndex = activeIndex)
     }
 
-    // The card the row has SETTLED on. Browsing is centering, not committing:
-    // unlike the old pager, scrolling the row NEVER sends setActiveTab — only
-    // diving into a pane commits the tab (see divePane below), matching the
-    // app-switcher idiom this row replicates.
+    // The card the row is on. Browsing is centering, not committing: unlike the old
+    // pager, scrolling the row NEVER sends setActiveTab — only diving into a pane
+    // commits the tab (see divePane below), matching the app-switcher idiom this
+    // row replicates.
     //
-    // Sampled when the scroll stops rather than derived continuously. Everything
-    // that reads it — a card's tap gate, the dock chip's dive-vs-centre split, the
-    // browsed-tab report — only matters once the row is at rest, while a
-    // continuously derived value recomposed this entire screen (every card, its
-    // canvas, its live thumbnails) each time a fling crossed a card, which is what
-    // a multi-card fling stuttered on. The dock's motion never needed it: it
-    // follows the row's fractional position at draw time.
+    // Follows the row *while it moves*, changing as each card takes over most of
+    // the screen, so a card can be tapped the moment it is the one on screen rather
+    // than only after the settle finishes. Quantised on purpose: a snapshotFlow of
+    // the rounded position emits once per card crossed, where the continuously
+    // derived value it replaces recomposed on every frame of a fling — this screen
+    // holds every card's canvas and live thumbnails, so that difference is the
+    // difference between one hitch per card and a stutter throughout.
     var centeredIndex by remember(rowListState) { mutableStateOf(0) }
     LaunchedEffect(rowListState) {
-        snapshotFlow { rowListState.isScrollInProgress }.collect { scrolling ->
-            if (!scrolling) {
-                centeredIndex = switcherFocusIndex(rowListState).roundToInt()
-            }
-        }
+        snapshotFlow { switcherFocusIndex(rowListState).roundToInt() }
+            .collect { index -> centeredIndex = index }
     }
 
     // One-way server→row sync: an external active-tab change (desktop, another
