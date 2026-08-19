@@ -31,7 +31,6 @@ package se.soderbjorn.lunamux.android.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.rememberSplineBasedDecay
 import androidx.compose.foundation.gestures.TargetedFlingBehavior
@@ -140,11 +139,15 @@ import se.soderbjorn.lunamux.client.viewmodel.OverviewBackingViewModel.UnlistedT
 internal const val SWITCHER_CARD_FRACTION = 0.89f
 
 /**
- * Fraction of the switcher row's height one card occupies. As with the width:
- * the height used to be derived from the card's width and the row's aspect,
- * which left a phone-shaped card floating in a quarter of empty row.
+ * The switcher's vertical rhythm: the gap above the cards, between the cards and
+ * the dock, and below the dock, all the same.
+ *
+ * The dock used to sit flush against the bottom edge with the card row's leftover
+ * slack above it, so it read as stuck to the bottom of the screen rather than as
+ * one of three evenly spaced bands. Cards now fill their row exactly and this is
+ * the only vertical spacing in the switcher.
  */
-internal const val SWITCHER_CARD_HEIGHT_FRACTION = 0.94f
+internal val SwitcherEdgeGap = 12.dp
 
 /** Corner radius of a switcher card, and of the return gesture's shrinking screen. */
 internal val SwitcherCardCorner = 20.dp
@@ -347,7 +350,10 @@ fun OverviewContent(
                     centeredIndex = centeredIndex,
                     onCenter = { index -> scope.launch { rowListState.animateScrollToItem(index) } },
                     onDiveTab = diveIntoTab,
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(top = SwitcherEdgeGap),
                 ) { tab -> canvasFor(tab, false) }
 
                 // The bottom tab dock — the switcher's app-icon-row analog:
@@ -371,6 +377,7 @@ fun OverviewContent(
                         }
                     },
                     onClose = { tab -> closeTabTarget = tab },
+                    modifier = Modifier.padding(vertical = SwitcherEdgeGap),
                 )
             }
         }
@@ -509,26 +516,9 @@ internal const val SWITCHER_SNAP_DAMPING = 1.2f
 private fun rememberSwitcherFlingBehavior(rowListState: LazyListState): TargetedFlingBehavior {
     val density = LocalDensity.current
     val splineDecay = rememberSplineBasedDecay<Float>()
-    // Every value below is a debug slider (SwitcherTuning) seeded from the
-    // constants above, so reading them here also makes them the remember keys:
-    // moving a slider rebuilds the behaviour mid-gesture.
-    val stiffness = SwitcherTuning.snapStiffness
-    val damping = SwitcherTuning.snapDamping
-    val platformDecay = SwitcherTuning.platformDecay
-    val friction = SwitcherTuning.decayFriction
-    val flickIntentDp = SwitcherTuning.flickIntentDp
-    return remember(
-        rowListState,
-        density,
-        splineDecay,
-        stiffness,
-        damping,
-        platformDecay,
-        friction,
-        flickIntentDp,
-    ) {
+    return remember(rowListState, density, splineDecay) {
         val base = SnapLayoutInfoProvider(rowListState, SnapPosition.Center)
-        val intentPx = with(density) { flickIntentDp.dp.toPx() }
+        val intentPx = with(density) { SWITCHER_FLICK_INTENT_DP.dp.toPx() }
         val advancePx = with(density) { SWITCHER_ADVANCE_VELOCITY_DP.dp.toPx() }
         val provider = object : SnapLayoutInfoProvider {
             override fun calculateSnapOffset(velocity: Float): Float {
@@ -556,12 +546,11 @@ private fun rememberSwitcherFlingBehavior(rowListState: LazyListState): Targeted
         }
         snapFlingBehavior(
             snapLayoutInfoProvider = provider,
-            decayAnimationSpec = if (platformDecay) {
-                splineDecay
-            } else {
-                exponentialDecay(frictionMultiplier = friction)
-            },
-            snapAnimationSpec = spring(dampingRatio = damping, stiffness = stiffness),
+            decayAnimationSpec = splineDecay,
+            snapAnimationSpec = spring(
+                dampingRatio = SWITCHER_SNAP_DAMPING,
+                stiffness = SWITCHER_SNAP_STIFFNESS,
+            ),
         )
     }
 }
@@ -664,7 +653,9 @@ private fun SwitcherCardRow(
 ) {
     BoxWithConstraints(modifier) {
         val cardWidth = maxWidth * SWITCHER_CARD_FRACTION
-        val cardHeight = maxHeight * SWITCHER_CARD_HEIGHT_FRACTION
+        // The card fills the row it is given; the breathing room around the
+        // switcher is [SwitcherEdgeGap], applied once by the caller.
+        val cardHeight = maxHeight
         val sidePadding = (maxWidth - cardWidth) / 2
         val cardShape = RoundedCornerShape(SwitcherCardCorner)
 

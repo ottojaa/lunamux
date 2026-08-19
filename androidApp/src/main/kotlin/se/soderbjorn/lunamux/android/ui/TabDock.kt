@@ -57,13 +57,11 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import kotlin.math.floor
-import se.soderbjorn.lunamux.android.BuildConfig
 import se.soderbjorn.lunamux.client.viewmodel.OverviewBackingViewModel.OverviewTab
 import se.soderbjorn.lunamux.client.viewmodel.OverviewBackingViewModel.UnlistedTab
 
@@ -91,11 +89,11 @@ internal const val DOCK_FALLOFF = 1f
  * @return the emphasis, 0..1.
  */
 private fun dockChipEmphasis(index: Int, focus: Float): Float =
-    (1f - abs(index - focus) * SwitcherTuning.dockFalloff).coerceIn(0f, 1f)
+    (1f - abs(index - focus) * DOCK_FALLOFF).coerceIn(0f, 1f)
 
 /**
  * The scale the chip at [index] is drawn at when the row sits at [focus]: full
- * size at the focus, [SwitcherTuning.dockSiblingScale] a card away.
+ * size at the focus, [DOCK_SIBLING_SCALE] a card away.
  *
  * Also what the strip's layout is computed from, so the two can never disagree.
  *
@@ -104,7 +102,7 @@ private fun dockChipEmphasis(index: Int, focus: Float): Float =
  * @return the scale factor.
  */
 private fun dockChipScale(index: Int, focus: Float): Float {
-    val sibling = SwitcherTuning.dockSiblingScale
+    val sibling = DOCK_SIBLING_SCALE
     return sibling + (1f - sibling) * dockChipEmphasis(index, focus)
 }
 
@@ -144,6 +142,8 @@ private fun dockChipScale(index: Int, focus: Float): Float {
  * @param onToggleSidebarHidden flip the long-pressed tab's hidden-from-sidebar
  *   flag (also hides it from the sessions list, which mirrors the sidebar).
  * @param onClose        confirm + close the long-pressed tab.
+ * @param modifier       layout modifier from [OverviewContent], which spaces the
+ *   dock evenly between the cards above it and the screen's bottom edge.
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -160,13 +160,12 @@ fun TabDock(
     onToggleHidden: (OverviewTab) -> Unit,
     onToggleSidebarHidden: (OverviewTab) -> Unit,
     onClose: (OverviewTab) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     if (tabs.isEmpty()) return
 
     // The tab chip whose context menu is currently open (by tab id).
     var menuTabId by remember { mutableStateOf<String?>(null) }
-    // Debug-only motion sliders (see SwitcherTuning); never composed in release.
-    var tuningOpen by remember { mutableStateOf(false) }
 
     // Each chip's measured width and the centre the Row placed it at, reported as
     // they are placed. Both are needed because the chips are drawn somewhere else
@@ -185,14 +184,14 @@ fun TabDock(
     }
 
     BoxWithConstraints(
-        Modifier
+        modifier
             .fillMaxWidth()
             .background(SidebarBackground)
             .clipToBounds(),
     ) {
         val density = LocalDensity.current
         val dockCentre = with(density) { maxWidth.toPx() } / 2f
-        val gapPx = with(density) { SwitcherTuning.dockGapDp.dp.toPx() }
+        val gapPx = with(density) { DOCK_CHIP_GAP_DP.dp.toPx() }
         // Where every chip should *appear*, given that the out-of-focus ones are
         // drawn smaller. Laying the strip out from scaled widths is the whole
         // point: a chip shrunk about its own centre leaves half its lost width as
@@ -224,7 +223,7 @@ fun TabDock(
         modifier = Modifier
             .wrapContentWidth(align = Alignment.Start, unbounded = true)
             .padding(vertical = 2.dp),
-        horizontalArrangement = Arrangement.spacedBy(SwitcherTuning.dockGapDp.dp),
+        horizontalArrangement = Arrangement.spacedBy(DOCK_CHIP_GAP_DP.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         tabs.forEachIndexed { index, tab ->
@@ -252,7 +251,7 @@ fun TabDock(
                         val scale = dockChipScale(index, focus)
                         scaleX = scale
                         scaleY = scale
-                        val siblingAlpha = SwitcherTuning.dockSiblingAlpha
+                        val siblingAlpha = DOCK_SIBLING_ALPHA
                         alpha = siblingAlpha + (1f - siblingAlpha) * dockChipEmphasis(index, focus)
                         // Slide from where the Row placed this chip to where the
                         // scaled-width walk says it belongs, with the focus point
@@ -338,30 +337,5 @@ fun TabDock(
             UnlistedTabsMenu(unlistedTabs = unlistedTabs, onSelect = onActivateUnlisted)
         }
     }
-
-        // Debug-only handle onto the motion sliders, pinned to the dock's corner
-        // so it never travels with the strip: tap opens them, long-press resets.
-        // Compiled into debug builds only — see SwitcherTuning, which goes away
-        // with them.
-        if (BuildConfig.DEBUG) {
-            Text(
-                "◍",
-                fontSize = 13.sp,
-                color = SidebarTextSecondary,
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(SidebarBackground)
-                    .combinedClickable(
-                        onClick = { tuningOpen = true },
-                        onLongClick = { SwitcherTuning.reset() },
-                    )
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-            )
-        }
-    }
-
-    if (tuningOpen) {
-        SwitcherTuningSheet(onDismiss = { tuningOpen = false })
     }
 }
