@@ -35,11 +35,16 @@ public class TextSelectionCursorController implements CursorController {
     // LUNAMUX: was ACTION_MORE, which called TerminalView.showContextMenu(). That is an
     // Activity-level affordance -- it needs a host that overrides onCreateContextMenu, which
     // is how Termux's Activity-based UI is built and is not something lunamux's Compose
-    // activity has. The item was therefore permanently dead (LMX-121). The extra actions now
-    // live directly in the floating bar's own overflow, which is the same "more" affordance
-    // one level less deep, and which works without an Activity contract.
-    public final int ACTION_SELECT_ALL = 3;
-    public final int ACTION_SHARE = 4;
+    // activity has. The item was therefore permanently dead (LMX-121). Rather than give the
+    // activity a context menu to satisfy one button, the bar is now flat: three real items and
+    // no submenu.
+    //
+    // A "Select all" briefly sat here too and was cut. It could only ever mean the visible
+    // screen -- the handles are on-screen views, and throwing them off screen to cover a
+    // 10k-line transcript is not a selection anyone can then adjust -- but a menu item named
+    // "Select all" that stops at the fold reads as a bug rather than a scope. Dragging a handle
+    // already does the job it was saving.
+    public final int ACTION_SHARE = 3;
 
     /** Whether "Paste" was last built enabled, so a refresh can skip a no-op menu rebuild. */
     private boolean mPasteEnabled;
@@ -140,10 +145,10 @@ public class TextSelectionCursorController implements CursorController {
                 mPasteEnabled = clipboardHasText();
                 menu.add(Menu.NONE, ACTION_COPY, Menu.NONE, R.string.copy_text).setShowAsAction(show);
                 menu.add(Menu.NONE, ACTION_PASTE, Menu.NONE, R.string.paste_text).setEnabled(mPasteEnabled).setShowAsAction(show);
-                // LUNAMUX: overflow items -- deliberately no setShowAsAction, so the floating
-                // bar keeps Copy/Paste inline and puts these behind its own overflow button.
-                menu.add(Menu.NONE, ACTION_SELECT_ALL, Menu.NONE, R.string.select_all_text);
-                menu.add(Menu.NONE, ACTION_SHARE, Menu.NONE, R.string.share_text);
+                // LUNAMUX: inline like the other two rather than hidden behind the overflow.
+                // With "Select all" gone it would have been an overflow button existing to hold
+                // a single item, which is the nesting the dead "More…" was guilty of.
+                menu.add(Menu.NONE, ACTION_SHARE, Menu.NONE, R.string.share_text).setShowAsAction(show);
                 return true;
             }
 
@@ -186,18 +191,12 @@ public class TextSelectionCursorController implements CursorController {
                         terminalView.stopTextSelectionMode();
                         terminalView.mTermSession.onPasteTextFromClipboard();
                         break;
-                    case ACTION_SELECT_ALL:
-                        // LUNAMUX: grow the selection to the whole visible screen, and stay in
-                        // selection mode -- the handles remain on screen, so this is a starting
-                        // point the user can drag further back into the transcript rather than a
-                        // terminal action. The bar's anchor follows via invalidate().
-                        selectAll();
-                        break;
                     case ACTION_SHARE:
-                        // LUNAMUX: the one genuinely useful thing behind the old dead "More…".
-                        // Stored first, and the selection stopped before the chooser is raised,
-                        // because the handles are window-level views that would otherwise float
-                        // above it.
+                        // LUNAMUX: hands the selection to another app in one step, where Copy
+                        // takes three (copy, leave, paste) -- the point of it is a stack trace
+                        // or a failing command going straight to Slack or a notes app. Stored
+                        // first, and the selection stopped before the chooser is raised, because
+                        // the handles are window-level views that would float above it.
                         mStoredSelectedText = getSelectedText();
                         terminalView.stopTextSelectionMode();
                         shareText(mStoredSelectedText);
@@ -345,27 +344,6 @@ public class TextSelectionCursorController implements CursorController {
             // surface here, and a greyed-out Paste is a better outcome than a crash.
             return false;
         }
-    }
-
-    /**
-     * LUNAMUX: grow the selection to cover the whole visible screen, staying in selection mode.
-     *
-     * Bound to the bar's "Select all". Scoped to what is on screen rather than the entire
-     * transcript so that both handles stay reachable -- the user drags them further back if
-     * they want more, which is the gesture the handles exist for. Called from the action-mode
-     * callback on the main thread.
-     *
-     * @see #getSelectedText()
-     */
-    private void selectAll() {
-        if (terminalView.mEmulator == null) return;
-        int topRow = terminalView.getTopRow();
-        mSelX1 = 0;
-        mSelX2 = terminalView.mEmulator.mColumns - 1;
-        mSelY1 = topRow;
-        mSelY2 = topRow + terminalView.mEmulator.mRows - 1;
-        // render() repositions both handles and re-anchors the bar off the new bounds.
-        terminalView.invalidate();
     }
 
     /**
