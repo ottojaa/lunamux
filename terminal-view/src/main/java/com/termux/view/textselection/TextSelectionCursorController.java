@@ -1,12 +1,11 @@
 package com.termux.view.textselection;
 
-import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Rect;
 import android.text.TextUtils;
 import android.view.ActionMode;
-import android.view.InputDevice;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.MotionEvent;
@@ -33,7 +32,31 @@ public class TextSelectionCursorController implements CursorController {
     private ActionMode mActionMode;
     public final int ACTION_COPY = 1;
     public final int ACTION_PASTE = 2;
-    public final int ACTION_MORE = 3;
+    // LUNAMUX: was ACTION_MORE, which called TerminalView.showContextMenu(). That is an
+    // Activity-level affordance -- it needs a host that overrides onCreateContextMenu, which
+    // is how Termux's Activity-based UI is built and is not something lunamux's Compose
+    // activity has. The item was therefore permanently dead (LMX-121). The extra actions now
+    // live directly in the floating bar's own overflow, which is the same "more" affordance
+    // one level less deep, and which works without an Activity contract.
+    public final int ACTION_SELECT_ALL = 3;
+    public final int ACTION_SHARE = 4;
+
+    /** Whether "Paste" was last built enabled, so a refresh can skip a no-op menu rebuild. */
+    private boolean mPasteEnabled;
+
+    /**
+     * Set when the system clipboard has changed under a live selection bar, so the next
+     * {@code onPrepareActionMode} re-reads it. Event-driven rather than polled: {@link #render()}
+     * invalidates the action mode on every frame, and {@code hasPrimaryClip()} is a binder call
+     * into the clipboard service -- asking it per frame would put a synchronous IPC in the draw
+     * path. It is also the only accurate way to do it, since from API 29 the clipboard reads as
+     * empty whenever the app is unfocused.
+     */
+    private boolean mClipboardDirty;
+
+    /** Registered for the lifetime of the action mode; null when nothing is listening. */
+    @Nullable
+    private ClipboardManager.OnPrimaryClipChangedListener mClipChangedListener;
 
     public TextSelectionCursorController(TerminalView terminalView) {
         this.terminalView = terminalView;
@@ -114,16 +137,36 @@ public class TextSelectionCursorController implements CursorController {
             public boolean onCreateActionMode(ActionMode mode, Menu menu) {
                 int show = MenuItem.SHOW_AS_ACTION_IF_ROOM | MenuItem.SHOW_AS_ACTION_WITH_TEXT;
 
-                ClipboardManager clipboard = (ClipboardManager) terminalView.getContext().getSystemService(Context.CLIPBOARD_SERVICE);
+                mPasteEnabled = clipboardHasText();
                 menu.add(Menu.NONE, ACTION_COPY, Menu.NONE, R.string.copy_text).setShowAsAction(show);
-                menu.add(Menu.NONE, ACTION_PASTE, Menu.NONE, R.string.paste_text).setEnabled(clipboard != null && clipboard.hasPrimaryClip()).setShowAsAction(show);
-                menu.add(Menu.NONE, ACTION_MORE, Menu.NONE, R.string.text_selection_more);
+                menu.add(Menu.NONE, ACTION_PASTE, Menu.NONE, R.string.paste_text).setEnabled(mPasteEnabled).setShowAsAction(show);
+                // LUNAMUX: overflow items -- deliberately no setShowAsAction, so the floating
+                // bar keeps Copy/Paste inline and puts these behind its own overflow button.
+                menu.add(Menu.NONE, ACTION_SELECT_ALL, Menu.NONE, R.string.select_all_text);
+                menu.add(Menu.NONE, ACTION_SHARE, Menu.NONE, R.string.share_text);
                 return true;
             }
 
             @Override
             public boolean onPrepareActionMode(ActionMode mode, Menu menu) {
-                return false;
+                // LUNAMUX: keep "Paste" in step with the clipboard for the life of the
+                // selection. Upstream built the item once and returned false forever, so a
+                // selection begun with an empty clipboard kept a greyed-out Paste even after
+                // the user had copied something -- a disabled button being indistinguishable
+                // from a dead one (LMX-120).
+                //
+                // render() invalidates the mode on every frame, so the common path here must
+                // cost nothing and must claim a change only when there is one: returning true
+                // unconditionally rebuilds and re-animates the floating bar every frame. The
+                // clipboard is therefore only re-read when its change listener has said so.
+                if (!mClipboardDirty) return false;
+                mClipboardDirty = false;
+                boolean pasteEnabled = clipboardHasText();
+                if (pasteEnabled == mPasteEnabled) return false;
+                mPasteEnabled = pasteEnabled;
+                MenuItem paste = menu.findItem(ACTION_PASTE);
+                if (paste != null) paste.setEnabled(pasteEnabled);
+                return true;
             }
 
             @Override
@@ -143,15 +186,21 @@ public class TextSelectionCursorController implements CursorController {
                         terminalView.stopTextSelectionMode();
                         terminalView.mTermSession.onPasteTextFromClipboard();
                         break;
-                    case ACTION_MORE:
-                        // We first store the selected text in case TerminalViewClient needs the
-                        // selected text before MORE button was pressed since we are going to
-                        // stop selection mode
+                    case ACTION_SELECT_ALL:
+                        // LUNAMUX: grow the selection to the whole visible screen, and stay in
+                        // selection mode -- the handles remain on screen, so this is a starting
+                        // point the user can drag further back into the transcript rather than a
+                        // terminal action. The bar's anchor follows via invalidate().
+                        selectAll();
+                        break;
+                    case ACTION_SHARE:
+                        // LUNAMUX: the one genuinely useful thing behind the old dead "More…".
+                        // Stored first, and the selection stopped before the chooser is raised,
+                        // because the handles are window-level views that would otherwise float
+                        // above it.
                         mStoredSelectedText = getSelectedText();
-                        // The text selection needs to be stopped before showing context menu,
-                        // otherwise handles will show above popup
                         terminalView.stopTextSelectionMode();
-                        terminalView.showContextMenu();
+                        shareText(mStoredSelectedText);
                         break;
                 }
 
@@ -182,15 +231,25 @@ public class TextSelectionCursorController implements CursorController {
 
             @Override
             public void onDestroyActionMode(ActionMode mode) {
-                // Ignore.
+                // LUNAMUX: the action mode's own teardown is the reliable place to drop the
+                // clipboard listener -- hide() can bail out early (its 300ms guard), whereas
+                // this fires however the mode ends, including when the system replaces it.
+                unregisterClipChangedListener();
             }
 
             @Override
             public void onGetContentRect(ActionMode mode, View view, Rect outRect) {
-                int x1 = Math.round(mSelX1 * terminalView.mRenderer.getFontWidth());
-                int x2 = Math.round(mSelX2 * terminalView.mRenderer.getFontWidth());
-                int y1 = Math.round((mSelY1 - 1 - terminalView.getTopRow()) * terminalView.mRenderer.getFontLineSpacing());
-                int y2 = Math.round((mSelY2 + 1 - terminalView.getTopRow()) * terminalView.mRenderer.getFontLineSpacing());
+                // LUNAMUX: go through the view's own cell -> pixel helpers instead of
+                // multiplying out the cell metrics here. onDraw translates the canvas by
+                // (-panX, contentOffsetY) to pan a grid wider than the view and to centre one
+                // that does not fill its height; getPointX/getPointY undo exactly those two
+                // offsets, and this rect -- which is what the floating bar anchors to -- did
+                // not, so the bar drifted away from the selection it belongs to as soon as the
+                // pane was panned or vertically centred.
+                int x1 = terminalView.getPointX(mSelX1);
+                int x2 = terminalView.getPointX(mSelX2);
+                int y1 = terminalView.getPointY(mSelY1 - 1);
+                int y2 = terminalView.getPointY(mSelY2 + 1);
 
                 if (x1 > x2) {
                     int tmp = x1;
@@ -207,6 +266,131 @@ public class TextSelectionCursorController implements CursorController {
                 outRect.set(x1, top, x2, bottom);
             }
         }, ActionMode.TYPE_FLOATING);
+
+        registerClipChangedListener();
+    }
+
+    /**
+     * LUNAMUX: start watching the system clipboard so the bar's "Paste" item can follow it.
+     *
+     * Called when the action mode is created; torn down again by
+     * {@link #unregisterClipChangedListener()} from {@code onDestroyActionMode}. The listener
+     * only marks state dirty and asks the mode to refresh -- reading the clipboard is left to
+     * {@code onPrepareActionMode}, which runs on the UI thread.
+     *
+     * @see #mClipboardDirty
+     */
+    private void registerClipChangedListener() {
+        if (mClipChangedListener != null) return;
+        ClipboardManager clipboard = clipboardManager();
+        if (clipboard == null) return;
+        mClipChangedListener = () -> {
+            mClipboardDirty = true;
+            if (mActionMode != null) mActionMode.invalidate();
+        };
+        try {
+            clipboard.addPrimaryClipChangedListener(mClipChangedListener);
+        } catch (Exception e) {
+            // Nothing to watch with; "Paste" simply keeps the state it was built with.
+            mClipChangedListener = null;
+        }
+    }
+
+    /**
+     * LUNAMUX: stop watching the system clipboard.
+     *
+     * Called from {@code onDestroyActionMode} and {@link #onDetached()}. Idempotent, because
+     * both can run for the same selection.
+     *
+     * @see #registerClipChangedListener()
+     */
+    private void unregisterClipChangedListener() {
+        if (mClipChangedListener == null) return;
+        ClipboardManager clipboard = clipboardManager();
+        if (clipboard != null) {
+            try {
+                clipboard.removePrimaryClipChangedListener(mClipChangedListener);
+            } catch (Exception e) {
+                // Already gone as far as the service is concerned; nothing to undo.
+            }
+        }
+        mClipChangedListener = null;
+        mClipboardDirty = false;
+    }
+
+    /**
+     * LUNAMUX: the system clipboard service, or null if this device does not expose one.
+     *
+     * @return the {@link ClipboardManager}, or null.
+     */
+    @Nullable
+    private ClipboardManager clipboardManager() {
+        return (ClipboardManager) terminalView.getContext().getSystemService(Context.CLIPBOARD_SERVICE);
+    }
+
+    /**
+     * LUNAMUX: whether a paste would produce anything, used to enable the bar's "Paste" item.
+     *
+     * @return true if the system clipboard holds a primary clip. Note that from API 29 the
+     * platform answers false whenever this app is unfocused -- which is precisely when no
+     * selection bar is up, so it costs nothing here.
+     */
+    private boolean clipboardHasText() {
+        ClipboardManager clipboard = clipboardManager();
+        if (clipboard == null) return false;
+        try {
+            return clipboard.hasPrimaryClip();
+        } catch (Exception e) {
+            // Reading the clipboard is an IPC into the system service; a dead source app can
+            // surface here, and a greyed-out Paste is a better outcome than a crash.
+            return false;
+        }
+    }
+
+    /**
+     * LUNAMUX: grow the selection to cover the whole visible screen, staying in selection mode.
+     *
+     * Bound to the bar's "Select all". Scoped to what is on screen rather than the entire
+     * transcript so that both handles stay reachable -- the user drags them further back if
+     * they want more, which is the gesture the handles exist for. Called from the action-mode
+     * callback on the main thread.
+     *
+     * @see #getSelectedText()
+     */
+    private void selectAll() {
+        if (terminalView.mEmulator == null) return;
+        int topRow = terminalView.getTopRow();
+        mSelX1 = 0;
+        mSelX2 = terminalView.mEmulator.mColumns - 1;
+        mSelY1 = topRow;
+        mSelY2 = topRow + terminalView.mEmulator.mRows - 1;
+        // render() repositions both handles and re-anchors the bar off the new bounds.
+        terminalView.invalidate();
+    }
+
+    /**
+     * LUNAMUX: hand [text] to the system share sheet.
+     *
+     * Bound to the bar's "Share", which replaced the dead "More…" item. Uses the view's own
+     * context (the hosting activity) so the chooser stacks on top of the app rather than
+     * starting its own task.
+     *
+     * @param text the selected text to share; null or empty is ignored.
+     */
+    private void shareText(String text) {
+        if (TextUtils.isEmpty(text)) return;
+        Intent send = new Intent(Intent.ACTION_SEND);
+        send.setType("text/plain");
+        send.putExtra(Intent.EXTRA_TEXT, text);
+        try {
+            terminalView.getContext().startActivity(Intent.createChooser(send, null));
+        } catch (Exception e) {
+            // No activity able to receive it, or a context that cannot start one. Nothing
+            // useful to say to the user, and certainly not worth taking the terminal down.
+            if (terminalView.mClient != null) {
+                terminalView.mClient.logStackTraceWithMessage("TextSelection", "Failed to share selected text", e);
+            }
+        }
     }
 
     @Override
@@ -347,6 +531,9 @@ public class TextSelectionCursorController implements CursorController {
 
     @Override
     public void onDetached() {
+        // LUNAMUX: the view is going away; make sure the clipboard service is not left holding
+        // a listener that closes over it.
+        unregisterClipChangedListener();
     }
 
     @Override

@@ -1,5 +1,9 @@
 <resources>
   <string name="paste_text">Paste</string>
   <string name="copy_text">Copy</string>
-  <string name="text_selection_more">More…</string>
+  <!-- Overflow items on the text-selection bar. "More…" used to sit here and opened an
+       Activity context menu that lunamux's Compose host does not provide, so it was dead;
+       these two replace it with the actions it would have offered. -->
+  <string name="select_all_text">Select all</string>
+  <string name="share_text">Share</string>
 </resources>
