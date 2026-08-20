@@ -1,7 +1,4 @@
 <resources>
   <string name="paste_text">Paste</string>
   <string name="copy_text">Copy</string>
-  <!-- Replaced "More…", which opened an Activity context menu that lunamux's Compose host
-       does not provide and so was permanently dead. -->
-  <string name="share_text">Share</string>
 </resources>
