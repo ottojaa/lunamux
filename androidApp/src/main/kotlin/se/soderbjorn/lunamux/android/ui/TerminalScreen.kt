@@ -40,6 +40,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imeAnimationTarget
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -76,6 +80,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -118,6 +123,13 @@ private const val PTY_RESUME_STALE_MS = 3_000L
 
 /** The phone's normal (driving) terminal font size in px. */
 private const val DRIVING_FONT_PX = 30
+
+/**
+ * How long the terminal will wait for the resync redraw that answers a cols-changing `Size`
+ * before giving up on it and resuming normal presentation. A safety valve for a server that
+ * cannot send one, never a pace — see the effect that uses it.
+ */
+private const val RESYNC_WAIT_TIMEOUT_MS = 1_000L
 
 /**
  * The mirror's zoom ceiling. `1.0` is the font that fills the view's height with the server's
@@ -230,7 +242,7 @@ private fun findLeafTitle(config: WindowConfig?, sessionId: String): String? {
  * @param sessionId the PTY session identifier to connect to on the server.
  * @param onBack callback invoked when the user navigates back to [TreeScreen].
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun TerminalScreen(
     sessionId: String,
@@ -325,12 +337,45 @@ fun TerminalScreen(
     // protocol change — but it IS a coupling: a change to when the server resyncs has a twin
     // here.
     //
-    // Two things read it, both consequences of the transcript being about to be rewritten: the
-    // pre-resize transcript drop below, and the scroll rule ([TranscriptScroll]) that makes a
-    // take-over land on the prompt. A plain holder rather than Compose state — it is written
-    // and read only on the main thread (the collector's dispatcher and the view's post), and it
-    // must not recompose anything.
-    val awaitingWidthResync = remember(sessionId) { booleanArrayOf(false) }
+    // Three things read it, all consequences of the transcript being about to be rewritten: the
+    // pre-resize transcript drop below, the scroll rule ([TranscriptScroll]) that makes a
+    // take-over land on the prompt, and the presentation freeze in the AndroidView update
+    // block. Compose state (not a plain holder) because that third reader is composition
+    // itself. Written only from the event collector, which runs on the main thread.
+    var awaitingWidthResync by remember(sessionId) { mutableStateOf(false) }
+
+    // Safety valve, not pacing. The freeze is released by the resync itself; a resync that
+    // never arrives — a server too old to synthesize one, a dropped frame — would otherwise
+    // leave this pane frozen at the mirror's font while it is the one driving. Far longer
+    // than a healthy round trip, short enough not to be worn as a stall. Same role, and the
+    // same reasoning, as [SizeVoteClock]'s timeout.
+    LaunchedEffect(sessionId, awaitingWidthResync) {
+        if (awaitingWidthResync) {
+            delay(RESYNC_WAIT_TIMEOUT_MS)
+            awaitingWidthResync = false
+        }
+    }
+
+    // True while the soft keyboard is sliding in or out. The root Surface pads by
+    // safeDrawing, which includes the IME inset, and Compose animates that inset frame by
+    // frame — so a keyboard animation relayouts this view on every frame of it, and each
+    // layout pass measures a new (rows) grid and asks the server for it. [SizeVoteClock]
+    // does not absorb that: it is clocked by the server's answers, and on a LAN an answer
+    // comes back in a couple of milliseconds, so a ~300 ms animation gets a long run of
+    // votes through. Every one is a real SIGWINCH and a full repaint by the program on the
+    // far end — the "it reflows several times" of taking a pane over and typing in it.
+    //
+    // The animation itself is the clock, the way a gesture is on web: `imeAnimationTarget`
+    // is where the inset is heading and `ime` is where it is now, and they differ exactly
+    // while an animation is running. No duration to tune.
+    val imeSettling = with(LocalDensity.current) {
+        WindowInsets.ime.getBottom(this) != WindowInsets.imeAnimationTarget.getBottom(this)
+    }
+
+    // Read from [remeasureAndAsk], which is remembered once and would otherwise capture the
+    // value this composition happened to have. Same holder idiom as [zoomFloorRef] below.
+    val imeSettlingRef = remember(sessionId) { booleanArrayOf(false) }
+    imeSettlingRef[0] = imeSettling
 
     // The driving font size. Deliberately NOT pinch-adjustable: see onScale — while
     // driving, a font change re-fits this phone's grid and re-votes the SHARED PTY
@@ -433,9 +478,27 @@ fun TerminalScreen(
                     localGrid = natural
                     gridFlow.value = natural.cols to natural.rows
                 }
-                sizeVotes.request(natural.cols, natural.rows, force = false)
+                // Measuring stays unconditional — see above, and note that a truthful
+                // [localGrid] is what makes the fallback below safe. Only the ask waits for
+                // the keyboard to finish moving.
+                //
+                // If that signal ever failed to clear, this would stop following the box
+                // rather than wedge the pane: a take-over and Reformat both force, which
+                // never comes through here, and typing calls [ensureDriving], which forces
+                // whenever the measured grid differs from the server's. The size would then
+                // land on the first keystroke instead of when the keyboard opened.
+                if (!imeSettlingRef[0]) {
+                    sizeVotes.request(natural.cols, natural.rows, force = false)
+                }
             }
         }
+    }
+
+    // The falling edge: ask once for the grid the settled layout actually has. Every
+    // intermediate frame of the animation was measured and dropped; this is the one that
+    // reaches the PTY, so opening or closing the keyboard costs exactly one resize.
+    LaunchedEffect(sessionId, imeSettling) {
+        if (!imeSettling) terminalViewRef.value?.let { remeasureAndAsk(it) }
     }
 
     // The user's font size is the other input to the natural grid: a bigger font means fewer
@@ -560,7 +623,7 @@ fun TerminalScreen(
                     // server answers with a full resync, and it is what makes everything
                     // below (the transcript drop, the scroll rule) apply.
                     val colsChanged = serverGrid != null && serverGrid?.first != sz.first
-                    if (colsChanged) awaitingWidthResync[0] = true
+                    if (colsChanged) awaitingWidthResync = true
                     serverGrid = sz
                     // Server drifted off the grid we forced to → another device
                     // reclaimed; drop the optimistic guard so the next real input
@@ -608,26 +671,27 @@ fun TerminalScreen(
                         if (colsChanged) runCatching { emulator.mainBuffer.clearTranscript() }
                         runCatching { emulator.resize(sz.first, sz.second, 1, 1) }
                     }
-                    // Repaint after the resize. A cols change is followed by the
-                    // synthesized redraw Bytes (which repaint), but a rows-only Size
-                    // carries no redraw, and even on a cols change the view otherwise
-                    // shows the pre-resize buffer until those Bytes land — the
-                    // "invisible until you scroll" flash on take-over. Respect a
+                    // Repaint after the resize. A rows-only Size carries no redraw, so
+                    // without this the view shows the pre-resize buffer until the next
+                    // output lands — the "invisible until you scroll" flash. Respect a
                     // scrolled-up user: onScreenUpdated force-snaps to the bottom, so
                     // only call it at the bottom and otherwise just invalidate in place.
                     //
-                    // A cols change is the exception: the transcript the offset pointed into
-                    // is gone (above), and a horizontal pan into content laid out at the old
-                    // width means nothing either, so both are reset rather than preserved.
+                    // A COLS change deliberately paints nothing. Its answer — the resync —
+                    // is right behind it on the same socket (the server does not debounce a
+                    // take-over), and it repaints from the presentation this pane is about to
+                    // adopt. Painting here as well would put one frame of half-resized
+                    // content on screen for no gain. The scroll bookkeeping is still reset
+                    // now, so the jump-to-bottom pill cannot flash in the gap: the transcript
+                    // that offset pointed into is gone, and a horizontal pan into content laid
+                    // out at the old width means nothing either.
                     terminalViewRef.value?.post {
                         val view = terminalViewRef.value ?: return@post
                         if (colsChanged) {
                             view.topRow = 0
-                            view.resetPan()
                             scrollPause.lastOffset = 0
                             scrolledUp = false
                             hasNewOutput = false
-                            view.onScreenUpdated()
                         } else if (view.topRow < 0) {
                             view.invalidate()
                         } else {
@@ -697,8 +761,8 @@ fun TerminalScreen(
             // the server emits one per cols change and it is the only RIS it authors between
             // them. Consumed here (not merely read) so the very next chunk, which is ordinary
             // output again, goes back to the normal rule.
-            val widthResync = isReset && awaitingWidthResync[0]
-            if (widthResync) awaitingWidthResync[0] = false
+            val widthResync = isReset && awaitingWidthResync
+            if (widthResync) awaitingWidthResync = false
             // A terminal reset (the reconnect replay's prefix, or a real
             // `reset` on the server) reverts the emulator's colour table to
             // the stock scheme — re-apply the theme before repainting or
@@ -1102,7 +1166,16 @@ fun TerminalScreen(
                         // only on a real change. The relayout re-runs the layout listener,
                         // which measures at the USER font — so a mirror-fit font change
                         // cannot move the natural grid.
-                        if (appliedFontRef[0] != appliedFontSize) {
+                        //
+                        // Held across a width resync. The Size frame that starts a take-over
+                        // flips `passive` at once, but the content that answers it lands a beat
+                        // later — so swapping the font on the Size alone repaints the OLD
+                        // screen at the NEW size, a visible resize of the wrong thing that the
+                        // resync then immediately undoes. Freezing the presentation until the
+                        // resync arrives makes the whole take-over one transition instead of
+                        // two. Same for the mirror window's placement below, and for the same
+                        // reason.
+                        if (!awaitingWidthResync && appliedFontRef[0] != appliedFontSize) {
                             val cellBefore = view.cellWidthPx
                             appliedFontRef[0] = appliedFontSize
                             view.setTextSize(appliedFontSize)
@@ -1123,11 +1196,13 @@ fun TerminalScreen(
                         // The window's vertical placement, and its collapse on take-over: a
                         // driving grid fits its own view, so there is nothing to centre and
                         // nowhere to pan.
-                        if (mirrorWindow != null) {
-                            view.setContentOffsetY(mirrorWindow.offsetY)
-                        } else {
-                            view.setContentOffsetY(0f)
-                            view.resetPan()
+                        if (!awaitingWidthResync) {
+                            if (mirrorWindow != null) {
+                                view.setContentOffsetY(mirrorWindow.offsetY)
+                            } else {
+                                view.setContentOffsetY(0f)
+                                view.resetPan()
+                            }
                         }
                         // Recomposition (e.g. our own scroll-pause state changes)
                         // must not yank a scrolled-up user back to the bottom:
