@@ -294,6 +294,19 @@ class MiniTerminalRegistry(
                                 // server synthesizes the redraw at the PTY dims — the
                                 // thumbnail just renders at exactly that width.
                                 runCatching {
+                                    // Drop the transcript on a cols change first, the same
+                                    // way the full-screen path does and for the same reason:
+                                    // TerminalBuffer.resize re-emits every character of the
+                                    // old state when the columns move, and the resync the
+                                    // server sends on exactly that condition discards the
+                                    // result. Free here — [snapshotFrame] reads screen rows
+                                    // only, so a thumbnail never had a use for the transcript
+                                    // in the first place. The emulator's own columns are the
+                                    // last size the server sent: a thumbnail never resizes
+                                    // itself.
+                                    if (emulator.mColumns != ev.cols) {
+                                        emulator.mainBuffer.clearTranscript()
+                                    }
                                     emulator.resize(ev.cols, ev.rows, 1, 1)
                                 }
                             is PtyEvent.Bytes -> {
