@@ -329,8 +329,17 @@ fun TerminalScreen(
     // before the server has said anything, where the view's own dims are all there is.
     val serverGridPin = remember(sessionId) { AtomicReference<Pair<Int, Int>?>(null) }
 
-    // Set when a COLS-changing Size lands, cleared by the RIS-bearing redraw that answers it.
-    // The server emits its synthesized resync on exactly this condition and no other (see
+    // "A resync is on its way, so hold everything that depends on the content until it lands."
+    // Cleared by the RIS-bearing redraw that answers it.
+    //
+    // Armed from two directions. Outbound: this client asks for a grid whose COLS differ from
+    // the server's ([ensureDriving], Reformat) — the earliest moment it can possibly know, and
+    // the one that matters, because the server seq's `Governance` ahead of `Size` and
+    // `isPassive` is `!driving`, so waiting for the Size means the presentation has already
+    // flipped and repainted the old screen at the new font. Inbound: a cols-changing Size this
+    // client did not ask for (the laptop reclaiming), where there is no earlier signal.
+    //
+    // The server emits its synthesized resync on exactly one condition and no other (see
     // TerminalSessionManager.applySize: `if (colsChanged) resyncTrigger.tryEmit(...)`), so both
     // ends derive "a resync is coming" from the same comparison of the same two numbers and
     // cannot drift. Deliberately inferred rather than flagged on the wire — it needs no
@@ -522,6 +531,15 @@ fun TerminalScreen(
                 val target = local.cols to local.rows
                 if (serverGrid != target && drivingTo.get() != target) {
                     drivingTo.set(target)
+                    // Arm the presentation freeze HERE, on the way out, not when the answer
+                    // comes back. The server seq's `Governance` ahead of `Size` on purpose,
+                    // and `isPassive` is `!driving` the moment a verdict lands — so by the
+                    // time the cols-changing Size arrives the font has already swapped and
+                    // repainted the old, still-mirrored screen at the new size. Measured on
+                    // device: that wrong frame is the first of the three repaints a take-over
+                    // used to show. Asking is the earliest point at which this client knows a
+                    // resync is coming, and it covers the whole round trip.
+                    if (local.cols != serverGrid?.first) awaitingWidthResync = true
                     sizeVotes.request(target.first, target.second, force = true)
                 }
             }
@@ -996,6 +1014,9 @@ fun TerminalScreen(
                             // already reports it). Record it so it doesn't
                             // immediately re-drive on the next keystroke.
                             drivingTo.set(natural.cols to natural.rows)
+                            // Same reason as [ensureDriving]: arm the freeze on the way out,
+                            // before the Governance frame can flip the presentation.
+                            if (natural.cols != serverGrid?.first) awaitingWidthResync = true
                             sizeVotes.request(natural.cols, natural.rows, force = true)
                         }
                     }) {
