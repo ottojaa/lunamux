@@ -489,7 +489,6 @@ private val ptyReadDispatcher = Executors.newCachedThreadPool { runnable ->
  *  - A headless [ScreenEmulator] mirrors what xterm.js renders so
  *    [detectState] runs against the actual on-screen text.
  */
-@OptIn(FlowPreview::class)
 class TerminalSession private constructor(
     private val pty: PtyProcess,
     initialScrollback: ByteArray? = null,
@@ -578,12 +577,21 @@ class TerminalSession private constructor(
     private val _events = MutableSharedFlow<SessionEvent>(replay = 0, extraBufferCapacity = 1024)
     override val events: SharedFlow<SessionEvent> = _events.asSharedFlow()
 
-    // Fired on every cols change; the heavyweight synthesized resync redraw is
-    // coalesced to fire once, RESYNC_DEBOUNCE_MS after the last change in a storm.
-    private val resyncTrigger = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
+    // Fired on every cols change, carrying whether the change came from a deliberate
+    // take-over. The heavyweight synthesized resync redraw is coalesced to fire once,
+    // RESYNC_DEBOUNCE_MS after the last change in a storm — except for a take-over,
+    // which goes out at once. @see resyncJob
+    private val resyncTrigger = MutableSharedFlow<Boolean>(extraBufferCapacity = 8)
 
     @Volatile
     private var bytesWritten: Long = 0
+
+    /**
+     * Wall-clock time of the last byte the program produced. Read by [awaitProgramQuiet] to
+     * tell whether the program has finished answering a `SIGWINCH` yet.
+     */
+    @Volatile
+    private var lastOutputAtMs: Long = 0
 
     override fun bytesWritten(): Long = bytesWritten
 
@@ -638,6 +646,7 @@ class TerminalSession private constructor(
                 break
             }
             if (n <= 0) break
+            lastOutputAtMs = System.currentTimeMillis()
             osc.feed(buf, n)
             screen.feed(buf, n)
             val chunk = buf.copyOf(n)
@@ -660,15 +669,77 @@ class TerminalSession private constructor(
         for (ev in eventChannel) _events.emit(ev)
     }
 
-    // Emits one synthesized resync redraw after a cols-change storm settles. The
-    // redraw is RIS-prefixed and self-contained, so only the last one matters; the
+    // Emits the synthesized resync redraw that answers a cols change. The redraw is
+    // RIS-prefixed and self-contained, so only the last one in a storm matters; the
     // per-change Size events still go out immediately from applySize.
+    //
+    // A *take-over* is not a storm. It is one deliberate act by one user, with nothing
+    // following it to coalesce with, and until its redraw lands the phone that just
+    // seized the session is looking at the pre-resize screen — so the debounce was pure
+    // added latency on the one path where latency is the whole complaint. A force
+    // therefore emits at once and cancels whatever ambient redraw was pending, which
+    // would otherwise re-send the same half-megabyte a moment later.
+    //
+    // Written as an explicit pending job rather than `debounce`, because the operator
+    // cannot be told to let one value through immediately.
     private val resyncJob: Job = scope.launch {
-        resyncTrigger.debounce(RESYNC_DEBOUNCE_MS).collect {
-            synchronized(outboundLock) {
-                val bytes = grid.synthesizeRedraw()
-                eventChannel.trySend(SessionEvent.Output(++eventSeq, bytes))
+        val self = this
+        var pending: Job? = null
+        resyncTrigger.collect { forced ->
+            pending?.cancel()
+            pending = self.launch {
+                if (forced) awaitProgramQuiet() else delay(RESYNC_DEBOUNCE_MS)
+                emitResync()
             }
+        }
+    }
+
+    /**
+     * Wait for the program to finish answering the `SIGWINCH` the resize just sent it.
+     *
+     * A redraw synthesized the instant the grid changes describes the screen *before* the
+     * program has re-rendered — and virtually every full-screen program re-renders on a
+     * resize. The client then paints the redraw and, a moment later, paints again when the
+     * program's own output arrives: two visible changes for one take-over, measured on device
+     * at 797 ms and 962 ms after the tap. Letting the program speak first folds them into one.
+     *
+     * This is emphatically not the storm debounce that used to sit on this path. That one was
+     * keyed on *size changes* and made a deliberate take-over wait out a window built for a
+     * laptop dragging a pane divider. This is keyed on *the program's own output*, which is
+     * the thing actually worth waiting for, and it returns as soon as the program stops —
+     * usually well inside [PROGRAM_QUIET_MS] of the ioctl.
+     *
+     * The cap matters: a program that never goes quiet (a progress bar, a build log) would
+     * otherwise hold the redraw for ever, and the client is sitting on a frozen screen until
+     * it lands.
+     */
+    private suspend fun awaitProgramQuiet() {
+        val deadline = System.currentTimeMillis() + PROGRAM_QUIET_CAP_MS
+        while (true) {
+            val now = System.currentTimeMillis()
+            val quietFor = now - lastOutputAtMs
+            if (quietFor >= PROGRAM_QUIET_MS || now >= deadline) return
+            delay(minOf(PROGRAM_QUIET_MS - quietFor, deadline - now))
+        }
+    }
+
+    /**
+     * Serialize the canonical grid and queue it as one ordered output event.
+     *
+     * Called only by [resyncJob], on its own coroutine rather than from the caller that
+     * changed the size: the redraw is the expensive part of a resize (hundreds of
+     * kilobytes for a busy session) and it is built under [outboundLock], so running it
+     * on a client's request path would stall every other client's outbound traffic for
+     * the duration.
+     *
+     * @see se.soderbjorn.lunamux.pty.SessionGrid.synthesizeRedraw
+     */
+    private fun emitResync() {
+        synchronized(outboundLock) {
+            val split = grid.synthesizeSplitRedraw()
+            eventChannel.trySend(
+                SessionEvent.Resync(++eventSeq, _sizeEvents.value.first, split),
+            )
         }
     }
 
@@ -733,7 +804,7 @@ class TerminalSession private constructor(
         val vote = SizeVote(max(MIN_GRID_COLS, cols), max(MIN_GRID_ROWS, rows), priority)
         val next = sizeArbiter.setSize(clientId, vote)
         publishGovernance()
-        applySize(next)
+        applySize(next, forced = false)
     }
 
     /** Register [clientId]'s declared governance [posture] for this connection. */
@@ -756,14 +827,14 @@ class TerminalSession private constructor(
         val only = SizeVote(max(MIN_GRID_COLS, cols), max(MIN_GRID_ROWS, rows), priority)
         val next = sizeArbiter.forceSize(clientId, only)
         publishGovernance()
-        applySize(next)
+        applySize(next, forced = true)
     }
 
     /** Unregister a client's size entry when its WebSocket disconnects. */
     override fun removeClient(clientId: String) {
         val next = sizeArbiter.remove(clientId)
         publishGovernance()
-        applySize(next)
+        applySize(next, forced = false)
     }
 
     /**
@@ -775,7 +846,7 @@ class TerminalSession private constructor(
     override fun noteClientInput(clientId: String) {
         val next = sizeArbiter.noteInput(clientId)
         publishGovernance()
-        applySize(next)
+        applySize(next, forced = false)
     }
 
     /**
@@ -819,8 +890,11 @@ class TerminalSession private constructor(
      * null when the effective size is unchanged — the per-keystroke guard).
      *
      * @param next the new effective grid, or null when nothing changed.
+     * @param forced true when the change came from a deliberate take-over
+     *   ([forceClientSize]) rather than an ambient vote. Only affects *when* the resync
+     *   redraw is sent — immediately, instead of after the storm debounce. @see resyncJob
      */
-    private fun applySize(next: Pair<Int, Int>?) {
+    private fun applySize(next: Pair<Int, Int>?, forced: Boolean) {
         val (c, r) = next ?: return
         val colsChanged = c != _sizeEvents.value.first
         screen.resize(c, r)
@@ -843,7 +917,7 @@ class TerminalSession private constructor(
         _sizeEvents.value = Pair(c, r)
         // Only a cols change rewraps the grid, so only then does the client need a
         // resync redraw; a rows-only change is carried by the Size event alone.
-        if (colsChanged) resyncTrigger.tryEmit(Unit)
+        if (colsChanged) resyncTrigger.tryEmit(forced)
     }
 
     override fun attachPayload(): AttachPayload = synchronized(outboundLock) {
@@ -973,6 +1047,19 @@ class TerminalSession private constructor(
          * RIS-prefixed and self-contained, emitting just the last one is correct.
          */
         private const val RESYNC_DEBOUNCE_MS = 100L
+
+        /**
+         * How long the PTY must be quiet before a forced resize's redraw is synthesized —
+         * long enough to catch the program's `SIGWINCH` repaint, short enough to be invisible
+         * next to the round trip it rides on. @see awaitProgramQuiet
+         */
+        private const val PROGRAM_QUIET_MS = 40L
+
+        /**
+         * Upper bound on that wait, for a program that never stops writing. The redraw is what
+         * releases the client's frozen screen, so it can never be held indefinitely.
+         */
+        private const val PROGRAM_QUIET_CAP_MS = 250L
 
         /**
          * Spawn the user's shell on a fresh PTY and wrap it in a session.

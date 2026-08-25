@@ -243,9 +243,37 @@ class LunamuxClient(
     fun openPtySocket(
         sessionId: String,
         initialGrid: kotlinx.coroutines.flow.StateFlow<Pair<Int, Int>?>? = null,
+    ): PtySocket = openPtySocket(sessionId, initialGrid, backfill = false)
+
+    /**
+     * As [openPtySocket], declaring whether this consumer can apply a **split** resync.
+     *
+     * A deliberate overload rather than a third defaulted parameter: Kotlin default arguments
+     * do not survive the Swift bridge, so adding one would rename the method iOS binds to and
+     * break its build. The two-argument form stays exactly what it was, and only a caller that
+     * handles [PtyEvent.Backfill] opts in.
+     *
+     * @param sessionId the PTY session to attach to.
+     * @param initialGrid see [openPtySocket].
+     * @param backfill true when this consumer applies [PtyEvent.Backfill] frames — placing the
+     *   lines above its screen, or deliberately dropping them (a thumbnail renders no history).
+     *   False keeps the server sending one whole redraw, which is what every client saw before
+     *   the split existed.
+     * @return the socket.
+     * @see ptyConnectQuery
+     */
+    fun openPtySocket(
+        sessionId: String,
+        initialGrid: kotlinx.coroutines.flow.StateFlow<Pair<Int, Int>?>?,
+        backfill: Boolean,
     ): PtySocket {
         demoServer?.let { return DemoPtySocket(sessionId = sessionId, server = it, scope = scope) }
-        return RealPtySocket(client = this, sessionId = sessionId, initialGrid = initialGrid)
+        return RealPtySocket(
+            client = this,
+            sessionId = sessionId,
+            initialGrid = initialGrid,
+            backfill = backfill,
+        )
     }
 
     /**

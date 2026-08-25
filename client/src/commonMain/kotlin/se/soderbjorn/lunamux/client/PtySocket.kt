@@ -74,6 +74,25 @@ sealed interface PtyEvent {
      *   this is false — see [PtyPresentation.isPassive].
      */
     data class Governance(val driving: Boolean, val governed: Boolean) : PtyEvent
+
+    /**
+     * Styled history lines belonging **above** the current screen — the second half of a
+     * split resync, arriving after the screen the renderer has already painted.
+     *
+     * Deliberately not [Bytes]: bytes can only be *appended* to a terminal, and appending
+     * scrollback below the live screen is exactly the mangle the whole server-authoritative
+     * model exists to prevent. A renderer lays these out at its own width and places them
+     * above the screen; one that cannot (an alternate-buffer TUI refuses a backfill) drops
+     * them and simply has less scrollback until the next resync.
+     *
+     * Only ever delivered to a socket that declared `backfill=1` on connect, so a renderer
+     * that ignores this branch never sees one.
+     *
+     * @property cols the width the lines were authored for; drop the frame when the local
+     *   grid has already moved past it. @property data the styled line stream.
+     * @see se.soderbjorn.lunamux.PtyServerMessage.Backfill
+     */
+    class Backfill(val cols: Int, val data: ByteArray) : PtyEvent
 }
 
 /**

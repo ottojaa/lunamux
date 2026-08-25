@@ -26,6 +26,20 @@ import kotlinx.coroutines.launch
 import se.soderbjorn.lunamux.client.PtySocket
 import androidx.compose.runtime.MutableState
 import java.util.concurrent.atomic.AtomicReference
+import com.termux.terminal.TerminalOutput
+
+/** Sink for the throwaway emulator [applyHistoryBackfill] uses as a layout engine. */
+private val DISCARDING_OUTPUT = object : TerminalOutput() {
+    override fun write(data: ByteArray?, offset: Int, count: Int) = Unit
+    override fun titleChanged(oldTitle: String?, newTitle: String?) = Unit
+    override fun onCopyTextToClipboard(text: String?) = Unit
+    override fun onPasteTextFromClipboard() = Unit
+    override fun onBell() = Unit
+    override fun onColorsChanged() = Unit
+}
+
+/** Headless cell pixel size for that scratch grid — never rendered, only wrapped against. */
+private const val NOMINAL_CELL_PX = 8
 
 /**
  * Build a [TerminalSession] subclass whose I/O is wired to the supplied
@@ -223,6 +237,54 @@ internal fun createExternalTerminalSession(
             scope.launch { handleInput(bytes) }
         }
     }
+}
+
+/**
+ * Place a stream of styled history lines **above** the emulator's screen.
+ *
+ * The second half of a split resync: the server sends the screen (which the caller has already
+ * fed and painted) and then the older scrollback separately, because bytes fed to a terminal
+ * can only ever be appended and appending scrollback under a live screen is the mangle the
+ * whole server-authoritative model exists to prevent.
+ *
+ * The lines are laid out by the same means the server uses for its own backfill — a throwaway
+ * emulator of the target width, which wraps them exactly as this one would have — and the
+ * resulting rows are handed to [TerminalEmulator.backfillAboveScreen].
+ *
+ * Refused, silently, when the grid has already moved off [cols] — the lines would wrap wrong,
+ * and the next resync carries the history again. When there is more history than the ring can
+ * take, the newest rows are kept and the oldest dropped, which is what a bounded transcript
+ * does anyway.
+ *
+ * Caller must hold the emulator lock — the rows are spliced into the live ring.
+ *
+ * @param emulator the live emulator to place the rows above.
+ * @param cols the width the lines were authored at; a mismatch drops the frame.
+ * @param bytes the styled line stream (`SGR` runs + CRLF per line).
+ * @return how many rows were placed; 0 when the frame was refused or empty.
+ * @see se.soderbjorn.lunamux.client.PtyEvent.Backfill
+ */
+internal fun applyHistoryBackfill(emulator: TerminalEmulator, cols: Int, bytes: ByteArray): Int {
+    if (bytes.isEmpty() || cols <= 0 || emulator.mColumns != cols) return 0
+    // The MAIN buffer, always: that is where history lives, whether or not a TUI currently
+    // holds the alternate screen. Nothing the alt frame addresses is disturbed by it.
+    val main = emulator.mainBuffer
+    val free = main.transcriptFreeRows()
+    if (free <= 0) return 0
+    // A scratch grid of the same width wraps the lines exactly as this emulator would have.
+    // One row of screen and `free` of transcript: every completed line lands in the transcript
+    // (each carries its own CRLF), and sizing it to the space actually available means the
+    // scratch does the newest-first truncation for us by evicting its own oldest.
+    val scratch = TerminalEmulator(
+        DISCARDING_OUTPUT, cols, 1, NOMINAL_CELL_PX, NOMINAL_CELL_PX, free + 1, null,
+    )
+    runCatching { scratch.append(bytes, bytes.size) }.getOrElse { return 0 }
+    val produced = scratch.mainBuffer.activeTranscriptRows
+    if (produced <= 0) return 0
+    // External row -produced..-1 is the transcript, oldest first. The rows are handed over
+    // wholesale — the scratch is discarded straight after.
+    val rows = Array(produced) { i -> scratch.mainBuffer.getRow(i - produced) }
+    return runCatching { main.prependTranscript(rows) }.getOrDefault(0)
 }
 
 /**

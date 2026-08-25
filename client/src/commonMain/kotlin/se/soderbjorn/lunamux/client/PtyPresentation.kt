@@ -35,12 +35,23 @@ import se.soderbjorn.lunamux.TerminalInputClassifier
  * (mirrors how `posture` already rides the URL). Omitted when [grid] is null
  * (the server then synthesizes at the current PTY dims).
  *
+ * `backfill=1` declares that this client can apply a **split** resync — screen first, older
+ * scrollback in a separate frame that it prepends (see [se.soderbjorn.lunamux.PtyServerMessage.Backfill]).
+ * A client that does not declare it keeps receiving one whole redraw, which is why the split
+ * needs no compatibility break.
+ *
  * @param posture `"viewer"` or `"driver"` (see server `readClientPosture`).
  * @param grid the client's current (cols, rows), or null to let the server choose.
- * @return the query suffix, e.g. `"&posture=viewer&cols=80&rows=24"`.
+ * @param backfill true when this client applies [se.soderbjorn.lunamux.PtyServerMessage.Backfill]
+ *   frames rather than appending them as output.
+ * @return the query suffix, e.g. `"&posture=viewer&backfill=1&cols=80&rows=24"`.
  */
-internal fun ptyConnectQuery(posture: String, grid: Pair<Int, Int>?): String {
-    val base = "&posture=$posture"
+internal fun ptyConnectQuery(
+    posture: String,
+    grid: Pair<Int, Int>?,
+    backfill: Boolean = false,
+): String {
+    val base = if (backfill) "&posture=$posture&backfill=1" else "&posture=$posture"
     return if (grid != null && grid.first > 0 && grid.second > 0) {
         "$base&cols=${grid.first}&rows=${grid.second}"
     } else {
