@@ -25,6 +25,7 @@ import kotlinx.serialization.json.Json
 import se.soderbjorn.lunamux.auth.DeviceAuth
 import se.soderbjorn.lunamux.persistence.SettingsRepository
 import se.soderbjorn.lunamux.pty.ClientPosture
+import se.soderbjorn.lunamux.pty.GridSerializer
 
 /** Tolerant JSON used for parsing inbound /pty control messages. */
 private val controlJson = Json { ignoreUnknownKeys = true }
@@ -78,11 +79,18 @@ internal fun Route.ptyRoutes(settingsRepo: SettingsRepository) {
         val qCols = call.request.queryParameters["cols"]?.toIntOrNull()
         val qRows = call.request.queryParameters["rows"]?.toIntOrNull()
 
+        // Whether this client can apply a SPLIT resync — screen first, older scrollback in a
+        // frame of its own that it places above rather than appends. Opt-in, and deliberately
+        // so: a client that has not been taught the `backfill` frame would append the history
+        // below its live screen, which is precisely the mangle the canonical grid exists to
+        // prevent. Absent (every client that predates the split) → one whole redraw, as before.
+        val backfillCapable = call.request.queryParameters["backfill"] == "1"
+
         // One writer coroutine over the single ordered event stream. It sends the
         // attach Size + synthesized redraw first, then streams live events gated by
         // seq — exact ordering by construction, replacing the old wall-clock merge{}.
         val writerJob = launch {
-            session.streamAttach(clientId, qCols, qRows) { frame -> send(frame) }
+            session.streamAttach(clientId, qCols, qRows, backfillCapable) { frame -> send(frame) }
         }
 
         try {
@@ -159,6 +167,7 @@ internal suspend fun TermSession.streamAttach(
     clientId: String,
     qCols: Int?,
     qRows: Int?,
+    backfillCapable: Boolean = false,
     send: suspend (Frame) -> Unit,
 ) {
     if (qCols != null && qRows != null && qCols > 0 && qRows > 0) {
@@ -184,6 +193,22 @@ internal suspend fun TermSession.streamAttach(
                 is SessionEvent.Size -> if (ev.seq > attachSeq) send(Frame.Text(sizeFrame(ev.cols, ev.rows)))
                 is SessionEvent.Governance ->
                     if (ev.seq > attachSeq) send(Frame.Text(governanceFrame(clientId, ev.governorClientId)))
+                // The one event rendered differently per connection. A capable client gets the
+                // screen first — which is all it needs to paint — and the older scrollback
+                // after, announced so it is placed above rather than appended. Everyone else
+                // gets the halves spliced back into the single whole redraw they have always
+                // received, so the split costs no client a compatibility break.
+                is SessionEvent.Resync -> if (ev.seq > attachSeq) {
+                    if (backfillCapable) {
+                        send(Frame.Binary(true, ev.split.screenFirst))
+                        if (ev.split.backfill.isNotEmpty()) {
+                            send(Frame.Text(backfillFrame(ev.cols)))
+                            send(Frame.Binary(true, ev.split.backfill))
+                        }
+                    } else {
+                        send(Frame.Binary(true, GridSerializer.joinForLegacy(ev.split)))
+                    }
+                }
             }
         }
 }
@@ -215,6 +240,20 @@ private fun governanceFrame(clientId: String, governorClientId: String?): String
  * @param rows the effective PTY rows.
  * @return the JSON control frame body.
  */
+/**
+ * Encode the control frame that announces a history backfill.
+ *
+ * Sent immediately before the binary frame carrying the lines, and only to a connection that
+ * declared `backfill=1`. The announcement rides ahead of the payload rather than wrapping it
+ * because the payload is an opaque terminal stream with no room for a header of its own.
+ *
+ * @param cols the width the lines were authored at.
+ * @return the JSON control frame body.
+ * @see PtyServerMessage.Backfill
+ */
+private fun backfillFrame(cols: Int): String =
+    windowJson.encodeToString<PtyServerMessage>(PtyServerMessage.Backfill(cols = cols))
+
 private fun sizeFrame(cols: Int, rows: Int): String =
     windowJson.encodeToString<PtyServerMessage>(PtyServerMessage.Size(cols, rows))
 

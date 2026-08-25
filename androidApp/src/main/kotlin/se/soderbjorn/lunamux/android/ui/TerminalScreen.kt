@@ -273,7 +273,7 @@ fun TerminalScreen(
     // synthesizes the attach redraw at our width (no 80x24-seed reflow flash). Fed by
     // [remeasureAndAsk] from the view's layout listener below.
     val gridFlow = remember(sessionId) { MutableStateFlow<Pair<Int, Int>?>(null) }
-    val ptySocket = remember(sessionId) { client.openPtySocket(sessionId, gridFlow) }
+    val ptySocket = remember(sessionId) { client.openPtySocket(sessionId, gridFlow, true) }
     val ctrlSticky = remember { mutableStateOf(false) }
     val shiftSticky = remember { mutableStateOf(false) }
     var swipeInputActive by remember { mutableStateOf(false) }
@@ -766,9 +766,24 @@ fun TerminalScreen(
                     }
                     return@collect
                 }
+                // The older half of a split resync: scrollback for ABOVE the screen the
+                // screen-first frame just painted. Applied on the emulator's own thread — it
+                // lays the lines out through a scratch grid and splices rows into the ring,
+                // which is far too much to do on the collector's — and deliberately without
+                // touching the scroll position: the user is looking at the screen this arrived
+                // behind, and rows added above it do not move it.
+                is PtyEvent.Backfill -> {
+                    val placed = withContext(emulatorDispatcher) {
+                        synchronized(emulator) {
+                            applyHistoryBackfill(emulator, ev.cols, ev.data)
+                        }
+                    }
+                    if (placed > 0) terminalViewRef.value?.post { terminalViewRef.value?.invalidate() }
+                    return@collect
+                }
                 is PtyEvent.Bytes -> Unit
             }
-            val chunk = ev.data
+            val chunk = (ev as PtyEvent.Bytes).data
             withContext(emulatorDispatcher) {
                 synchronized(emulator) {
                     emulator.append(chunk, chunk.size)

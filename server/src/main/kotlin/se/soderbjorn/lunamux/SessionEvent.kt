@@ -54,6 +54,27 @@ sealed interface SessionEvent {
      * @see se.soderbjorn.lunamux.pty.ClientSizeArbiter.governor
      */
     class Governance(override val seq: Long, val governorClientId: String?) : SessionEvent
+
+    /**
+     * The synthesized redraw that answers a cols change, carried in both forms so each
+     * connection can be served the one it declared it understands.
+     *
+     * Not an [Output]: a connection that can apply a backfill receives two frames here (the
+     * screen, then the older history announced as a `backfill` control frame), and one that
+     * cannot receives the halves spliced back into a single whole redraw. Deciding that per
+     * connection is what lets the split ship without a client-compatibility break — the work
+     * of serializing is still done exactly once, in [se.soderbjorn.lunamux.pty.SessionGrid].
+     *
+     * @property cols the grid the halves were authored at; travels to the client so it can
+     *   refuse a backfill whose width no longer matches its own.
+     * @see se.soderbjorn.lunamux.pty.GridSerializer.SplitRedraw
+     * @see se.soderbjorn.lunamux.pty.GridSerializer.joinForLegacy
+     */
+    class Resync(
+        override val seq: Long,
+        val cols: Int,
+        val split: se.soderbjorn.lunamux.pty.GridSerializer.SplitRedraw,
+    ) : SessionEvent
 }
 
 /**

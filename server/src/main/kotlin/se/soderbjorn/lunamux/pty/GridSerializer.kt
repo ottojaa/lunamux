@@ -39,6 +39,16 @@ import com.termux.terminal.WcWidth
 
 object GridSerializer {
 
+    /**
+     * How many of the newest history lines ride with the screen in a [SplitRedraw]. A couple of
+     * screenfuls on any device, so scrolling back a little after a take-over needs nothing that
+     * has not arrived; everything older follows in the backfill.
+     */
+    const val SPLIT_TAIL_LINES = 200
+
+    /** Bytes of `RIS` + `ED3` that open every [serialize] output — the splice point in [joinForLegacy]. */
+    private const val RESET_PREFIX_LEN = 6
+
     private const val ESC = "\u001b"
     private const val CSI = "\u001b["
     private const val OSC = "\u001b]"
@@ -94,6 +104,79 @@ object GridSerializer {
         }
         emitEpilogue(sb, e)
         return sb.toString().toByteArray(Charsets.UTF_8)
+    }
+
+    /**
+     * A resync split in two so the receiver can paint before the whole thing has arrived.
+     *
+     * @property screenFirst a complete, self-contained redraw — `RIS` + `ED3` + the newest
+     *   [SPLIT_TAIL_LINES] history lines + the screen + the state epilogue. Correct on its own:
+     *   a receiver that stops here has a right screen and a short scrollback.
+     * @property backfill the *older* history, as a bare styled line stream with no `RIS` and no
+     *   epilogue. Belongs above the screen [screenFirst] painted, so it cannot simply be
+     *   appended — see [se.soderbjorn.lunamux.PtyServerMessage.Backfill]. Empty when the whole
+     *   history fitted in the tail.
+     * @see joinForLegacy
+     */
+    class SplitRedraw(val screenFirst: ByteArray, val backfill: ByteArray)
+
+    /**
+     * Serialize the grid as a [SplitRedraw].
+     *
+     * The measured problem: a busy 143x42 session serializes to about half a megabyte, history
+     * first, with the part the user is waiting for — the prompt — at the very end. A phone
+     * taking that pane over saw nothing for ~735 ms. [SplitRedraw.screenFirst] is the same
+     * bytes minus the old history, so it lands in a fraction of the time.
+     *
+     * @param e the source emulator (caller holds the grid monitor).
+     * @param history the committed logical lines, oldest first.
+     * @param pending see [serialize].
+     * @param tailLines how many of the newest history lines ride along with the screen.
+     * @return the two halves.
+     */
+    fun serializeSplit(
+        e: TerminalEmulator,
+        history: List<LogicalLine> = emptyList(),
+        pending: LogicalLine? = null,
+        tailLines: Int = SPLIT_TAIL_LINES,
+    ): SplitRedraw {
+        val cut = (history.size - tailLines.coerceAtLeast(1)).coerceAtLeast(0)
+        val older = history.subList(0, cut)
+        val tail = history.subList(cut, history.size)
+        val sb = StringBuilder(older.sumOf { it.text.length + 16 })
+        emitHistory(sb, older)
+        return SplitRedraw(
+            screenFirst = serialize(e, tail, pending),
+            backfill = if (older.isEmpty()) ByteArray(0) else sb.toString().toByteArray(Charsets.UTF_8),
+        )
+    }
+
+    /**
+     * Rebuild the single whole-redraw form from a [SplitRedraw], for a connection that did not
+     * declare it can apply a backfill.
+     *
+     * Byte-identical to [serialize] over the same inputs, and cheaply so: [emitHistory] writes
+     * each line independently (a full SGR per run, no state carried between lines), so the two
+     * history halves concatenate exactly. The splice point is the fixed `RIS` + `ED3` prefix —
+     * the old history has to land after the screen has been cleared and before the tail it
+     * continues into.
+     *
+     * The one thing that could have differed is [serialize]'s `homeFirst`, which is decided by
+     * whether *anything* precedes the screen flow. It cannot differ here: a non-empty history
+     * always leaves a non-empty tail (the split takes the newest lines), so both forms see
+     * history before the screen.
+     *
+     * @param split the two halves.
+     * @return the whole redraw, as an old client expects it.
+     */
+    fun joinForLegacy(split: SplitRedraw): ByteArray {
+        if (split.backfill.isEmpty()) return split.screenFirst
+        val a = split.screenFirst
+        val out = ByteArray(a.size + split.backfill.size)
+        a.copyInto(out, 0, 0, RESET_PREFIX_LEN)
+        split.backfill.copyInto(out, RESET_PREFIX_LEN)
+        a.copyInto(out, RESET_PREFIX_LEN + split.backfill.size, RESET_PREFIX_LEN, a.size)
+        return out
     }
 
     /**

@@ -442,6 +442,20 @@ class SessionGrid(cols: Int, rows: Int, initialAnswerSink: ((ByteArray) -> Unit)
     }
 
     /**
+     * Synthesize the resync as a [GridSerializer.SplitRedraw]: the screen plus a recent tail
+     * of history, and the older history separately for the receiver to place above it.
+     *
+     * Called by `TerminalSession`'s resync emitter, which hands each attached connection
+     * whichever form it declared it can apply.
+     *
+     * @return the two halves, consistent under one monitor hold.
+     * @see GridSerializer.serializeSplit
+     */
+    fun synthesizeSplitRedraw(): GridSerializer.SplitRedraw = synchronized(emulator) {
+        GridSerializer.serializeSplit(emulator, history.lines(), history.pendingLine())
+    }
+
+    /**
      * The redraw bytes and the grid dims they were authored at, taken under one
      * hold of the grid monitor so the two can never disagree.
      *

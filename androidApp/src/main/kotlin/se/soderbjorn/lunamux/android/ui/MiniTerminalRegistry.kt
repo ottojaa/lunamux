@@ -230,7 +230,11 @@ class MiniTerminalRegistry(
      */
     private fun createEntry(sessionId: String): Entry {
         val dispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
-        val socket = client.openPtySocket(sessionId)
+        // Backfill-capable so the server sends this thumbnail the screen first and the older
+        // scrollback separately — the screen is the entire thing a thumbnail draws
+        // ([snapshotFrame] reads screen rows only), so it paints a resize sooner and the
+        // history it will never render is dropped below.
+        val socket = client.openPtySocket(sessionId, null, true)
         // No view backs a registry emulator; the ref stays null. The session never votes a
         // size on its own (only the layout listener in TerminalScreen does, and there is no
         // view here), and a thumbnail never takes input, so its take-over gate is a no-op.
@@ -325,6 +329,9 @@ class MiniTerminalRegistry(
                             // never votes, so it is never the governor and has nothing to
                             // change when governance moves.
                             is PtyEvent.Governance -> Unit
+                            // A thumbnail renders the screen and nothing else, so scrollback
+                            // that belongs above it has nowhere to go and nothing to show.
+                            is PtyEvent.Backfill -> Unit
                             PtyEvent.Reset -> {
                                 val ris = byteArrayOf(0x1b, 'c'.code.toByte())
                                 emulator.append(ris, ris.size)

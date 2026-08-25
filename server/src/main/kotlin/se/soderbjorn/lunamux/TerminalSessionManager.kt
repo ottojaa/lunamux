@@ -586,6 +586,13 @@ class TerminalSession private constructor(
     @Volatile
     private var bytesWritten: Long = 0
 
+    /**
+     * Wall-clock time of the last byte the program produced. Read by [awaitProgramQuiet] to
+     * tell whether the program has finished answering a `SIGWINCH` yet.
+     */
+    @Volatile
+    private var lastOutputAtMs: Long = 0
+
     override fun bytesWritten(): Long = bytesWritten
 
     init {
@@ -639,6 +646,7 @@ class TerminalSession private constructor(
                 break
             }
             if (n <= 0) break
+            lastOutputAtMs = System.currentTimeMillis()
             osc.feed(buf, n)
             screen.feed(buf, n)
             val chunk = buf.copyOf(n)
@@ -679,15 +687,39 @@ class TerminalSession private constructor(
         var pending: Job? = null
         resyncTrigger.collect { forced ->
             pending?.cancel()
-            pending = null
-            if (forced) {
+            pending = self.launch {
+                if (forced) awaitProgramQuiet() else delay(RESYNC_DEBOUNCE_MS)
                 emitResync()
-            } else {
-                pending = self.launch {
-                    delay(RESYNC_DEBOUNCE_MS)
-                    emitResync()
-                }
             }
+        }
+    }
+
+    /**
+     * Wait for the program to finish answering the `SIGWINCH` the resize just sent it.
+     *
+     * A redraw synthesized the instant the grid changes describes the screen *before* the
+     * program has re-rendered — and virtually every full-screen program re-renders on a
+     * resize. The client then paints the redraw and, a moment later, paints again when the
+     * program's own output arrives: two visible changes for one take-over, measured on device
+     * at 797 ms and 962 ms after the tap. Letting the program speak first folds them into one.
+     *
+     * This is emphatically not the storm debounce that used to sit on this path. That one was
+     * keyed on *size changes* and made a deliberate take-over wait out a window built for a
+     * laptop dragging a pane divider. This is keyed on *the program's own output*, which is
+     * the thing actually worth waiting for, and it returns as soon as the program stops —
+     * usually well inside [PROGRAM_QUIET_MS] of the ioctl.
+     *
+     * The cap matters: a program that never goes quiet (a progress bar, a build log) would
+     * otherwise hold the redraw for ever, and the client is sitting on a frozen screen until
+     * it lands.
+     */
+    private suspend fun awaitProgramQuiet() {
+        val deadline = System.currentTimeMillis() + PROGRAM_QUIET_CAP_MS
+        while (true) {
+            val now = System.currentTimeMillis()
+            val quietFor = now - lastOutputAtMs
+            if (quietFor >= PROGRAM_QUIET_MS || now >= deadline) return
+            delay(minOf(PROGRAM_QUIET_MS - quietFor, deadline - now))
         }
     }
 
@@ -704,8 +736,10 @@ class TerminalSession private constructor(
      */
     private fun emitResync() {
         synchronized(outboundLock) {
-            val bytes = grid.synthesizeRedraw()
-            eventChannel.trySend(SessionEvent.Output(++eventSeq, bytes))
+            val split = grid.synthesizeSplitRedraw()
+            eventChannel.trySend(
+                SessionEvent.Resync(++eventSeq, _sizeEvents.value.first, split),
+            )
         }
     }
 
@@ -1013,6 +1047,19 @@ class TerminalSession private constructor(
          * RIS-prefixed and self-contained, emitting just the last one is correct.
          */
         private const val RESYNC_DEBOUNCE_MS = 100L
+
+        /**
+         * How long the PTY must be quiet before a forced resize's redraw is synthesized —
+         * long enough to catch the program's `SIGWINCH` repaint, short enough to be invisible
+         * next to the round trip it rides on. @see awaitProgramQuiet
+         */
+        private const val PROGRAM_QUIET_MS = 40L
+
+        /**
+         * Upper bound on that wait, for a program that never stops writing. The redraw is what
+         * releases the client's frozen screen, so it can never be held indefinitely.
+         */
+        private const val PROGRAM_QUIET_CAP_MS = 250L
 
         /**
          * Spawn the user's shell on a fresh PTY and wrap it in a session.

@@ -935,4 +935,34 @@ sealed class PtyServerMessage {
         val driving: Boolean,
         val governed: Boolean = true,
     ) : PtyServerMessage()
+
+    /**
+     * Announces that the **next binary frame** on this connection is a history
+     * *backfill*: styled logical lines belonging **above** the current screen, not a
+     * continuation of the output stream.
+     *
+     * Why the redraw is split at all. A cols change is answered by a synthesized resync —
+     * scrollback first, then the screen — and for a busy session that is most of a megabyte
+     * with the part the user is waiting for (the prompt) at the very end. Measured on device,
+     * a phone taking a pane over saw nothing at all for ~735 ms while it arrived. Sending the
+     * screen and a recent tail first lets the client paint in a fraction of that; the older
+     * scrollback follows and is prepended, which is invisible unless the user scrolls up.
+     *
+     * A backfill cannot be a plain output frame because bytes can only ever be *appended* to
+     * a terminal. The receiver lays the lines out at its own width and places them above the
+     * screen (`TerminalEmulator.backfillAboveScreen`), which is the same primitive the server
+     * uses to reveal history into a grown grid.
+     *
+     * Only sent to connections that asked for it (`&backfill=1` on the `/pty` URL). Everyone
+     * else keeps receiving one whole redraw, so this adds no client-compatibility break.
+     *
+     * @param cols the width the lines were authored for — the server grid at the time. A
+     *   receiver whose own grid has already moved on should drop the frame rather than lay
+     *   out at the wrong width; the next resync will carry the history again.
+     */
+    @Serializable
+    @SerialName("backfill")
+    data class Backfill(
+        val cols: Int,
+    ) : PtyServerMessage()
 }
