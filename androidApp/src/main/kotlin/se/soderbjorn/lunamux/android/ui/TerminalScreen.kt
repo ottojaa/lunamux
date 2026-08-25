@@ -783,7 +783,9 @@ fun TerminalScreen(
                 }
                 is PtyEvent.Bytes -> Unit
             }
-            val chunk = (ev as PtyEvent.Bytes).data
+            // Every other branch above returns, so this is the Bytes case — but as a cast it
+            // would become a crash the day a branch is added that falls through instead.
+            val chunk = (ev as? PtyEvent.Bytes)?.data ?: return@collect
             withContext(emulatorDispatcher) {
                 synchronized(emulator) {
                     emulator.append(chunk, chunk.size)
