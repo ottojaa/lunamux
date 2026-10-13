@@ -802,6 +802,55 @@ public final class TerminalBuffer {
         }
     }
 
+    /**
+     * LUNAMUX ADDITION. How many more transcript rows this buffer could hold.
+     *
+     * @return free rows above the oldest history, 0 for a screen-only ring.
+     * @see #prependTranscript(TerminalRow[])
+     */
+    public int transcriptFreeRows() {
+        if (mTotalRows <= mScreenRows) return 0;
+        return mTotalRows - mScreenRows - mActiveTranscriptRows;
+    }
+
+    /**
+     * LUNAMUX ADDITION. Insert rows at the OLDEST end of the transcript.
+     * <p>
+     * The counterpart to {@link #backfillAboveScreen} for a ring that <em>has</em> a
+     * transcript. That method rotates a screen-only ring so rows appear above the screen, and
+     * refuses here by design ({@code mTotalRows != mScreenRows}); a client buffer needs the
+     * other operation — history older than everything it already holds, placed before its
+     * oldest row, with the screen and the existing transcript left exactly where they are.
+     * <p>
+     * Used to apply the second half of a split resync, where the server sends the screen and a
+     * recent tail first so the client can paint, and the older scrollback after. Nothing on
+     * screen moves, so it is safe to call while the user is reading, and safe under an
+     * alternate-buffer TUI as long as the caller targets the main buffer (the alt frame's
+     * addressing is untouched by the main buffer's history).
+     * <p>
+     * When {@code rows} is longer than {@link #transcriptFreeRows}, the <em>newest</em> rows
+     * are kept — those are the ones the user reaches by scrolling up a little — and the oldest
+     * are dropped, which is what a bounded transcript does anyway.
+     *
+     * @param rows the rows to insert, oldest first, laid out at this buffer's width.
+     * @return how many rows were placed.
+     */
+    public int prependTranscript(TerminalRow[] rows) {
+        if (rows.length == 0) return 0;
+        int free = transcriptFreeRows();
+        if (free <= 0) return 0;
+        final int take = Math.min(free, rows.length);
+        final int firstSrc = rows.length - take;
+        // Internal index of the current oldest transcript row; the new rows go before it.
+        final int oldest = ((mScreenFirstRow - mActiveTranscriptRows) % mTotalRows + mTotalRows) % mTotalRows;
+        for (int i = 0; i < take; i++) {
+            int internal = ((oldest - take + i) % mTotalRows + mTotalRows) % mTotalRows;
+            mLines[internal] = rows[firstSrc + i];
+        }
+        mActiveTranscriptRows += take;
+        return take;
+    }
+
     public void clearTranscript() {
         if (mScreenFirstRow < mActiveTranscriptRows) {
             Arrays.fill(mLines, mTotalRows + mScreenFirstRow - mActiveTranscriptRows, mTotalRows, null);

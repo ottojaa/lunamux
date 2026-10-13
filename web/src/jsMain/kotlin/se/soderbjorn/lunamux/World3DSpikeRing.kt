@@ -287,6 +287,9 @@ internal fun buildRingPane(spec: PaneSpec, n: Int, scene: Scene, chrome: SpikeCh
                                 // A ring pane is a mirror by construction — it never
                                 // drives — so governance changes nothing here.
                                 is PtyServerMessage.Governance -> Unit
+                                // Unreachable: web never declares `backfill=1`, so the server
+                                // never splits a resync for it.
+                                is PtyServerMessage.Backfill -> Unit
                             }
                         }
                     } else {

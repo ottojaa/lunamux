@@ -54,6 +54,12 @@ class RealPtySocket internal constructor(
     private val client: LunamuxClient,
     override val sessionId: String,
     private val initialGrid: StateFlow<Pair<Int, Int>?>? = null,
+    /**
+     * Whether this consumer applies [PtyEvent.Backfill] frames. Declared on the connect URL,
+     * so the server only ever splits a resync for a socket that asked; false keeps the whole
+     * redraw arriving as one output frame, exactly as before the split existed.
+     */
+    private val backfill: Boolean = false,
 ) : PtySocket {
     // One ordered stream of Bytes | Size | Reset. `replay = 64` lets a late
     // subscriber (a screen that composes after the socket connected) catch up
@@ -133,7 +139,8 @@ class RealPtySocket internal constructor(
                         // Viewer posture: this (mobile) client mirrors the desktop's PTY
                         // size and does not govern it until the user deliberately takes
                         // over. See PtyRoutes.readClientPosture / ptyConnectQuery.
-                        client.wsUrlWithAuth("/pty/$sessionId") + ptyConnectQuery("viewer", grid)
+                        client.wsUrlWithAuth("/pty/$sessionId") +
+                            ptyConnectQuery("viewer", grid, backfill = backfill)
                     )
                     _activeSession.value = session
                     lastTrafficAtMillis = Clock.System.now().toEpochMilliseconds()
@@ -145,10 +152,24 @@ class RealPtySocket internal constructor(
                         _events.emit(PtyEvent.Reset)
                     }
                     everConnected = true
+                    // Set by a `backfill` control frame and consumed by the binary frame it
+                    // announces: that one carries scrollback to place ABOVE the screen, not
+                    // output to append. Confined to this collector, which is single-threaded
+                    // per connection, and cleared on every binary frame so a malformed pair
+                    // cannot make an ordinary output chunk be mistaken for history.
+                    var pendingBackfillCols: Int? = null
                     session.incoming.consumeEach { frame ->
                         lastTrafficAtMillis = Clock.System.now().toEpochMilliseconds()
                         when (frame) {
-                            is Frame.Binary -> _events.emit(PtyEvent.Bytes(frame.readBytes()))
+                            is Frame.Binary -> {
+                                val cols = pendingBackfillCols
+                                pendingBackfillCols = null
+                                if (cols != null) {
+                                    _events.emit(PtyEvent.Backfill(cols, frame.readBytes()))
+                                } else {
+                                    _events.emit(PtyEvent.Bytes(frame.readBytes()))
+                                }
+                            }
                             is Frame.Text -> runCatching {
                                 val msg = client.json.decodeFromString<PtyServerMessage>(
                                     frame.readText()
@@ -169,6 +190,13 @@ class RealPtySocket internal constructor(
                                         _events.emit(
                                             PtyEvent.Governance(msg.driving, msg.governed)
                                         )
+                                    }
+                                    // Nothing is emitted here: this frame only says what the
+                                    // NEXT binary frame is. Emitting a marker event would put
+                                    // it on [events] ahead of the bytes it describes, and every
+                                    // consumer would have to carry the same latch anyway.
+                                    is PtyServerMessage.Backfill -> {
+                                        pendingBackfillCols = msg.cols
                                     }
                                 }
                             }

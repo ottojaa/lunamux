@@ -415,6 +415,10 @@ fun connectPane(entry: TerminalEntry) {
                         entry.driving = if (msg.governed) msg.driving else null
                         applyMirrorPresentation(entry)
                     }
+                    // Unreachable: web does not declare `backfill=1` on its `/pty` URL, so
+                    // the server never splits a resync for it — it keeps receiving one whole
+                    // redraw. Present only because the message type is sealed.
+                    is PtyServerMessage.Backfill -> Unit
                 }
             }
         } else {
