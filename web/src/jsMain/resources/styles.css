@@ -3527,3 +3527,118 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 :root[data-dt-chrome="blended"] .world-status-bar.world-status-empty {
     border-top: none;
 }
+
+/* ── Agents overview (AgentsOverview.kt) ──
+   Topbar chip plus the ⌘⇧A overlay. Needs-you rows use the amber accent,
+   working rows the cyan one; history rows are dimmed. Lifted above the pane
+   modals so it opens over whatever is on screen. */
+.ao-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 8px;
+    border: 1px solid var(--t-border, rgba(255, 255, 255, 0.15));
+    border-radius: 12px;
+    background: transparent;
+    color: var(--t-text, var(--text-primary));
+    font: 600 12px/1 var(--dt-font-sidebar, system-ui, sans-serif);
+    cursor: pointer;
+}
+.ao-chip:hover { background: var(--t-hover, rgba(255, 255, 255, 0.08)); }
+.ao-chip-need { color: #f2b84b; }
+.ao-chip-work { color: #56d4e6; }
+.ao-chip-sep { opacity: 0.4; }
+
+.ao-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 100001;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 12vh;
+    background: rgba(0, 0, 0, 0.45);
+}
+.ao-panel {
+    width: min(860px, 94vw);
+    max-height: 70vh;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--t-border, #2a5662);
+    border-radius: 12px;
+    background: var(--dt-window-bg, var(--t-surface, #0b1d23));
+    color: var(--t-text, #e8f6f8);
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+    font: 13px/1.35 var(--dt-font-sidebar, system-ui, sans-serif);
+    overflow: hidden;
+}
+.ao-search {
+    margin: 12px;
+    padding: 9px 12px;
+    border: 1px solid var(--t-accent, #56d4e6);
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 14px;
+    outline: none;
+}
+.ao-list { flex: 1; overflow-y: auto; padding: 0 12px 8px; }
+.ao-heading {
+    padding: 10px 4px 4px;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    opacity: 0.6;
+}
+.ao-row {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) minmax(0, 1.25fr) 64px 84px;
+    align-items: start;
+    gap: 8px;
+    padding: 8px 6px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    cursor: pointer;
+}
+.ao-row.ao-needs { background: rgba(242, 184, 75, 0.08); }
+.ao-row.ao-selected { border-color: var(--t-accent, #56d4e6); }
+.ao-row.ao-history .ao-title { opacity: 0.75; }
+.ao-icon { text-align: center; }
+.ao-state-needs_you { color: #f2b84b; }
+.ao-state-working { color: #56d4e6; }
+.ao-state-idle, .ao-state-ended { color: #86a0a8; }
+.ao-main { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.ao-glyph { color: #e0957f; }
+.ao-tag {
+    padding: 0 5px;
+    border: 1px solid #86a0a8;
+    border-radius: 4px;
+    color: #86a0a8;
+    font-size: 10px;
+}
+.ao-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ao-link, .ao-repo { flex: none; font-size: 11px; opacity: 0.65; }
+.ao-now { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.8; }
+.ao-needs .ao-now {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    color: #f6d48c;
+    opacity: 1;
+}
+.ao-now.ao-error { color: #ff7b72; opacity: 1; }
+.ao-age { text-align: right; opacity: 0.6; }
+.ao-needs .ao-age { color: #f2b84b; opacity: 1; }
+.ao-action { text-align: right; opacity: 0.7; }
+.ao-selected .ao-action { opacity: 1; color: var(--t-accent, #56d4e6); }
+.ao-more { padding: 6px 4px; font-size: 12px; text-decoration: underline; opacity: 0.7; cursor: pointer; }
+.ao-empty { padding: 24px 4px; text-align: center; opacity: 0.6; }
+.ao-hint {
+    padding: 8px 14px;
+    border-top: 1px solid var(--t-border, #2a5662);
+    font-size: 11px;
+    opacity: 0.6;
+}
+.lunamux-app-settings-claude-error { color: #ff7b72; font-size: 12px; }
