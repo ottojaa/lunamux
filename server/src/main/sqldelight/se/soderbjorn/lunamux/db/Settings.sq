@@ -11,6 +11,30 @@ CREATE TABLE IF NOT EXISTS pane_scrollback (
     rows       INTEGER
 );
 
+CREATE TABLE IF NOT EXISTS agent_sessions (
+    id                  TEXT NOT NULL PRIMARY KEY,
+    agent               TEXT NOT NULL,
+    agent_session_id    TEXT,
+    source              TEXT NOT NULL,
+    leaf_id             TEXT,
+    terminal_session_id TEXT,
+    cwd                 TEXT,
+    repo                TEXT,
+    branch              TEXT,
+    worktree_path       TEXT,
+    title               TEXT,
+    first_prompt        TEXT,
+    transcript_path     TEXT,
+    links               TEXT NOT NULL DEFAULT '',
+    state               TEXT NOT NULL,
+    state_since         INTEGER NOT NULL,
+    now_line            TEXT,
+    question            TEXT,
+    last_screen         TEXT,
+    created_at          INTEGER NOT NULL,
+    ended_at            INTEGER
+);
+
 selectByKey:
 SELECT value FROM settings WHERE key = ?;
 
@@ -31,3 +55,25 @@ DELETE FROM pane_scrollback WHERE leaf_id = ?;
 
 selectAllScrollbackLeafIds:
 SELECT leaf_id FROM pane_scrollback;
+
+upsertAgentSession:
+INSERT OR REPLACE INTO agent_sessions(
+    id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
+    worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
+    question, last_screen, created_at, ended_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+selectOpenAgentSessions:
+SELECT * FROM agent_sessions WHERE state != 'ended' ORDER BY created_at;
+
+selectRecentEndedAgentSessions:
+SELECT * FROM agent_sessions WHERE state = 'ended' ORDER BY ended_at DESC LIMIT ?;
+
+selectAgentSessionByAgentId:
+SELECT * FROM agent_sessions WHERE agent = ? AND agent_session_id = ? ORDER BY created_at DESC LIMIT 1;
+
+selectAgentSessionById:
+SELECT * FROM agent_sessions WHERE id = ?;
+
+endOpenAgentSessions:
+UPDATE agent_sessions SET state = 'ended', ended_at = ?, state_since = ? WHERE state != 'ended';

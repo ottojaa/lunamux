@@ -274,12 +274,19 @@ internal fun buildRepublishSnapshot(sharedPath: String, inMemSnapshot: JsonObjec
  * connected clients via the returned shared flow. Replay is 1 so newly
  * connected clients get the latest snapshot immediately.
  */
-internal fun installSessionStatePoller(scope: CoroutineScope): MutableSharedFlow<Map<String, String?>> {
+internal fun installSessionStatePoller(
+    scope: CoroutineScope,
+    agentTracker: AgentSessionTracker,
+): MutableSharedFlow<Map<String, String?>> {
     val sessionStates = MutableSharedFlow<Map<String, String?>>(replay = 1)
     scope.launch {
         while (true) {
             delay(3_000)
-            sessionStates.emit(TerminalSessions.resolveStates())
+            val states = TerminalSessions.resolveStates()
+            sessionStates.emit(states)
+            runCatching {
+                agentTracker.onPoll(TerminalSessions.list().mapNotNull { (id, _) -> livePaneSnapshot(id, states) })
+            }.onFailure { LoggerFactory.getLogger("AgentSessions").warn("Agent session poll failed", it) }
         }
     }
     return sessionStates

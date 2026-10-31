@@ -144,6 +144,36 @@ class SettingsRepository(
             """.trimIndent(),
             parameters = 0,
         )
+        // Same story for the agent-session history table.
+        driver.execute(
+            identifier = null,
+            sql = """
+                CREATE TABLE IF NOT EXISTS agent_sessions (
+                    id                  TEXT NOT NULL PRIMARY KEY,
+                    agent               TEXT NOT NULL,
+                    agent_session_id    TEXT,
+                    source              TEXT NOT NULL,
+                    leaf_id             TEXT,
+                    terminal_session_id TEXT,
+                    cwd                 TEXT,
+                    repo                TEXT,
+                    branch              TEXT,
+                    worktree_path       TEXT,
+                    title               TEXT,
+                    first_prompt        TEXT,
+                    transcript_path     TEXT,
+                    links               TEXT NOT NULL DEFAULT '',
+                    state               TEXT NOT NULL,
+                    state_since         INTEGER NOT NULL,
+                    now_line            TEXT,
+                    question            TEXT,
+                    last_screen         TEXT,
+                    created_at          INTEGER NOT NULL,
+                    ended_at            INTEGER
+                )
+            """.trimIndent(),
+            parameters = 0,
+        )
         // Same no-.sqm story for columns added to an existing table: bring
         // pre-existing DBs up to the current shape. SQLite has no
         // ADD COLUMN IF NOT EXISTS, so the "duplicate column name" error on
@@ -425,6 +455,94 @@ class SettingsRepository(
      */
     fun allScrollbackLeafIds(): Set<String> =
         database.settingsQueries.selectAllScrollbackLeafIds().executeAsList().toSet()
+
+    /**
+     * Insert or replace one agent-session record.
+     *
+     * Called by [se.soderbjorn.lunamux.AgentSessionTracker] whenever a record
+     * opens, changes state or ends.
+     *
+     * @param r the record to store, keyed by [AgentSessionRecord.id].
+     */
+    fun saveAgentSession(r: AgentSessionRecord) {
+        database.settingsQueries.upsertAgentSession(
+            r.id, r.agent, r.agentSessionId, r.source, r.leafId, r.terminalSessionId, r.cwd,
+            r.repo, r.branch, r.worktreePath, r.title, r.firstPrompt, r.transcriptPath,
+            r.links.joinToString(","), r.state, r.stateSince, r.nowLine, r.question,
+            r.lastScreen, r.createdAt, r.endedAt,
+        )
+    }
+
+    /**
+     * Every record that has not ended, oldest first.
+     *
+     * Called by the tracker at startup to close records a crash left open.
+     *
+     * @return the open records, including their `lastScreen`.
+     */
+    fun loadOpenAgentSessions(): List<AgentSessionRecord> =
+        database.settingsQueries.selectOpenAgentSessions(::toAgentSessionRecord).executeAsList()
+
+    /**
+     * The most recently ended records, newest first.
+     *
+     * Called by the tracker when it builds the list pushed to clients.
+     *
+     * @param limit how many to return.
+     * @return ended records ordered by end time.
+     */
+    fun loadRecentEndedAgentSessions(limit: Long): List<AgentSessionRecord> =
+        database.settingsQueries.selectRecentEndedAgentSessions(limit, ::toAgentSessionRecord).executeAsList()
+
+    /**
+     * Look up a record by the agent's own session id.
+     *
+     * Called by the tracker when a hook reports a session id it has not seen
+     * since startup, so a resumed conversation reattaches to its old record.
+     *
+     * @param agent `claude`, `codex` or `gemini`.
+     * @param agentSessionId the agent's session id.
+     * @return the newest matching record, or null.
+     */
+    fun findAgentSession(agent: String, agentSessionId: String): AgentSessionRecord? =
+        database.settingsQueries.selectAgentSessionByAgentId(agent, agentSessionId, ::toAgentSessionRecord)
+            .executeAsOneOrNull()
+
+    /**
+     * Look up a record by Lunamux's record id.
+     *
+     * Called by the resume command, which receives the id of the row the user picked.
+     *
+     * @param id the record id.
+     * @return the record, or null if it no longer exists.
+     */
+    fun findAgentSessionById(id: String): AgentSessionRecord? =
+        database.settingsQueries.selectAgentSessionById(id, ::toAgentSessionRecord).executeAsOneOrNull()
+
+    /**
+     * Mark every still-open record as ended.
+     *
+     * Called by the tracker at startup: terminal sessions do not survive a
+     * restart, so a record still open then belongs to a process that is gone.
+     *
+     * @param now epoch millis used for both `ended_at` and `state_since`.
+     */
+    fun endOpenAgentSessions(now: Long) {
+        database.settingsQueries.endOpenAgentSessions(now, now)
+    }
+
+    private fun toAgentSessionRecord(
+        id: String, agent: String, agentSessionId: String?, source: String, leafId: String?,
+        terminalSessionId: String?, cwd: String?, repo: String?, branch: String?,
+        worktreePath: String?, title: String?, firstPrompt: String?, transcriptPath: String?,
+        links: String, state: String, stateSince: Long, nowLine: String?, question: String?,
+        lastScreen: String?, createdAt: Long, endedAt: Long?,
+    ) = AgentSessionRecord(
+        id, agent, agentSessionId, source, leafId, terminalSessionId, cwd, repo, branch,
+        worktreePath, title, firstPrompt, transcriptPath,
+        links.split(',').filter { it.isNotEmpty() }, state, stateSince, nowLine, question,
+        lastScreen, createdAt, endedAt,
+    )
 
     /**
      * Read a raw string value from the settings key/value store.

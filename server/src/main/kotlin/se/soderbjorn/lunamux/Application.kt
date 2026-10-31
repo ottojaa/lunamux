@@ -93,6 +93,16 @@ fun main() {
     // first value seen by the rest of the app — that way no throwaway PTYs
     // are created for a default layout we'd immediately discard.
     val repo = SettingsRepository(AppPaths.databaseFile())
+
+    // Agent sessions: records left open by a previous run are closed here, and
+    // the port is fixed before the first session is created because every
+    // pane's environment carries the events URL.
+    val port = System.getProperty("lunamux.port")?.toIntOrNull()
+        ?: SERVER_TLS_PORT
+    AgentEvents.port = port
+    val agentTracker = AgentSessionTracker(repo).also { it.start() }
+    val claudeHooks = ClaudeHooks()
+    TerminalSessions.onDestroy = agentTracker::onSessionDestroyed
     WindowState.initialize(repo)
 
     val persistenceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -118,7 +128,7 @@ fun main() {
     // inside the 2 s config-persist window (issue #127 follow-up).
     installWorldThemePersister(persistenceScope, repo)
     val scrollbackSaver = installScrollbackSaver(persistenceScope, repo)
-    val sessionStates = installSessionStatePoller(persistenceScope)
+    val sessionStates = installSessionStatePoller(persistenceScope, agentTracker)
     val sharedThemesWatch = installSharedThemesWatcher(repo)
 
     val usageMonitor = ClaudeUsageMonitor()
@@ -134,14 +144,15 @@ fun main() {
                 scrollbackSaver.saveAll(force = true)
             }
         }
+        runCatching {
+            agentTracker.endAll(TerminalSessions.list().mapNotNull { (id, _) -> livePaneSnapshot(id) })
+        }
         usageMonitor.stop()
         runCatching { sharedThemesWatch.close() }
         persistenceScope.cancel()
         repo.close()
     })
 
-    val port = System.getProperty("lunamux.port")?.toIntOrNull()
-        ?: SERVER_TLS_PORT
     SettingsDialog.setListeningPort(port)
 
     // Generate-or-load the self-signed TLS keystore before binding the
@@ -172,7 +183,7 @@ fun main() {
                 this.port = port
             }
         },
-        module = { module(repo, sessionStates, usageMonitor, scrollbackSaver) }
+        module = { module(repo, sessionStates, usageMonitor, scrollbackSaver, agentTracker, claudeHooks) }
     )
 
     if (java.awt.GraphicsEnvironment.isHeadless()) {
@@ -205,12 +216,16 @@ fun main() {
  * @param scrollbackSaver the periodic scrollback flusher; reused by `/admin/shutdown`
  *                        so a graceful stop produces the same on-disk result as the
  *                        JVM shutdown hook
+ * @param agentTracker    the agent session records, pushed to clients and fed by hook events
+ * @param claudeHooks     the Claude Code settings editor behind the Connect/Disconnect row
  */
 fun Application.module(
     settingsRepo: SettingsRepository,
     sessionStates: MutableSharedFlow<Map<String, String?>>,
     usageMonitor: ClaudeUsageMonitor,
     scrollbackSaver: ScrollbackSaver,
+    agentTracker: AgentSessionTracker,
+    claudeHooks: ClaudeHooks,
 ) {
     install(ContentNegotiation) { json() }
     install(WebSockets) {
@@ -243,7 +258,8 @@ fun Application.module(
         uiSettingsRoutes(settingsRepo)
         ptyRoutes(settingsRepo)
         agentRoutes(settingsRepo)
-        windowRoutes(settingsRepo, sessionStates, usageMonitor)
+        windowRoutes(settingsRepo, sessionStates, usageMonitor, agentTracker, claudeHooks)
+        agentEventRoutes(agentTracker)
         adminRoutes(settingsRepo, scrollbackSaver)
         // MCP endpoint (localhost-only, MCP-token gated) — see mcp/McpRoutes.kt.
         mcpRoutes(settingsRepo, usageMonitor)
