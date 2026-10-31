@@ -945,6 +945,8 @@ class DemoServer internal constructor(
                 publishStates()
             }
             is WindowCommand.OpenSettings -> emit(WindowEnvelope.UiSettings(buildJsonObject { }))
+            // The demo has no agent sessions and no Claude Code settings file.
+            is WindowCommand.ResumeAgentSession, is WindowCommand.SetClaudeHooks -> Unit
             is WindowCommand.RefreshUsage -> emit(WindowEnvelope.ClaudeUsage(DemoFixtures.claudeUsage))
             is WindowCommand.GetWorktreeDefaults -> emit(
                 WindowEnvelope.WorktreeDefaults(

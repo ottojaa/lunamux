@@ -24,6 +24,7 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import se.soderbjorn.lunula.core.PersistKeys
+import se.soderbjorn.lunamux.AgentSessionSummary
 import se.soderbjorn.lunamux.WindowConfig
 
 /**
@@ -119,6 +120,21 @@ class WindowStateRepository {
     /** Observable raw `LAYOUT_STATE` element (see backing field). */
     val rawLayoutState: StateFlow<JsonElement?> = _rawLayoutState.asStateFlow()
 
+    /** The agentic-CLI sessions the server last reported, open ones and the most recent ended. */
+    private val _agentSessions = MutableStateFlow<List<AgentSessionSummary>>(emptyList())
+    /** Observable agent sessions; the source of the agents overview. */
+    val agentSessions: StateFlow<List<AgentSessionSummary>> = _agentSessions.asStateFlow()
+
+    /** Whether the Claude Code settings file currently holds Lunamux's hook entries. */
+    private val _claudeConnected = MutableStateFlow(false)
+    /** Observable Claude Code connection flag for the App Settings row. */
+    val claudeConnected: StateFlow<Boolean> = _claudeConnected.asStateFlow()
+
+    /** The last message the server sent about a failed resume or connect, or `null`. */
+    private val _agentSessionError = MutableStateFlow<String?>(null)
+    /** Observable error text for the overview and the settings row; cleared by [clearAgentSessionError]. */
+    val agentSessionError: StateFlow<String?> = _agentSessionError.asStateFlow()
+
     /** Whether the server has sent a `PendingApproval` envelope (device not
      *  yet approved). */
     private val _pendingApproval = MutableStateFlow(false)
@@ -147,6 +163,35 @@ class WindowStateRepository {
      */
     fun updateStates(states: Map<String, String?>) {
         _states.value = states
+    }
+
+    /**
+     * Replace the cached agent sessions and the Claude Code connection flag.
+     *
+     * Called by [WindowSocket] when an `AgentSessions` envelope arrives.
+     *
+     * @param sessions the server's current rows.
+     * @param claudeConnected whether Lunamux's Claude Code hooks are installed.
+     */
+    fun updateAgentSessions(sessions: List<AgentSessionSummary>, claudeConnected: Boolean) {
+        _agentSessions.value = sessions
+        _claudeConnected.value = claudeConnected
+    }
+
+    /**
+     * Remember the server's explanation of a failed resume or connect.
+     *
+     * Called by [WindowSocket] when an `AgentSessionError` envelope arrives.
+     *
+     * @param message text to show the user, for example "folder no longer exists".
+     */
+    fun setAgentSessionError(message: String) {
+        _agentSessionError.value = message
+    }
+
+    /** Forget the last agent error once the user has seen it or tries again. */
+    fun clearAgentSessionError() {
+        _agentSessionError.value = null
     }
 
     /**
