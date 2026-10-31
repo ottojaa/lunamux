@@ -104,6 +104,9 @@ class AgentSessionTracker(
     /** Panes whose screen still shows an agent we already ended; do not reopen until it clears. */
     private val awaitScreenClear = HashSet<String>()
 
+    /** Ids of hook-fed `needs_you` records whose pane screen has been seen showing the prompt. */
+    private val promptSeen = HashSet<String>()
+
     private val _summaries = MutableStateFlow<List<AgentSessionSummary>>(emptyList())
 
     /**
@@ -154,7 +157,18 @@ class AgentSessionTracker(
                     rec = open(pane, pane.agent, SOURCE_SCREEN, agentSessionId = null, transcriptPath = null)
                 } else continue
             }
-            if (rec.source != SOURCE_SCREEN) continue
+            if (rec.source != SOURCE_SCREEN) {
+                // Claude Code sends no event when a permission prompt is approved, so
+                // a long tool would keep the row at needs_you until it finished. The
+                // screen is only used for that one step: it must have shown the
+                // prompt (waiting) before showing work again clears the row.
+                if (rec.state != NEEDS_YOU) promptSeen.remove(rec.id)
+                else if (pane.state == "waiting") promptSeen.add(rec.id)
+                else if (pane.state == "working" && promptSeen.remove(rec.id)) {
+                    put(rec.copy(state = WORKING, stateSince = clock(), question = null))
+                }
+                continue
+            }
             val state = when (pane.state) {
                 "waiting" -> NEEDS_YOU
                 "working" -> WORKING

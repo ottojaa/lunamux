@@ -230,6 +230,24 @@ class AgentSessionTrackerTest {
     }
 
     @Test
+    fun `an approved permission prompt returns the row to working once the screen shows work`() {
+        val t = tracker()
+        t.onHook(pane(), event("PreToolUse", "a-1", "tool_name" to "Bash"))
+        t.onHook(pane(), event("Notification", "a-1", "message" to "Claude needs your permission to use Bash"))
+        assertEquals("needs_you", t.summaries.value.single().state)
+
+        // Work on screen before the prompt was ever seen is not an approval.
+        t.onPoll(listOf(pane(agent = "claude", state = "working")))
+        assertEquals("needs_you", t.summaries.value.single().state)
+
+        t.onPoll(listOf(pane(agent = "claude", state = "waiting")))
+        t.onPoll(listOf(pane(agent = "claude", state = "working")))
+        val row = t.summaries.value.single()
+        assertEquals("working", row.state)
+        assertNull(row.question)
+    }
+
+    @Test
     fun `resuming a conversation reopens its ended record instead of adding a row`() {
         val t = tracker()
         t.onHook(pane("s1"), event("SessionStart", "a-1"))
