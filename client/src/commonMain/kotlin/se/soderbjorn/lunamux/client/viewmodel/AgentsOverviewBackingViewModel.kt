@@ -114,8 +114,8 @@ class AgentsOverviewBackingViewModel(
      * @property activityMillis for a working row Lunamux hosts, epoch millis of the last sign of
      *   life from the agent (the server's activity time, else the moment it started working);
      *   null for every other row, including a member the group file declares that has no session
-     *   here, because nothing then says it is alive. The view draws a live cursor only when this
-     *   is set and [isQuiet] is false.
+     *   here, because nothing then says it is alive. The view animates the working glyph only
+     *   when this is set and [isQuiet] is false.
      */
     data class Row(
         val id: String,
@@ -175,6 +175,9 @@ class AgentsOverviewBackingViewModel(
      * @property expanded whether every member shows rather than only those that need the user.
      * @property leadLive whether the lead session is open, so ↵ on the header jumps to it.
      * @property leadLastSaid what the lead session last said, or null.
+     * @property activityMillis the latest sign of life among the members at work that Lunamux
+     *   hosts (see [Row.activityMillis]); null when none of them is, so the header's working
+     *   glyph has nothing to say it is busy.
      */
     data class Group(
         val id: String,
@@ -190,6 +193,7 @@ class AgentsOverviewBackingViewModel(
         val expanded: Boolean,
         val leadLive: Boolean,
         val leadLastSaid: String?,
+        val activityMillis: Long? = null,
     )
 
     /**
@@ -818,6 +822,9 @@ class AgentsOverviewBackingViewModel(
             expanded = g.id in ui.expandedGroups,
             leadLive = u.leadLive,
             leadLastSaid = g.lead.lastSaid,
+            activityMillis = u.members.mapNotNull { (_, s) ->
+                s?.takeIf { it.state == WORKING }?.let { it.lastActivityAt ?: it.stateSince }
+            }.maxOrNull(),
         )
     }
 

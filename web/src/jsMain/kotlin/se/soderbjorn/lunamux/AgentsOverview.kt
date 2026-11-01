@@ -71,7 +71,7 @@ private const val SEARCH_DEBOUNCE_MS = 150
 /** How often an open live peek asks for a fresh screen. */
 private const val PEEK_REFRESH_MS = 2_000
 
-/** How often the open list redraws on its own, so ages move and a working row that has gone quiet stops blinking. */
+/** How often the open list redraws on its own, so ages move and a working row that has gone quiet stops moving. */
 private const val CLOCK_TICK_MS = 30_000
 
 /**
@@ -433,8 +433,8 @@ private fun buildRow(row: Row, index: Int, selected: Boolean, peek: AgentsOvervi
     row.repo?.let { main.appendChild(span("ao-repo", it)) }
     el.appendChild(main)
 
-    // A working row Lunamux hosts shows what the agent is doing now and ends in a blinking cursor;
-    // once nothing has been heard from it for a while the cursor stops and the age says so.
+    // A working row shows a working glyph and, when Lunamux hosts it, what the agent is doing now;
+    // once nothing has been heard from it for a while the glyph stops and the age says so.
     val activity = row.activityMillis?.takeIf { row.state == "working" }
     val quiet = activity != null && AgentsOverviewBackingViewModel.isQuiet(activity, kotlin.js.Date.now().toLong())
     val now = div("ao-now")
@@ -443,6 +443,10 @@ private fun buildRow(row: Row, index: Int, selected: Boolean, peek: AgentsOvervi
         now.classList.add("ao-error")
         now.textContent = error
     } else {
+        if (row.state == "working") {
+            now.classList.add("ao-has-work")
+            now.appendChild(workingGlyph(active = activity != null && !quiet))
+        }
         val text = span("ao-now-text", "")
         row.label?.let { text.appendChild(span("ao-label", "$it  ")) }
         text.appendChild(document.createTextNode(when {
@@ -450,10 +454,6 @@ private fun buildRow(row: Row, index: Int, selected: Boolean, peek: AgentsOvervi
             else -> row.nowLine ?: if (row.state == "working" && activity == null) "Working" else ""
         }))
         now.appendChild(text)
-        if (activity != null && !quiet) {
-            now.classList.add("ao-live")
-            now.appendChild(span("ao-cursor", "▌"))
-        }
     }
     el.appendChild(now)
 
@@ -528,6 +528,10 @@ private fun buildGroupHeader(
 
     val main = div("ao-main")
     main.appendChild(span("ao-title ao-group-title", row.title))
+    if (group != null && group.workingCount > 0) {
+        val busy = group.activityMillis?.let { !AgentsOverviewBackingViewModel.isQuiet(it, kotlin.js.Date.now().toLong()) } == true
+        main.appendChild(workingGlyph(active = busy))
+    }
     group?.repo?.let { main.appendChild(span("ao-repo", it)) }
     val url = group?.linkUrl
     if (url != null) {

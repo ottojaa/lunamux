@@ -36,9 +36,10 @@ build a file under a dot-name and rename it into place.
 - When the lead is open it is also a row of the box, first, titled `<Tag> session` ("Programme
   session"), with its own state, question or last tool line and age. It is not listed again
   outside the box.
-- A working session Lunamux hosts shows what it is doing now, ending in a blinking cursor. When
-  nothing has been heard from it for five minutes the cursor stops and the age reads
-  `quiet 6m`.
+- A working session Lunamux hosts shows a small turning braille glyph and what it is doing now;
+  the group title carries the same glyph while any member works. When nothing has been heard from
+  a session for five minutes the glyph stops and dims, and the age reads `quiet 6m`. The glyph
+  is still when the browser asks for reduced motion.
 - Members count in the topbar chip next to ordinary sessions; held members do not.
 
 ## Format
@@ -116,7 +117,7 @@ three seconds.
 
 Without `match`, a member is drawn from the file alone: its state, line and age are exactly what
 the file says, and it has no action (there is no session of its own to open or jump to). Because
-nothing says such a member is alive, it never shows a cursor either.
+nothing says such a member is alive, its glyph is always still and dimmed.
 
 With `match`, Lunamux looks for the member's session among the ones it tracks:
 

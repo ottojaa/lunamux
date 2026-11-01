@@ -315,6 +315,24 @@ class AgentsOverviewGroupsViewModelTest {
     }
 
     @Test
+    fun aGroupHeaderCarriesTheLatestSignOfLifeOfItsHostedWorkingMembers() {
+        layout("leaf-w1", "leaf-w2")
+        show(
+            listOf(group(members = listOf(
+                member("one", "working", recordId = "w1"),
+                member("two", "working", recordId = "w2"),
+                member("unhosted", "working"),
+            ))),
+            session("w1", "working", lastActivityAt = 7_000),
+            session("w2", "working", lastActivityAt = 9_000),
+        )
+        assertEquals(9_000L, vm.state.groups.getValue("g1").activityMillis)
+
+        show(listOf(group(members = listOf(member("unhosted", "working")))))
+        assertEquals(null, vm.state.groups.getValue("g1").activityMillis)
+    }
+
+    @Test
     fun aWorkingRowGoesQuietAfterFiveMinutesWithoutASignOfLife() {
         val q = AgentsOverviewBackingViewModel.QUIET_AFTER_MS
         assertEquals(5 * 60_000L, q)
