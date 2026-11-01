@@ -3561,7 +3561,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     background: rgba(0, 0, 0, 0.45);
 }
 .ao-panel {
-    width: min(860px, 94vw);
+    width: min(1200px, 90vw);
     max-height: 70vh;
     display: flex;
     flex-direction: column;
@@ -3593,7 +3593,9 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 }
 .ao-row {
     display: grid;
-    grid-template-columns: 22px minmax(0, 1fr) minmax(0, 1.25fr) 64px 150px;
+    /* The title column is wider than the status column, so a long title is read before a long
+       status is cut; the age column fits "quiet 12m". */
+    grid-template-columns: 22px minmax(0, 1.5fr) minmax(0, 1fr) 88px 120px;
     align-items: start;
     gap: 8px;
     padding: 8px 6px;
@@ -3630,7 +3632,19 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     opacity: 1;
 }
 .ao-now.ao-error { color: #ff7b72; opacity: 1; }
-.ao-age { text-align: right; opacity: 0.6; }
+.ao-age { text-align: right; white-space: nowrap; opacity: 0.6; }
+.ao-age.ao-quiet { opacity: 0.45; }
+/* A working row ends in a block cursor that blinks while the agent is heard from, as a terminal's does. */
+.ao-now.ao-live { display: flex; gap: 2px; }
+.ao-now-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ao-cursor {
+    flex: none; color: var(--t-accent, #56d4e6);
+    animation: ao-blink 1s steps(1, end) infinite;
+}
+@keyframes ao-blink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+    .ao-cursor { animation: none; }
+}
 .ao-needs .ao-age { color: #f2b84b; opacity: 1; }
 .ao-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .ao-action { text-align: right; opacity: 0.7; white-space: nowrap; }
@@ -3709,7 +3723,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-more { padding: 6px 4px; font-size: 12px; text-decoration: underline; opacity: 0.7; cursor: pointer; }
 .ao-empty { padding: 24px 4px; text-align: center; opacity: 0.6; }
 
-/* A programme group: a header, its members indented under it, and a "+ more" line, drawn as one box. */
+/* A programme group: a one-line header, its members indented once under it, and a quiet "N more" line, drawn as one box. */
 .ao-group {
     margin-top: 6px;
     background: color-mix(in srgb, var(--t-accent, #56d4e6) 12%, var(--t-surface, #0f2a32));
@@ -3718,7 +3732,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     align-items: center;
     /* The title column takes the width its title and chips need, up to half the row, so a long
        title shortens with an ellipsis and the counts keep room to be read. */
-    grid-template-columns: 22px fit-content(50%) minmax(0, 1fr) 64px 150px;
+    grid-template-columns: 22px fit-content(50%) minmax(0, 1fr) 88px 120px;
 }
 .ao-group .ao-repo { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ao-group.ao-group-end { border-radius: 10px; }
@@ -3728,10 +3742,6 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     color: var(--t-text-dim, #a9c6cd); font-size: 16px; line-height: 1; cursor: pointer;
 }
 .ao-group-title { font-weight: 700; color: var(--t-text, #e8f6f8); flex: 0 1 auto; }
-.ao-pill {
-    flex: none; padding: 1px 7px; border-radius: 4px;
-    background: color-mix(in srgb, var(--t-accent, #56d4e6) 18%, var(--t-surface, #16343d)); color: var(--t-text-dim, #a9c6cd); font-size: 10px; letter-spacing: 0.06em;
-}
 .ao-link-chip {
     flex: none; padding: 1px 7px; border: 1px solid var(--t-border, #2a5662); border-radius: 5px;
     font-size: 11px; color: var(--t-text-dim, #a9dfe8); text-decoration: none; white-space: nowrap;
@@ -3761,7 +3771,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 }
 .ao-member.ao-selected, .ao-group-more.ao-selected { border-color: var(--t-accent, #56d4e6); }
 .ao-group-more { display: block; padding: 4px 12px 8px 60px; font-size: 12px; }
-.ao-more-text { color: var(--t-text-dim, #9fb6bc); text-decoration: underline; }
+.ao-more-text { color: var(--t-text-dim, #9fb6bc); }
 .ao-hint {
     padding: 8px 14px;
     border-top: 1px solid var(--t-border, #2a5662);
