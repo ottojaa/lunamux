@@ -203,20 +203,23 @@ class AgentGroupsWatcher(
         val files = dir.listFiles { f -> f.isFile && f.name.endsWith(".json") && !f.name.startsWith(".") }
             ?.sortedBy { it.name }.orEmpty()
         synchronized(lock) {
-            seen.keys.retainAll(files.map { it.name }.toSet())
+            // A duplicate id is reported only when the set of parsed files changed in this
+            // reload; otherwise the same warning would repeat on every poll.
+            var changed = seen.keys.retainAll(files.map { it.name }.toSet())
             for (f in files) {
                 val modified = f.lastModified()
                 val length = f.length()
                 val before = seen[f.name]
                 if (before != null && before.modified == modified && before.length == length) continue
                 seen[f.name] = Seen(modified, length, parseFile(f, modified))
+                changed = true
             }
             val byId = LinkedHashMap<String, Pair<String, ParsedGroup>>()
             // Oldest file first so that, for a repeated id, the newest file replaces it.
             for ((name, s) in seen.entries.sortedBy { it.value.modified }) {
                 val p = s.parsed ?: continue
                 val earlier = byId[p.group.id]
-                if (earlier != null) warn("Agent group file $name repeats the id of ${earlier.first}; using $name")
+                if (earlier != null && changed) warn("Agent group file $name repeats the id of ${earlier.first}; using $name")
                 byId[p.group.id] = name to p
             }
             parsed = byId.values.map { it.second }
@@ -231,9 +234,12 @@ class AgentGroupsWatcher(
      * a record counts as open from its own state alone.
      */
     fun resolve() {
-        val recs = records()
-        val groupsNow = synchronized(lock) { parsed }
-        _groups.value = groupsNow.map { resolveGroup(it, recs) }.sortedBy { it.id }
+        // Compute and publish under the lock, so that the poll loop and the record collector
+        // cannot interleave and leave the older result as the published one.
+        synchronized(lock) {
+            val recs = records()
+            _groups.value = parsed.map { resolveGroup(it, recs) }.sortedBy { it.id }
+        }
     }
 
     private fun parseFile(f: File, modified: Long): ParsedGroup? {

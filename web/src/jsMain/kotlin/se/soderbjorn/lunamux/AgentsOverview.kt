@@ -483,8 +483,12 @@ private fun buildGroupHeader(
     counts.className = "ao-counts"
     if (group != null) {
         if (group.needYouCount > 0) counts.appendChild(span("ao-counts-need", "${group.needYouCount} needs you"))
-        if (group.needYouCount > 0 && group.summary.isNotEmpty()) counts.appendChild(span("ao-counts-rest", " · "))
-        counts.appendChild(span("ao-counts-rest", group.summary))
+        // One span per count, kept on one line, so the line only wraps between counts.
+        val rest = group.summary.split(" · ").filter { it.isNotEmpty() }
+        rest.forEachIndexed { i, part ->
+            if (i > 0 || group.needYouCount > 0) counts.appendChild(document.createTextNode(" · "))
+            counts.appendChild(span("ao-counts-rest", part))
+        }
     }
     counts.addEventListener("click", { e: Event ->
         e.stopPropagation()

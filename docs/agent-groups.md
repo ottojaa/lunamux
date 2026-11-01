@@ -86,7 +86,7 @@ One object per file.
 | `members[].state` | yes | `needs_you`, `working`, `idle` or `ended`. |
 | `members[].label` | no | A short word shown in front of the line and used in the `+ … in review` count. |
 | `members[].line` | no | One line of detail: the question for `needs_you`, otherwise what it is doing. |
-| `members[].since` | yes | ISO-8601 time the member entered its state; drives the age and the ordering. When missing or unreadable, the file's modified time is used. |
+| `members[].since` | no (recommended) | ISO-8601 time the member entered its state; drives the age and the ordering. When missing or unreadable, the file's modified time is used. |
 | `members[].links` | no | Short text chips such as ticket ids. |
 | `members[].match` | no | How to find the member's real session; see below. |
 

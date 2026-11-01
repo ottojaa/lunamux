@@ -229,5 +229,9 @@ class AgentGroupsWatcherTest {
         watcher.reload()
         assertEquals("Newer", watcher.groups.value.single().title)
         assertNotNull(warnings.singleOrNull { "repeats the id" in it })
+        // Polling again with nothing changed must not repeat the warning.
+        watcher.reload()
+        watcher.reload()
+        assertEquals(1, warnings.count { "repeats the id" in it })
     }
 }
