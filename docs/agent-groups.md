@@ -16,35 +16,44 @@ build a file under a dot-name and rename it into place.
 
 ## What the person sees
 
-- The box has a one-line header: chevron, title, the repo, a link chip, plain counts such as
-  **1 needs you** · 1 working · 2 held · 1 in review, and how long the longest wait has been.
-  There is no badge and no button on it.
-- Collapsed, only the members that need the user show, followed by a quiet `2 more` line (the
-  number of members hidden). ↵ on it, or a click on the chevron or the counts, shows every
-  member.
-- Each member's action is **Open** (its session is closed: it resumes in a new tab) or **Jump**
-  (its session is open). A member Lunamux has no session for has no action.
-- A *held* member is an idle one whose `label` starts with `held` (any case), for example
-  `held: not merging yet`. Held members are counted apart, as `N held`, and never as needing the
-  user.
-- The box sits in **NOW** while any member needs the user or works, ranked by its most urgent
-  member and then by how long that member has waited, like a single session. When nothing is
-  urgent its header leads **EARLIER**, collapsed.
+The overview is one terminal-style table. Column two is the state and the only place a glyph
+appears: **◆** needs you (amber), a turning braille glyph for work in progress, **○** waiting or
+idle, **‖** paused, **✓** done. A programme is an expansion panel drawn as a tree.
+
+- The programme's header row has the title, the repo, the counts of its runs in a fixed order
+  (**1 needs you** · 1 working · 1 in review · 2 queued · 1 paused · 3 done, zero counts left out),
+  and **open** at the right end. It has no fill, badge, link chip, age or ◆.
+- Collapsed, only the runs that need the user show under the header. Expanded (click on the
+  header, →, or space; ← collapses) every run shows, most urgent first: needs you, working, in
+  review, queued, other labels, paused, done. There is no "N more" line. An expansion survives
+  closing and reopening the overview.
+- Each run's status is its **live line**: the question for a run that needs the user, what it is
+  doing for one that works, and for a finished one the word `done` plus its pull request
+  (`done · #22`). An empty or whitespace-only `line` shows as nothing, never as a bare separator,
+  and the row falls back to the label or a dash.
+- A run whose `sessionId` is set opens with **open** (↵): a new tab in `lead.folder` running
+  `claude attach <session id>`. The id comes from the file; Lunamux builds the command. A run
+  whose session Lunamux hosts jumps to its pane instead, and a closed one resumes. A run with
+  neither has no action.
+- A programme stays in **NOW** until all its runs have ended, even when nothing is running: it
+  does not change section as runs start and stop. Within NOW, units rank by their most urgent run
+  (needs you, working, open work with nothing running). Only a programme whose runs have all
+  ended moves to **EARLIER**. A single idle session stays in NOW for ten minutes after its last
+  activity, shown idle with its age, and then moves to EARLIER.
 - ↵ on the header goes to the **lead session**: it jumps there if the lead is open, otherwise
-  Lunamux opens a new tab in `lead.folder` and types `lead.command` into it. The footer says so
-  only while a header is selected: `↵ opens the <tag> session · it last said: <last words>`.
-- When the lead is open it is also a row of the box, first, titled `<Tag> session` ("Programme
-  session"), with its own state, question or last tool line and age. It is not listed again
-  outside the box.
-- A working session Lunamux hosts shows a small turning braille glyph and what it is doing now;
-  the group title carries the same glyph while any member works. When nothing has been heard from
-  a session for five minutes the glyph stops and dims, and the age reads `quiet 6m`. The glyph
-  is still when the browser asks for reduced motion.
-- A member Lunamux has no session for is only as fresh as its file. When the file's modified time
-  is twenty minutes old, those members are dimmed, have no working glyph, and their age reads
-  `stale 25m`. A member with a session follows the session, not the file. The counts do not
-  change when a file goes stale: they are the file's claim, and only the rows show its age.
-- Members count in the topbar chip next to ordinary sessions; held members do not.
+  Lunamux opens a new tab in `lead.folder` and types `lead.command` into it. "open" at the right
+  end of the header does the same.
+- A live session that is the lead (see `lead.sessionId`) is the header, not a second row. A
+  lead that needs the user or works is also a row among the runs, titled `<Tag> session`
+  ("Programme session"), with its own question or last tool line.
+- A working run shows the turning glyph while there is a recent sign of life, and the glyph stops
+  and dims otherwise. For a run Lunamux hosts the sign is its session's activity; for a run
+  outside Lunamux it is the file's modified time, so a fresh file keeps its working runs live.
+  After five minutes without a sign the age reads `quiet 6m`; a file untouched for twenty
+  minutes reads `stale 25m` on every working run it declares. The glyph is still when the
+  browser asks for reduced motion.
+- Members count in the topbar chip next to ordinary sessions: `◆ 2 need you · 1 working`,
+  `3 working`, or `agents idle`. Paused runs never count as needing the user.
 
 ## Format
 
@@ -61,7 +70,8 @@ One object per file.
   "updatedAt": "2026-11-01T09:30:00Z",
   "lead": {
     "command": "claude --resume programme-lead",
-    "folder": "~/code/work-app"
+    "folder": "~/code/work-app",
+    "sessionId": "d6e66e3c-a412-4020-b4c9-0d001ae7faba"
   },
   "members": [
     {
@@ -82,8 +92,9 @@ One object per file.
       "title": "Permissions page",
       "state": "idle",
       "label": "in review",
-      "line": "PR #212 is waiting for review",
-      "since": "2026-11-01T08:10:00Z"
+      "links": ["#212"],
+      "since": "2026-11-01T08:10:00Z",
+      "sessionId": "9a3c1e72-6d0b-4c11-b2f4-0c5d8e7a1b30"
     }
   ]
 }
@@ -94,19 +105,21 @@ One object per file.
 | `version` | no | `1`. |
 | `id` | yes | Unique, stable id of the group. If two files use one id, the newer file wins and a warning is logged. |
 | `title` | yes | The box's name. |
-| `tag` | no | What the programme is called in the lead's row ("Programme session") and, lower-case, in the footer's "↵ opens the … session". Without it both say "lead". |
+| `tag` | no | What the programme is called in the lead's row ("Programme session"). Without it the row says "Lead session". |
 | `repo` | no | Repository name shown beside the title. |
-| `link` | no | `{ "label", "url" }` chip. Only `http://` and `https://` URLs are shown; anything else drops the chip. |
+| `link` | no | `{ "label", "url" }`. Accepted and ignored: the overview draws no link chips. |
 | `updatedAt` | no | ISO-8601 time of the writer's last change. Informational. |
 | `lead.command` | yes | Typed into a new shell (followed by ↵) when the lead is not open. |
 | `lead.folder` | yes | Absolute path, or one starting with `~/`. The new tab opens here. |
+| `lead.sessionId` | no | The agent session id of the programme's home chat, the same kind of id as `members[].match.agentSessionId`. The live session with this id is drawn as the header instead of as a separate row. Without it nothing is folded. |
 | `members[]` | no | The group's sessions, shown in the order listed. |
 | `members[].title` | yes | What the member is called in the box. A matched session keeps this title. |
 | `members[].state` | yes | `needs_you`, `working`, `idle` or `ended`. |
-| `members[].label` | no | A short status word shown in front of the line and used in the counts ("1 in review"). On an idle member, a label starting with `held` makes it a held one. Use plain statuses, not ticket keys. |
-| `members[].line` | no | One line of detail: the question for `needs_you`, otherwise what it is doing. |
+| `members[].label` | no | A short status word shown in front of the line and used in the counts ("1 in review"). `in review`, `queued`, `paused` (or `held`) and `done` have a glyph of their own; any other label counts as given. Use plain statuses, not ticket keys. |
+| `members[].line` | no | One line of detail: the question for `needs_you`, otherwise what it is doing. Blank means none. |
+| `members[].sessionId` | no | The id `claude attach` takes for the run's background session. Gives the run an **open** action when Lunamux hosts no session for it. Only letters, digits, `-` and `_` are accepted; anything else is never typed into a shell. |
 | `members[].since` | no (recommended) | ISO-8601 time the member entered its state; drives the age and the ordering. When missing or unreadable, the file's modified time is used. |
-| `members[].links` | no | Short text chips such as ticket ids. Shown exactly as given; Lunamux adds none of its own. |
+| `members[].links` | no | Ticket ids and pull requests such as `ACC-12` or `#212`. A `#`-number is the run's pull request, shown after `done`; Lunamux adds none of its own. |
 | `members[].match` | no | How to find the member's real session; see below. |
 
 Unknown fields are ignored. Paths must be absolute or start with `~/`; a relative path makes
@@ -120,8 +133,8 @@ three seconds.
 ## Matching members to real sessions
 
 Without `match`, a member is drawn from the file alone: its state, line and age are exactly what
-the file says, and it has no action (there is no session of its own to open or jump to). Because
-nothing says such a member is alive, its glyph is always still and dimmed.
+the file says, and it has no action (there is no session of its own to open or jump to). Whether it is
+alive is told by the file's freshness alone (see below).
 
 With `match`, Lunamux looks for the member's session among the ones it tracks:
 
@@ -133,10 +146,14 @@ jumps to it (or opens it in a new tab once closed). Its title stays the file's. 
 member is not listed a second time outside the group, and one session can belong to only one
 member.
 
-The lead is found the same way: the newest open session whose working folder equals
-`lead.folder`. It is *open* when that session is running in a pane that is on screen in the
-layout. That session is not matched to members, whatever their `match.folder`, it is drawn as the
-box's first row, and what it last said is shown in the footer while the header is selected.
+The lead is the newest session whose `agentSessionId` equals `lead.sessionId`, wherever it runs.
+That session is the header rather than a row of its own, and it is not matched to members,
+whatever their `match.folder`. Without that id, or when no session has it, nothing is folded: the
+header's ↵ and "open" still go to the newest open session whose working folder equals
+`lead.folder` (or start `lead.command` when there is none), but that session stays an ordinary
+row. The lead is *open* when its session is running in a pane that is on screen in the layout.
+Other chats the person once declared as the programme's home are real chats: they stay in the
+list, and only the session with `lead.sessionId` is folded.
 
 ## Writing and removing files
 
@@ -145,8 +162,8 @@ box's first row, and what it last said is shown in the footer while the header i
   and re-reads about every three seconds, so a state change shows up within a poll.
 - **Keep the file fresh while the programme runs.** Staleness is read from the file's modified
   time, not from `updatedAt`. A writer that has nothing new to say must still touch the file
-  (set its modified time, leaving content and format alone) at least every ten minutes, or its
-  members read as stale after twenty. The orchestrator's writer does this on every controller tick.
+  (set its modified time, leaving content and format alone) at least every two minutes while a
+  run works, or its working runs read as quiet after five minutes and stale after twenty. The orchestrator's writer does this on every controller tick.
 - **To remove a group**, delete its file. The box disappears within a poll. Lunamux keeps nothing
   about it.
 

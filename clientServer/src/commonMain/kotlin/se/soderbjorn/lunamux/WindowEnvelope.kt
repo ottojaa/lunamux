@@ -345,6 +345,8 @@ sealed class WindowEnvelope {
  * @param repo name of the git repository folder, or null outside one.
  * @param branch branch the agent was started on, or null.
  * @param cwd folder the agent ran in.
+ * @param cwdHome true when [cwd] is the home folder of the user running the server; the overview
+ *   shows such a row's folder as "~" (a client cannot tell, because it does not know the home path).
  * @param nowLine the last tool line ("Bash ./gradlew test"), or null.
  * @param question what the agent is asking while [state] is `needs_you`.
  * @param leafId the pane the agent runs in (meaningful while the record is open).
@@ -355,6 +357,9 @@ sealed class WindowEnvelope {
  *   (a prompt, a tool starting or finishing, a stop), or null when none has arrived since the
  *   server started. [stateSince] cannot stand in for it, because it does not move while an
  *   agent keeps working; the overview uses this to tell a busy session from a hung one.
+ * @param firstPrompt first line of what the user first asked the session, at most 160 characters,
+ *   or null before a prompt was seen; the overview shows it after "❯" when a row has no tool line
+ *   or last reply of its own.
  */
 @Serializable
 data class AgentSessionSummary(
@@ -367,12 +372,14 @@ data class AgentSessionSummary(
     val repo: String? = null,
     val branch: String? = null,
     val cwd: String? = null,
+    val cwdHome: Boolean = false,
     val nowLine: String? = null,
     val question: String? = null,
     val leafId: String? = null,
     val endedAt: Long? = null,
     val lastSaid: String? = null,
     val lastActivityAt: Long? = null,
+    val firstPrompt: String? = null,
 )
 
 /**
@@ -589,6 +596,9 @@ data class AgentGroup(
  * @param recordId the open session record in [folder], or null when none is open.
  * @param live whether that record's pane is in the layout, so the header can jump to it.
  * @param lastSaid what the lead's record last said (see [AgentSessionSummary.lastSaid]), or null.
+ * @param named whether [recordId] is the session the group file names with `lead.sessionId`. Only a
+ *   named lead is the programme's own session and is drawn as its header; a record that is merely
+ *   the newest one in [folder] still serves the header's open, but is listed like any other session.
  */
 @Serializable
 data class AgentGroupLead(
@@ -596,6 +606,7 @@ data class AgentGroupLead(
     val recordId: String? = null,
     val live: Boolean = false,
     val lastSaid: String? = null,
+    val named: Boolean = false,
 )
 
 /**
@@ -609,6 +620,9 @@ data class AgentGroupLead(
  * @param line one line about what the member is doing or waiting for, or null.
  * @param sinceMillis epoch millis when the member entered [state].
  * @param recordId the session record the member matched, or null when Lunamux does not host it.
+ * @param sessionId the id of the member's background session as the file gave it, or null. It is
+ *   what [WindowCommand.OpenAgentGroupMember] names; the command that attaches to it is built by
+ *   the server and never travels.
  */
 @Serializable
 data class AgentGroupMember(
@@ -619,4 +633,5 @@ data class AgentGroupMember(
     val line: String? = null,
     val sinceMillis: Long = 0,
     val recordId: String? = null,
+    val sessionId: String? = null,
 )

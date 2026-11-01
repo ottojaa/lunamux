@@ -5,6 +5,8 @@
 #   With no argument the newest directory in the backup root that holds a manifest.env is used.
 #
 # What it does, in order:
+#   0. Refuses to run inside a Lunamux terminal (quitting the app would kill the script halfway);
+#      run it from macOS Terminal.app.
 #   1. Reads the backup's manifest and checks it holds what it should; changes nothing yet.
 #   2. Stops the running server (flushing state first) and the app.
 #   3. Saves the CURRENT state (app moved aside, database, tls, shell-init, userData) into
@@ -22,6 +24,7 @@ if [[ -n "$BACKUP" && -d "$BACKUP" ]]; then BACKUP="$(cd "$BACKUP" && pwd)"; fi
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # shellcheck source=scripts/local-install-common.sh
 source scripts/local-install-common.sh
+refuse_inside_lunamux
 
 if [[ -z "$BACKUP" ]]; then
     BACKUP="$(ls -dt "$BACKUP_ROOT"/*/ 2>/dev/null | while read -r d; do

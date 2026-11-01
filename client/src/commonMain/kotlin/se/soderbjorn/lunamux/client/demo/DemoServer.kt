@@ -951,6 +951,7 @@ class DemoServer internal constructor(
             is WindowCommand.SearchAgentSessions,
             is WindowCommand.InspectAgentSession,
             is WindowCommand.OpenAgentGroupLead,
+            is WindowCommand.OpenAgentGroupMember,
             -> Unit
             is WindowCommand.RefreshUsage -> emit(WindowEnvelope.ClaudeUsage(DemoFixtures.claudeUsage))
             is WindowCommand.GetWorktreeDefaults -> emit(

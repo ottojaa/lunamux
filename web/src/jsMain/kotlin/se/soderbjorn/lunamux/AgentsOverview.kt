@@ -1,18 +1,22 @@
 /**
- * The agents overview in the web client: a topbar chip that counts the agent
- * sessions needing the user and the ones at work, and the ⌘⇧A overlay that
- * lists every agentic-CLI session (Claude Code, Codex, Gemini) under "Now"
- * and "Earlier". Typing two or more characters swaps the lists for search
- * results over every session ever run; → peeks at a session's screen and
- * × / ⌘⌫ close a live one after an inline confirmation. A programme group
- * declared by a tool is drawn as one box: a one-line header, the members that need the
- * user, and a quiet "N more" line that expands it. The footer says what ↵ does on the
- * selected row, which for a group header is to open the group's lead session.
+ * The agents overview in the web client: a topbar chip that says how many agent sessions need the
+ * user and how many work, and the ⌘⇧A overlay that lists every agentic-CLI session (Claude Code,
+ * Codex, Gemini) as one terminal-style table under "Now" and "Earlier".
  *
- * All state and behaviour live in the shared
- * [AgentsOverviewBackingViewModel]; this file only draws its state as plain
- * DOM and turns key presses and clicks into calls on it. The chip and the
- * overlay read the same state, so their counts always agree.
+ * Every row is the same seven-column grid: a gutter (the programme chevron or its tree lines), the
+ * state glyph (the only place a state is drawn as a glyph), the title, where it runs, a status
+ * line, the age and the row's own action. A programme declared by a tool is an expansion panel in
+ * the same grid: a bold header whose click, →, ← and space fold it, whose "open" opens the
+ * programme's session, and whose runs hang under it on tree lines. Typing two or more characters
+ * swaps the lists for search results over every session ever run; → peeks at a session's screen
+ * and ⌘⌫ closes a live one after an inline confirmation. The footer names the keys that work on
+ * the selected row.
+ *
+ * All state and behaviour live in the shared [AgentsOverviewBackingViewModel]; this file only
+ * draws its state as plain DOM and turns key presses and clicks into calls on it. Rows are found
+ * again by their id, never by their position, so a redraw while the list changes under the
+ * pointer cannot move a click onto another row. The chip and the overlay read the same state, so
+ * their counts always agree.
  *
  * @see AgentsOverviewBackingViewModel
  * @see registerAgentsOverviewHotkey
@@ -30,6 +34,8 @@ import org.w3c.dom.HTMLInputElement
 import org.w3c.dom.events.Event
 import org.w3c.dom.events.KeyboardEvent
 import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel
+import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Footer
+import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Glyph
 import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Row
 import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.RowKind as Kind
 import se.soderbjorn.lunula.web.hotkey.Hotkey
@@ -54,22 +60,12 @@ private var chipElement: HTMLElement? = null
 private var overlayElement: HTMLElement? = null
 private var searchInput: HTMLInputElement? = null
 private var listElement: HTMLElement? = null
-private var hintElement: HTMLElement? = null
-private var shownRows: List<Row> = emptyList()
+private var footElement: HTMLElement? = null
+private var shownRows: Map<String, Row> = emptyMap()
 private var searchTimer: Int? = null
 private var peekTimer: Int? = null
 private var clockTimer: Int? = null
 private var lastState: AgentsOverviewBackingViewModel.State? = null
-
-/** The footer's key legend, shown unless a group header is selected. */
-private const val DEFAULT_HINT =
-    "type to search · ↑↓ select · ↵ jump or resume · → peek at its screen · ⌘⌫ close session · esc close"
-
-/**
- * The footer's key legend for a member the file lists but Lunamux does not host: there is no
- * session to jump to, peek at or close, so those keys are left out.
- */
-private const val UNHOSTED_HINT = "type to search · ↑↓ select · nothing to open for this member · esc close"
 
 /** Pause after the last key press before the query is sent to the server. */
 private const val SEARCH_DEBOUNCE_MS = 150
@@ -79,6 +75,15 @@ private const val PEEK_REFRESH_MS = 2_000
 
 /** How often the open list redraws on its own, so ages move and a working row that has gone quiet stops moving. */
 private const val CLOCK_TICK_MS = 30_000
+
+/**
+ * One entry of the footer: a key and what it does. An entry without a key is a plain remark.
+ *
+ * @property key the key as drawn, such as `→` or `⌘⌫`, or empty for a remark.
+ * @property word what the key does, or the remark itself.
+ * @property cls an extra class: how the entry gives way when the panel narrows.
+ */
+private data class FooterSegment(val key: String, val word: String, val cls: String = "")
 
 /**
  * Register the configurable **agents overview** hotkey (default ⌘⇧A) with the
@@ -98,9 +103,9 @@ internal fun registerAgentsOverviewHotkey() {
 }
 
 /**
- * Build the topbar chip ("◆ 3 need you │ ◌ 3") that opens the overview. It is
- * hidden while nothing needs the user and nothing is working, and starts
- * following the view model's state as soon as it is built.
+ * Build the topbar chip ("◆ 2 need you · 1 working") that opens the overview. It shows from the
+ * first agent session on, so it also says "agents idle", and starts following the view model's
+ * state as soon as it is built.
  *
  * Called by [bootViaToolkitShell] when it assembles the topbar.
  *
@@ -151,6 +156,8 @@ private fun renderAgentsOverview(state: AgentsOverviewBackingViewModel.State) {
 private fun keepClockTicking(needed: Boolean) {
     if (needed && clockTimer == null) {
         clockTimer = kotlinx.browser.window.setInterval({
+            // An idle session leaves NOW on the clock alone, so the state is built again first.
+            agentsOverview.tick()
             val state = lastState
             val list = listElement
             if (state != null && state.open && list != null) {
@@ -192,18 +199,24 @@ private fun searchSoon() {
     )
 }
 
+/**
+ * Redraw the topbar chip: "◆ 2 need you" in the warning colour, then the dim rest ("1 working",
+ * or "agents idle"), joined by a faint dot.
+ *
+ * @param state the view model's current state.
+ */
 private fun renderChip(state: AgentsOverviewBackingViewModel.State) {
     val chip = chipElement ?: return
     chip.style.display = if (state.chipVisible) "" else "none"
     chip.textContent = ""
-    if (state.needYouCount > 0) {
-        chip.appendChild(span("ao-chip-need", "◆ ${state.needYouCount} need you"))
-    }
-    if (state.needYouCount > 0 && state.workingCount > 0) chip.appendChild(span("ao-chip-sep", "│"))
-    if (state.workingCount > 0) chip.appendChild(span("ao-chip-work", "◌ ${state.workingCount}"))
+    val needs = state.chipNeeds
+    val rest = state.chipRest
+    if (needs != null) chip.appendChild(span("ao-chip-need", "◆ $needs"))
+    if (needs != null && rest != null) chip.appendChild(span("ao-chip-sep", "·"))
+    if (rest != null) chip.appendChild(span("ao-chip-rest", rest))
 }
 
-/** Create the backdrop, search box and list the first time the overlay opens. */
+/** Create the backdrop, search line, list and footer the first time the overlay opens. */
 private fun ensureOverlay(query: String) {
     if (overlayElement != null) return
     val backdrop = div("ao-backdrop")
@@ -214,10 +227,12 @@ private fun ensureOverlay(query: String) {
     })
 
     val panel = div("ao-panel")
+    val line = div("ao-search-line")
+    line.appendChild(span("ao-prompt", "❯"))
     val input = document.createElement("input") as HTMLInputElement
     input.type = "text"
     input.className = "ao-search"
-    input.placeholder = "Search all sessions"
+    input.placeholder = "search every session, closed ones too"
     input.value = query
     input.setAttribute("autocomplete", "off")
     input.setAttribute("spellcheck", "false")
@@ -229,28 +244,30 @@ private fun ensureOverlay(query: String) {
     input.addEventListener("blur", { _: Event ->
         if (overlayElement != null) kotlinx.browser.window.setTimeout({ input.focus() }, 0)
     })
+    line.appendChild(input)
 
     val list = div("ao-list")
-    list.addEventListener("click", { e: Event ->
-        val index = ((e.target as? HTMLElement)?.closest(".ao-row") as? HTMLElement)
-            ?.getAttribute("data-index")?.toIntOrNull()
-        shownRows.getOrNull(index ?: -1)?.let { launchAgentsOverview { agentsOverview.activate(it) } }
+    list.addEventListener("click", { e: Event -> onListClick(e.target as? HTMLElement) })
+
+    val foot = div("ao-foot")
+    foot.addEventListener("click", { e: Event ->
+        val key = ((e.target as? HTMLElement)?.closest(".ao-seg") as? HTMLElement)?.getAttribute("data-key")
+        if (!key.isNullOrEmpty()) onFooterKey(key)
     })
 
-    panel.appendChild(input)
+    panel.appendChild(line)
     panel.appendChild(list)
-    val hint = div("ao-hint")
-    hint.textContent = DEFAULT_HINT
-    panel.appendChild(hint)
+    panel.appendChild(foot)
     backdrop.appendChild(panel)
     document.body?.appendChild(backdrop)
     overlayElement = backdrop
     searchInput = input
     listElement = list
-    hintElement = hint
+    footElement = foot
     input.focus()
 }
 
+/** Remove the overlay from the page and forget every element that belonged to it. */
 private fun closeOverlayElement() {
     searchTimer?.let { kotlinx.browser.window.clearTimeout(it) }
     searchTimer = null
@@ -258,16 +275,55 @@ private fun closeOverlayElement() {
     overlayElement = null
     searchInput = null
     listElement = null
-    hintElement = null
-    shownRows = emptyList()
+    footElement = null
+    shownRows = emptyMap()
+}
+
+/**
+ * Turn a click in the list into a view-model call, finding the row by its id.
+ *
+ * A programme header folds on a click anywhere except its "open", which opens the programme's
+ * session; the "+ N more" line shows the rest of Earlier; any other row is selected and done
+ * (jumped to, resumed or opened), as ↵ would.
+ *
+ * @param target the element that was clicked, or null.
+ */
+private fun onListClick(target: HTMLElement?) {
+    val el = target?.closest(".ao-row") as? HTMLElement ?: return
+    if (el.classList.contains("ao-more")) { agentsOverview.showMoreEarlier(); return }
+    val row = el.getAttribute("data-id")?.let { shownRows[it] } ?: return
+    agentsOverview.select(row.id)
+    when {
+        row.kind == Kind.GROUP && target.closest(".ao-x") == null -> row.groupId?.let { agentsOverview.toggleGroup(it) }
+        else -> launchAgentsOverview { agentsOverview.activate(row) }
+    }
+}
+
+/**
+ * Do what a footer segment's key does, when the segment is clicked.
+ *
+ * @param key the segment's key as drawn (`→`, `←`, `space`, `⌘⌫` or `esc`); the others do nothing.
+ */
+private fun onFooterKey(key: String) {
+    when (key) {
+        "→" -> launchAgentsOverview { agentsOverview.stepIn() }
+        "←" -> agentsOverview.stepOut()
+        "space" -> launchAgentsOverview { agentsOverview.toggleSelected() }
+        "⌘⌫" -> launchAgentsOverview { agentsOverview.requestClose() }
+        "esc" -> agentsOverview.back()
+    }
 }
 
 /**
  * Turn a key press in the search box into a view-model call.
  *
- * ↑ and ↓ move the selection (which also closes a peek or a confirmation), → opens the peek
- * when the caret is at the end of the text, ← closes it, ⌘⌫ asks to close the selected session
- * (only while the search box is empty), and esc steps back one level.
+ * ↑ and ↓ move the selection (which also closes a peek or a confirmation). → steps in when the
+ * caret is at the end of the text: it unfolds a programme, enters it, or peeks at a session. ←
+ * steps out while the box is empty or a peek is open, and space folds or unfolds a programme
+ * while the box is empty. ⌘⌫ asks to close the selected session (only while the box is empty),
+ * and esc steps back one level.
+ *
+ * @param e the key press in the search box.
  */
 private fun onSearchKey(e: KeyboardEvent) {
     val state = agentsOverview.state
@@ -283,12 +339,15 @@ private fun onSearchKey(e: KeyboardEvent) {
         }
         e.key == "ArrowRight" && input != null && input.selectionStart == input.value.length -> {
             e.preventDefault()
-            launchAgentsOverview { agentsOverview.peek() }
+            launchAgentsOverview { agentsOverview.stepIn() }
         }
-        e.key == "ArrowLeft" && state.peek != null -> { e.preventDefault(); agentsOverview.closePeek() }
-        e.key == "ArrowLeft" && state.query.isEmpty() && selectedExpandedGroup(state) != null -> {
+        e.key == "ArrowLeft" && (state.peek != null || state.query.isEmpty()) -> {
             e.preventDefault()
-            selectedExpandedGroup(state)?.let { agentsOverview.toggleGroup(it) }
+            agentsOverview.stepOut()
+        }
+        e.key == " " && state.query.isEmpty() -> {
+            e.preventDefault()
+            launchAgentsOverview { agentsOverview.toggleSelected() }
         }
         e.key == "Backspace" && e.metaKey && state.query.isEmpty() -> {
             e.preventDefault()
@@ -297,81 +356,96 @@ private fun onSearchKey(e: KeyboardEvent) {
     }
 }
 
-/** The id of the expanded group the highlighted row belongs to, or null. */
-private fun selectedExpandedGroup(state: AgentsOverviewBackingViewModel.State): String? =
-    state.rows.getOrNull(state.selected)?.groupId?.takeIf { state.groups[it]?.expanded == true }
-
 @OptIn(DelicateCoroutinesApi::class)
 private fun launchAgentsOverview(block: suspend () -> Unit) {
     GlobalScope.launch { block() }
 }
 
 /**
- * Rebuild the list from [state]: search results under a "N MATCHES" heading while searching,
- * otherwise the "Now" and "Earlier" sections. The selected row is highlighted and carries the
- * peek popover; the close confirmation follows the row it asks about.
+ * Rebuild the list and the footer from [state]: search results under a "N MATCHES" heading while
+ * searching, otherwise the "NOW" and "EARLIER" sections. The selected row is highlighted and
+ * carries the peek; the close confirmation follows the row it asks about.
+ *
+ * @param state the view model's current state.
  */
 private fun renderList(state: AgentsOverviewBackingViewModel.State) {
     val list = listElement ?: return
     list.textContent = ""
-    shownRows = state.rows
-    hintElement?.textContent = groupHint(state)
-        ?: if (state.rows.getOrNull(state.selected)?.unhosted == true) UNHOSTED_HINT else DEFAULT_HINT
+    shownRows = state.rows.associateBy { it.id }
+    renderFooter(state)
     if (state.rows.isEmpty()) {
         list.appendChild(div("ao-empty").also { it.textContent = state.emptyText })
         return
     }
-    var index = 0
+    val now = kotlin.js.Date.now().toLong()
     fun add(rows: List<Row>) = rows.forEachIndexed { i, row ->
-        val selected = index == state.selected
-        val endsGroup = row.groupId != null && rows.getOrNull(i + 1)?.groupId != row.groupId
+        val selected = row.id == state.selectedId
+        val sameGroupAfter = rows.getOrNull(i + 1)?.let { it.groupId != null && it.groupId == row.groupId } == true
         list.appendChild(
-            when (row.kind) {
-                Kind.GROUP -> buildGroupHeader(row, state.groups[row.groupId], index, selected, endsGroup, if (selected) state.peek else null)
-                Kind.GROUP_MORE -> buildGroupMore(row, index, selected)
-                else -> buildRow(row, index, selected, if (selected) state.peek else null).also {
-                    if (row.groupId != null) {
-                        it.classList.add("ao-member")
-                        if (endsGroup) it.classList.add("ao-group-end")
-                    }
-                }
+            if (row.kind == Kind.GROUP) {
+                buildRow(row, state, selected, now, kids = sameGroupAfter, last = false)
+            } else {
+                buildRow(row, state, selected, now, kids = false, last = row.groupId != null && !sameGroupAfter)
             },
         )
         state.confirm?.takeIf { it.rowId == row.id }?.let { list.appendChild(buildConfirm(it)) }
-        index++
     }
     if (state.matchMode) {
-        state.matchHeading?.let { list.appendChild(div("ao-heading").also { h -> h.textContent = it }) }
+        state.matchHeading?.let { list.appendChild(div("ao-sec").also { h -> h.textContent = it }) }
         add(state.matches)
     } else {
         if (state.now.isNotEmpty()) {
-            list.appendChild(div("ao-heading").also { it.textContent = "NOW" })
+            list.appendChild(div("ao-sec").also { it.textContent = "NOW" })
             add(state.now)
         }
         if (state.earlier.isNotEmpty()) {
-            list.appendChild(div("ao-heading").also { it.textContent = "EARLIER" })
+            list.appendChild(div("ao-sec").also { it.textContent = "EARLIER" })
             add(state.earlier)
-            if (state.earlierHidden > 0) {
-                val more = div("ao-more")
-                more.textContent = "More"
-                more.addEventListener("click", { _: Event -> agentsOverview.showMoreEarlier() })
-                list.appendChild(more)
-            }
+            if (state.earlierHidden > 0) list.appendChild(buildMoreLine(state.earlierHidden))
         }
     }
-    (list.querySelector(".ao-selected") as? HTMLElement)?.asDynamic().scrollIntoView(js("({block: 'nearest'})"))
+    (list.querySelector(".ao-sel") as? HTMLElement)?.asDynamic().scrollIntoView(js("({block: 'nearest'})"))
 }
 
 /**
- * What ↵ does when a group header is selected, and what the lead session last said, for the
- * footer; null for any other selection. Named after the group's tag, so a group tagged
- * `PROGRAMME` reads "↵ opens the programme session".
+ * The keys that work on the selected row, drawn under the list: each key in the text colour and
+ * its words dim, as clickable segments.
+ *
+ * @param state the view model's current state; its footer says which set of keys applies.
  */
-private fun groupHint(state: AgentsOverviewBackingViewModel.State): String? {
-    val row = state.rows.getOrNull(state.selected)?.takeIf { it.kind == Kind.GROUP } ?: return null
-    val group = state.groups[row.groupId] ?: return null
-    val said = group.leadLastSaid?.let { " · it last said: $it" } ?: ""
-    return "↵ opens the ${group.tag?.lowercase() ?: "lead"} session$said"
+private fun renderFooter(state: AgentsOverviewBackingViewModel.State) {
+    val foot = footElement ?: return
+    foot.textContent = ""
+    footerSegments(state).forEach { seg ->
+        val el = span("ao-seg ${seg.cls}".trim(), "")
+        el.setAttribute("data-key", seg.key)
+        if (seg.key.isNotEmpty()) el.appendChild(span("ao-k", seg.key))
+        el.appendChild(document.createTextNode(seg.word))
+        foot.appendChild(el)
+    }
+}
+
+/**
+ * Choose the footer's entries from the selection: only keys that do something on that row, with
+ * "← back to the programme" added for a run, and "↑↓ move" and "esc close" always last.
+ *
+ * @param state the view model's current state.
+ * @return the entries, in the order they are drawn.
+ */
+private fun footerSegments(state: AgentsOverviewBackingViewModel.State): List<FooterSegment> {
+    val row = state.selectedRow
+    val move = FooterSegment("↑↓", "move", "ao-seg-move")
+    val esc = FooterSegment("esc", "close")
+    val back = FooterSegment("←", "back to the programme", "ao-seg-back").takeIf { row?.kind == Kind.SESSION && row.groupId != null }
+    return when (state.footer) {
+        Footer.LIVE -> listOfNotNull(FooterSegment("→", "peek"), FooterSegment("⌘⌫", "close session"), back, move, esc)
+        Footer.CLOSED -> listOfNotNull(FooterSegment("→", "peek at its saved screen"), back, move, esc)
+        Footer.GROUP_COLLAPSED -> listOf(FooterSegment("→", "expand"), FooterSegment("space", "expand"), move, esc)
+        Footer.GROUP_EXPANDED -> listOf(FooterSegment("←", "collapse"), FooterSegment("space", "collapse"), move, esc)
+        Footer.RUN_ATTACH -> listOfNotNull(back, move, esc)
+        Footer.NO_SESSION -> listOfNotNull(FooterSegment("", "nothing to open: this run is not in a Lunamux pane"), back, move, esc)
+        Footer.NONE -> listOf(move, esc)
+    }
 }
 
 /** Where a search matched, in words, for the line under a result. */
@@ -409,84 +483,143 @@ private fun highlighted(text: String, start: Int, length: Int): org.w3c.dom.Docu
 }
 
 /**
- * One session row: state icon, agent, title with links and repo, now line, age and action,
- * plus, as the design shows, the search snippet, the resume note and (when selected) the peek.
+ * The state glyph of a row, drawn in the second column: ◆ for a run that needs the user, the
+ * braille working glyph (moving while the work is live, still and dim once it is not), ○, ‖, ✓
+ * or ·; nothing for a header whose programme has no working run.
+ *
+ * @param row the row.
+ * @param group the row's programme header data when [row] is a header, for its working glyph.
+ * @param now the current epoch millis, for the working rule.
+ * @return the cell's content, or null for an empty cell.
  */
-private fun buildRow(row: Row, index: Int, selected: Boolean, peek: AgentsOverviewBackingViewModel.Peek?): HTMLElement {
-    val needs = row.state == "needs_you"
-    val live = row.state == "needs_you" || row.state == "working"
-    val el = div(
-        "ao-row" + (if (needs) " ao-needs" else "") + (if (selected) " ao-selected" else "") +
-            (if (live) "" else " ao-history"),
-    )
-    el.setAttribute("data-index", index.toString())
-
-    el.appendChild(span("ao-icon ao-state-${row.state}", when (row.state) {
-        "needs_you" -> "◆"
-        "working" -> "◌"
-        "idle" -> "●"
-        else -> "○"
-    }))
-
-    val main = div("ao-main")
-    if (row.agent.isNotEmpty()) {
-        main.appendChild(if (row.agent == "claude") span("ao-glyph", "✳") else span("ao-tag", row.agent))
+private fun stateGlyph(row: Row, group: AgentsOverviewBackingViewModel.Group?, now: Long): HTMLElement? = when {
+    row.kind == Kind.GROUP ->
+        group?.takeIf { it.workingCount > 0 }
+            ?.let { workingGlyph(AgentsOverviewBackingViewModel.isWorkingLive(it.activityMillis, now)) }
+    else -> when (row.glyph) {
+        Glyph.NEEDS_YOU -> span("ao-g-need", "◆")
+        Glyph.WORKING -> workingGlyph(AgentsOverviewBackingViewModel.isWorkingLive(row.activityMillis, now))
+        Glyph.WAITING -> span("ao-g-plain", "○")
+        Glyph.PAUSED -> span("ao-g-plain", "‖")
+        Glyph.DONE -> span("ao-g-plain", "✓")
+        Glyph.CLOSED -> span("ao-g-plain", "·")
+        Glyph.NONE -> null
     }
-    val title = span("ao-title", "")
-    if (row.field == "title") title.appendChild(highlighted(row.title, row.matchStart, row.matchLength))
-    else title.textContent = row.title
-    main.appendChild(title)
-    row.links.forEach { main.appendChild(span("ao-link", it)) }
-    row.repo?.let { main.appendChild(span("ao-repo", it)) }
-    el.appendChild(main)
+}
 
-    // A working row shows a working glyph and, when Lunamux hosts it, what the agent is doing now;
-    // once nothing has been heard from it for a while the glyph stops and the age says so.
-    val activity = row.activityMillis?.takeIf { row.state == "working" }
-    val quiet = activity != null && AgentsOverviewBackingViewModel.isQuiet(activity, kotlin.js.Date.now().toLong())
-    // A group member the file declares and Lunamux does not host is only as fresh as the file: once
-    // nobody has refreshed it for a while its state is dimmed, not drawn as news.
-    val stale = row.fileRefreshedMillis?.let { AgentsOverviewBackingViewModel.isStale(it, kotlin.js.Date.now().toLong()) } == true
-    val now = div("ao-now")
+/**
+ * The status cell of a session or run: a prefix when the work has gone quiet or its file stale,
+ * the file's label, then the line; an error replaces all of it and is never dimmed. A finished
+ * run also carries its pull request inline, which only shows once the "where" column is dropped.
+ *
+ * @param row the row.
+ * @param now the current epoch millis.
+ * @return the cell.
+ */
+private fun statusCell(row: Row, now: Long): HTMLElement {
+    val cell = span("ao-n", "")
     val error = row.error
     if (error != null) {
-        // An error is never dimmed: it is the one thing on the row the person has to read.
-        now.classList.add("ao-error")
-        now.textContent = error
-    } else {
-        if (stale) now.classList.add("ao-quiet")
-        if (row.state == "working" && !stale) {
-            now.classList.add("ao-has-work")
-            now.appendChild(workingGlyph(active = activity != null && !quiet))
-        }
-        val text = span("ao-now-text", "")
-        row.label?.let { text.appendChild(span("ao-label", "$it  ")) }
-        text.appendChild(document.createTextNode(when {
-            needs -> row.question ?: row.nowLine ?: "Needs you"
-            else -> row.nowLine ?: if (row.state == "working" && activity == null) "Working" else ""
-        }))
-        now.appendChild(text)
+        cell.classList.add("ao-n-error")
+        cell.textContent = error
+        return cell
     }
-    el.appendChild(now)
+    val prefix = AgentsOverviewBackingViewModel.agePrefix(row, now)
+    if (prefix.isNotEmpty()) cell.appendChild(span("ao-n-faint", prefix))
+    val label = row.label
+    if (label != null) {
+        cell.appendChild(document.createTextNode(label))
+        if (row.status.isNotEmpty()) cell.appendChild(span("ao-n-faint", " · "))
+    }
+    cell.appendChild(document.createTextNode(row.status))
+    val pr = row.where?.takeIf { row.glyph == Glyph.DONE && it.startsWith("#") }
+    if (pr != null) cell.appendChild(span("ao-pr-inline", " · $pr"))
+    return cell
+}
 
-    el.appendChild(
-        if (quiet) span("ao-age ao-quiet", "quiet ${formatAge(activity!!)}")
-        else if (stale) span("ao-age ao-quiet", "stale ${formatAge(row.fileRefreshedMillis!!)}")
-        else span("ao-age", formatAge(row.sinceMillis)),
-    )
-    val actions = span("ao-actions", "")
-    if (row.actionLabel.isNotEmpty()) actions.appendChild(span("ao-action", row.actionLabel))
-    if (selected && !row.unhosted) {
-        actions.appendChild(iconButton("Peek at its screen", "›", peek != null) {
-            launchAgentsOverview { if (peek != null) agentsOverview.closePeek() else agentsOverview.peek() }
-        })
-        if (row.canClose) {
-            actions.appendChild(iconButton("Close this session", "✕", false) {
-                launchAgentsOverview { agentsOverview.requestClose() }
-            })
-        }
+/**
+ * The count line of a programme header: "1 needs you" in the warning colour, then the dim counts,
+ * joined by faint dots.
+ *
+ * @param group the header's data, or null if it vanished since the row was built.
+ * @return the cell.
+ */
+private fun countsCell(group: AgentsOverviewBackingViewModel.Group?): HTMLElement {
+    val cell = span("ao-n", "")
+    if (group == null) return cell
+    val parts = group.summary.split(" · ").filter { it.isNotEmpty() }
+    if (group.needYouCount > 0) cell.appendChild(span("ao-cn", AgentsOverviewBackingViewModel.needYouText(group.needYouCount)))
+    parts.forEachIndexed { i, part ->
+        if (i > 0 || group.needYouCount > 0) cell.appendChild(span("ao-n-faint", " · "))
+        cell.appendChild(document.createTextNode(part))
     }
-    el.appendChild(actions)
+    return cell
+}
+
+/**
+ * One row of the table, session, run or programme header, in the seven-column grid.
+ *
+ * The row's colour comes from its state alone: needs-you status in the brightest text, working
+ * status mid-bright, the rest dim. The selected row shows its action as "↵ jump" and the like at
+ * the right end; a header always shows "open". Search snippets, the resume note, an open peek and
+ * a failed open's error span the row's full width underneath.
+ *
+ * @param row the row to draw.
+ * @param state the view model's state, for the header data and the open peek.
+ * @param selected whether it is the highlighted row.
+ * @param now the current epoch millis.
+ * @param kids for a header, whether runs are drawn under it (so a tree line runs down from it).
+ * @param last for a run, whether it is the last one of its programme on screen.
+ * @return the row element, carrying the row's id as `data-id` for click routing.
+ */
+private fun buildRow(
+    row: Row,
+    state: AgentsOverviewBackingViewModel.State,
+    selected: Boolean,
+    now: Long,
+    kids: Boolean,
+    last: Boolean,
+): HTMLElement {
+    val isHead = row.kind == Kind.GROUP
+    val group = state.groups[row.groupId].takeIf { isHead }
+    val classes = mutableListOf("ao-row")
+    if (isHead) classes += "ao-head"
+    if (isHead && kids) classes += "ao-kids"
+    if (!isHead && row.groupId != null) classes += "ao-mem"
+    if (last) classes += "ao-last"
+    if (selected) classes += "ao-sel"
+    if (!isHead && row.glyph == Glyph.NEEDS_YOU) classes += "ao-need"
+    if (!isHead && row.glyph == Glyph.WORKING) classes += "ao-working"
+    if (!isHead && (row.glyph == Glyph.CLOSED || (!row.isLive && row.groupId == null))) classes += "ao-past"
+    if (row.fileRefreshedMillis?.let { AgentsOverviewBackingViewModel.isStale(it, now) } == true) classes += "ao-stale"
+    val el = div(classes.joinToString(" "))
+    el.setAttribute("data-id", row.id)
+
+    el.appendChild(span("ao-gut", if (isHead) (if (group?.expanded == true) "▾" else "▸") else ""))
+
+    val glyphCell = span("ao-s", "")
+    stateGlyph(row, group, now)?.let { glyphCell.appendChild(it) }
+    el.appendChild(glyphCell)
+
+    val title = span("ao-t", "")
+    if (row.field == "title") title.appendChild(highlighted(row.title, row.matchStart, row.matchLength))
+    else title.textContent = row.title
+    if (!isHead && row.agent.isNotEmpty() && row.agent != "claude") title.appendChild(span("ao-agent", " ${row.agent}"))
+    el.appendChild(title)
+
+    el.appendChild(span("ao-w", if (isHead) group?.repo ?: "" else row.where ?: ""))
+    el.appendChild(if (isHead) countsCell(group) else statusCell(row, now))
+    el.appendChild(span("ao-a", if (isHead || row.sinceMillis <= 0) "" else formatAge(row.sinceMillis)))
+    el.appendChild(
+        span(
+            "ao-x",
+            when {
+                isHead -> if (selected) "↵ open" else "open"
+                selected && row.actionLabel.isNotEmpty() -> "↵ ${row.actionLabel}"
+                else -> ""
+            },
+        ),
+    )
 
     if (row.field != null && row.field != "title" && row.snippet != null) {
         val snip = div("ao-snippet")
@@ -495,117 +628,23 @@ private fun buildRow(row: Row, index: Int, selected: Boolean, peek: AgentsOvervi
         el.appendChild(snip)
     }
     row.resumeNote?.let { el.appendChild(div("ao-note").also { n -> n.textContent = it }) }
-    if (peek != null) el.appendChild(buildPeek(peek))
+    state.peek?.takeIf { selected }?.let { el.appendChild(buildPeek(it)) }
     return el
 }
 
 /**
- * The header of a group box, on one line: chevron, title, repo, link chip when the group has one,
- * the count line with the needs-you part highlighted, and its age. What ↵ opens is told in the
- * footer ([groupHint]); a failed open of the lead adds an error line under the header.
+ * The dim "+ 6 more" line that ends Earlier. It is not a row anyone can select; a click shows the
+ * rest.
  *
- * Clicking the chevron or the count line shows or hides the members; clicking anywhere else
- * opens the lead like ↵ does.
- *
- * @param row the [Kind.GROUP] row.
- * @param group the group's header data, or null if it vanished since the row was built.
- * @param index the row's position in the list, for click routing.
- * @param selected whether it is the highlighted row.
- * @param endsGroup whether no member rows follow, so the box closes under it.
- * @param peek the open peek of the lead session, if this header is selected and has one.
+ * @param hidden how many Earlier entries are still hidden.
+ * @return the line, laid out on the same grid as a row.
  */
-private fun buildGroupHeader(
-    row: Row,
-    group: AgentsOverviewBackingViewModel.Group?,
-    index: Int,
-    selected: Boolean,
-    endsGroup: Boolean,
-    peek: AgentsOverviewBackingViewModel.Peek?,
-): HTMLElement {
-    val el = div(
-        "ao-row ao-group" + (if (selected) " ao-selected" else "") + (if (endsGroup) " ao-group-end" else ""),
-    )
-    el.setAttribute("data-index", index.toString())
-    val groupId = row.groupId
-
-    val chevron = document.createElement("button") as HTMLElement
-    chevron.asDynamic().type = "button"
-    chevron.className = "ao-chevron"
-    chevron.setAttribute("aria-label", "Show or hide all of the group's sessions")
-    chevron.textContent = if (group?.expanded == true) "⌄" else "›"
-    chevron.addEventListener("click", { e: Event ->
-        e.stopPropagation()
-        if (groupId != null) agentsOverview.toggleGroup(groupId)
-    })
-    el.appendChild(chevron)
-
-    val main = div("ao-main")
-    main.appendChild(span("ao-title ao-group-title", row.title))
-    if (group != null && group.workingCount > 0) {
-        val busy = group.activityMillis?.let { !AgentsOverviewBackingViewModel.isQuiet(it, kotlin.js.Date.now().toLong()) } == true
-        main.appendChild(workingGlyph(active = busy))
-    }
-    group?.repo?.let { main.appendChild(span("ao-repo", it)) }
-    val url = group?.linkUrl
-    if (url != null) {
-        val chip = document.createElement("a") as HTMLElement
-        chip.className = "ao-link-chip"
-        chip.setAttribute("href", url)
-        chip.setAttribute("target", "_blank")
-        chip.setAttribute("rel", "noopener noreferrer")
-        chip.textContent = group.linkLabel ?: url
-        chip.addEventListener("click", { e: Event -> e.stopPropagation() })
-        main.appendChild(chip)
-    }
-    el.appendChild(main)
-
-    val counts = document.createElement("button") as HTMLElement
-    counts.asDynamic().type = "button"
-    counts.className = "ao-counts"
-    if (group != null) {
-        if (group.needYouCount > 0) counts.appendChild(span("ao-counts-need", "${group.needYouCount} needs you"))
-        counts.title = listOfNotNull(
-            "${group.needYouCount} needs you".takeIf { group.needYouCount > 0 },
-            group.summary.takeIf { it.isNotEmpty() },
-        ).joinToString(" · ")
-        val rest = group.summary.split(" · ").filter { it.isNotEmpty() }
-        rest.forEachIndexed { i, part ->
-            if (i > 0 || group.needYouCount > 0) counts.appendChild(document.createTextNode(" · "))
-            counts.appendChild(span("ao-counts-rest", part))
-        }
-    }
-    counts.addEventListener("click", { e: Event ->
-        e.stopPropagation()
-        if (groupId != null) agentsOverview.toggleGroup(groupId)
-    })
-    el.appendChild(counts)
-
-    el.appendChild(span("ao-age", if (row.sinceMillis > 0) formatAge(row.sinceMillis) else ""))
-    el.appendChild(span("ao-actions", ""))
-
-    row.error?.let { el.appendChild(div("ao-note ao-error").also { line -> line.textContent = it }) }
-    if (peek != null) el.appendChild(buildPeek(peek))
+private fun buildMoreLine(hidden: Int): HTMLElement {
+    val el = div("ao-row ao-more")
+    el.appendChild(span("ao-gut", ""))
+    el.appendChild(span("ao-s", ""))
+    el.appendChild(span("ao-t", "+ $hidden more"))
     return el
-}
-
-/** The quiet "2 more" line under a collapsed group; ↵ or a click shows every member. */
-private fun buildGroupMore(row: Row, index: Int, selected: Boolean): HTMLElement {
-    val el = div("ao-row ao-group-more ao-group-end" + if (selected) " ao-selected" else "")
-    el.setAttribute("data-index", index.toString())
-    el.appendChild(span("ao-more-text", row.title))
-    return el
-}
-
-/** A small square button on the selected row; clicks do not also activate the row. */
-private fun iconButton(label: String, glyph: String, pressed: Boolean, onClick: () -> Unit): HTMLElement {
-    val b = document.createElement("button") as HTMLElement
-    b.asDynamic().type = "button"
-    b.className = "ao-icon-btn" + if (pressed) " ao-pressed" else ""
-    b.setAttribute("aria-label", label)
-    b.title = label
-    b.textContent = glyph
-    b.addEventListener("click", { e: Event -> e.stopPropagation(); onClick() })
-    return b
 }
 
 /** The popover under the selected row: a heading and the last lines of the session's screen. */

@@ -301,6 +301,21 @@ sealed class WindowCommand {
     data class OpenAgentGroupLead(val groupId: String) : WindowCommand()
 
     /**
+     * Open a programme run that Lunamux does not host: the server looks the group up among
+     * the group files it reads, confirms one of its members carries [sessionId], and opens a
+     * tab named like the member that types `claude attach <sessionId>`. The line is built by
+     * the server from the id alone; a client never supplies a command. An unknown group, a
+     * member that is no longer in the file or an id that is not a plain session id is answered
+     * with [WindowEnvelope.AgentSessionError] (record id null).
+     *
+     * @param groupId the [AgentGroup.id] of the group the run belongs to
+     * @param sessionId the [AgentGroupMember.sessionId] of the run to attach to
+     */
+    @Serializable
+    @SerialName("openAgentGroupMember")
+    data class OpenAgentGroupMember(val groupId: String, val sessionId: String) : WindowCommand()
+
+    /**
      * Search every agent session ever recorded, open or closed, plus Claude Code
      * sessions imported from before Lunamux recorded them. The server answers
      * on the asking connection only with [WindowEnvelope.AgentSessionMatches].
