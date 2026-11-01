@@ -153,7 +153,7 @@ object AgentsOverviewSeed {
                     createdAt = ended - 40 * MINUTE,
                     endedAt = ended,
                     repoRoot = workdir,
-                    lastSaid = "Done. ${s.title} is finished.",
+                    lastSaid = "Merged; the checks pass.",
                     taskId = s.task,
                 ),
             )
