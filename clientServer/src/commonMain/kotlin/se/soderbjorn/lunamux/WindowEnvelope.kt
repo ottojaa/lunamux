@@ -229,7 +229,81 @@ sealed class WindowEnvelope {
         val message: String,
         val level: String = "info",
     ) : WindowEnvelope()
+
+    /**
+     * Every agentic-CLI session the server tracks: the open ones plus the
+     * most recent ended ones, without their saved screen text. Sent on
+     * connect and again whenever any record changes, so the agents overview
+     * (toolbar chip and overlay) follows a session within a moment of a hook
+     * event or a poll result. Older clients fail to decode this frame and
+     * drop it, which is harmless.
+     *
+     * @param sessions the sessions, in no particular order
+     * @param claudeConnected whether Lunamux's hooks are present in the user's
+     *   Claude Code settings file (drives the App Settings Connect/Disconnect row)
+     * @see AgentSessionSummary
+     */
+    @Serializable
+    @SerialName("agentSessions")
+    data class AgentSessions(
+        val sessions: List<AgentSessionSummary>,
+        val claudeConnected: Boolean = false,
+    ) : WindowEnvelope()
+
+    /**
+     * A failed agents-overview request, sent only to the connection that made
+     * it: resuming a session whose folder is gone, or connecting Claude Code
+     * when its settings file cannot be edited.
+     *
+     * @param recordId the [AgentSessionSummary.id] the request was about, or
+     *   null for the Claude Code connection
+     * @param message text for the user, such as "folder no longer exists"
+     * @see WindowCommand.ResumeAgentSession
+     * @see WindowCommand.SetClaudeHooks
+     */
+    @Serializable
+    @SerialName("agentSessionError")
+    data class AgentSessionError(val recordId: String?, val message: String) : WindowEnvelope()
 }
+
+/**
+ * One row of the agents overview: a run of Claude Code, Codex or Gemini in a
+ * pane, as the server's `agent_sessions` table records it.
+ *
+ * Built by the server's session tracker, pushed in
+ * [WindowEnvelope.AgentSessions] and ordered and titled by the client's
+ * agents overview view model.
+ *
+ * @param id Lunamux's record id; also what [WindowCommand.ResumeAgentSession] names.
+ * @param agent `claude`, `codex` or `gemini`.
+ * @param state `needs_you`, `working`, `idle` or `ended`.
+ * @param stateSince epoch millis when [state] last changed.
+ * @param title the agent's own title for the session, frozen once seen; null if none.
+ * @param links ticket keys such as `ABC-12` found in the branch or title.
+ * @param repo name of the git repository folder, or null outside one.
+ * @param branch branch the agent was started on, or null.
+ * @param cwd folder the agent ran in.
+ * @param nowLine the last tool line ("Bash ./gradlew test"), or null.
+ * @param question what the agent is asking while [state] is `needs_you`.
+ * @param leafId the pane the agent runs in (meaningful while the record is open).
+ * @param endedAt epoch millis when the record ended, or null while open.
+ */
+@Serializable
+data class AgentSessionSummary(
+    val id: String,
+    val agent: String,
+    val state: String,
+    val stateSince: Long,
+    val title: String? = null,
+    val links: List<String> = emptyList(),
+    val repo: String? = null,
+    val branch: String? = null,
+    val cwd: String? = null,
+    val nowLine: String? = null,
+    val question: String? = null,
+    val leafId: String? = null,
+    val endedAt: Long? = null,
+)
 
 /**
  * One model-specific weekly usage row from the `/usage` screen, e.g.

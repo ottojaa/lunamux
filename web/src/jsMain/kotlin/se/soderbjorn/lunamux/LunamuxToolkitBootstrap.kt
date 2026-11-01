@@ -1368,6 +1368,7 @@ fun bootViaToolkitShell(root: HTMLElement) {
             // just left of "+". Click routes to the same [toggleOverview3d] as
             // the ⌥⌘→ hotkey.
             extraTopbarBeforeStandard = buildList {
+                add(buildAgentsOverviewTopbarAction())
                 add(buildOverview3dTopbarAction())
                 add(buildWorld3dSpikeTopbarAction())
             },
@@ -1507,6 +1508,7 @@ fun bootViaToolkitShell(root: HTMLElement) {
     // feature is actually enabled. See [registerOverview3dHotkey],
     // [applyOverview3dChromeVisibility], and [prewarmOverview3d].
     registerOverview3dHotkey()
+    registerAgentsOverviewHotkey() // ⌘⇧A opens the agents overview
     registerWorld3dSpikeHotkey() // ⌥⌘← opens the world spike (mirror of ⌥⌘→)
     registerWorldSwitchHotkey() // ⌥⌘O cycles to the next world in flat 2D mode
     applyOverview3dChromeVisibility()

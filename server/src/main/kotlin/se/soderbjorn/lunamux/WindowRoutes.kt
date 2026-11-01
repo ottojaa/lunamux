@@ -31,6 +31,7 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.readText
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
@@ -290,6 +291,10 @@ internal class WindowConnectionContext(
      * active world; old clients always add to the default (first) world.
      */
     val supportsWorlds: Boolean = false,
+    /** The agent session record behind the agents overview; null where the overview is not wired up. */
+    val agentTracker: AgentSessionTracker? = null,
+    /** The Claude Code settings editor behind the App Settings Connect row; null where it is not wired up. */
+    val claudeHooks: ClaudeHooks? = null,
 ) {
     private val gitWatchers = ConcurrentHashMap<String, GitWatchHandle>()
 
@@ -356,6 +361,8 @@ internal fun Route.windowRoutes(
     settingsRepo: SettingsRepository,
     sessionStates: MutableSharedFlow<Map<String, String?>>,
     usageMonitor: ClaudeUsageMonitor,
+    agentTracker: AgentSessionTracker,
+    claudeHooks: ClaudeHooks,
 ) {
     webSocket("/window") {
         val token = call.readAuthToken()
@@ -416,6 +423,16 @@ internal fun Route.windowRoutes(
             }
         }
 
+        // Agent sessions follow the tracker, not the 3 s poll, so a hook event
+        // reaches the overview straight away. The Claude connection flag rides
+        // along because the settings row needs it with the same lifetime.
+        claudeHooks.refresh()
+        val agentSessionsPushJob = launch {
+            combine(agentTracker.summaries, claudeHooks.connected) { sessions, connected ->
+                WindowEnvelope.AgentSessions(sessions, connected)
+            }.collect { env -> send(Frame.Text(windowJson.encodeToString<WindowEnvelope>(env))) }
+        }
+
         val usagePushJob = launch {
             usageMonitor.usageData.collect { data ->
                 val payload = windowJson.encodeToString<WindowEnvelope>(WindowEnvelope.ClaudeUsage(data))
@@ -450,6 +467,8 @@ internal fun Route.windowRoutes(
             settingsRepo = settingsRepo,
             usageMonitor = usageMonitor,
             supportsWorlds = supportsWorlds,
+            agentTracker = agentTracker,
+            claudeHooks = claudeHooks,
         )
 
         try {
@@ -460,6 +479,7 @@ internal fun Route.windowRoutes(
             ctx.closeAll()
             pushJob.cancel()
             statePushJob.cancel()
+            agentSessionsPushJob.cancel()
             usagePushJob.cancel()
             agentNoticePushJob?.cancel()
             uiSettingsPushJob.cancel()
@@ -728,6 +748,12 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
             val worldId = if (ctx.supportsWorlds) WindowState.activeWorldId() else WindowState.defaultWorldId()
             WindowState.addTab(worldId = worldId)
         }
+        is WindowCommand.ResumeAgentSession -> resumeAgentSession(cmd.recordId, ctx)
+        is WindowCommand.SetClaudeHooks -> {
+            val hooks = ctx.claudeHooks ?: return
+            val error = if (cmd.connected) hooks.connect() else hooks.disconnect()
+            if (error != null) ctx.send(WindowEnvelope.AgentSessionError(null, error))
+        }
         is WindowCommand.CloseTab -> WindowState.closeTab(cmd.tabId)
         is WindowCommand.RenameTab -> WindowState.renameTab(cmd.tabId, cmd.title)
         is WindowCommand.MoveTab -> WindowState.moveTab(cmd.tabId, cmd.targetTabId, cmd.before)
@@ -886,5 +912,53 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
             }
             ctx.send(WindowEnvelope.WorktreeCreated(paneId = cmd.paneId, newCwd = newCwd))
         }
+    }
+}
+
+/**
+ * Whether [id] is safe to type into a shell as an argument: letters, digits,
+ * `-` and `_` only. Claude's own ids are UUIDs, but the id in a record came
+ * from a hook request body, so it is checked before it reaches the PTY.
+ *
+ * @param id the agent's session id as stored on the record.
+ * @return true when it contains nothing the shell would interpret.
+ */
+private fun isPlainSessionId(id: String): Boolean = id.isNotEmpty() && id.length <= 100 && id.all { it.isLetterOrDigit() || it == '-' || it == '_' }
+
+/**
+ * Open a new tab for an agent session and start its agent again.
+ *
+ * Called by [handleWindowCommand] for [WindowCommand.ResumeAgentSession]. The
+ * tab is titled like the overview row and starts in the folder the agent ran
+ * in; the resume command is typed into its shell the way the MCP `run`
+ * tool does. Gemini has no resume command, so its tab just opens in the
+ * folder. A folder that has since been deleted is reported back as an
+ * [WindowEnvelope.AgentSessionError] and no tab is created.
+ *
+ * @param recordId the [AgentSessionSummary.id] of the row.
+ * @param ctx the connection that asked, which receives any error.
+ */
+private suspend fun resumeAgentSession(recordId: String, ctx: WindowConnectionContext) {
+    val rec = ctx.agentTracker?.find(recordId)
+    if (rec == null) {
+        ctx.send(WindowEnvelope.AgentSessionError(recordId, "session no longer exists"))
+        return
+    }
+    val cwd = rec.cwd
+    if (cwd.isNullOrBlank() || !java.io.File(cwd).isDirectory) {
+        ctx.send(WindowEnvelope.AgentSessionError(recordId, "folder no longer exists"))
+        return
+    }
+    val command = when (rec.agent) {
+        "claude" -> rec.agentSessionId?.takeIf(::isPlainSessionId)?.let { "claude --resume $it" } ?: "claude --continue"
+        "codex" -> "codex resume"
+        else -> null
+    }
+    val tabId = WindowState.addTab(WindowState.activeWorldId(), initialCwd = cwd)
+    WindowState.renameTab(tabId, rec.title ?: rec.branch ?: java.io.File(cwd).name)
+    val sessionId = WindowState.config.value.worlds.flatMap { it.tabs }
+        .firstOrNull { it.id == tabId }?.panes?.firstOrNull()?.leaf?.sessionId
+    if (command != null && sessionId != null) {
+        TerminalSessions.get(sessionId)?.write((command + "\r").toByteArray(Charsets.UTF_8))
     }
 }

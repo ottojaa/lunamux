@@ -72,6 +72,9 @@ import se.soderbjorn.lunula.web.themeeditor.AppearanceTab
 import kotlinx.browser.document
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -707,7 +710,75 @@ private fun buildGeneralSection(): HTMLElement {
             "their folder names.",
     ))
 
+    section.appendChild(buildClaudeCodeRow())
+
     return section
+}
+
+/**
+ * The **Claude Code** connection row in the General section: a single button,
+ * "Connect Claude Code" or "Disconnect", that asks the server to add or remove
+ * Lunamux's hook entries in the user's Claude settings file. Nothing is edited
+ * until the button is pressed. The label follows
+ * [WindowStateRepository.claudeConnected]; a failure the server reports (for
+ * example a settings file that is not valid JSON) is shown under the button.
+ *
+ * Built by [buildGeneralSection] each time the App Settings sidebar is built.
+ *
+ * @return the freshly-built row element.
+ * @see WindowCommand.SetClaudeHooks
+ */
+@OptIn(DelicateCoroutinesApi::class)
+private fun buildClaudeCodeRow(): HTMLElement {
+    val windowState = lunamuxClient.windowState
+    val row = document.createElement("div") as HTMLElement
+    row.className = "lunamux-app-settings-toggle-row"
+
+    val header = document.createElement("div") as HTMLElement
+    header.className = "lunamux-app-settings-toggle-header"
+    val labelEl = document.createElement("span") as HTMLElement
+    labelEl.className = "lunamux-app-settings-toggle-label"
+    labelEl.textContent = "Claude Code"
+    header.appendChild(labelEl)
+    header.appendChild(buildHelpPopover(
+        "Lets the agents overview show what each Claude Code session is doing " +
+            "and when it needs you. Connecting adds Lunamux-marked hook entries to " +
+            "your Claude Code settings file; disconnecting removes only those. " +
+            "Claude Code started outside Lunamux is unaffected.",
+    ))
+    row.appendChild(header)
+
+    val btn = document.createElement("button") as HTMLElement
+    btn.asDynamic().type = "button"
+    btn.className = "dt-settings-choice-btn"
+    row.appendChild(btn)
+
+    val message = document.createElement("div") as HTMLElement
+    message.className = "lunamux-app-settings-claude-error"
+    row.appendChild(message)
+
+    var pressed = false
+    btn.addEventListener("click", { _: Event ->
+        pressed = true
+        windowState.clearAgentSessionError()
+        val connect = !windowState.claudeConnected.value
+        launchCmd(WindowCommand.SetClaudeHooks(connect))
+    })
+
+    GlobalScope.launch {
+        var attached = false
+        combine(windowState.claudeConnected, windowState.agentSessionError) { c, e -> c to e }
+            .takeWhile {
+                // Stop once the sidebar body this row lived in has been replaced.
+                if (row.isConnected) attached = true
+                !attached || row.isConnected
+            }
+            .collect { (connected, error) ->
+                btn.textContent = if (connected) "Disconnect" else "Connect Claude Code"
+                message.textContent = if (pressed) error.orEmpty() else ""
+            }
+    }
+    return row
 }
 
 /**

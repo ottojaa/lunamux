@@ -452,10 +452,12 @@ object WindowState {
     /** Create a new tab with a single terminal pane, switch to it, and
      *  default it to auto-tiling.
      *
+     *  @param worldId the world to add the tab to, or null for the active world.
+     *  @param initialCwd folder the tab's shell starts in, or null for the home folder.
      *  @return the newly minted tab id (used by the MCP `create_tab` tool
      *    to report the created tab; the `/window` command path ignores it).
      */
-    fun addTab(worldId: String? = null): String = synchronized(this) {
+    fun addTab(worldId: String? = null, initialCwd: String? = null): String = synchronized(this) {
         // Bootstrap a default world if the config is world-less (the
         // pre-[initialize] path some unit tests exercise). Production always
         // has at least the cold-start "Home" world from [buildDefault].
@@ -465,7 +467,7 @@ object WindowState {
         // for old-client commands so those always land in the default world.
         val wid = worldId ?: cfg.activeWorldId ?: cfg.worlds.firstOrNull()?.id ?: return@synchronized ""
         val world = cfg.worlds.firstOrNull { it.id == wid } ?: return@synchronized ""
-        val sessionId = TerminalSessions.create()
+        val sessionId = TerminalSessions.create(initialCwd)
         val tabId = newTabId()
         val nodeId = newNodeId()
         val newView = TabManager.addTab(
@@ -697,6 +699,18 @@ object WindowState {
             if (tab.panes.any { it.leaf.id == paneId }) return@synchronized tab.id
         }
         null
+    }
+
+    /**
+     * The id of the pane showing terminal session [sessionId].
+     *
+     * Called by [livePaneSnapshot] so agent records can name their pane.
+     *
+     * @param sessionId a live terminal session id.
+     * @return the leaf id, or null if no pane shows the session.
+     */
+    fun leafIdOfSession(sessionId: String): String? = synchronized(this) {
+        findLeafBySession(_config.value, sessionId)?.id
     }
 
     private fun findLeafBySession(cfg: WindowConfig, sessionId: String): LeafNode? {

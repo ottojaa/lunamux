@@ -179,6 +179,9 @@ class RealWindowSocket internal constructor(
                             // pane set out so the mobile sessions list can dim
                             // docked panes, live with web minimize/restore.
                             is WindowEnvelope.UiSettings -> client.windowState.updateUiSettings(envelope.settings)
+                            is WindowEnvelope.AgentSessions ->
+                                client.windowState.updateAgentSessions(envelope.sessions, envelope.claudeConnected)
+                            is WindowEnvelope.AgentSessionError -> client.windowState.setAgentSessionError(envelope.message)
                             is WindowEnvelope.FileBrowserDir,
                             is WindowEnvelope.FileBrowserContentMsg,
                             is WindowEnvelope.FileBrowserError,

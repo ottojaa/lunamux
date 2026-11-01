@@ -269,6 +269,32 @@ sealed class WindowCommand {
     object AddTab : WindowCommand()
 
     /**
+     * Pick a finished or idle agent session back up: the server opens a new
+     * tab named like the row, in the folder the agent ran in, and types the
+     * agent's resume command (`claude --resume <id>`, `claude --continue`
+     * without an id, or `codex resume`). Gemini has no resume; for it the tab
+     * just opens in the folder. A missing folder is answered with
+     * [WindowEnvelope.AgentSessionError].
+     *
+     * @param recordId the [AgentSessionSummary.id] of the row
+     */
+    @Serializable
+    @SerialName("resumeAgentSession")
+    data class ResumeAgentSession(val recordId: String) : WindowCommand()
+
+    /**
+     * Add or remove Lunamux's hook entries in the user's Claude Code settings
+     * file. Sent when the App Settings "Connect Claude Code" row is pressed.
+     * The result arrives as the next [WindowEnvelope.AgentSessions]
+     * (`claudeConnected`) or a [WindowEnvelope.AgentSessionError].
+     *
+     * @param connected true to connect, false to disconnect
+     */
+    @Serializable
+    @SerialName("setClaudeHooks")
+    data class SetClaudeHooks(val connected: Boolean) : WindowCommand()
+
+    /**
      * Close a tab and all panes within it.
      *
      * @param tabId the id of the tab to close
