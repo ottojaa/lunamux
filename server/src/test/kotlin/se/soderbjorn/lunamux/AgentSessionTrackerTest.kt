@@ -302,4 +302,48 @@ class AgentSessionTrackerTest {
         assertEquals("Grep todo", toolLine(Json.parseToJsonElement("""{"tool_name":"Grep","tool_input":{"pattern":"todo"}}""") as JsonObject))
         assertNull(toolLine(Json.parseToJsonElement("""{"x":1}""") as JsonObject))
     }
+
+    @Test
+    fun `a name the user gave the pane becomes the title and survives the pane closing`() {
+        val t = tracker()
+        t.onPoll(listOf(pane(agent = "claude", state = "working", title = "✳ Agent title")))
+        now = 2_000
+        t.onPoll(listOf(PaneSnapshot("s1", "leaf-s1", "/work/repo", "✳ Agent title", "claude", "working", true, "My F2 name") { "x" }))
+        assertEquals("My F2 name", t.summaries.value.single().title)
+        now = 3_000
+        t.onSessionDestroyed("s1", "bye")
+        assertEquals("My F2 name", t.summaries.value.single().title)
+
+        val reloaded = tracker(SettingsRepository(File(dbDir, "test.db")))
+        assertEquals("My F2 name", reloaded.summaries.value.single().title)
+    }
+
+    @Test
+    fun `the repository root is recorded when a record opens`() {
+        val r = SettingsRepository(File(dbDir, "root.db"))
+        val t = AgentSessionTracker(
+            r,
+            gitInfo = { GitInfo("app", "feat", "/app/.claude/worktrees/feat", "/app") },
+            clock = { now },
+            newId = { "r${++nextId}" },
+        ).also { it.start() }
+        t.onPoll(listOf(pane(agent = "claude", state = "working")))
+        assertEquals("/app", r.findAgentSessionById(t.summaries.value.single().id)!!.repoRoot)
+    }
+
+    @Test
+    fun `the ended hook is called once for a record that ends`() {
+        val ended = mutableListOf<String>()
+        val t = AgentSessionTracker(
+            repo,
+            gitInfo = { GitInfo(repo = "lunamux") },
+            clock = { now },
+            newId = { "r${++nextId}" },
+            onEnded = { ended += it.id },
+        ).also { it.start() }
+        t.onPoll(listOf(pane(agent = "claude", state = "working")))
+        t.onSessionDestroyed("s1", "bye")
+        t.onPoll(emptyList())
+        assertEquals(listOf("r1"), ended)
+    }
 }
