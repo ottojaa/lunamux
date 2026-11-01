@@ -2,7 +2,9 @@
  * The agents overview in the web client: a topbar chip that counts the agent
  * sessions needing the user and the ones at work, and the ⌘⇧A overlay that
  * lists every agentic-CLI session (Claude Code, Codex, Gemini) under "Now"
- * and "Earlier".
+ * and "Earlier". Typing two or more characters swaps the lists for search
+ * results over every session ever run; → peeks at a session's screen and
+ * × / ⌘⌫ close a live one after an inline confirmation.
  *
  * All state and behaviour live in the shared
  * [AgentsOverviewBackingViewModel]; this file only draws its state as plain
@@ -49,6 +51,14 @@ private var overlayElement: HTMLElement? = null
 private var searchInput: HTMLInputElement? = null
 private var listElement: HTMLElement? = null
 private var shownRows: List<Row> = emptyList()
+private var searchTimer: Int? = null
+private var peekTimer: Int? = null
+
+/** Pause after the last key press before the query is sent to the server. */
+private const val SEARCH_DEBOUNCE_MS = 150
+
+/** How often an open live peek asks for a fresh screen. */
+private const val PEEK_REFRESH_MS = 2_000
 
 /**
  * Register the configurable **agents overview** hotkey (default ⌘⇧A) with the
@@ -106,6 +116,34 @@ private fun renderAgentsOverview(state: AgentsOverviewBackingViewModel.State) {
     } else {
         closeOverlayElement()
     }
+    keepPeekFresh(state.peek?.live == true)
+}
+
+/**
+ * Start or stop the timer that refreshes an open live peek, so the screen follows the
+ * agent while it is shown and nothing polls once it is closed.
+ *
+ * @param needed whether a live peek is open.
+ */
+private fun keepPeekFresh(needed: Boolean) {
+    if (needed && peekTimer == null) {
+        peekTimer = kotlinx.browser.window.setInterval(
+            { launchAgentsOverview { agentsOverview.refreshPeek() } },
+            PEEK_REFRESH_MS,
+        )
+    } else if (!needed) {
+        peekTimer?.let { kotlinx.browser.window.clearInterval(it) }
+        peekTimer = null
+    }
+}
+
+/** Send the query to the server once typing pauses; a newer key press replaces the pending send. */
+private fun searchSoon() {
+    searchTimer?.let { kotlinx.browser.window.clearTimeout(it) }
+    searchTimer = kotlinx.browser.window.setTimeout(
+        { searchTimer = null; launchAgentsOverview { agentsOverview.search() } },
+        SEARCH_DEBOUNCE_MS,
+    )
 }
 
 private fun renderChip(state: AgentsOverviewBackingViewModel.State) {
@@ -133,11 +171,14 @@ private fun ensureOverlay(query: String) {
     val input = document.createElement("input") as HTMLInputElement
     input.type = "text"
     input.className = "ao-search"
-    input.placeholder = "Search sessions"
+    input.placeholder = "Search all sessions"
     input.value = query
     input.setAttribute("autocomplete", "off")
     input.setAttribute("spellcheck", "false")
-    input.addEventListener("input", { _: Event -> agentsOverview.setQuery(input.value) })
+    input.addEventListener("input", { _: Event ->
+        agentsOverview.setQuery(input.value)
+        searchSoon()
+    })
     input.addEventListener("keydown", { e: Event -> onSearchKey(e as KeyboardEvent) })
     input.addEventListener("blur", { _: Event ->
         if (overlayElement != null) kotlinx.browser.window.setTimeout({ input.focus() }, 0)
@@ -153,7 +194,7 @@ private fun ensureOverlay(query: String) {
     panel.appendChild(input)
     panel.appendChild(list)
     panel.appendChild(div("ao-hint").also {
-        it.textContent = "type to search · ↑↓ select · ↵ jump or resume · esc close"
+        it.textContent = "type to search · ↑↓ select · ↵ jump or resume · → peek at its screen · ⌘⌫ close session · esc close"
     })
     backdrop.appendChild(panel)
     document.body?.appendChild(backdrop)
@@ -164,6 +205,8 @@ private fun ensureOverlay(query: String) {
 }
 
 private fun closeOverlayElement() {
+    searchTimer?.let { kotlinx.browser.window.clearTimeout(it) }
+    searchTimer = null
     overlayElement?.remove()
     overlayElement = null
     searchInput = null
@@ -171,13 +214,34 @@ private fun closeOverlayElement() {
     shownRows = emptyList()
 }
 
-/** Turn a key press in the search box into a view-model call. */
+/**
+ * Turn a key press in the search box into a view-model call.
+ *
+ * ↑ and ↓ move the selection (which also closes a peek or a confirmation), → opens the peek
+ * when the caret is at the end of the text, ← closes it, ⌘⌫ asks to close the selected session
+ * (only while the search box is empty), and esc steps back one level.
+ */
 private fun onSearchKey(e: KeyboardEvent) {
-    when (e.key) {
-        "ArrowDown" -> { e.preventDefault(); agentsOverview.moveSelection(1) }
-        "ArrowUp" -> { e.preventDefault(); agentsOverview.moveSelection(-1) }
-        "Enter" -> { e.preventDefault(); launchAgentsOverview { agentsOverview.activateSelected() } }
-        "Escape" -> { e.preventDefault(); agentsOverview.close() }
+    val state = agentsOverview.state
+    val input = searchInput
+    when {
+        e.key == "ArrowDown" -> { e.preventDefault(); agentsOverview.moveSelection(1) }
+        e.key == "ArrowUp" -> { e.preventDefault(); agentsOverview.moveSelection(-1) }
+        e.key == "Enter" -> { e.preventDefault(); launchAgentsOverview { agentsOverview.activateSelected() } }
+        e.key == "Escape" -> { e.preventDefault(); agentsOverview.back() }
+        state.confirm != null && (e.key == "ArrowLeft" || e.key == "ArrowRight" || e.key == "Tab") -> {
+            e.preventDefault()
+            agentsOverview.moveConfirmFocus()
+        }
+        e.key == "ArrowRight" && input != null && input.selectionStart == input.value.length -> {
+            e.preventDefault()
+            launchAgentsOverview { agentsOverview.peek() }
+        }
+        e.key == "ArrowLeft" && state.peek != null -> { e.preventDefault(); agentsOverview.closePeek() }
+        e.key == "Backspace" && e.metaKey && state.query.isEmpty() -> {
+            e.preventDefault()
+            launchAgentsOverview { agentsOverview.requestClose(fromKeyboard = true) }
+        }
     }
 }
 
@@ -186,36 +250,87 @@ private fun launchAgentsOverview(block: suspend () -> Unit) {
     GlobalScope.launch { block() }
 }
 
-/** Rebuild the "Now" and "Earlier" sections and highlight the selected row. */
+/**
+ * Rebuild the list from [state]: search results under a "N MATCHES" heading while searching,
+ * otherwise the "Now" and "Earlier" sections. The selected row is highlighted and carries the
+ * peek popover; the close confirmation follows the row it asks about.
+ */
 private fun renderList(state: AgentsOverviewBackingViewModel.State) {
     val list = listElement ?: return
     list.textContent = ""
     shownRows = state.rows
     if (state.rows.isEmpty()) {
-        val text = if (state.query.isBlank()) "No agent sessions yet" else "Nothing matches “${state.query}”"
-        list.appendChild(div("ao-empty").also { it.textContent = text })
+        list.appendChild(div("ao-empty").also { it.textContent = state.emptyText })
         return
     }
     var index = 0
-    if (state.now.isNotEmpty()) {
-        list.appendChild(div("ao-heading").also { it.textContent = "NOW" })
-        state.now.forEach { list.appendChild(buildRow(it, index, index == state.selected)); index++ }
+    fun add(rows: List<Row>) = rows.forEach { row ->
+        val selected = index == state.selected
+        list.appendChild(buildRow(row, index, selected, if (selected) state.peek else null))
+        state.confirm?.takeIf { it.rowId == row.id }?.let { list.appendChild(buildConfirm(it)) }
+        index++
     }
-    if (state.earlier.isNotEmpty()) {
-        list.appendChild(div("ao-heading").also { it.textContent = "EARLIER" })
-        state.earlier.forEach { list.appendChild(buildRow(it, index, index == state.selected)); index++ }
-        if (state.earlierHidden > 0) {
-            val more = div("ao-more")
-            more.textContent = "More (${state.earlierHidden})"
-            more.addEventListener("click", { _: Event -> agentsOverview.showMoreEarlier() })
-            list.appendChild(more)
+    if (state.matchMode) {
+        state.matchHeading?.let { list.appendChild(div("ao-heading").also { h -> h.textContent = it }) }
+        add(state.matches)
+    } else {
+        if (state.now.isNotEmpty()) {
+            list.appendChild(div("ao-heading").also { it.textContent = "NOW" })
+            add(state.now)
+        }
+        if (state.earlier.isNotEmpty()) {
+            list.appendChild(div("ao-heading").also { it.textContent = "EARLIER" })
+            add(state.earlier)
+            if (state.earlierHidden > 0) {
+                val more = div("ao-more")
+                more.textContent = "More"
+                more.addEventListener("click", { _: Event -> agentsOverview.showMoreEarlier() })
+                list.appendChild(more)
+            }
         }
     }
     (list.querySelector(".ao-selected") as? HTMLElement)?.asDynamic().scrollIntoView(js("({block: 'nearest'})"))
 }
 
-/** One session row: state icon, agent, title with links and repo, now line, age, action. */
-private fun buildRow(row: Row, index: Int, selected: Boolean): HTMLElement {
+/** Where a search matched, in words, for the line under a result. */
+private fun fieldLabel(field: String?): String = when (field) {
+    "prompt" -> "first prompt"
+    "branch" -> "branch"
+    "links" -> "links"
+    "transcript" -> "in transcript"
+    "screen" -> "on its last screen"
+    else -> ""
+}
+
+/**
+ * [text] as a fragment with `[start, start + length)` wrapped in a highlight mark.
+ *
+ * @param text the text to show.
+ * @param start where the match begins.
+ * @param length how many characters it covers; 0 or less shows the text plain.
+ */
+private fun highlighted(text: String, start: Int, length: Int): org.w3c.dom.DocumentFragment {
+    val fragment = document.createDocumentFragment()
+    if (length <= 0 || start < 0 || start + length > text.length) {
+        fragment.appendChild(document.createTextNode(text))
+        return fragment
+    }
+    fragment.appendChild(document.createTextNode(text.substring(0, start)))
+    fragment.appendChild(
+        (document.createElement("mark") as HTMLElement).also {
+            it.className = "ao-mark"
+            it.textContent = text.substring(start, start + length)
+        },
+    )
+    fragment.appendChild(document.createTextNode(text.substring(start + length)))
+    return fragment
+}
+
+/**
+ * One session row: state icon, agent, title with links and repo, now line, age and action,
+ * plus, as the design shows, the search snippet, the resume note and (when selected) the peek.
+ */
+private fun buildRow(row: Row, index: Int, selected: Boolean, peek: AgentsOverviewBackingViewModel.Peek?): HTMLElement {
     val needs = row.state == "needs_you"
     val live = row.state == "needs_you" || row.state == "working"
     val el = div(
@@ -235,7 +350,10 @@ private fun buildRow(row: Row, index: Int, selected: Boolean): HTMLElement {
     main.appendChild(
         if (row.agent == "claude") span("ao-glyph", "✳") else span("ao-tag", row.agent),
     )
-    main.appendChild(span("ao-title", row.title))
+    val title = span("ao-title", "")
+    if (row.field == "title") title.appendChild(highlighted(row.title, row.matchStart, row.matchLength))
+    else title.textContent = row.title
+    main.appendChild(title)
     row.links.forEach { main.appendChild(span("ao-link", it)) }
     row.repo?.let { main.appendChild(span("ao-repo", it)) }
     el.appendChild(main)
@@ -254,8 +372,78 @@ private fun buildRow(row: Row, index: Int, selected: Boolean): HTMLElement {
     el.appendChild(now)
 
     el.appendChild(span("ao-age", formatAge(row.sinceMillis)))
-    el.appendChild(span("ao-action", row.actionLabel))
+    val actions = span("ao-actions", "")
+    actions.appendChild(span("ao-action", row.actionLabel))
+    if (selected) {
+        actions.appendChild(iconButton("Peek at its screen", "›", peek != null) {
+            launchAgentsOverview { if (peek != null) agentsOverview.closePeek() else agentsOverview.peek() }
+        })
+        if (row.canClose) {
+            actions.appendChild(iconButton("Close this session", "✕", false) {
+                launchAgentsOverview { agentsOverview.requestClose() }
+            })
+        }
+    }
+    el.appendChild(actions)
+
+    if (row.field != null && row.field != "title" && row.snippet != null) {
+        val snip = div("ao-snippet")
+        snip.appendChild(span("ao-snippet-label", fieldLabel(row.field) + "  "))
+        snip.appendChild(highlighted(row.snippet!!, row.matchStart, row.matchLength))
+        el.appendChild(snip)
+    }
+    row.resumeNote?.let { el.appendChild(div("ao-note").also { n -> n.textContent = it }) }
+    if (peek != null) el.appendChild(buildPeek(peek))
     return el
+}
+
+/** A small square button on the selected row; clicks do not also activate the row. */
+private fun iconButton(label: String, glyph: String, pressed: Boolean, onClick: () -> Unit): HTMLElement {
+    val b = document.createElement("button") as HTMLElement
+    b.asDynamic().type = "button"
+    b.className = "ao-icon-btn" + if (pressed) " ao-pressed" else ""
+    b.setAttribute("aria-label", label)
+    b.title = label
+    b.textContent = glyph
+    b.addEventListener("click", { e: Event -> e.stopPropagation(); onClick() })
+    return b
+}
+
+/** The popover under the selected row: a heading and the last lines of the session's screen. */
+private fun buildPeek(peek: AgentsOverviewBackingViewModel.Peek): HTMLElement {
+    val box = div("ao-peek")
+    box.addEventListener("click", { e: Event -> e.stopPropagation() })
+    box.appendChild(div("ao-peek-title").also {
+        it.textContent = if (peek.live) "LIVE SCREEN · ${peek.title}".uppercase()
+        else "SAVED SCROLLBACK · CLOSED ${formatAge(peek.closedSinceMillis ?: 0L)}".uppercase()
+    })
+    when {
+        peek.loading -> box.appendChild(div("ao-peek-line").also { it.textContent = "…" })
+        peek.emptyText != null -> box.appendChild(div("ao-peek-line").also { it.textContent = peek.emptyText })
+        else -> peek.lines.forEach { line -> box.appendChild(div("ao-peek-line").also { it.textContent = line }) }
+    }
+    return box
+}
+
+/** The inline "Close “title”?" bar with its warnings; the focused button shows a ring. */
+private fun buildConfirm(confirm: AgentsOverviewBackingViewModel.Confirm): HTMLElement {
+    val bar = div("ao-confirm")
+    bar.addEventListener("click", { e: Event -> e.stopPropagation() })
+    val text = div("ao-confirm-text")
+    text.appendChild(span("", "Close “${confirm.title}”? The agent stops. You can find it here and resume it later."))
+    confirm.warnings.forEach { text.appendChild(div("ao-confirm-warn").also { w -> w.textContent = it }) }
+    bar.appendChild(text)
+    val cancel = document.createElement("button") as HTMLElement
+    cancel.className = "ao-btn" + if (confirm.cancelFocused) " ao-btn-focus" else ""
+    cancel.textContent = "Cancel"
+    cancel.addEventListener("click", { _: Event -> agentsOverview.cancelClose() })
+    val close = document.createElement("button") as HTMLElement
+    close.className = "ao-btn ao-btn-danger" + if (!confirm.cancelFocused) " ao-btn-focus" else ""
+    close.textContent = "Close session"
+    close.addEventListener("click", { _: Event -> launchAgentsOverview { agentsOverview.confirmClose() } })
+    bar.appendChild(cancel)
+    bar.appendChild(close)
+    return bar
 }
 
 /**

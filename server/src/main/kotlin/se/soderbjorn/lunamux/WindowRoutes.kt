@@ -30,15 +30,19 @@ import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.readText
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import se.soderbjorn.lunula.core.PersistKeys
 import se.soderbjorn.lunamux.auth.DeviceAuth
 import se.soderbjorn.lunamux.persistence.SettingsRepository
 import se.soderbjorn.lunamux.ui.SettingsDialog
+import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -110,6 +114,15 @@ internal fun ApplicationCall.readClientInfo(): DeviceAuth.ClientInfo {
         version = version,
     )
 }
+
+/** Logger for this file's command handlers. */
+private val log = LoggerFactory.getLogger("WindowRoutes")
+
+/** How long an agents-overview inspection may spend on git before it is dropped. */
+private const val INSPECT_TIMEOUT_MS = 8_000L
+
+/** The (connection, record) inspections in flight, so a repeated ask for one is not run twice at once. */
+private val inspecting = java.util.concurrent.ConcurrentHashMap.newKeySet<Pair<WindowConnectionContext, String>>()
 
 /**
  * Lowest client app version whose deserializer knows the `agent` [LeafContent]
@@ -749,6 +762,35 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
             WindowState.addTab(worldId = worldId)
         }
         is WindowCommand.ResumeAgentSession -> resumeAgentSession(cmd.recordId, ctx)
+        is WindowCommand.SearchAgentSessions -> ctx.scope.launch {
+            // Off the socket's loop: the query reads SQLite and may run git for resume notes.
+            runCatching {
+                val matches = withContext(Dispatchers.IO) {
+                    AgentSessionSearch.search(ctx.settingsRepo, ctx.agentTracker, cmd.query)
+                }
+                ctx.send(WindowEnvelope.AgentSessionMatches(cmd.query, matches))
+            }.onFailure {
+                log.warn("Agent session search failed", it)
+                // Answer anyway, or the overlay would show "Searching…" until the query changes.
+                ctx.send(WindowEnvelope.AgentSessionMatches(cmd.query, emptyList()))
+            }
+        }
+        is WindowCommand.InspectAgentSession -> ctx.scope.launch {
+            // A live peek asks again every couple of seconds; while git is still busy on the
+            // previous ask for the same row, that ask is enough.
+            val key = ctx to cmd.recordId
+            if (!inspecting.add(key)) return@launch
+            try {
+                runCatching {
+                    val inspection = withTimeoutOrNull(INSPECT_TIMEOUT_MS) {
+                        withContext(Dispatchers.IO) { AgentSessionSearch.inspect(cmd.recordId, ctx.agentTracker) }
+                    }
+                    if (inspection != null) ctx.send(inspection)
+                }.onFailure { log.warn("Agent session inspect failed", it) }
+            } finally {
+                inspecting.remove(key)
+            }
+        }
         is WindowCommand.SetClaudeHooks -> {
             val hooks = ctx.claudeHooks ?: return
             val error = if (cmd.connected) hooks.connect() else hooks.disconnect()
@@ -932,8 +974,10 @@ private fun isPlainSessionId(id: String): Boolean = id.isNotEmpty() && id.length
  * tab is titled like the overview row and starts in the folder the agent ran
  * in; the resume command is typed into its shell the way the MCP `run`
  * tool does. Gemini has no resume command, so its tab just opens in the
- * folder. A folder that has since been deleted is reported back as an
- * [WindowEnvelope.AgentSessionError] and no tab is created.
+ * folder. A worktree that has since been removed is recreated at its old path
+ * first ([AgentResumePlanner]); when that is impossible, or the folder is gone
+ * for good, the reason goes back as an [WindowEnvelope.AgentSessionError] and
+ * no tab is created.
  *
  * @param recordId the [AgentSessionSummary.id] of the row.
  * @param ctx the connection that asked, which receives any error.
@@ -944,10 +988,21 @@ private suspend fun resumeAgentSession(recordId: String, ctx: WindowConnectionCo
         ctx.send(WindowEnvelope.AgentSessionError(recordId, "session no longer exists"))
         return
     }
-    val cwd = rec.cwd
-    if (cwd.isNullOrBlank() || !java.io.File(cwd).isDirectory) {
-        ctx.send(WindowEnvelope.AgentSessionError(recordId, "folder no longer exists"))
-        return
+    val plan = withContext(Dispatchers.IO) { AgentResumePlanner.plan(rec) }
+    val cwd = when (plan) {
+        ResumePlan.InPlace -> rec.cwd!!
+        is ResumePlan.Missing -> {
+            ctx.send(WindowEnvelope.AgentSessionError(recordId, plan.reason))
+            return
+        }
+        is ResumePlan.Recreate -> {
+            val error = withContext(Dispatchers.IO) { AgentResumePlanner.recreate(plan) }
+            if (error != null) {
+                ctx.send(WindowEnvelope.AgentSessionError(recordId, error))
+                return
+            }
+            AgentResumePlanner.resumeFolder(rec, plan)
+        }
     }
     val command = when (rec.agent) {
         "claude" -> rec.agentSessionId?.takeIf(::isPlainSessionId)?.let { "claude --resume $it" } ?: "claude --continue"

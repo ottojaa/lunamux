@@ -273,14 +273,40 @@ sealed class WindowCommand {
      * tab named like the row, in the folder the agent ran in, and types the
      * agent's resume command (`claude --resume <id>`, `claude --continue`
      * without an id, or `codex resume`). Gemini has no resume; for it the tab
-     * just opens in the folder. A missing folder is answered with
-     * [WindowEnvelope.AgentSessionError].
+     * just opens in the folder. When a worktree's folder was removed, the
+     * server first recreates it at the old path (from the branch, or from the
+     * default branch when the branch is gone); a folder that cannot be
+     * recreated is answered with [WindowEnvelope.AgentSessionError].
      *
      * @param recordId the [AgentSessionSummary.id] of the row
      */
     @Serializable
     @SerialName("resumeAgentSession")
     data class ResumeAgentSession(val recordId: String) : WindowCommand()
+
+    /**
+     * Search every agent session ever recorded, open or closed, plus Claude Code
+     * sessions imported from before Lunamux recorded them. The server answers
+     * on the asking connection only with [WindowEnvelope.AgentSessionMatches].
+     * A query shorter than two characters has no matches.
+     *
+     * @param query the text typed in the agents overview search box
+     */
+    @Serializable
+    @SerialName("searchAgentSessions")
+    data class SearchAgentSessions(val query: String) : WindowCommand()
+
+    /**
+     * Ask for the details the agents overview needs about one session: its
+     * screen (for peek), uncommitted and unpushed work (for the close
+     * confirmation) and how Resume would work. The server answers on the
+     * asking connection only with [WindowEnvelope.AgentSessionInspection].
+     *
+     * @param recordId the [AgentSessionSummary.id] of the row
+     */
+    @Serializable
+    @SerialName("inspectAgentSession")
+    data class InspectAgentSession(val recordId: String) : WindowCommand()
 
     /**
      * Add or remove Lunamux's hook entries in the user's Claude Code settings

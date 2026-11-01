@@ -169,7 +169,9 @@ class SettingsRepository(
                     question            TEXT,
                     last_screen         TEXT,
                     created_at          INTEGER NOT NULL,
-                    ended_at            INTEGER
+                    ended_at            INTEGER,
+                    repo_root           TEXT,
+                    search_text         TEXT
                 )
             """.trimIndent(),
             parameters = 0,
@@ -183,6 +185,14 @@ class SettingsRepository(
         }
         runCatching {
             driver.execute(null, "ALTER TABLE pane_scrollback ADD COLUMN rows INTEGER", 0)
+        }
+        // Appended in the same order as the CREATE TABLE above, so an upgraded
+        // database and a fresh one have identical column positions.
+        runCatching {
+            driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN repo_root TEXT", 0)
+        }
+        runCatching {
+            driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN search_text TEXT", 0)
         }
     }
 
@@ -469,7 +479,7 @@ class SettingsRepository(
             r.id, r.agent, r.agentSessionId, r.source, r.leafId, r.terminalSessionId, r.cwd,
             r.repo, r.branch, r.worktreePath, r.title, r.firstPrompt, r.transcriptPath,
             r.links.joinToString(","), r.state, r.stateSince, r.nowLine, r.question,
-            r.lastScreen, r.createdAt, r.endedAt,
+            r.lastScreen, r.createdAt, r.endedAt, r.repoRoot, r.id,
         )
     }
 
@@ -526,13 +536,87 @@ class SettingsRepository(
         terminalSessionId: String?, cwd: String?, repo: String?, branch: String?,
         worktreePath: String?, title: String?, firstPrompt: String?, transcriptPath: String?,
         links: String, state: String, stateSince: Long, nowLine: String?, question: String?,
-        lastScreen: String?, createdAt: Long, endedAt: Long?,
+        lastScreen: String?, createdAt: Long, endedAt: Long?, repoRoot: String?,
     ) = AgentSessionRecord(
         id, agent, agentSessionId, source, leafId, terminalSessionId, cwd, repo, branch,
         worktreePath, title, firstPrompt, transcriptPath,
         links.split(',').filter { it.isNotEmpty() }, state, stateSince, nowLine, question,
-        lastScreen, createdAt, endedAt,
+        lastScreen, createdAt, endedAt, repoRoot,
     )
+
+    /**
+     * Store the searchable conversation text of one record.
+     *
+     * Called from the tracker's background worker after a record ends and by
+     * the Claude Code history import. It is a separate write because the long
+     * text is never part of an in-memory [AgentSessionRecord]; the regular
+     * [saveAgentSession] keeps whatever is stored.
+     *
+     * @param id the record id.
+     * @param text the extracted text; an empty string marks "looked, found
+     *   nothing" so the record is not retried.
+     * @see loadAgentSessionsMissingSearchText
+     */
+    fun setAgentSessionSearchText(id: String, text: String) {
+        database.settingsQueries.setAgentSessionSearchText(text, id)
+    }
+
+    /**
+     * Ended records that have a transcript file but no stored search text yet.
+     *
+     * Called once at startup by the tracker's background worker to backfill
+     * records created before search existed.
+     *
+     * @return pairs of record id and transcript path.
+     */
+    fun loadAgentSessionsMissingSearchText(): List<Pair<String, String>> =
+        database.settingsQueries.selectAgentSessionsMissingSearchText { id, path -> id to path!! }
+            .executeAsList()
+
+    /**
+     * One search hit: the record plus short windows of the long columns.
+     *
+     * @property record the matching record; its `lastScreen` is always null.
+     * @property transcriptWindow about 240 characters of the transcript text
+     *   around the first match, or null when the transcript did not match.
+     * @property screenWindow the same for the last screen.
+     */
+    data class AgentSessionHit(
+        val record: AgentSessionRecord,
+        val transcriptWindow: String?,
+        val screenWindow: String?,
+    )
+
+    /**
+     * Find records containing [query] in any searchable column.
+     *
+     * Called by the window route for `SearchAgentSessions`. The match is a
+     * case-insensitive substring match; `%`, `_` and `\` in [query] are
+     * matched literally. Ranking is the caller's job: this returns the
+     * newest 200 candidates.
+     *
+     * @param query the text typed by the user (not escaped).
+     * @return up to 200 hits, newest first.
+     * @see AgentSessionHit
+     */
+    fun searchAgentSessions(query: String): List<AgentSessionHit> {
+        val pattern = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        return database.settingsQueries.searchAgentSessions(pattern, query) {
+                id, agent, agentSessionId, source, leafId, terminalSessionId, cwd, repo, branch,
+                worktreePath, title, firstPrompt, transcriptPath, links, state, stateSince, nowLine,
+                question, createdAt, endedAt, repoRoot, transcriptWindow, screenWindow,
+            ->
+            AgentSessionHit(
+                toAgentSessionRecord(
+                    id, agent, agentSessionId, source, leafId, terminalSessionId, cwd, repo, branch,
+                    worktreePath, title, firstPrompt, transcriptPath, links, state, stateSince,
+                    nowLine, question, null, createdAt, endedAt, repoRoot,
+                ),
+                transcriptWindow,
+                screenWindow,
+            )
+        }.executeAsList()
+    }
 
     /**
      * Read a raw string value from the settings key/value store.

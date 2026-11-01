@@ -264,6 +264,52 @@ sealed class WindowEnvelope {
     @Serializable
     @SerialName("agentSessionError")
     data class AgentSessionError(val recordId: String?, val message: String) : WindowEnvelope()
+
+    /**
+     * The answer to [WindowCommand.SearchAgentSessions], sent only to the
+     * connection that asked.
+     *
+     * @param query the query this answers, so the client can drop a reply that
+     *   arrives after the user typed something else
+     * @param matches at most 50, best first: title, first prompt, branch or
+     *   links, then transcript or last screen; open sessions before ended ones,
+     *   newest first within each
+     * @see AgentSessionMatch
+     */
+    @Serializable
+    @SerialName("agentSessionMatches")
+    data class AgentSessionMatches(
+        val query: String,
+        val matches: List<AgentSessionMatch>,
+    ) : WindowEnvelope()
+
+    /**
+     * The answer to [WindowCommand.InspectAgentSession], sent only to the
+     * connection that asked.
+     *
+     * @param recordId the session this describes
+     * @param live true while the session's pane is open, so [screen] is its
+     *   current screen rather than the saved last screen
+     * @param screen the last 12 non-blank screen lines; empty when nothing is saved
+     * @param uncommitted how many files have uncommitted changes in the session's
+     *   folder; null when the folder is gone or not a git folder
+     * @param unpushed how many commits are on the branch but on no remote; null when unknown
+     * @param branch the branch checked out in the folder now, else the one recorded
+     * @param resumeNote what Resume would do when it is not simply "run the agent's resume
+     *   command in the folder" (for example "Worktree removed. Resume recreates it from
+     *   branch x."); null when nothing needs saying
+     */
+    @Serializable
+    @SerialName("agentSessionInspection")
+    data class AgentSessionInspection(
+        val recordId: String,
+        val live: Boolean,
+        val screen: List<String> = emptyList(),
+        val uncommitted: Int? = null,
+        val unpushed: Int? = null,
+        val branch: String? = null,
+        val resumeNote: String? = null,
+    ) : WindowEnvelope()
 }
 
 /**
@@ -303,6 +349,31 @@ data class AgentSessionSummary(
     val question: String? = null,
     val leafId: String? = null,
     val endedAt: Long? = null,
+)
+
+/**
+ * One search result in [WindowEnvelope.AgentSessionMatches]: a session and
+ * where the query was found in it.
+ *
+ * @param summary the session, with its live state when it is open
+ * @param field where the best match is: `title`, `prompt`, `branch`, `links`,
+ *   `transcript` or `screen`
+ * @param snippet about 40 characters either side of the match on one line, or
+ *   null for a `title` match (the title itself is highlighted)
+ * @param start where the match begins inside [snippet], or inside the title
+ *   for a `title` match
+ * @param length how many characters the match covers
+ * @param resumeNote what Resume would do for an ended session whose folder is gone
+ *   (see [WindowEnvelope.AgentSessionInspection.resumeNote]); null otherwise
+ */
+@Serializable
+data class AgentSessionMatch(
+    val summary: AgentSessionSummary,
+    val field: String,
+    val snippet: String? = null,
+    val start: Int = 0,
+    val length: Int = 0,
+    val resumeNote: String? = null,
 )
 
 /**

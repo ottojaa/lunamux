@@ -713,6 +713,18 @@ object WindowState {
         findLeafBySession(_config.value, sessionId)?.id
     }
 
+    /**
+     * The name the user gave (F2) the pane showing terminal session [sessionId].
+     *
+     * Called by [livePaneSnapshot] so the agent record can keep the name after the pane is gone.
+     *
+     * @param sessionId a live terminal session id.
+     * @return the custom name, or null if the pane has none or no pane shows the session.
+     */
+    fun customNameOfSession(sessionId: String): String? = synchronized(this) {
+        findLeafBySession(_config.value, sessionId)?.customName
+    }
+
     private fun findLeafBySession(cfg: WindowConfig, sessionId: String): LeafNode? {
         for (tab in allTabs(cfg)) {
             tab.panes.firstOrNull { it.leaf.sessionId == sessionId }?.let { return it.leaf }

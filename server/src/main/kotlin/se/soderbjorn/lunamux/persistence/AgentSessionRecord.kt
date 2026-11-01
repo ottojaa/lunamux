@@ -22,7 +22,8 @@ package se.soderbjorn.lunamux.persistence
  * @property id Lunamux's own record id (stable across restarts; not the agent's id).
  * @property agent `claude`, `codex` or `gemini`.
  * @property agentSessionId the agent's own session id (Claude's `session_id`), if known.
- * @property source `hooks` when Claude Code hook events feed the record, else `screen`.
+ * @property source `hooks` when Claude Code hook events feed the record, `screen` when only the
+ *   terminal is watched, `import` for a Claude Code transcript found on disk (history, found by search only).
  * @property leafId the layout leaf (pane) the agent runs in; leaf ids survive restarts.
  * @property terminalSessionId the live terminal session id while the pane is open
  *   (these change on every server start).
@@ -42,6 +43,9 @@ package se.soderbjorn.lunamux.persistence
  * @property lastScreen the last 200 plain-text screen lines, written when the record ends.
  * @property createdAt epoch millis when the record opened.
  * @property endedAt epoch millis when it ended, or null while open.
+ * @property repoRoot absolute path of the repository's main checkout (the parent of
+ *   `--git-common-dir`), or null outside git and for records made before it was kept.
+ *   Resume uses it to recreate a removed worktree.
  */
 data class AgentSessionRecord(
     val id: String,
@@ -65,4 +69,5 @@ data class AgentSessionRecord(
     val lastScreen: String? = null,
     val createdAt: Long = 0,
     val endedAt: Long? = null,
+    val repoRoot: String? = null,
 )

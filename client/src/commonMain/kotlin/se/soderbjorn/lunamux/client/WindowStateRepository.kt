@@ -26,6 +26,7 @@ import kotlinx.serialization.json.jsonObject
 import se.soderbjorn.lunula.core.PersistKeys
 import se.soderbjorn.lunamux.AgentSessionSummary
 import se.soderbjorn.lunamux.WindowConfig
+import se.soderbjorn.lunamux.WindowEnvelope
 
 /**
  * The toolkit-owned geometry of a single pane, parsed from the `LAYOUT_STATE`
@@ -135,6 +136,16 @@ class WindowStateRepository {
     /** Observable error text for the overview and the settings row; cleared by [clearAgentSessionError]. */
     val agentSessionError: StateFlow<String?> = _agentSessionError.asStateFlow()
 
+    /** The server's latest answer to an agents-overview search, or `null` before any. */
+    private val _agentMatches = MutableStateFlow<WindowEnvelope.AgentSessionMatches?>(null)
+    /** Observable search answer; the view model drops it when its query no longer matches. */
+    val agentMatches: StateFlow<WindowEnvelope.AgentSessionMatches?> = _agentMatches.asStateFlow()
+
+    /** The server's latest inspection of one agent session (peek, close warnings, resume note). */
+    private val _agentInspection = MutableStateFlow<WindowEnvelope.AgentSessionInspection?>(null)
+    /** Observable inspection; the view model uses it only while it names the selected session. */
+    val agentInspection: StateFlow<WindowEnvelope.AgentSessionInspection?> = _agentInspection.asStateFlow()
+
     /** Whether the server has sent a `PendingApproval` envelope (device not
      *  yet approved). */
     private val _pendingApproval = MutableStateFlow(false)
@@ -187,6 +198,28 @@ class WindowStateRepository {
      */
     fun setAgentSessionError(message: String) {
         _agentSessionError.value = message
+    }
+
+    /**
+     * Remember the server's answer to the latest agents-overview search.
+     *
+     * Called by [WindowSocket] when an `AgentSessionMatches` envelope arrives.
+     *
+     * @param matches the matches and the query they answer.
+     */
+    fun updateAgentMatches(matches: WindowEnvelope.AgentSessionMatches) {
+        _agentMatches.value = matches
+    }
+
+    /**
+     * Remember the server's inspection of one agent session.
+     *
+     * Called by [WindowSocket] when an `AgentSessionInspection` envelope arrives.
+     *
+     * @param inspection the screen, unsaved-work counts and resume note.
+     */
+    fun updateAgentInspection(inspection: WindowEnvelope.AgentSessionInspection) {
+        _agentInspection.value = inspection
     }
 
     /** Forget the last agent error once the user has seen it or tries again. */

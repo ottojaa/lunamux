@@ -32,7 +32,9 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
     question            TEXT,
     last_screen         TEXT,
     created_at          INTEGER NOT NULL,
-    ended_at            INTEGER
+    ended_at            INTEGER,
+    repo_root           TEXT,
+    search_text         TEXT
 );
 
 selectByKey:
@@ -57,20 +59,62 @@ selectAllScrollbackLeafIds:
 SELECT leaf_id FROM pane_scrollback;
 
 upsertAgentSession:
+-- search_text is written only by setAgentSessionSearchText. INSERT OR REPLACE
+-- deletes the old row first, so the sub-select carries the stored text over.
 INSERT OR REPLACE INTO agent_sessions(
     id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
     worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    question, last_screen, created_at, ended_at, repo_root, search_text
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    (SELECT search_text FROM agent_sessions WHERE id = ?));
 
+-- The hot reads below name their columns so the long search_text never rides
+-- along; imported history (source = 'import') is only ever found by search.
 selectRecentEndedAgentSessions:
-SELECT * FROM agent_sessions WHERE state = 'ended' ORDER BY ended_at DESC LIMIT ?;
+SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
+    worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
+    question, last_screen, created_at, ended_at, repo_root
+FROM agent_sessions WHERE state = 'ended' AND source != 'import' ORDER BY ended_at DESC LIMIT ?;
 
 selectAgentSessionByAgentId:
-SELECT * FROM agent_sessions WHERE agent = ? AND agent_session_id = ? ORDER BY created_at DESC LIMIT 1;
+SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
+    worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
+    question, last_screen, created_at, ended_at, repo_root
+FROM agent_sessions WHERE agent = ? AND agent_session_id = ? ORDER BY created_at DESC LIMIT 1;
 
 selectAgentSessionById:
-SELECT * FROM agent_sessions WHERE id = ?;
+SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
+    worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
+    question, last_screen, created_at, ended_at, repo_root
+FROM agent_sessions WHERE id = ?;
 
 endOpenAgentSessions:
 UPDATE agent_sessions SET state = 'ended', ended_at = ?, state_since = ? WHERE state != 'ended';
+
+setAgentSessionSearchText:
+UPDATE agent_sessions SET search_text = ? WHERE id = ?;
+
+selectAgentSessionsMissingSearchText:
+SELECT id, transcript_path FROM agent_sessions
+WHERE state = 'ended' AND transcript_path IS NOT NULL AND search_text IS NULL;
+
+-- Every record whose title, first prompt, branch, links, transcript text or last
+-- screen contains :raw (LIKE, with :pattern already escaped by the caller).
+-- The two big columns come back only as a short window around the first match.
+searchAgentSessions:
+SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
+    worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
+    question, created_at, ended_at, repo_root,
+    CASE WHEN search_text LIKE :pattern ESCAPE '\'
+        THEN substr(search_text, max(1, instr(lower(search_text), lower(:raw)) - 80), 240) END AS transcript_window,
+    CASE WHEN last_screen LIKE :pattern ESCAPE '\'
+        THEN substr(last_screen, max(1, instr(lower(last_screen), lower(:raw)) - 80), 240) END AS screen_window
+FROM agent_sessions
+WHERE title LIKE :pattern ESCAPE '\'
+    OR first_prompt LIKE :pattern ESCAPE '\'
+    OR branch LIKE :pattern ESCAPE '\'
+    OR links LIKE :pattern ESCAPE '\'
+    OR search_text LIKE :pattern ESCAPE '\'
+    OR last_screen LIKE :pattern ESCAPE '\'
+ORDER BY COALESCE(ended_at, state_since) DESC
+LIMIT 200;

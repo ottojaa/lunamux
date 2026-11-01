@@ -1,17 +1,20 @@
 /**
  * Tests for [AgentsOverviewBackingViewModel]: how the server's session list
  * becomes NOW and EARLIER rows, the chip counts, the title chain, the
- * title-only search, the keyboard selection, and the commands that jump and
- * resume send.
+ * search over every session (match mode, stale answers, resume notes), the
+ * keyboard selection, the peek, the close confirmation, and the commands that
+ * jump, resume, search, inspect and close send.
  */
 package se.soderbjorn.lunamux.client.viewmodel
 
+import se.soderbjorn.lunamux.AgentSessionMatch
 import se.soderbjorn.lunamux.AgentSessionSummary
 import se.soderbjorn.lunamux.LeafNode
 import se.soderbjorn.lunamux.Pane
 import se.soderbjorn.lunamux.TabConfig
 import se.soderbjorn.lunamux.WindowCommand
 import se.soderbjorn.lunamux.WindowConfig
+import se.soderbjorn.lunamux.WindowEnvelope
 import se.soderbjorn.lunamux.WorldConfig
 import se.soderbjorn.lunamux.client.WindowStateRepository
 import kotlin.test.Test
@@ -39,9 +42,10 @@ class AgentsOverviewBackingViewModelTest {
     private fun session(
         id: String, state: String, since: Long = 1_000, title: String? = null, agent: String = "claude",
         leaf: String? = "leaf-$id", endedAt: Long? = null, branch: String? = null, cwd: String? = "/work/proj",
+        nowLine: String? = null, question: String? = null,
     ) = AgentSessionSummary(
         id = id, agent = agent, state = state, stateSince = since, title = title, links = emptyList(),
-        repo = "proj", branch = branch, cwd = cwd, nowLine = null, question = null, leafId = leaf, endedAt = endedAt,
+        repo = "proj", branch = branch, cwd = cwd, nowLine = nowLine, question = question, leafId = leaf, endedAt = endedAt,
     )
 
     private fun leaf(id: String, custom: String? = null) =
@@ -106,34 +110,261 @@ class AgentsOverviewBackingViewModelTest {
     }
 
     @Test
-    fun titleIsCustomNameThenAgentTitleThenBranchThenFolder() {
-        layout(leaf("leaf-a", custom = "My name"), leaf("leaf-b"), leaf("leaf-c"), leaf("leaf-d"))
+    fun titleIsTheSessionTitleThenBranchThenFolder() {
+        layout(leaf("leaf-a", custom = "Pane name"), leaf("leaf-c"), leaf("leaf-d"))
         windowState.updateAgentSessions(
             listOf(
-                session("a", "working", title = "Agent title"),
-                session("b", "working", title = "Agent title"),
+                session("a", "working", title = "Server title"),
                 session("c", "working", branch = "feature/ABC-12-x"),
                 session("d", "working"),
             ),
             true,
         )
         val titles = vm.state.now.associate { it.id to it.title }
-        assertEquals("My name", titles["a"])
-        assertEquals("Agent title", titles["b"])
+        assertEquals("Server title", titles["a"], "the server already folds the pane's name into the title")
         assertEquals("feature/ABC-12-x", titles["c"])
         assertEquals("proj", titles["d"])
     }
 
     @Test
-    fun searchMatchesTitlesOnlyAndIgnoresCase() {
+    fun aQueryUnderTwoCharactersFiltersNothingAndSendsNoSearch() = runNow {
+        windowState.updateAgentSessions(listOf(session("a", "working", title = "Alpha"), session("b", "working", title = "Beta")), true)
+        vm.setQuery("a")
+        vm.search()
+        assertFalse(vm.state.matchMode)
+        assertEquals(2, vm.state.rows.size)
+        assertTrue(sent.none { it is WindowCommand.SearchAgentSessions })
+    }
+
+    @Test
+    fun twoCharactersSearchEverySessionAndWaitForTheAnswer() = runNow {
+        windowState.updateAgentSessions(listOf(session("a", "working")), true)
+        vm.open()
+        vm.setQuery(" fl ")
+        vm.search()
+        assertEquals(
+            listOf<WindowCommand>(WindowCommand.SearchAgentSessions("fl")),
+            sent.filterIsInstance<WindowCommand.SearchAgentSessions>(),
+        )
+        val waiting = vm.state
+        assertTrue(waiting.matchMode && waiting.searching)
+        assertTrue(waiting.rows.isEmpty())
+        assertEquals("Searching…", waiting.emptyText)
+        assertNull(waiting.matchHeading)
+    }
+
+    private fun answer(query: String, vararg m: AgentSessionMatch) =
+        windowState.updateAgentMatches(WindowEnvelope.AgentSessionMatches(query, m.toList()))
+
+    @Test
+    fun matchesShowInTheServersOrderWithTheirFieldAndSnippetAndNoNowEarlierSplit() {
+        windowState.updateAgentSessions(listOf(session("live", "working", title = "Live one")), true)
+        vm.setQuery("needle")
+        answer(
+            "needle",
+            AgentSessionMatch(session("old", "ended", leaf = null, endedAt = 5, title = "Needle plan"), "title", null, 0, 6, null),
+            AgentSessionMatch(session("live", "working", title = "Live one"), "transcript", "…a needle here…", 3, 6, null),
+            AgentSessionMatch(
+                session("gone", "ended", leaf = null, endedAt = 4, title = "Other"), "prompt", "fix needle", 4, 6,
+                "Worktree removed. Resume recreates it from branch x.",
+            ),
+        )
+        val s = vm.state
+        assertTrue(s.matchMode)
+        assertEquals(listOf("old", "live", "gone"), s.rows.map { it.id })
+        assertTrue(s.now.isEmpty() && s.earlier.isEmpty())
+        assertEquals("3 MATCHES", s.matchHeading)
+        assertEquals("title", s.rows[0].field)
+        assertEquals(0 to 6, s.rows[0].matchStart to s.rows[0].matchLength)
+        assertEquals("…a needle here…", s.rows[1].snippet)
+        assertEquals("Worktree removed. Resume recreates it from branch x.", s.rows[2].resumeNote)
+        assertEquals("Resume", s.rows[2].actionLabel)
+    }
+
+    @Test
+    fun anAnswerForAnOlderQueryIsIgnored() {
+        windowState.updateAgentSessions(emptyList(), true)
+        vm.setQuery("needle")
+        answer("need", AgentSessionMatch(session("x", "ended", leaf = null, endedAt = 1), "title", null, 0, 4, null))
+        assertTrue(vm.state.searching)
+        assertTrue(vm.state.rows.isEmpty())
+        answer("needle")
+        assertFalse(vm.state.searching)
+        assertEquals(
+            "Nothing matches “needle”. Search covers titles, first prompts, branches, links and transcripts.",
+            vm.state.emptyText,
+        )
+    }
+
+    @Test
+    fun aMatchTakesItsStateFromTheLiveSessionList() {
+        layout(leaf("leaf-a"))
+        vm.setQuery("needle")
+        windowState.updateAgentSessions(listOf(session("a", "needs_you")), true)
+        answer("needle", AgentSessionMatch(session("a", "ended", leaf = "leaf-a", endedAt = 5), "prompt", "x needle", 2, 6, null))
+        val row = vm.state.rows.single()
+        assertEquals("needs_you", row.state)
+        assertTrue(row.isLive)
+        assertEquals("Jump", row.actionLabel)
+    }
+
+    @Test
+    fun theChipCountsAreNotNarrowedByTheQuery() {
+        windowState.updateAgentSessions(listOf(session("a", "working"), session("b", "working")), true)
+        vm.setQuery("zzz")
+        answer("zzz")
+        assertEquals(2, vm.state.workingCount)
+    }
+
+    @Test
+    fun selectingARowAsksTheServerOnceAndShowsItsResumeNote() = runNow {
+        windowState.updateAgentSessions(listOf(session("old", "ended", leaf = null, endedAt = 5)), true)
+        vm.open()
+        vm.inspectSelected()
+        vm.inspectSelected()
+        assertEquals(listOf<WindowCommand>(WindowCommand.InspectAgentSession("old")), sent)
+        assertNull(vm.state.rows.single().resumeNote)
+        windowState.updateAgentInspection(WindowEnvelope.AgentSessionInspection("old", live = false, resumeNote = "Worktree removed."))
+        assertEquals("Worktree removed.", vm.state.rows.single().resumeNote)
+    }
+
+    @Test
+    fun peekShowsTheLiveScreenOrTheSavedScrollbackOrSaysThereIsNone() = runNow {
+        layout(leaf("leaf-a"))
         windowState.updateAgentSessions(
-            listOf(session("a", "working", title = "Fix Flaky Test"), session("b", "working", title = "Refactor", branch = "flaky")),
+            listOf(session("a", "working", title = "Live"), session("old", "ended", leaf = null, endedAt = 5, title = "Old")),
             true,
         )
-        vm.setQuery("flaky")
-        assertEquals(listOf("a"), vm.state.rows.map { it.id })
-        // The chip is not narrowed by the search.
-        assertEquals(2, vm.state.workingCount)
+        vm.open()
+        vm.peek()
+        assertTrue(vm.state.peek!!.loading)
+        windowState.updateAgentInspection(WindowEnvelope.AgentSessionInspection("a", live = true, screen = listOf("one", "two")))
+        var peek = vm.state.peek!!
+        assertTrue(peek.live)
+        assertEquals(listOf("one", "two"), peek.lines)
+        assertNull(peek.closedSinceMillis)
+
+        vm.moveSelection(1)
+        assertNull(vm.state.peek, "moving the selection closes the peek")
+        vm.peek()
+        windowState.updateAgentInspection(WindowEnvelope.AgentSessionInspection("old", live = false))
+        peek = vm.state.peek!!
+        assertFalse(peek.live)
+        assertEquals(5L, peek.closedSinceMillis)
+        assertEquals("(no saved screen)", peek.emptyText)
+        vm.closePeek()
+        assertNull(vm.state.peek)
+    }
+
+    @Test
+    fun refreshingAsksAgainOnlyWhileALivePeekIsOpen() = runNow {
+        layout(leaf("leaf-a"))
+        windowState.updateAgentSessions(listOf(session("a", "working")), true)
+        vm.open()
+        vm.refreshPeek()
+        assertTrue(sent.isEmpty())
+        vm.peek()
+        windowState.updateAgentInspection(WindowEnvelope.AgentSessionInspection("a", live = true, screen = listOf("x")))
+        sent.clear()
+        vm.refreshPeek()
+        assertEquals(listOf<WindowCommand>(WindowCommand.InspectAgentSession("a")), sent)
+        vm.closePeek()
+        sent.clear()
+        vm.refreshPeek()
+        assertTrue(sent.isEmpty())
+    }
+
+    @Test
+    fun closeAsksFirstWithWarningsAndCancelFocusedAndNothingIsClosedYet() = runNow {
+        layout(leaf("leaf-a"))
+        windowState.updateAgentSessions(
+            listOf(session("a", "working", title = "Fix tests", nowLine = "Bash npm test")),
+            true,
+        )
+        vm.open()
+        windowState.updateAgentInspection(
+            WindowEnvelope.AgentSessionInspection("a", live = true, uncommitted = 3, unpushed = 1, branch = "feat"),
+        )
+        vm.requestClose()
+        val confirm = vm.state.confirm!!
+        assertEquals("Fix tests", confirm.title)
+        assertTrue(confirm.cancelFocused)
+        assertEquals(
+            listOf(
+                "It is working right now: Bash npm test",
+                "3 uncommitted changes · 1 unpushed commit on feat stay in its folder.",
+            ),
+            confirm.warnings,
+        )
+        assertTrue(sent.none { it is WindowCommand.CloseSession })
+    }
+
+    @Test
+    fun aSessionWaitingForYouSaysWhatItAsks() = runNow {
+        layout(leaf("leaf-a"))
+        windowState.updateAgentSessions(listOf(session("a", "needs_you", question = "Delete the table?")), true)
+        vm.open()
+        vm.requestClose()
+        assertEquals(listOf("It is waiting for you: Delete the table?"), vm.state.confirm!!.warnings)
+    }
+
+    @Test
+    fun enterOnTheFocusedCancelKeepsTheSessionAndEnterOnCloseClosesIt() = runNow {
+        layout(leaf("leaf-a"))
+        windowState.updateAgentSessions(listOf(session("a", "idle")), true)
+        vm.open()
+        vm.requestClose()
+        vm.activateSelected()
+        assertNull(vm.state.confirm)
+        assertTrue(sent.none { it is WindowCommand.CloseSession })
+
+        vm.requestClose()
+        vm.moveConfirmFocus()
+        assertFalse(vm.state.confirm!!.cancelFocused)
+        vm.activateSelected()
+        assertEquals(listOf<WindowCommand>(WindowCommand.CloseSession("s-leaf-a")), sent.filterIsInstance<WindowCommand.CloseSession>())
+        assertNull(vm.state.confirm)
+    }
+
+    @Test
+    fun escStepsBackFromConfirmThenPeekThenTheOverlay() = runNow {
+        layout(leaf("leaf-a"))
+        windowState.updateAgentSessions(listOf(session("a", "idle")), true)
+        vm.open()
+        vm.peek()
+        vm.requestClose()
+        assertNull(vm.state.peek, "asking to close replaces the peek")
+        vm.back()
+        assertNull(vm.state.confirm)
+        assertTrue(vm.state.open)
+        vm.peek()
+        vm.back()
+        assertNull(vm.state.peek)
+        assertTrue(vm.state.open)
+        vm.back()
+        assertFalse(vm.state.open)
+    }
+
+    @Test
+    fun theKeyboardCloseIsIgnoredWhileTypingButTheButtonStillWorks() = runNow {
+        layout(leaf("leaf-a"))
+        windowState.updateAgentSessions(listOf(session("a", "idle", title = "alpha")), true)
+        vm.open()
+        vm.setQuery("al")
+        answer("al", AgentSessionMatch(session("a", "idle", title = "alpha"), "title", null, 0, 2, null))
+        vm.requestClose(fromKeyboard = true)
+        assertNull(vm.state.confirm)
+        vm.requestClose()
+        assertEquals("alpha", vm.state.confirm!!.title)
+    }
+
+    @Test
+    fun anEndedRowCannotBeClosed() = runNow {
+        windowState.updateAgentSessions(listOf(session("old", "ended", leaf = null, endedAt = 5)), true)
+        vm.open()
+        vm.requestClose()
+        assertNull(vm.state.confirm)
+        assertFalse(vm.state.rows.single().canClose)
     }
 
     @Test
