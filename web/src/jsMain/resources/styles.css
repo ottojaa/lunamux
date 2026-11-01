@@ -3644,7 +3644,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     font-size: 15px; line-height: 1.2em; text-align: center; color: var(--t-accent, #56d4e6);
 }
 .ao-work-layer { position: absolute; inset: 0; opacity: 0; }
-.ao-work-rest { opacity: 0.35; }
+.ao-work-rest { opacity: 0.5; }
 .ao-needs .ao-age { color: #f2b84b; opacity: 1; }
 .ao-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .ao-action { text-align: right; opacity: 0.7; white-space: nowrap; }
@@ -3730,11 +3730,11 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     border: 1px solid var(--t-border, #2a5662);
     border-radius: 10px 10px 0 0;
     align-items: center;
-    /* The title column takes the width its title and chips need, up to half the row, so a long
+    /* The title column takes the width its title and chips need, up to two fifths of the row, so a long
        title shortens with an ellipsis and the counts keep room to be read. */
-    grid-template-columns: 22px fit-content(50%) minmax(0, 1fr) 88px 120px;
+    grid-template-columns: 22px fit-content(40%) minmax(0, 1fr) 88px 120px;
 }
-.ao-group .ao-repo { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ao-group .ao-repo { flex: none; max-width: 14em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ao-group.ao-group-end { border-radius: 10px; }
 .ao-group.ao-selected { border-color: var(--t-accent, #56d4e6); }
 .ao-chevron {
