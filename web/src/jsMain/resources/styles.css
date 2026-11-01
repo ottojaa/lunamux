@@ -3634,6 +3634,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-now.ao-error { color: #ff7b72; opacity: 1; }
 .ao-age { text-align: right; white-space: nowrap; opacity: 0.6; }
 .ao-age.ao-quiet { opacity: 0.45; }
+.ao-now.ao-quiet { opacity: 0.45; }
 /* A working row (or group) carries the working glyph beside its text. */
 .ao-now.ao-has-work { display: flex; align-items: center; gap: 6px; }
 .ao-now-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

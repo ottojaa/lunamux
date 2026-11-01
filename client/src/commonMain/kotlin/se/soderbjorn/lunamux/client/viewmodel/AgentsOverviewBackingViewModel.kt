@@ -116,6 +116,9 @@ class AgentsOverviewBackingViewModel(
      *   null for every other row, including a member the group file declares that has no session
      *   here, because nothing then says it is alive. The view animates the working glyph only
      *   when this is set and [isQuiet] is false.
+     * @property fileRefreshedMillis for a group member Lunamux does not host, epoch millis the group
+     *   file that declares it was last refreshed; null for every other row. The view marks the row
+     *   stale when [isStale] says so.
      */
     data class Row(
         val id: String,
@@ -142,6 +145,7 @@ class AgentsOverviewBackingViewModel(
         val unhosted: Boolean = false,
         val label: String? = null,
         val activityMillis: Long? = null,
+        val fileRefreshedMillis: Long? = null,
     )
 
     /** What a [Row] stands for. */
@@ -896,6 +900,7 @@ class AgentsOverviewBackingViewModel(
                     links = m.links, repo = null, nowLine = null, question = null, sinceMillis = m.sinceMillis,
                     isLive = false, canResume = false, actionLabel = "",
                     error = resumeError("$MEMBER_PREFIX${g.id}:$i"), unhosted = true,
+                    fileRefreshedMillis = g.refreshedAtMillis,
                 )
             }
             m to base.copy(
@@ -1023,6 +1028,28 @@ class AgentsOverviewBackingViewModel(
          * @see Row.activityMillis
          */
         fun isQuiet(activityMillis: Long, nowMillis: Long): Boolean = nowMillis - activityMillis >= QUIET_AFTER_MS
+
+        /**
+         * How long a group file may go without being refreshed before what it says about members
+         * Lunamux does not host is treated as stale. The writer touches an unchanged file at least
+         * every ten minutes while its controller runs, so twenty minutes of silence means the
+         * controller stopped and the file's states are no longer news.
+         */
+        const val STALE_AFTER_MS = 20L * 60_000L
+
+        /**
+         * Whether a group file has gone stale: it was last refreshed [STALE_AFTER_MS] or more ago.
+         * A pure function of the clock, like [isQuiet], so the web view's periodic redraw can flip a
+         * row to stale with no new input from the server.
+         *
+         * Called by the web overview on every redraw for each row with a [Row.fileRefreshedMillis].
+         *
+         * @param refreshedMillis epoch millis the group file was last refreshed.
+         * @param nowMillis the current epoch millis.
+         * @return true when the gap is at least [STALE_AFTER_MS].
+         * @see Row.fileRefreshedMillis
+         */
+        fun isStale(refreshedMillis: Long, nowMillis: Long): Boolean = nowMillis - refreshedMillis >= STALE_AFTER_MS
 
         private const val GROUP_PREFIX = "group:"
         private const val MEMBER_PREFIX = "member:"

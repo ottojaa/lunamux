@@ -74,6 +74,19 @@ class AgentGroupsWatcherTest {
     }
 
     @Test
+    fun `a group carries its file's modification time, also through a touch that changes nothing else`() {
+        write("g1.json", groupJson(members = member("Peek", "working")), modified = 1_700_000_000_000)
+        watcher.reload()
+        assertEquals(1_700_000_000_000, watcher.groups.value.single().refreshedAtMillis)
+
+        // The writer only touches an unchanged file: same content, newer time.
+        File(dir, "g1.json").setLastModified(1_700_000_600_000)
+        watcher.reload()
+        assertEquals(1_700_000_600_000, watcher.groups.value.single().refreshedAtMillis)
+        assertEquals("working", watcher.groups.value.single().members.single().state)
+    }
+
+    @Test
     fun `unknown fields are ignored and a link that is not http is dropped`() {
         write("g1.json", groupJson(extra = ""","future":{"x":1}""").replace("https://example.org/board", "javascript:alert(1)"))
         watcher.reload()

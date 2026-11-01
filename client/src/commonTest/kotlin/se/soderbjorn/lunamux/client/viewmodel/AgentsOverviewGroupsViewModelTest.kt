@@ -3,7 +3,7 @@
  * among the single sessions, what a collapsed and an expanded box show, how its members count
  * in the chip (held members counted apart from those that need you), what ↵ and the action
  * labels are on a header, a member and a member Lunamux does not host, how the open lead sits
- * inside its box, and when a working row counts as quiet.
+ * inside its box, when a working row counts as quiet, and when a group file's members count as stale.
  */
 package se.soderbjorn.lunamux.client.viewmodel
 
@@ -61,11 +61,11 @@ class AgentsOverviewGroupsViewModelTest {
 
     private fun group(
         id: String = "g1", members: List<AgentGroupMember>, leadRecord: String? = null, leadLive: Boolean = false,
-        lastSaid: String? = null, tag: String? = "Programme",
+        lastSaid: String? = null, tag: String? = "Programme", refreshedAtMillis: Long? = null,
     ) = AgentGroup(
         id = id, title = "Release $id", tag = tag, repo = "proj",
         lead = AgentGroupLead(folder = "/work/lead", recordId = leadRecord, live = leadLive, lastSaid = lastSaid),
-        members = members,
+        members = members, refreshedAtMillis = refreshedAtMillis,
     )
 
     private fun show(groups: List<AgentGroup>, vararg sessions: AgentSessionSummary) {
@@ -350,6 +350,44 @@ class AgentsOverviewGroupsViewModelTest {
         assertEquals(5 * 60_000L, q)
         assertFalse(AgentsOverviewBackingViewModel.isQuiet(10_000, 10_000 + q - 1))
         assertTrue(AgentsOverviewBackingViewModel.isQuiet(10_000, 10_000 + q))
+    }
+
+    @Test
+    fun aGroupFileIsStaleTwentyMinutesAfterItWasLastRefreshed() {
+        val limit = AgentsOverviewBackingViewModel.STALE_AFTER_MS
+        assertEquals(20 * 60_000L, limit)
+        assertFalse(AgentsOverviewBackingViewModel.isStale(10_000, 10_000 + limit - 1))
+        assertTrue(AgentsOverviewBackingViewModel.isStale(10_000, 10_000 + limit))
+    }
+
+    @Test
+    fun onlyMembersLunamuxDoesNotHostCarryTheFileRefreshTime() {
+        layout("leaf-w1")
+        show(
+            listOf(group(refreshedAtMillis = 5_000, members = listOf(member("unhosted", "working"), member("hosted", "working", recordId = "w1")))),
+            session("w1", "working"),
+        )
+        vm.toggleGroup("g1")
+        val byId = vm.state.rows.associateBy { it.id }
+        assertEquals(5_000L, byId.getValue("member:g1:0").fileRefreshedMillis)
+        assertEquals(null, byId.getValue("w1").fileRefreshedMillis, "a member with a session follows the session, not the file")
+        assertEquals(null, byId.getValue("group:g1").fileRefreshedMillis)
+    }
+
+    @Test
+    fun anUnhostedRowTurnsStaleAsTheClockMovesWithNoNewInput() {
+        val refreshed = 1_000_000L
+        show(listOf(group(refreshedAtMillis = refreshed, members = listOf(member("unhosted", "working", line = "Doing a thing")))))
+        vm.toggleGroup("g1")
+        val row = vm.state.rows.single { it.id == "member:g1:0" }
+        val stateBefore = vm.state
+        val at = { minutes: Long -> refreshed + minutes * 60_000L }
+        assertFalse(AgentsOverviewBackingViewModel.isStale(row.fileRefreshedMillis!!, at(19)))
+        assertTrue(AgentsOverviewBackingViewModel.isStale(row.fileRefreshedMillis!!, at(20)))
+        // Nothing in the state changed: the row reads the same, and the clock alone decides.
+        assertEquals(stateBefore, vm.state)
+        assertEquals("working", row.state)
+        assertEquals("Doing a thing", row.nowLine)
     }
 
     @Test

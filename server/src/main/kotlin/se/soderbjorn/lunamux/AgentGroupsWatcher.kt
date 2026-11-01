@@ -276,7 +276,7 @@ class AgentGroupsWatcher(
         val group = AgentGroup(
             id = id, title = title, tag = file.tag?.takeIf { it.isNotBlank() }, repo = file.repo?.takeIf { it.isNotBlank() },
             linkLabel = if (url != null) label ?: url else null, linkUrl = url,
-            lead = AgentGroupLead(folder = leadFolder), members = members,
+            lead = AgentGroupLead(folder = leadFolder), members = members, refreshedAtMillis = modified,
         )
         return ParsedGroup(group, command, leadFolder, matches)
     }
