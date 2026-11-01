@@ -166,3 +166,13 @@ tasks.named<JavaExec>("run") {
         logger.lifecycle("Lunamux dev server: port $portOverride, db $dbPathOverride")
     }
 }
+
+// Fills a scratch database and task folder with the cases the agents overview shows (see
+// AgentsOverviewSeed). Run it through scripts/seed-agents-overview.sh while the scratch server
+// is stopped. `--args` carries the two paths.
+tasks.register<JavaExec>("seedAgentsOverview") {
+    group = "application"
+    description = "Seeds a scratch database and task folder for the agents overview."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("se.soderbjorn.lunamux.AgentsOverviewSeed")
+}
