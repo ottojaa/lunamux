@@ -3,11 +3,12 @@
  * user and how many work, and the ⌘⇧A overlay that lists every agentic-CLI session (Claude Code,
  * Codex, Gemini) as one terminal-style table under "Now" and "Earlier".
  *
- * Every row is the same seven-column grid: a gutter (the programme chevron or its tree lines), the
+ * Every row is the same seven-column grid: a gutter (the task chevron or its tree lines), the
  * state glyph (the only place a state is drawn as a glyph), the title, where it runs, a status
- * line, the age and the row's own action. A programme declared by a tool is an expansion panel in
- * the same grid: a bold header whose click, →, ← and space fold it, whose "open" opens the
- * programme's session, and whose runs hang under it on tree lines. Typing two or more characters
+ * line, the age and the row's own action. A task with several sessions is an expansion panel in
+ * the same grid: a bold header whose click, →, ← and space fold it, whose action ("jump" to the
+ * session that most needs the person, else "open" the task's own session) is its ↵, and whose
+ * sessions hang under it on tree lines; a task with one session is that session's plain row. Typing two or more characters
  * swaps the lists for search results over every session ever run; → peeks at a session's screen
  * and ⌘⌫ closes a live one after an inline confirmation. The footer names the keys that work on
  * the selected row.
@@ -282,8 +283,10 @@ private fun closeOverlayElement() {
 /**
  * Turn a click in the list into a view-model call, finding the row by its id.
  *
- * A programme header folds on a click anywhere except its "open", which opens the programme's
- * session; the "+ N more" line shows the rest of Earlier; any other row is selected and done
+ * A task header folds on a click anywhere except its action, which does what ↵ does on the header
+ * (jump to the session that most needs the person, else run the task's `open` action, else fold),
+ * and its `open` control, which runs the task's `open` action even while a session is live;
+ * the "+ N more" line shows the rest of Earlier; any other row is selected and done
  * (jumped to, resumed or opened), as ↵ would.
  *
  * @param target the element that was clicked, or null.
@@ -294,7 +297,8 @@ private fun onListClick(target: HTMLElement?) {
     val row = el.getAttribute("data-id")?.let { shownRows[it] } ?: return
     agentsOverview.select(row.id)
     when {
-        row.kind == Kind.GROUP && target.closest(".ao-x") == null -> row.groupId?.let { agentsOverview.toggleGroup(it) }
+        row.kind == Kind.TASK && target.closest(".ao-open") != null -> launchAgentsOverview { agentsOverview.openTask(row) }
+        row.kind == Kind.TASK && target.closest(".ao-x") == null -> row.taskId?.let { agentsOverview.toggleTask(it) }
         else -> launchAgentsOverview { agentsOverview.activate(row) }
     }
 }
@@ -318,8 +322,8 @@ private fun onFooterKey(key: String) {
  * Turn a key press in the search box into a view-model call.
  *
  * ↑ and ↓ move the selection (which also closes a peek or a confirmation). → steps in when the
- * caret is at the end of the text: it unfolds a programme, enters it, or peeks at a session. ←
- * steps out while the box is empty or a peek is open, and space folds or unfolds a programme
+ * caret is at the end of the text: it unfolds a task, enters it, or peeks at a session. ←
+ * steps out while the box is empty or a peek is open, and space folds or unfolds a task
  * while the box is empty. ⌘⌫ asks to close the selected session (only while the box is empty),
  * and esc steps back one level.
  *
@@ -380,12 +384,12 @@ private fun renderList(state: AgentsOverviewBackingViewModel.State) {
     val now = kotlin.js.Date.now().toLong()
     fun add(rows: List<Row>) = rows.forEachIndexed { i, row ->
         val selected = row.id == state.selectedId
-        val sameGroupAfter = rows.getOrNull(i + 1)?.let { it.groupId != null && it.groupId == row.groupId } == true
+        val sameTaskAfter = rows.getOrNull(i + 1)?.let { it.taskId != null && it.taskId == row.taskId } == true
         list.appendChild(
-            if (row.kind == Kind.GROUP) {
-                buildRow(row, state, selected, now, kids = sameGroupAfter, last = false)
+            if (row.kind == Kind.TASK) {
+                buildRow(row, state, selected, now, kids = sameTaskAfter, last = false)
             } else {
-                buildRow(row, state, selected, now, kids = false, last = row.groupId != null && !sameGroupAfter)
+                buildRow(row, state, selected, now, kids = false, last = inPanel(row, state) && !sameTaskAfter)
             },
         )
         state.confirm?.takeIf { it.rowId == row.id }?.let { list.appendChild(buildConfirm(it)) }
@@ -427,7 +431,7 @@ private fun renderFooter(state: AgentsOverviewBackingViewModel.State) {
 
 /**
  * Choose the footer's entries from the selection: only keys that do something on that row, with
- * "← back to the programme" added for a run, and "↑↓ move" and "esc close" always last.
+ * "← back to the task" added for a session inside a task panel, and "↑↓ move" and "esc close" always last.
  *
  * @param state the view model's current state.
  * @return the entries, in the order they are drawn.
@@ -436,14 +440,14 @@ private fun footerSegments(state: AgentsOverviewBackingViewModel.State): List<Fo
     val row = state.selectedRow
     val move = FooterSegment("↑↓", "move", "ao-seg-move")
     val esc = FooterSegment("esc", "close")
-    val back = FooterSegment("←", "back to the programme", "ao-seg-back").takeIf { row?.kind == Kind.SESSION && row.groupId != null }
+    val back = FooterSegment("←", "back to the task", "ao-seg-back").takeIf { row?.kind == Kind.SESSION && inPanel(row, state) }
     return when (state.footer) {
         Footer.LIVE -> listOfNotNull(FooterSegment("→", "peek"), FooterSegment("⌘⌫", "close session"), back, move, esc)
         Footer.CLOSED -> listOfNotNull(FooterSegment("→", "peek at its saved screen"), back, move, esc)
-        Footer.GROUP_COLLAPSED -> listOf(FooterSegment("→", "expand"), FooterSegment("space", "expand"), move, esc)
-        Footer.GROUP_EXPANDED -> listOf(FooterSegment("←", "collapse"), FooterSegment("space", "collapse"), move, esc)
+        Footer.TASK_COLLAPSED -> listOf(FooterSegment("→", "expand"), FooterSegment("space", "expand"), move, esc)
+        Footer.TASK_EXPANDED -> listOf(FooterSegment("←", "collapse"), FooterSegment("space", "collapse"), move, esc)
         Footer.RUN_ATTACH -> listOfNotNull(back, move, esc)
-        Footer.NO_SESSION -> listOfNotNull(FooterSegment("", "nothing to open: this run is not in a Lunamux pane"), back, move, esc)
+        Footer.NO_SESSION -> listOfNotNull(FooterSegment("", "nothing to open: this session is not in a Lunamux pane"), back, move, esc)
         Footer.NONE -> listOf(move, esc)
     }
 }
@@ -483,18 +487,18 @@ private fun highlighted(text: String, start: Int, length: Int): org.w3c.dom.Docu
 }
 
 /**
- * The state glyph of a row, drawn in the second column: ◆ for a run that needs the user, the
+ * The state glyph of a row, drawn in the second column: ◆ for a session that needs the user, the
  * braille working glyph (moving while the work is live, still and dim once it is not), ○, ‖, ✓
- * or ·; nothing for a header whose programme has no working run.
+ * or ·; nothing for a header whose task has no working session.
  *
  * @param row the row.
- * @param group the row's programme header data when [row] is a header, for its working glyph.
+ * @param task the row's task header data when [row] is a header, for its working glyph.
  * @param now the current epoch millis, for the working rule.
  * @return the cell's content, or null for an empty cell.
  */
-private fun stateGlyph(row: Row, group: AgentsOverviewBackingViewModel.Group?, now: Long): HTMLElement? = when {
-    row.kind == Kind.GROUP ->
-        group?.takeIf { it.workingCount > 0 }
+private fun stateGlyph(row: Row, task: AgentsOverviewBackingViewModel.Task?, now: Long): HTMLElement? = when {
+    row.kind == Kind.TASK ->
+        task?.takeIf { it.workingCount > 0 }
             ?.let { workingGlyph(AgentsOverviewBackingViewModel.isWorkingLive(it.activityMillis, now)) }
     else -> when (row.glyph) {
         Glyph.NEEDS_YOU -> span("ao-g-need", "◆")
@@ -508,9 +512,9 @@ private fun stateGlyph(row: Row, group: AgentsOverviewBackingViewModel.Group?, n
 }
 
 /**
- * The status cell of a session or run: a prefix when the work has gone quiet or its file stale,
+ * The status cell of a session: a prefix when the work has gone quiet or its file stale,
  * the file's label, then the line; an error replaces all of it and is never dimmed. A finished
- * run also carries its pull request inline, which only shows once the "where" column is dropped.
+ * session also carries its pull request inline, which only shows once the "where" column is dropped.
  *
  * @param row the row.
  * @param now the current epoch millis.
@@ -538,38 +542,53 @@ private fun statusCell(row: Row, now: Long): HTMLElement {
 }
 
 /**
- * The count line of a programme header: "1 needs you" in the warning colour, then the dim counts,
+ * The count line of a task header: "1 needs you" in the warning colour, then the dim counts,
  * joined by faint dots.
  *
- * @param group the header's data, or null if it vanished since the row was built.
+ * @param task the header's data, or null if it vanished since the row was built.
  * @return the cell.
  */
-private fun countsCell(group: AgentsOverviewBackingViewModel.Group?): HTMLElement {
+private fun countsCell(task: AgentsOverviewBackingViewModel.Task?): HTMLElement {
     val cell = span("ao-n", "")
-    if (group == null) return cell
-    val parts = group.summary.split(" · ").filter { it.isNotEmpty() }
-    if (group.needYouCount > 0) cell.appendChild(span("ao-cn", AgentsOverviewBackingViewModel.needYouText(group.needYouCount)))
+    if (task == null) return cell
+    val parts = task.summary.split(" · ").filter { it.isNotEmpty() }
+    if (task.needYouCount > 0) cell.appendChild(span("ao-cn", AgentsOverviewBackingViewModel.needYouText(task.needYouCount)))
     parts.forEachIndexed { i, part ->
-        if (i > 0 || group.needYouCount > 0) cell.appendChild(span("ao-n-faint", " · "))
+        if (i > 0 || task.needYouCount > 0) cell.appendChild(span("ao-n-faint", " · "))
         cell.appendChild(document.createTextNode(part))
     }
     return cell
 }
 
 /**
- * One row of the table, session, run or programme header, in the seven-column grid.
+ * Whether [row] hangs under a task header on screen: it belongs to a task that is drawn as a
+ * panel. A task's only session is a plain row and is not.
+ *
+ * Called by [buildRow], [renderList] and [footerSegments] to choose tree lines and the "back" key.
+ *
+ * @param row the row.
+ * @param state the view model's state, whose [AgentsOverviewBackingViewModel.State.tasks] lists the panels.
+ * @return true for a session inside a panel.
+ */
+private fun inPanel(row: Row, state: AgentsOverviewBackingViewModel.State): Boolean =
+    row.kind == Kind.SESSION && row.taskId != null && state.tasks.containsKey(row.taskId)
+
+/**
+ * One row of the table, session or task header, in the seven-column grid.
  *
  * The row's colour comes from its state alone: needs-you status in the brightest text, working
  * status mid-bright, the rest dim. The selected row shows its action as "↵ jump" and the like at
- * the right end; a header always shows "open". Search snippets, the resume note, an open peek and
+ * the right end; a header shows where its ↵ goes ("jump" or "open"), or "↵ expand" / "↵ collapse"
+ * when it only folds, and, when its task has an `open` action and ↵ jumps, an `open` control of
+ * its own in the age column. Search snippets, the resume note, an open peek and
  * a failed open's error span the row's full width underneath.
  *
  * @param row the row to draw.
  * @param state the view model's state, for the header data and the open peek.
  * @param selected whether it is the highlighted row.
  * @param now the current epoch millis.
- * @param kids for a header, whether runs are drawn under it (so a tree line runs down from it).
- * @param last for a run, whether it is the last one of its programme on screen.
+ * @param kids for a header, whether sessions are drawn under it (so a tree line runs down from it).
+ * @param last for a session in a panel, whether it is the last one of its task on screen.
  * @return the row element, carrying the row's id as `data-id` for click routing.
  */
 private fun buildRow(
@@ -580,25 +599,26 @@ private fun buildRow(
     kids: Boolean,
     last: Boolean,
 ): HTMLElement {
-    val isHead = row.kind == Kind.GROUP
-    val group = state.groups[row.groupId].takeIf { isHead }
+    val isHead = row.kind == Kind.TASK
+    val task = state.tasks[row.taskId].takeIf { isHead }
+    val member = inPanel(row, state)
     val classes = mutableListOf("ao-row")
     if (isHead) classes += "ao-head"
     if (isHead && kids) classes += "ao-kids"
-    if (!isHead && row.groupId != null) classes += "ao-mem"
+    if (member) classes += "ao-mem"
     if (last) classes += "ao-last"
     if (selected) classes += "ao-sel"
     if (!isHead && row.glyph == Glyph.NEEDS_YOU) classes += "ao-need"
     if (!isHead && row.glyph == Glyph.WORKING) classes += "ao-working"
-    if (!isHead && (row.glyph == Glyph.CLOSED || (!row.isLive && row.groupId == null))) classes += "ao-past"
+    if (!isHead && (row.glyph == Glyph.CLOSED || (!row.isLive && !member))) classes += "ao-past"
     if (row.fileRefreshedMillis?.let { AgentsOverviewBackingViewModel.isStale(it, now) } == true) classes += "ao-stale"
     val el = div(classes.joinToString(" "))
     el.setAttribute("data-id", row.id)
 
-    el.appendChild(span("ao-gut", if (isHead) (if (group?.expanded == true) "▾" else "▸") else ""))
+    el.appendChild(span("ao-gut", if (isHead) (if (task?.expanded == true) "▾" else "▸") else ""))
 
     val glyphCell = span("ao-s", "")
-    stateGlyph(row, group, now)?.let { glyphCell.appendChild(it) }
+    stateGlyph(row, task, now)?.let { glyphCell.appendChild(it) }
     el.appendChild(glyphCell)
 
     val title = span("ao-t", "")
@@ -607,14 +627,22 @@ private fun buildRow(
     if (!isHead && row.agent.isNotEmpty() && row.agent != "claude") title.appendChild(span("ao-agent", " ${row.agent}"))
     el.appendChild(title)
 
-    el.appendChild(span("ao-w", if (isHead) group?.repo ?: "" else row.where ?: ""))
-    el.appendChild(if (isHead) countsCell(group) else statusCell(row, now))
-    el.appendChild(span("ao-a", if (isHead || row.sinceMillis <= 0) "" else formatAge(row.sinceMillis)))
+    el.appendChild(span("ao-w", if (isHead) task?.repo ?: "" else row.where ?: ""))
+    el.appendChild(if (isHead) countsCell(task) else statusCell(row, now))
+    // A header has no age. When ↵ on it jumps to a live session but its task also has an `open`
+    // action, that column holds the `open` control so the action stays reachable.
+    if (isHead && task?.hasOpen == true && row.actionLabel == "jump") {
+        el.appendChild(span("ao-a ao-open", "open"))
+    } else {
+        el.appendChild(span("ao-a", if (isHead || row.sinceMillis <= 0) "" else formatAge(row.sinceMillis)))
+    }
     el.appendChild(
         span(
             "ao-x",
             when {
-                isHead -> if (selected) "↵ open" else "open"
+                isHead && row.actionLabel.isEmpty() ->
+                    if (selected) "↵ ${if (task?.expanded == true) "collapse" else "expand"}" else ""
+                isHead -> if (selected) "↵ ${row.actionLabel}" else row.actionLabel
                 selected && row.actionLabel.isNotEmpty() -> "↵ ${row.actionLabel}"
                 else -> ""
             },

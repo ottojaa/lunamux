@@ -37,6 +37,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.put
+import se.soderbjorn.lunamux.TaskIndex
 import se.soderbjorn.lunula.core.Appearance
 import se.soderbjorn.lunula.core.PersistKeys
 import se.soderbjorn.lunula.core.ThemeSnapshotV2
@@ -198,7 +199,7 @@ private fun summarizeArgs(args: JsonObject): String =
  * Register a write tool: wraps the handler so every successful call is
  * recorded in [McpActivityLog] with redacted arguments.
  */
-private fun writeTool(
+internal fun writeTool(
     name: String,
     description: String,
     inputSchema: JsonObject,
@@ -277,8 +278,10 @@ private object RunDone : Exception() {
  *
  * @param settingsRepo backing store for workspace templates and the
  *   theme-selection blob used by `set_theme`.
+ * @param taskIndex the task index `create_window` files a new window's session in when
+ *   it is given a `taskId`; null where tasks are not wired up, which leaves that argument out.
  */
-fun registerMcpWriteTools(settingsRepo: SettingsRepository) {
+fun registerMcpWriteTools(settingsRepo: SettingsRepository, taskIndex: TaskIndex? = null) {
 
     // ── Group C — input & execution ──────────────────────────────────────
 
@@ -435,19 +438,32 @@ fun registerMcpWriteTools(settingsRepo: SettingsRepository) {
 
     writeTool(
         name = "create_window",
-        description = "Create a new terminal window (pane). Returns the new windowId and sessionId.",
+        description = "Create a new terminal window (pane). Returns the new windowId and sessionId. " +
+            "When this window will run another agent session for work you are already doing " +
+            "(for example a second session you start to split the work), pass taskId, the id " +
+            "create_task returned, so the sessions show as one task in the agents overview.",
         inputSchema = schemaObject(
             "tabId" to schemaString("Tab to create the window in (default: active tab)."),
             "worldId" to schemaString("When no tabId is given: the world whose active tab to use (default: active world)."),
             "cwd" to schemaString("Starting directory for the new shell."),
             "title" to schemaString("Optional custom window name."),
+            "taskId" to schemaString(
+                "Task the agent session that starts in this window belongs to (an id from " +
+                    "create_task or list_tasks). Optional.",
+            ),
         ),
     ) { _, args ->
+        val taskId = args.optString("taskId")
+        if (taskId != null) {
+            val index = taskIndex ?: throw McpArgumentException("Tasks are not available on this server")
+            taskCall { index.requireTask(taskId) }
+        }
         val tabId = resolveTargetTab(args)
         val leaf = WindowState.addPaneToTab(tabId, initialCwd = args.optString("cwd"))
             ?: throw McpArgumentException("Unknown tabId: $tabId")
         args.optString("title")?.let { WindowState.renamePane(leaf.id, it) }
         markAgentTouched(leaf.id)
+        if (taskId != null) taskCall { taskIndex!!.addToTask(taskId, listOf(leaf.sessionId)) }
         McpToolResult.json(buildJsonObject {
             put("windowId", leaf.id)
             put("sessionId", leaf.sessionId)

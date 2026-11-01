@@ -285,35 +285,32 @@ sealed class WindowCommand {
     data class ResumeAgentSession(val recordId: String) : WindowCommand()
 
     /**
-     * Open the lead session of an agent session group. The server looks the
-     * group up among the group files it reads, so the command that gets
-     * typed always comes from the file and never from a client. When the
-     * lead is already open the client jumps to it itself and the server
-     * answers nothing; otherwise the server opens a tab named like the group
-     * in the lead's folder and types the lead's start command. A group or
-     * folder that no longer exists is answered with
+     * Run a task's `open` action. The server looks the task up among the task files it reads, so
+     * the command that gets typed always comes from the file and never from a client: it opens a
+     * tab named like the task in the action's folder and types the action's command. A task
+     * without an `open` action, or a folder that no longer exists, is answered with
      * [WindowEnvelope.AgentSessionError] (record id null).
      *
-     * @param groupId the [AgentGroup.id] of the group whose header was opened
+     * @param taskId the [AgentTask.id] of the task whose header asked to open
      */
     @Serializable
-    @SerialName("openAgentGroupLead")
-    data class OpenAgentGroupLead(val groupId: String) : WindowCommand()
+    @SerialName("openTask")
+    data class OpenTask(val taskId: String) : WindowCommand()
 
     /**
-     * Open a programme run that Lunamux does not host: the server looks the group up among
-     * the group files it reads, confirms one of its members carries [sessionId], and opens a
-     * tab named like the member that types `claude attach <sessionId>`. The line is built by
-     * the server from the id alone; a client never supplies a command. An unknown group, a
-     * member that is no longer in the file or an id that is not a plain session id is answered
-     * with [WindowEnvelope.AgentSessionError] (record id null).
+     * Open a task member that Lunamux does not host: the server looks the task up among the task
+     * files it reads, finds the member with [memberKey], and opens a tab named like the member that
+     * types `claude attach <id>` for the session id the file gives it. The line is built by the
+     * server from that id alone; a client never supplies a command. An unknown task, a member that
+     * is no longer in the file, or an id that is not a plain session id is answered with
+     * [WindowEnvelope.AgentSessionError] (record id null).
      *
-     * @param groupId the [AgentGroup.id] of the group the run belongs to
-     * @param sessionId the [AgentGroupMember.sessionId] of the run to attach to
+     * @param taskId the [AgentTask.id] of the task the member belongs to
+     * @param memberKey the [AgentTaskMember.key] of the member to attach to
      */
     @Serializable
-    @SerialName("openAgentGroupMember")
-    data class OpenAgentGroupMember(val groupId: String, val sessionId: String) : WindowCommand()
+    @SerialName("openTaskMember")
+    data class OpenTaskMember(val taskId: String, val memberKey: String) : WindowCommand()
 
     /**
      * Search every agent session ever recorded, open or closed, plus Claude Code

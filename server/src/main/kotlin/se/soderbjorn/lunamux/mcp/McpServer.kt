@@ -476,7 +476,15 @@ object McpServer {
                 "instructions",
                 "Lunamux terminal-multiplexer control surface. Content/exec tools take a " +
                     "sessionId; layout tools take a windowId (a window is a pane in the UI). " +
-                    "Read tools echo both so results can be cross-referenced.",
+                    "Read tools echo both so results can be cross-referenced. " +
+                    "Every agent session belongs to one task, and the agents overview shows tasks. " +
+                    "When you start a second agent session for work you are already doing, call " +
+                    "create_task (passing your own \$LUNAMUX_SESSION_ID and the new session's id in " +
+                    "sessionIds), or create_window with a taskId so the sessions show as one task; " +
+                    "add_to_task joins a session to a task that exists. When you continue earlier work, " +
+                    "call list_tasks first and join the task that is already there instead of " +
+                    "creating another. A session you never group is " +
+                    "a task of its own, which is right for work that stands alone.",
             )
         }
         return McpHandled(resultResponse(id, result), newSessionId = session.id)

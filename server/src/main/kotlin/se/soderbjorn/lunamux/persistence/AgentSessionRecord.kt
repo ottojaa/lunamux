@@ -47,8 +47,10 @@ package se.soderbjorn.lunamux.persistence
  *   `--git-common-dir`), or null outside git and for records made before it was kept.
  *   Resume uses it to recreate a removed worktree.
  * @property lastSaid the first line of the last paragraph of the agent's most recent reply
- *   (at most 160 characters), or null before it has said anything. A group's header shows it
- *   as what its lead session last said.
+ *   (at most 160 characters), or null before it has said anything. A member row shows it
+ *   as the status line when the session has no tool line to show.
+ * @property taskId the task an agent put this session in through the MCP tools, or null when it
+ *   made no choice. A task file can still place a session that has none.
  */
 data class AgentSessionRecord(
     val id: String,
@@ -74,4 +76,5 @@ data class AgentSessionRecord(
     val endedAt: Long? = null,
     val repoRoot: String? = null,
     val lastSaid: String? = null,
+    val taskId: String? = null,
 )

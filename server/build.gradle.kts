@@ -127,9 +127,10 @@ sqldelight {
 // `termtastic.db` and the older one would silently strip fields it didn't
 // recognise on its next save, e.g. losing freshly-introduced LeafContent
 // variants like the markdown overview pane.
-// Both settings are overridable from the command line:
+// These settings are overridable from the command line:
 //
-//     ./gradlew :server:run -Dlunamux.port=8460 -Dlunamux.dbPath=/tmp/mine.db
+//     ./gradlew :server:run -Dlunamux.port=8460 -Dlunamux.dbPath=/tmp/mine.db \
+//         -Dlunamux.tasksDir=/tmp/mine-tasks -Dlunamux.agentGroupsDir=/tmp/mine-groups
 //
 // The forwarding below is load-bearing and not redundant. A `-D` on the
 // gradlew command line sets the property on the *Gradle daemon* JVM, and
@@ -154,6 +155,11 @@ tasks.named<JavaExec>("run") {
     val dbPathOverride = providers.systemProperty("lunamux.dbPath").getOrElse(defaultDevDb)
     systemProperty("lunamux.port", portOverride)
     systemProperty("lunamux.dbPath", dbPathOverride)
+    // The folders of task files are forwarded for the same reason: without them a dev server
+    // reads the task files of the Lunamux that runs for real on this machine.
+    for (name in listOf("lunamux.tasksDir", "lunamux.agentGroupsDir")) {
+        providers.systemProperty(name).orNull?.let { systemProperty(name, it) }
+    }
     doFirst {
         logger.lifecycle("Lunamux dev server: port $portOverride, db $dbPathOverride")
     }

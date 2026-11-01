@@ -172,7 +172,22 @@ class SettingsRepository(
                     ended_at            INTEGER,
                     repo_root           TEXT,
                     search_text         TEXT,
-                    last_said           TEXT
+                    last_said           TEXT,
+                    task_id             TEXT
+                )
+            """.trimIndent(),
+            parameters = 0,
+        )
+        // Tasks that agents create through the MCP tools. Sessions belong to a task through
+        // agent_sessions.task_id; the table holds only the task's own name.
+        driver.execute(
+            identifier = null,
+            sql = """
+                CREATE TABLE IF NOT EXISTS agent_tasks (
+                    id         TEXT NOT NULL PRIMARY KEY,
+                    title      TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
                 )
             """.trimIndent(),
             parameters = 0,
@@ -197,6 +212,9 @@ class SettingsRepository(
         }
         runCatching {
             driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN last_said TEXT", 0)
+        }
+        runCatching {
+            driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN task_id TEXT", 0)
         }
     }
 
@@ -483,7 +501,7 @@ class SettingsRepository(
             r.id, r.agent, r.agentSessionId, r.source, r.leafId, r.terminalSessionId, r.cwd,
             r.repo, r.branch, r.worktreePath, r.title, r.firstPrompt, r.transcriptPath,
             r.links.joinToString(","), r.state, r.stateSince, r.nowLine, r.question,
-            r.lastScreen, r.createdAt, r.endedAt, r.repoRoot, r.id, r.lastSaid,
+            r.lastScreen, r.createdAt, r.endedAt, r.repoRoot, r.id, r.lastSaid, r.taskId,
         )
     }
 
@@ -541,13 +559,47 @@ class SettingsRepository(
         worktreePath: String?, title: String?, firstPrompt: String?, transcriptPath: String?,
         links: String, state: String, stateSince: Long, nowLine: String?, question: String?,
         lastScreen: String?, createdAt: Long, endedAt: Long?, repoRoot: String?,
-        lastSaid: String?,
+        lastSaid: String?, taskId: String?,
     ) = AgentSessionRecord(
         id, agent, agentSessionId, source, leafId, terminalSessionId, cwd, repo, branch,
         worktreePath, title, firstPrompt, transcriptPath,
         links.split(',').filter { it.isNotEmpty() }, state, stateSince, nowLine, question,
-        lastScreen, createdAt, endedAt, repoRoot, lastSaid,
+        lastScreen, createdAt, endedAt, repoRoot, lastSaid, taskId,
     )
+
+    /**
+     * One task an agent created through the MCP tools.
+     *
+     * @property id the task's id, a slug of its title plus a short suffix.
+     * @property title the name the agent gave it.
+     * @property createdAt epoch millis when it was created.
+     * @property updatedAt epoch millis of the last rename.
+     */
+    data class AgentTaskRow(val id: String, val title: String, val createdAt: Long, val updatedAt: Long)
+
+    /**
+     * Insert or replace one agent-made task.
+     *
+     * Called by the MCP `create_task` and `rename_task` tools through the task index.
+     *
+     * @param task the row to store, keyed by [AgentTaskRow.id].
+     * @see loadAgentTasks
+     */
+    fun saveAgentTask(task: AgentTaskRow) {
+        database.settingsQueries.upsertAgentTask(task.id, task.title, task.createdAt, task.updatedAt)
+    }
+
+    /**
+     * Every agent-made task, oldest first.
+     *
+     * Called by the task index whenever it rebuilds the tasks it pushes and lists.
+     *
+     * @return all rows of `agent_tasks`.
+     */
+    fun loadAgentTasks(): List<AgentTaskRow> =
+        database.settingsQueries.selectAgentTasks { id, title, createdAt, updatedAt ->
+            AgentTaskRow(id, title, createdAt, updatedAt)
+        }.executeAsList()
 
     /**
      * Store the searchable conversation text of one record.
@@ -609,13 +661,13 @@ class SettingsRepository(
         return database.settingsQueries.searchAgentSessions(pattern, query) {
                 id, agent, agentSessionId, source, leafId, terminalSessionId, cwd, repo, branch,
                 worktreePath, title, firstPrompt, transcriptPath, links, state, stateSince, nowLine,
-                question, createdAt, endedAt, repoRoot, lastSaid, transcriptWindow, screenWindow,
+                question, createdAt, endedAt, repoRoot, lastSaid, taskId, transcriptWindow, screenWindow,
             ->
             AgentSessionHit(
                 toAgentSessionRecord(
                     id, agent, agentSessionId, source, leafId, terminalSessionId, cwd, repo, branch,
                     worktreePath, title, firstPrompt, transcriptPath, links, state, stateSince,
-                    nowLine, question, null, createdAt, endedAt, repoRoot, lastSaid,
+                    nowLine, question, null, createdAt, endedAt, repoRoot, lastSaid, taskId,
                 ),
                 transcriptWindow,
                 screenWindow,

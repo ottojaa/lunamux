@@ -51,19 +51,24 @@ object AppPaths {
     }
 
     /**
-     * Folder the agents overview reads agent group files from.
+     * Folders the agents overview reads task files from.
      *
-     * Called by [Application.main] for the group watcher. Always `~/.lunamux/agent-groups`
-     * unless `-Dlunamux.agentGroupsDir=<dir>` names another folder (dev servers and tests).
-     * It is deliberately not under [dataDir]: other tools write there, so it must be
-     * easy to find and independent of the database location.
+     * Called by [Application.main] for the task file watcher. With no override that is
+     * `~/.lunamux/tasks` plus the folder earlier versions used, `~/.lunamux/agent-groups`, so files
+     * written for them keep working. `-Dlunamux.tasksDir=<dir>` and `-Dlunamux.agentGroupsDir=<dir>`
+     * each name a folder to read instead (dev servers and tests set both to scratch folders); once
+     * either is set, only the folders named are read. The folders are deliberately not under
+     * [dataDir]: other tools write there, so they must be easy to find and independent of the
+     * database location.
      *
-     * @return the folder; it may not exist.
+     * @return the folders, in the order they are read; any of them may not exist.
      */
-    fun agentGroupsDir(): File {
-        val override = System.getProperty("lunamux.agentGroupsDir")
-        if (!override.isNullOrBlank()) return File(override)
-        return File(System.getProperty("user.home"), ".lunamux/agent-groups")
+    fun taskDirs(): List<File> {
+        val tasks = System.getProperty("lunamux.tasksDir")?.takeIf { it.isNotBlank() }
+        val legacy = System.getProperty("lunamux.agentGroupsDir")?.takeIf { it.isNotBlank() }
+        if (tasks != null || legacy != null) return listOfNotNull(tasks, legacy).map(::File)
+        val home = System.getProperty("user.home")
+        return listOf(File(home, ".lunamux/tasks"), File(home, ".lunamux/agent-groups"))
     }
 
     /**

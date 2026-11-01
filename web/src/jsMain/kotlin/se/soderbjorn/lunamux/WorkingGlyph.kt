@@ -1,6 +1,6 @@
 /**
  * The small glyph the agents overview draws to say "this agent is working": in the state column of
- * a working row, and in the header of a programme while any of its runs works.
+ * a working row, and in the header of a task while any of its sessions works.
  *
  * It is one component whose look is entirely its [WorkingGlyphSpec] (the frames and their
  * timings), so changing the glyph means changing [BRAILLE_PAIR_TURN], not the drawing code.
@@ -71,8 +71,8 @@ private fun tick() {
 /**
  * Build the working glyph.
  *
- * Called by the agents overview for the state column of each working row and of a programme
- * header with a working run.
+ * Called by the agents overview for the state column of each working row and of a task
+ * header with a working session.
  *
  * @param active whether the work is live (heard from lately, see
  *   [se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.isWorkingLive]); false
