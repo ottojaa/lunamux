@@ -3682,6 +3682,9 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-head .ao-x { color: var(--ao-muted); }
 .ao-head .ao-x:hover { color: var(--ao-text); text-decoration: underline; text-underline-offset: 3px; }
 .ao-head.ao-sel .ao-x { color: var(--ao-text); }
+/* The header's own `open` control, shown beside a jump so the task's open action stays reachable. */
+.ao-head .ao-open { color: var(--ao-muted); cursor: pointer; }
+.ao-head .ao-open:hover { color: var(--ao-text); text-decoration: underline; text-underline-offset: 3px; }
 .ao-cn { color: var(--ao-warn); font-weight: 600; }
 
 /* Runs: tree lines in the gutter, titles not indented. */

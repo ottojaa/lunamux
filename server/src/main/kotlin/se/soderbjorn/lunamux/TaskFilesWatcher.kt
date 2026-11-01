@@ -147,8 +147,8 @@ private class Seen(val modified: Long, val length: Long, val parsed: TaskFile?)
  * without a command or an absolute folder, is skipped with a single warning until it changes
  * again; nothing here throws.
  *
- * Created once by `main()`; the [TaskIndex] collects [files] and `windowRoutes` asks [find] for
- * the `open` command when a task's header is opened.
+ * Created once by `main()`; the [TaskIndex] collects [files] and answers every question about a
+ * task, including which `open` command the open-task routes run.
  *
  * @param dirs the folders holding `<id>.json` files, in the order they are read; any of them may
  *   not exist. When two files share an id the newer file wins, wherever it lies.
@@ -181,17 +181,6 @@ class TaskFilesWatcher(
             }
         }
     }
-
-    /**
-     * Look up a task file by id.
-     *
-     * Called by the open-task routes, which take the command and folder from here and never from
-     * a client.
-     *
-     * @param taskId the task's id.
-     * @return the parsed file, or null for an id no file declares.
-     */
-    fun find(taskId: String): TaskFile? = _files.value.firstOrNull { it.id == taskId }
 
     /**
      * Re-read the folders: parse files that are new or changed, forget removed ones, then publish.

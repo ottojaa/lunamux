@@ -284,7 +284,8 @@ private fun closeOverlayElement() {
  * Turn a click in the list into a view-model call, finding the row by its id.
  *
  * A task header folds on a click anywhere except its action, which does what ↵ does on the header
- * (jump to the session that most needs the person, else run the task's `open` action, else fold);
+ * (jump to the session that most needs the person, else run the task's `open` action, else fold),
+ * and its `open` control, which runs the task's `open` action even while a session is live;
  * the "+ N more" line shows the rest of Earlier; any other row is selected and done
  * (jumped to, resumed or opened), as ↵ would.
  *
@@ -296,6 +297,7 @@ private fun onListClick(target: HTMLElement?) {
     val row = el.getAttribute("data-id")?.let { shownRows[it] } ?: return
     agentsOverview.select(row.id)
     when {
+        row.kind == Kind.TASK && target.closest(".ao-open") != null -> launchAgentsOverview { agentsOverview.openTask(row) }
         row.kind == Kind.TASK && target.closest(".ao-x") == null -> row.taskId?.let { agentsOverview.toggleTask(it) }
         else -> launchAgentsOverview { agentsOverview.activate(row) }
     }
@@ -577,7 +579,8 @@ private fun inPanel(row: Row, state: AgentsOverviewBackingViewModel.State): Bool
  * The row's colour comes from its state alone: needs-you status in the brightest text, working
  * status mid-bright, the rest dim. The selected row shows its action as "↵ jump" and the like at
  * the right end; a header shows where its ↵ goes ("jump" or "open"), or "↵ expand" / "↵ collapse"
- * when it only folds. Search snippets, the resume note, an open peek and
+ * when it only folds, and, when its task has an `open` action and ↵ jumps, an `open` control of
+ * its own in the age column. Search snippets, the resume note, an open peek and
  * a failed open's error span the row's full width underneath.
  *
  * @param row the row to draw.
@@ -626,7 +629,13 @@ private fun buildRow(
 
     el.appendChild(span("ao-w", if (isHead) task?.repo ?: "" else row.where ?: ""))
     el.appendChild(if (isHead) countsCell(task) else statusCell(row, now))
-    el.appendChild(span("ao-a", if (isHead || row.sinceMillis <= 0) "" else formatAge(row.sinceMillis)))
+    // A header has no age. When ↵ on it jumps to a live session but its task also has an `open`
+    // action, that column holds the `open` control so the action stays reachable.
+    if (isHead && task?.hasOpen == true && row.actionLabel == "jump") {
+        el.appendChild(span("ao-a ao-open", "open"))
+    } else {
+        el.appendChild(span("ao-a", if (isHead || row.sinceMillis <= 0) "" else formatAge(row.sinceMillis)))
+    }
     el.appendChild(
         span(
             "ao-x",

@@ -53,8 +53,6 @@ class TaskFilesWatcherTest {
         assertEquals(folder("open"), t.open!!.folder)
         assertEquals("needs_you", t.members.single().member.state)
         assertEquals(java.time.Instant.parse("2026-11-01T11:41:43Z").toEpochMilli(), t.members.single().member.sinceMillis)
-        assertEquals("claude 'go'", watcher.find("t1")!!.open!!.command)
-        assertNull(watcher.find("nope"))
         assertTrue(warnings.isEmpty())
     }
 
@@ -153,7 +151,6 @@ class TaskFilesWatcherTest {
         File(dir, "t1.json").delete()
         watcher.reload()
         assertTrue(watcher.files.value.isEmpty())
-        assertNull(watcher.find("t1"))
     }
 
     @Test

@@ -24,7 +24,12 @@ idle, **‖** paused, **✓** done.
 - **Several sessions, one panel.** The header row has the title, the repo, the counts of its
   sessions in a fixed order (**1 needs you** · 1 working · 1 in review · 2 queued · 1 paused ·
   3 done, zero counts left out) and, when the task has an `open` action, **open** at the right
-  end. It has no fill, badge, link chip, age or ◆.
+  end (while ↵ jumps to a live session, **open** is its own control in the column before ↵'s
+  word; a click on it runs the action). The repo is the file's; a task the agents made shows the
+  repo all its sessions share, and none when they differ. It has no fill, badge, link chip, age or ◆.
+- **Every session shows where it runs.** A session's column after the title is its repo (or its
+  folder when it has none), the same as a plain row; a pull request the task file gives for it
+  replaces that.
 - **Collapsed**, a panel shows the sessions that need the person (longest waiting first) and the
   ones that are working. **Expanded** (click on the header, →, or space; ← collapses) it shows
   every session, most urgent first: needs you, working, in review, queued, other labels, paused,
@@ -167,7 +172,8 @@ fixed version of the file is picked up within about three seconds.
 
 ### The `open` action
 
-`open` is optional. With it, the header shows **open**, and ↵ on a header with no open session
+`open` is optional. With it, the header always offers **open** (a click runs it, also while a
+session is live), and ↵ on a header with no open session
 types `open.command` into a new tab started in `open.folder`. The tab is named like the task.
 Without it, a task has no such action and ↵ falls back to expanding or collapsing the panel.
 

@@ -105,7 +105,7 @@ class AgentsOverviewBackingViewModel(
      * @property isLive whether the agent's pane is still open, so ↵ jumps to it.
      * @property canResume whether ↵ opens a new tab for it (an ended row).
      * @property actionLabel the word of the ↵ action: `jump`, `resume` or `open folder` for a
-     *   session; `jump`, `resume` or `open` for a task's session; for a task header `jump` (a
+     *   session; `jump`, `resume` or `open` for a task's session; for a task header what ↵ does: `jump` (a
      *   live session needs the person or works), else `open` (the task has an `open` action), else
      *   empty (↵ then expands or collapses it); empty for a session Lunamux has no record of and the
      *   file gave no session id, which has nothing to open.
@@ -253,8 +253,8 @@ class AgentsOverviewBackingViewModel(
      * @property jumpRecordId the record of the live session that most needs the person, which ↵ on
      *   the header jumps to: the ◆ that has waited longest, else the working session with the
      *   freshest sign of life; null when no session of the task is open.
-     * @property hasOpen whether the task file gives an `open` action, which ↵ runs when no session
-     *   is open.
+     * @property hasOpen whether the task file gives an `open` action: ↵ on the header runs it when
+     *   no session is open, and the header always offers it as its own `open` control.
      * @property activityMillis the latest sign of life among the working sessions (see
      *   [Row.activityMillis]); null when none works, so the header's working glyph is empty. The
      *   header draws the moving glyph while [isWorkingLive] says that stamp is fresh.
@@ -812,7 +812,8 @@ class AgentsOverviewBackingViewModel(
      * server says why it could not, exactly as for [resume].
      *
      * Called by [activateTask] when no session of the task is open, and for a click on the
-     * header's "open".
+     * header's `open` control, which the header offers whenever the task has an `open` action,
+     * also while a session is live (↵ then jumps to it).
      *
      * @param row the header row; its [Row.taskId] names the task.
      */
@@ -1163,11 +1164,12 @@ class AgentsOverviewBackingViewModel(
     /** The header the view draws for [u]. */
     private fun taskOf(u: TaskUnit, ui: Ui): Task {
         val t = u.task
+        val repo = headerRepo(u)
         val buckets = u.runs.map { bucketOf(it.member) }
         val counted = buckets.filter { it.order > 0 }.groupBy { it.name }
             .entries.sortedBy { (_, list) -> list.first().order }
         return Task(
-            id = t.id, title = t.title, repo = t.repo,
+            id = t.id, title = t.title, repo = repo,
             needYouCount = u.runs.count { it.member.state == NEEDS_YOU },
             workingCount = u.runs.count { it.member.state == WORKING },
             summary = counted.joinToString(" · ") { (name, list) -> "${list.size} $name" }
@@ -1178,6 +1180,21 @@ class AgentsOverviewBackingViewModel(
             activityMillis = u.runs.filter { it.member.state == WORKING }
                 .mapNotNull { workingActivity(it, t.refreshedAtMillis) }.maxOrNull(),
         )
+    }
+
+    /**
+     * The repository a task header shows: the one its file names, else the repository every one of
+     * its hosted sessions runs in. A task the agents made has no file, so without this its header's
+     * repository column would be empty even when all its sessions share one.
+     *
+     * @param u the task unit.
+     * @return the repository folder name, or null when the sessions do not share one.
+     */
+    private fun headerRepo(u: TaskUnit): String? {
+        u.task.repo?.let { return it }
+        val hosted = u.runs.mapNotNull { it.session }
+        if (hosted.isEmpty() || hosted.any { it.repo == null }) return null
+        return hosted.map { it.repo }.distinct().singleOrNull()
     }
 
     /**
@@ -1226,7 +1243,7 @@ class AgentsOverviewBackingViewModel(
         val header = tasks.getValue(t.id).let { task ->
             Row(
                 id = "$TASK_PREFIX${t.id}", agent = "", state = stateOfRank(u.rank), title = t.title,
-                links = emptyList(), repo = t.repo, nowLine = null, question = null, sinceMillis = u.since,
+                links = emptyList(), repo = headerRepo(u), nowLine = null, question = null, sinceMillis = u.since,
                 isLive = task.jumpRecordId != null, canResume = false,
                 actionLabel = when {
                     task.jumpRecordId != null -> "jump"
@@ -1315,7 +1332,7 @@ class AgentsOverviewBackingViewModel(
                 else -> Glyph.WAITING
             },
             status = status,
-            where = pr,
+            where = pr ?: base.where,
         )
     }
 

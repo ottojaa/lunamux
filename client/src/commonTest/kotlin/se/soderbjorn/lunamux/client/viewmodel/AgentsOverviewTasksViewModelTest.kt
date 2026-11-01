@@ -75,9 +75,9 @@ class AgentsOverviewTasksViewModelTest {
 
     private fun task(
         id: String = "g1", members: List<AgentTaskMember>, hasOpen: Boolean = false,
-        refreshedAtMillis: Long? = null, source: String = "file",
+        refreshedAtMillis: Long? = null, source: String = "file", repo: String? = "proj",
     ) = AgentTask(
-        id = id, title = "Release $id", repo = "proj", source = source, hasOpen = hasOpen,
+        id = id, title = "Release $id", repo = repo, source = source, hasOpen = hasOpen,
         members = members.mapIndexed { i, m -> if (m.key.isEmpty()) m.copy(key = "#${i + 1}") else m },
         refreshedAtMillis = refreshedAtMillis,
     )
@@ -293,6 +293,65 @@ class AgentsOverviewTasksViewModelTest {
         assertEquals("Which branch?", vm.state.rows.first { it.id == "b" }.status)
         assertEquals("g1", vm.state.rows.first { it.id == "a" }.taskId)
         assertNull(vm.state.rows.first { it.id == "a" }.memberKey, "a session no file lists has no file member key")
+    }
+
+    @Test
+    fun aSessionInAPanelKeepsItsRepoOrFolderAndAPullRequestTakesTheColumnWhenTheFileGivesOne() {
+        layout("leaf-a", "leaf-b", "leaf-c")
+        show(
+            listOf(task(source = "agents", repo = null, members = emptyList())),
+            session("a", "working", taskId = "g1", repo = "lunamux"),
+            session("b", "working", taskId = "g1", repo = null, cwd = "/work/notes"),
+            session("c", "working", taskId = "g1", repo = "lunamux"),
+        )
+        val where = vm.state.rows.filter { it.kind == RowKind.SESSION }.associate { it.id to it.where }
+        assertEquals(mapOf("a" to "lunamux", "b" to "notes", "c" to "lunamux"), where)
+
+        show(
+            listOf(task(members = listOf(member("a", "working", recordId = "a", links = listOf("#22")), member("x", "idle")))),
+            session("a", "working", repo = "lunamux"),
+        )
+        assertEquals("#22", vm.state.rows.first { it.id == "a" }.where)
+    }
+
+    @Test
+    fun anAgentMadeTaskHeaderShowsTheRepoItsSessionsShareAndNoneWhenTheyDiffer() {
+        layout("leaf-a", "leaf-b")
+        show(
+            listOf(task(source = "agents", repo = null, members = emptyList())),
+            session("a", "working", taskId = "g1", repo = "lunamux"),
+            session("b", "idle", taskId = "g1", repo = "lunamux"),
+        )
+        assertEquals("lunamux", vm.state.tasks.getValue("g1").repo)
+        assertEquals("lunamux", vm.state.rows.first { it.kind == RowKind.TASK }.repo)
+
+        show(
+            listOf(task(source = "agents", repo = null, members = emptyList())),
+            session("a", "working", taskId = "g1", repo = "lunamux"),
+            session("b", "idle", taskId = "g1", repo = "other"),
+        )
+        assertNull(vm.state.tasks.getValue("g1").repo)
+
+        show(
+            listOf(task(source = "file", repo = "named", members = emptyList())),
+            session("a", "working", taskId = "g1", repo = "lunamux"),
+            session("b", "idle", taskId = "g1", repo = "lunamux"),
+        )
+        assertEquals("named", vm.state.tasks.getValue("g1").repo, "the file's repository wins")
+    }
+
+    @Test
+    fun aTaskWithAnOpenActionStillRunsItFromItsOwnControlWhileASessionIsLive() = runNow {
+        layout("leaf-r1")
+        show(
+            listOf(task(hasOpen = true, members = listOf(member("a", "working", recordId = "r1"), member("b", "idle")))),
+            session("r1", "working"),
+        )
+        val header = vm.state.rows.first { it.kind == RowKind.TASK }
+        assertEquals("jump", header.actionLabel, "↵ goes to the live session")
+        assertTrue(vm.state.tasks.getValue("g1").hasOpen, "the header still offers the open control")
+        vm.openTask(header)
+        assertEquals(listOf<WindowCommand>(WindowCommand.OpenTask("g1")), sent)
     }
 
     @Test

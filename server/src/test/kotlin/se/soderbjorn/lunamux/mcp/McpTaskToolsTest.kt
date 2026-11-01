@@ -71,6 +71,19 @@ class McpTaskToolsTest {
     private fun taskOf(sessionId: String) = tracker.openRecordOf(sessionId)!!.taskId
 
     @Test
+    fun `the initialize instructions say when to group, and to join an existing task when continuing work`() {
+        val handled = runBlocking {
+            McpServer.handleMessage(
+                """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}""",
+                McpScope.READ_WRITE, null,
+            )
+        }
+        val text = mcpJson.parseToJsonElement(handled.body!!).jsonObject["result"]!!.jsonObject["instructions"]!!.jsonPrimitive.content
+        assertTrue("create_task" in text && "create_window with a taskId" in text, text)
+        assertTrue("continue earlier work" in text && "list_tasks first" in text && "instead of creating another" in text, text)
+    }
+
+    @Test
     fun `create_task returns an id and puts the named sessions in the task`() {
         session("s1"); session("s2")
         val result = call("create_task", """{"title":"Split the importer","sessionIds":["s1","s2"]}""")
