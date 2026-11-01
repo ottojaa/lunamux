@@ -1,7 +1,9 @@
 /**
  * Tests for the programme-group part of [AgentsOverviewBackingViewModel]: where a group box sits
  * among the single sessions, what a collapsed and an expanded box show, how its members count
- * in the chip, and what ↵ does on a header and on a member Lunamux does not host.
+ * in the chip (held members counted apart from those that need you), what ↵ and the action
+ * labels are on a header, a member and a member Lunamux does not host, how the open lead sits
+ * inside its box, and when a working row counts as quiet.
  */
 package se.soderbjorn.lunamux.client.viewmodel
 
@@ -37,10 +39,14 @@ class AgentsOverviewGroupsViewModelTest {
     private val windowState = WindowStateRepository()
     private val vm = AgentsOverviewBackingViewModel(windowState) { sent += it }
 
-    private fun session(id: String, state: String, since: Long = 1_000, endedAt: Long? = null) = AgentSessionSummary(
-        id = id, agent = "claude", state = state, stateSince = since, title = "session $id", links = emptyList(),
-        repo = "proj", branch = null, cwd = "/work/proj", nowLine = null, question = null,
-        leafId = "leaf-$id".takeIf { endedAt == null }, endedAt = endedAt,
+    private fun session(
+        id: String, state: String, since: Long = 1_000, endedAt: Long? = null, title: String = "session $id",
+        repo: String? = "proj", cwd: String = "/work/proj", links: List<String> = emptyList(),
+        nowLine: String? = null, question: String? = null, lastActivityAt: Long? = null,
+    ) = AgentSessionSummary(
+        id = id, agent = "claude", state = state, stateSince = since, title = title, links = links,
+        repo = repo, branch = null, cwd = cwd, nowLine = nowLine, question = question,
+        leafId = "leaf-$id".takeIf { endedAt == null }, endedAt = endedAt, lastActivityAt = lastActivityAt,
     )
 
     private fun layout(vararg leafIds: String) {
@@ -48,8 +54,10 @@ class AgentsOverviewGroupsViewModelTest {
         windowState.updateConfig(WindowConfig(tabs = listOf(TabConfig(id = "tab-1", title = "one", panes = panes)), activeTabId = "tab-1"))
     }
 
-    private fun member(title: String, state: String, since: Long = 1_000, label: String? = null, recordId: String? = null, line: String? = null) =
-        AgentGroupMember(title = title, state = state, sinceMillis = since, label = label, recordId = recordId, line = line)
+    private fun member(
+        title: String, state: String, since: Long = 1_000, label: String? = null, recordId: String? = null,
+        line: String? = null, links: List<String> = emptyList(),
+    ) = AgentGroupMember(title = title, state = state, sinceMillis = since, label = label, recordId = recordId, line = line, links = links)
 
     private fun group(
         id: String = "g1", members: List<AgentGroupMember>, leadRecord: String? = null, leadLive: Boolean = false,
@@ -109,7 +117,7 @@ class AgentsOverviewGroupsViewModelTest {
         assertEquals(listOf("group:g1", "member:g1:0", "more:g1"), rows.map { it.id })
         assertEquals(RowKind.GROUP, rows[0].kind)
         assertEquals(RowKind.GROUP_MORE, rows[2].kind)
-        assertEquals("+ 1 working, 1 in review", rows[2].title)
+        assertEquals("2 more", rows[2].title)
         val g = vm.state.groups.getValue("g1")
         assertEquals(1, g.needYouCount)
         assertEquals("1 working · 1 in review", g.summary)
@@ -167,7 +175,7 @@ class AgentsOverviewGroupsViewModelTest {
         layout("leaf-other")
         show(listOf(group(members = listOf(member("a", "working")))))
         val header = vm.state.rows.first { it.kind == RowKind.GROUP }
-        assertEquals("Open lead", header.actionLabel)
+        assertEquals("Open", header.actionLabel)
         vm.activate(header)
         assertEquals(listOf<WindowCommand>(WindowCommand.OpenAgentGroupLead("g1")), sent)
     }
@@ -182,12 +190,179 @@ class AgentsOverviewGroupsViewModelTest {
     }
 
     @Test
-    fun returnOnAMemberLunamuxDoesNotHostOpensTheLead() = runNow {
+    fun aMemberLunamuxDoesNotHostHasNothingToOpenAndReturnDoesNothing() = runNow {
         show(listOf(group(members = listOf(member("a", "needs_you")))))
         val unhosted = vm.state.rows.first { it.id == "member:g1:0" }
         assertTrue(unhosted.unhosted)
+        assertEquals("", unhosted.actionLabel)
         vm.activate(unhosted)
-        assertEquals(listOf<WindowCommand>(WindowCommand.OpenAgentGroupLead("g1")), sent)
+        assertTrue(sent.isEmpty())
+    }
+
+    @Test
+    fun noRowOffersOpenLead() {
+        layout("leaf-r1")
+        show(
+            listOf(group(members = listOf(member("a", "needs_you"), member("b", "working", recordId = "r1")))),
+            session("r1", "working"),
+        )
+        vm.toggleGroup("g1")
+        assertTrue(vm.state.rows.none { it.actionLabel == "Open lead" })
+    }
+
+    @Test
+    fun aMemberIsJumpWhenItsSessionIsOpenOpenWhenItEndedAndNothingWhenUnmatched() {
+        layout("leaf-live")
+        show(
+            listOf(group(members = listOf(
+                member("live one", "working", recordId = "live"),
+                member("done one", "idle", recordId = "done"),
+                member("nobody's", "idle"),
+            ))),
+            session("live", "working"),
+            session("done", "ended", endedAt = 5_000),
+        )
+        vm.toggleGroup("g1")
+        val labels = vm.state.rows.filter { it.groupId == "g1" && it.kind == RowKind.SESSION }.associate { it.title to it.actionLabel }
+        assertEquals(mapOf("live one" to "Jump", "done one" to "Open", "nobody's" to ""), labels)
+    }
+
+    @Test
+    fun aMemberShowsOnlyTheLinksTheFileGivesNotOnesReadFromItsBranch() {
+        layout("leaf-r1")
+        show(
+            listOf(group(members = listOf(member("a", "working", recordId = "r1"), member("b", "idle", recordId = "r2", links = listOf("ABC-2"))))),
+            session("r1", "working", links = listOf("ABC-1")),
+            session("r2", "idle", links = listOf("ABC-9")),
+        )
+        vm.toggleGroup("g1")
+        val links = vm.state.rows.filter { it.kind == RowKind.SESSION }.associate { it.title to it.links }
+        assertEquals(mapOf("a" to emptyList(), "b" to listOf("ABC-2")), links)
+    }
+
+    @Test
+    fun heldMembersAreCountedAsHeldNotAsNeedingYouNorIdle() {
+        show(listOf(group(members = listOf(
+            member("a", "needs_you"),
+            member("b", "working"),
+            member("c", "idle", label = "held: not merging yet"),
+            member("d", "idle", label = "Held for the owner"),
+            member("e", "idle", label = "ready to test"),
+            member("f", "working", label = "held up by a build"),
+        ))))
+        val g = vm.state.groups.getValue("g1")
+        assertEquals(1, g.needYouCount)
+        assertEquals("2 working · 2 held · 1 ready to test", g.summary)
+        // The chip counts what needs you and what works; a held member is neither.
+        assertEquals(1, vm.state.needYouCount)
+        assertEquals(2, vm.state.workingCount)
+    }
+
+    @Test
+    fun theOpenLeadIsDrawnInsideItsBoxAsTheProgrammeSessionAndNotAgainAsASingle() {
+        layout("leaf-lead")
+        show(
+            listOf(group(members = listOf(member("a", "idle")), leadRecord = "lead", leadLive = true)),
+            session("lead", "working", nowLine = "Bash ./gradlew test", lastActivityAt = 9_000),
+        )
+        vm.toggleGroup("g1")
+        val rows = vm.state.rows
+        assertEquals(listOf("group:g1", "lead", "member:g1:0"), rows.map { it.id })
+        val lead = rows[1]
+        assertEquals("Programme session", lead.title)
+        assertEquals("working", lead.state)
+        assertEquals("Bash ./gradlew test", lead.nowLine)
+        assertEquals("Jump", lead.actionLabel)
+        assertEquals(1, vm.state.workingCount)
+    }
+
+    @Test
+    fun aQuietLeadAddsNothingToTheCountsAndALeadThatNeedsYouLiftsTheGroup() {
+        layout("leaf-lead")
+        show(
+            listOf(group(members = listOf(member("a", "working")), leadRecord = "lead", leadLive = true)),
+            session("lead", "idle"),
+        )
+        assertEquals("1 working", vm.state.groups.getValue("g1").summary)
+        assertEquals(0, vm.state.needYouCount)
+
+        show(
+            listOf(group(members = listOf(member("a", "idle")), leadRecord = "lead", leadLive = true)),
+            session("lead", "needs_you", question = "Which branch?"),
+        )
+        assertEquals(1, vm.state.needYouCount)
+        assertEquals(1, vm.state.groups.getValue("g1").needYouCount)
+        val rows = vm.state.now
+        assertEquals(listOf("group:g1", "lead", "more:g1"), rows.map { it.id })
+        assertEquals("Which branch?", rows[1].question)
+    }
+
+    @Test
+    fun theMoreRowDoesNotCountAQuietLeadThatTheHeaderCountsLeaveOut() {
+        layout("leaf-lead")
+        show(
+            listOf(group(members = listOf(member("a", "idle", label = "ready to test")), leadRecord = "lead", leadLive = true)),
+            session("lead", "idle"),
+        )
+        val rows = vm.state.rows
+        assertEquals("1 ready to test", vm.state.groups.getValue("g1").summary)
+        assertEquals("1 more", rows.single { it.id == "more:g1" }.title)
+    }
+
+    @Test
+    fun aWorkingRowThatLunamuxHostsCarriesItsLastSignOfLifeAndNothingElseDoes() {
+        layout("leaf-w1", "leaf-w2", "leaf-i1")
+        show(
+            listOf(group(members = listOf(member("unhosted", "working", line = "Doing a thing")))),
+            session("w1", "working", since = 1_000, lastActivityAt = 7_000),
+            session("w2", "working", since = 2_000),
+            session("i1", "idle"),
+        )
+        vm.toggleGroup("g1")
+        val byId = vm.state.rows.associateBy { it.id }
+        assertEquals(7_000L, byId.getValue("w1").activityMillis)
+        assertEquals(2_000L, byId.getValue("w2").activityMillis, "with no activity time it falls back to when it started working")
+        assertEquals(null, byId.getValue("i1").activityMillis)
+        assertEquals(null, byId.getValue("member:g1:0").activityMillis, "an unhosted member has no sign of life to show")
+    }
+
+    @Test
+    fun aGroupHeaderCarriesTheLatestSignOfLifeOfItsHostedWorkingMembers() {
+        layout("leaf-w1", "leaf-w2")
+        show(
+            listOf(group(members = listOf(
+                member("one", "working", recordId = "w1"),
+                member("two", "working", recordId = "w2"),
+                member("unhosted", "working"),
+            ))),
+            session("w1", "working", lastActivityAt = 7_000),
+            session("w2", "working", lastActivityAt = 9_000),
+        )
+        assertEquals(9_000L, vm.state.groups.getValue("g1").activityMillis)
+
+        show(listOf(group(members = listOf(member("unhosted", "working")))))
+        assertEquals(null, vm.state.groups.getValue("g1").activityMillis)
+    }
+
+    @Test
+    fun aWorkingRowGoesQuietAfterFiveMinutesWithoutASignOfLife() {
+        val q = AgentsOverviewBackingViewModel.QUIET_AFTER_MS
+        assertEquals(5 * 60_000L, q)
+        assertFalse(AgentsOverviewBackingViewModel.isQuiet(10_000, 10_000 + q - 1))
+        assertTrue(AgentsOverviewBackingViewModel.isQuiet(10_000, 10_000 + q))
+    }
+
+    @Test
+    fun twoSessionsWithTheSameTitleAndNoRepositoryShowTheFolderTheyRunIn() {
+        layout("leaf-a", "leaf-b", "leaf-c")
+        show(
+            emptyList(),
+            session("a", "idle", title = "Counting to 10", repo = "proj"),
+            session("b", "idle", title = "Counting to 10", repo = null, cwd = "/Users/me/notes/"),
+            session("c", "idle", title = "Something else", repo = null, cwd = "/Users/me/other"),
+        )
+        val repos = vm.state.rows.associate { it.id to it.repo }
+        assertEquals(mapOf("a" to "proj", "b" to "notes", "c" to null), repos)
     }
 
     @Test

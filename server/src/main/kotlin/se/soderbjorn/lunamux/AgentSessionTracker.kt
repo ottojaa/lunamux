@@ -121,6 +121,12 @@ class AgentSessionTracker(
     private val promptSeen = HashSet<String>()
 
     /**
+     * When each open record last received a hook event, by record id. Kept in memory only: it
+     * is empty after a restart, and a record with no entry publishes no activity time.
+     */
+    private val lastActivity = HashMap<String, Long>()
+
+    /**
      * Git facts per folder, filled by [warmGit] before the lock is taken so a slow
      * repository never holds up closing panes; [open] only reads it.
      */
@@ -197,6 +203,9 @@ class AgentSessionTracker(
                 if (rec.state != NEEDS_YOU) promptSeen.remove(rec.id)
                 else if (pane.state == "waiting") promptSeen.add(rec.id)
                 else if (pane.state == "working" && promptSeen.remove(rec.id)) {
+                    // Answering the prompt is a sign of life: without a fresh stamp the row
+                    // would keep the time of the prompt and read "quiet" at once.
+                    lastActivity[rec.id] = clock()
                     put(rec.copy(state = WORKING, stateSince = clock(), question = null))
                 }
                 continue
@@ -205,6 +214,15 @@ class AgentSessionTracker(
                 "waiting" -> NEEDS_YOU
                 "working" -> WORKING
                 else -> IDLE
+            }
+            // A record no hook feeds is followed by the screen alone, so a screen that shows work
+            // is the only sign of life it will ever give. The stamp is renewed only once it is
+            // [ACTIVITY_REFRESH_MS] old: the overlay needs minute precision, and a stamp that moved
+            // on every poll would push a new frame to every client every few seconds.
+            if (state == WORKING) {
+                val now = clock()
+                val last = lastActivity[rec.id]
+                if (last == null || now - last >= ACTIVITY_REFRESH_MS) lastActivity[rec.id] = now
             }
             var next = rec
             if (state == WORKING && rec.title == null) next = next.copy(title = cleanTitle(pane.programTitle))
@@ -281,6 +299,7 @@ class AgentSessionTracker(
             }
             else -> return@synchronized
         }
+        lastActivity[rec.id] = now
         put(rec)
         publish()
     }
@@ -431,6 +450,7 @@ class AgentSessionTracker(
     }
 
     private fun end(rec: AgentSessionRecord, screen: String?) {
+        lastActivity.remove(rec.id)
         val now = clock()
         val ended = rec.copy(
             state = ENDED,
@@ -464,7 +484,7 @@ class AgentSessionTracker(
         records.values.firstOrNull { it.state != ENDED && it.terminalSessionId == terminalSessionId }
 
     private fun publish() {
-        _summaries.value = records.values.map { it.toSummary() }
+        _summaries.value = records.values.map { it.toSummary().copy(lastActivityAt = lastActivity[it.id]) }
     }
 
     private companion object {
@@ -476,6 +496,9 @@ class AgentSessionTracker(
         const val IDLE = "idle"
         const val ENDED = "ended"
         const val RECENT_ENDED = 50L
+
+        /** How old a screen-derived activity stamp must be before a working poll renews it. */
+        const val ACTIVITY_REFRESH_MS = 30_000L
         const val PROMPT_MAX = 500
         const val QUESTION_MAX = 400
         const val GIT_CACHE_MS = 60_000L

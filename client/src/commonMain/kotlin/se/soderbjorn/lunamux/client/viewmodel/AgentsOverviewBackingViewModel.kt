@@ -13,8 +13,9 @@
  * The view only renders [State] and forwards key presses.
  *
  * Groups declared by group files appear as boxes: a header row, the members that need the
- * user, and a "+ more" row that expands the rest. A group ranks beside single sessions by
- * its most urgent member, and its header opens the group's lead session.
+ * user, and a quiet "N more" row that expands the rest. A group ranks beside single sessions by
+ * its most urgent member, and its header opens the group's lead session. The lead session, when
+ * it is open, is drawn inside its box as a row of its own rather than as a separate session.
  *
  * @see se.soderbjorn.lunamux.AgentSessionSummary
  * @see se.soderbjorn.lunamux.AgentGroup
@@ -89,7 +90,9 @@ class AgentsOverviewBackingViewModel(
      *   the view turns it into an age.
      * @property isLive whether the agent's pane is still open, so ↵ jumps to it.
      * @property canResume whether ↵ opens a new tab for it (an ended row).
-     * @property actionLabel the label of the ↵ action: `Jump`, `Resume` or `Open folder`.
+     * @property actionLabel the label of the ↵ action: `Jump`, `Resume` or `Open folder` for a
+     *   session; `Jump` or `Open` for a group member or header; empty for a group member Lunamux
+     *   has no session for, which has nothing to open.
      * @property error a message from the last failed resume of this row, or null.
      * @property canClose whether × and ⌘⌫ can close it: it has an open pane.
      * @property field in a search result, where the query was found: `title`, `prompt`,
@@ -105,8 +108,14 @@ class AgentsOverviewBackingViewModel(
      *   "+ more" row. Only [RowKind.SESSION] rows exist in a search.
      * @property groupId the group a header, "+ more" row or member belongs to; null for a single session.
      * @property unhosted true for a group member Lunamux does not host (it has no session record);
-     *   ↵ on it opens the group's lead session.
-     * @property label a group member's short status word from the group file ("in review"), or null.
+     *   it shows what the group file says and ↵ does nothing on it.
+     * @property label a group member's status from the group file ("in review", "held: not merging
+     *   yet"), or null.
+     * @property activityMillis for a working row Lunamux hosts, epoch millis of the last sign of
+     *   life from the agent (the server's activity time, else the moment it started working);
+     *   null for every other row, including a member the group file declares that has no session
+     *   here, because nothing then says it is alive. The view animates the working glyph only
+     *   when this is set and [isQuiet] is false.
      */
     data class Row(
         val id: String,
@@ -132,6 +141,7 @@ class AgentsOverviewBackingViewModel(
         val groupId: String? = null,
         val unhosted: Boolean = false,
         val label: String? = null,
+        val activityMillis: Long? = null,
     )
 
     /** What a [Row] stands for. */
@@ -142,7 +152,7 @@ class AgentsOverviewBackingViewModel(
         /** The header of a group box. [Row.id] is `group:<id>`. */
         GROUP,
 
-        /** The "+ 1 working, 1 in review" row under a collapsed group. [Row.id] is `more:<id>`. */
+        /** The quiet "2 more" row under a collapsed group. [Row.id] is `more:<id>`. */
         GROUP_MORE,
     }
 
@@ -151,18 +161,23 @@ class AgentsOverviewBackingViewModel(
      *
      * @property id the group's id.
      * @property title the group's name.
-     * @property tag the pill text (for example `PROGRAMME`), or null.
+     * @property tag what the group is called in "↵ opens the programme session" (for example
+     *   `PROGRAMME`), or null.
      * @property repo repository name, or null.
      * @property linkLabel the link chip's text, or null when there is no link.
      * @property linkUrl the link chip's `http(s)` address.
      * @property needYouCount members that need the user; drawn highlighted before [summary].
      * @property workingCount members at work.
      * @property summary the rest of the header's count line, without the needs-you part
-     *   ("1 working · 1 in review"); empty when every member needs the user.
+     *   ("1 working · 3 held · 1 in review"): working first, then held (idle members whose label
+     *   starts with "held"), then the others by their label; empty when every member needs the user.
      * @property sinceMillis when the most urgent member's wait began; the view turns it into an age.
      * @property expanded whether every member shows rather than only those that need the user.
      * @property leadLive whether the lead session is open, so ↵ on the header jumps to it.
      * @property leadLastSaid what the lead session last said, or null.
+     * @property activityMillis the latest sign of life among the members at work that Lunamux
+     *   hosts (see [Row.activityMillis]); null when none of them is, so the header's working
+     *   glyph has nothing to say it is busy.
      */
     data class Group(
         val id: String,
@@ -178,6 +193,7 @@ class AgentsOverviewBackingViewModel(
         val expanded: Boolean,
         val leadLive: Boolean,
         val leadLastSaid: String?,
+        val activityMillis: Long? = null,
     )
 
     /**
@@ -543,7 +559,8 @@ class AgentsOverviewBackingViewModel(
     suspend fun activate(row: Row) {
         when {
             row.kind == RowKind.GROUP_MORE -> row.groupId?.let(::expandGroup)
-            row.kind == RowKind.GROUP || row.unhosted -> openLead(row)
+            row.kind == RowKind.GROUP -> openLead(row)
+            row.unhosted -> Unit
             row.isLive -> jump(row)
             row.canResume -> resume(row)
         }
@@ -585,9 +602,9 @@ class AgentsOverviewBackingViewModel(
      * in a new tab. The overlay stays open until the new tab is active or the server says why
      * it could not, exactly as for [resume].
      *
-     * Called for ↵ on a group header and on a member Lunamux does not host.
+     * Called for ↵ on a group header.
      *
-     * @param row the header or member row; its [Row.groupId] names the group.
+     * @param row the header row; its [Row.groupId] names the group.
      */
     suspend fun openLead(row: Row) {
         val groupId = row.groupId ?: return
@@ -648,6 +665,7 @@ class AgentsOverviewBackingViewModel(
         val rank: Int,
         val since: Long,
         val leadLive: Boolean,
+        val leadId: String?,
     )
 
     private fun build(input: Inputs): State {
@@ -674,23 +692,33 @@ class AgentsOverviewBackingViewModel(
             )
         }
 
-        // A session a group member matched is drawn inside its group box, not again as a single.
+        // A session a group member matched, or the open lead, is drawn inside its group box, not again as a single.
         val units = groupFiles.map { g ->
-            val members = g.members.map { m -> m to m.recordId?.let(byId::get) }
+            // Open means a session Lunamux lists whose pane is in the layout, so Jump has somewhere to go.
+            val leadSummary = g.lead.recordId?.let(byId::get)
+            val leadLive = g.lead.live && leadSummary != null && panes[leadSummary.leafId] != null
+            // An open lead is the group's own session: it becomes the first row of the box.
+            val leadMember = leadSummary?.takeIf { leadLive }?.let { leadMemberOf(g, it) to it }
+            val members = listOfNotNull(leadMember) + g.members.map { m -> m to m.recordId?.let(byId::get) }
             val rank = members.minOfOrNull { (m, _) -> rankOf(m.state) } ?: IDLE_RANK
             val since = when {
                 members.isEmpty() -> 0L
                 rank == IDLE_RANK -> members.maxOf { (m, _) -> m.sinceMillis }
                 else -> members.filter { (m, _) -> rankOf(m.state) == rank }.minOf { (m, _) -> m.sinceMillis }
             }
-            // Open means a session Lunamux lists whose pane is in the layout, so Jump has somewhere to go.
-            val leadSummary = g.lead.recordId?.let(byId::get)
-            val leadLive = g.lead.live && leadSummary != null && panes[leadSummary.leafId] != null
-            GroupUnit(g, members, rank, since, leadLive)
+            GroupUnit(g, members, rank, since, leadLive, leadMember?.second?.id)
         }
         val claimed = units.flatMap { u -> u.members.mapNotNull { (_, s) -> s?.id } }.toSet()
-        val singles = sessions.filter { it.id !in claimed }
+        val unclaimed = sessions.filter { it.id !in claimed }
             .map { s -> s to toRow(s, panes[s.leafId], resumeError(s.id)) }
+        // Two sessions with the same title and no repository to tell them apart (two agents asked the
+        // same thing in different folders) show the folder each runs in.
+        val titleCount = unclaimed.groupingBy { (_, row) -> row.title }.eachCount()
+        val singles = unclaimed.map { (s, row) ->
+            if (row.repo == null && (titleCount[row.title] ?: 0) > 1) {
+                s to row.copy(repo = s.cwd?.trimEnd('/')?.substringAfterLast('/')?.takeIf { it.isNotBlank() })
+            } else s to row
+        }
 
         // Groups and single sessions are ranked together: urgency first, then who has waited longest.
         val urgent = buildList {
@@ -781,7 +809,10 @@ class AgentsOverviewBackingViewModel(
         ui: Ui,
     ): Group {
         val g = u.group
-        val rest = restCounts(u.members.map { it.first }.filter { it.state != NEEDS_YOU })
+        // A quiet lead session is not a run, so it adds nothing to the counts; a busy one does.
+        val rest = restCounts(
+            u.members.map { it.first }.filter { it.state != NEEDS_YOU && (u.leadId == null || it.recordId != u.leadId || it.state == WORKING) },
+        )
         return Group(
             id = g.id, title = g.title, tag = g.tag, repo = g.repo, linkLabel = g.linkLabel, linkUrl = g.linkUrl,
             needYouCount = u.members.count { (m, _) -> m.state == NEEDS_YOU },
@@ -791,25 +822,51 @@ class AgentsOverviewBackingViewModel(
             expanded = g.id in ui.expandedGroups,
             leadLive = u.leadLive,
             leadLastSaid = g.lead.lastSaid,
+            activityMillis = u.members.mapNotNull { (_, s) ->
+                s?.takeIf { it.state == WORKING }?.let { it.lastActivityAt ?: it.stateSince }
+            }.maxOrNull(),
         )
     }
 
     /**
-     * "1 working", "1 in review", …: working members first, then the others grouped by their
-     * label (an unlabeled one by its state), in the order the file lists them.
+     * "1 working", "3 held", "1 in review", …: working members first, then held ones as one
+     * count whatever their reason, then the others grouped by their label (an unlabeled one by its
+     * state), in the order the file lists them.
      */
     private fun restCounts(members: List<AgentGroupMember>): List<String> {
         val working = members.count { it.state == WORKING }
-        val others = members.filter { it.state != WORKING }.groupingBy { it.label ?: it.state }.eachCount()
+        val held = members.count(::isHeld)
+        val others = members.filter { it.state != WORKING && !isHeld(it) }.groupingBy { it.label ?: it.state }.eachCount()
         return buildList {
             if (working > 0) add("$working working")
+            if (held > 0) add("$held held")
             others.forEach { (label, n) -> add("$n $label") }
         }
     }
 
+    /** Whether the feed parked [m] on purpose: it is idle and its label starts with "held". */
+    private fun isHeld(m: AgentGroupMember) = m.state == IDLE && m.label?.startsWith(HELD, ignoreCase = true) == true
+
+    /**
+     * The row the open lead session of [g] shows as inside its box, in the shape of a member the
+     * file declared: titled after the group's tag ("Programme session"), with the session's own
+     * state, question or last tool line and age.
+     */
+    private fun leadMemberOf(g: AgentGroup, s: AgentSessionSummary) = AgentGroupMember(
+        title = leadTitle(g.tag),
+        state = s.state,
+        line = if (s.state == NEEDS_YOU) s.question ?: s.nowLine else s.nowLine,
+        sinceMillis = s.stateSince,
+        recordId = s.id,
+    )
+
+    /** What the lead session is called in its group's box: "Programme session", or "Lead session" without a tag. */
+    private fun leadTitle(tag: String?): String =
+        (tag?.trim()?.takeIf { it.isNotEmpty() } ?: "lead").lowercase().replaceFirstChar { it.uppercase() } + " session"
+
     /**
      * The rows of one group box: its header, then the members that need the user followed by a
-     * "+ more" row, or every member once the group is expanded.
+     * "N more" row, or every member once the group is expanded.
      */
     private fun groupRows(
         u: GroupUnit,
@@ -824,24 +881,29 @@ class AgentsOverviewBackingViewModel(
             id = "$GROUP_PREFIX${g.id}", agent = "", state = stateOfRank(u.rank), title = g.title,
             links = emptyList(), repo = g.repo, nowLine = null, question = null, sinceMillis = u.since,
             isLive = leadSummaryLive, canResume = !leadSummaryLive,
-            actionLabel = if (leadSummaryLive) "Jump" else "Open lead",
+            actionLabel = if (leadSummaryLive) "Jump" else "Open",
             error = resumeError("$GROUP_PREFIX${g.id}"), kind = RowKind.GROUP, groupId = g.id,
         )
-        val memberRows = u.members.mapIndexed { i, (m, s) ->
+        // The lead, when it is a row of the box, comes first and is not in the file: members keep their file index.
+        val leadOffset = if (u.leadId != null) 1 else 0
+        val memberRows = u.members.mapIndexed { position, (m, s) ->
+            val i = position - leadOffset
             val base = if (s != null) {
                 toRow(s, s.leafId.let(panes::get), resumeError(s.id))
             } else {
                 Row(
                     id = "$MEMBER_PREFIX${g.id}:$i", agent = "", state = m.state, title = m.title,
                     links = m.links, repo = null, nowLine = null, question = null, sinceMillis = m.sinceMillis,
-                    isLive = false, canResume = false, actionLabel = "Open lead",
+                    isLive = false, canResume = false, actionLabel = "",
                     error = resumeError("$MEMBER_PREFIX${g.id}:$i"), unhosted = true,
                 )
             }
             m to base.copy(
                 title = m.title,
                 state = m.state,
-                links = m.links.ifEmpty { base.links },
+                // Only the keys the file gives; the ones read from a session's branch are not the feed's.
+                links = m.links,
+                actionLabel = if (base.isLive) "Jump" else if (s != null) "Open" else "",
                 sinceMillis = m.sinceMillis,
                 nowLine = if (m.state == NEEDS_YOU) null else m.line,
                 question = if (m.state == NEEDS_YOU) m.line else null,
@@ -849,12 +911,16 @@ class AgentsOverviewBackingViewModel(
                 label = m.label,
             )
         }
-        val hidden = if (expanded) emptyList() else memberRows.filter { (m, _) -> m.state != NEEDS_YOU }
+        // A quiet lead is left out of the header counts, so it is left out of "N more" as well: the
+        // two must add up to the same members.
+        val hidden = if (expanded) emptyList() else memberRows.filter { (m, _) ->
+            m.state != NEEDS_YOU && (u.leadId == null || m.recordId != u.leadId || m.state == WORKING)
+        }
         val shown = if (expanded) memberRows else memberRows.filter { (m, _) -> m.state == NEEDS_YOU }
         val more = if (hidden.isEmpty()) emptyList() else listOf(
             Row(
                 id = "$MORE_PREFIX${g.id}", agent = "", state = IDLE,
-                title = "+ " + restCounts(hidden.map { it.first }).joinToString(", "),
+                title = "${hidden.size} more",
                 links = emptyList(), repo = null, nowLine = null, question = null, sinceMillis = 0,
                 isLive = false, canResume = false, actionLabel = "Show", kind = RowKind.GROUP_MORE, groupId = g.id,
             ),
@@ -909,6 +975,7 @@ class AgentsOverviewBackingViewModel(
             sinceMillis = if (ended) s.endedAt ?: s.stateSince else s.stateSince,
             isLive = live,
             canResume = !live,
+            activityMillis = if (s.state == WORKING) s.lastActivityAt ?: s.stateSince else null,
             actionLabel = when {
                 live -> "Jump"
                 s.agent == GEMINI -> "Open folder"
@@ -936,11 +1003,33 @@ class AgentsOverviewBackingViewModel(
         /** The fewest characters that start a search over every session. */
         const val MIN_QUERY = 2
 
+        /**
+         * How long a working session may show no sign of life before the overview stops
+         * drawing it as busy. Hook events arrive around every tool call, so five minutes
+         * without one means a hung session or one inside a single very long tool call.
+         */
+        const val QUIET_AFTER_MS = 5L * 60_000L
+
+        /**
+         * Whether a working row has gone quiet: nothing has been heard from it for
+         * [QUIET_AFTER_MS]. A pure function of the clock so the web view and the tests agree.
+         *
+         * Called by the web overview on every redraw (and on its clock tick) for each working
+         * row that has an [Row.activityMillis].
+         *
+         * @param activityMillis epoch millis of the row's last sign of life.
+         * @param nowMillis the current epoch millis.
+         * @return true when the gap is at least [QUIET_AFTER_MS].
+         * @see Row.activityMillis
+         */
+        fun isQuiet(activityMillis: Long, nowMillis: Long): Boolean = nowMillis - activityMillis >= QUIET_AFTER_MS
+
         private const val GROUP_PREFIX = "group:"
         private const val MEMBER_PREFIX = "member:"
         private const val MORE_PREFIX = "more:"
         private const val IDLE_RANK = 2
         private const val IDLE = "idle"
+        private const val HELD = "held"
         private const val NEEDS_YOU = "needs_you"
         private const val WORKING = "working"
         private const val ENDED = "ended"

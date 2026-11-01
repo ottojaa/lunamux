@@ -351,6 +351,10 @@ sealed class WindowEnvelope {
  * @param endedAt epoch millis when the record ended, or null while open.
  * @param lastSaid first line of the last paragraph of the agent's latest reply, at most 160
  *   characters, or null before it has said anything; shown on a group header for its lead.
+ * @param lastActivityAt epoch millis of the last hook event the server folded into this record
+ *   (a prompt, a tool starting or finishing, a stop), or null when none has arrived since the
+ *   server started. [stateSince] cannot stand in for it, because it does not move while an
+ *   agent keeps working; the overview uses this to tell a busy session from a hung one.
  */
 @Serializable
 data class AgentSessionSummary(
@@ -368,6 +372,7 @@ data class AgentSessionSummary(
     val leafId: String? = null,
     val endedAt: Long? = null,
     val lastSaid: String? = null,
+    val lastActivityAt: Long? = null,
 )
 
 /**

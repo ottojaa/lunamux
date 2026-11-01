@@ -5,8 +5,9 @@
  * and "Earlier". Typing two or more characters swaps the lists for search
  * results over every session ever run; → peeks at a session's screen and
  * × / ⌘⌫ close a live one after an inline confirmation. A programme group
- * declared by a tool is drawn as one box: a header, the members that need the
- * user, and a "+ more" line that expands it.
+ * declared by a tool is drawn as one box: a one-line header, the members that need the
+ * user, and a quiet "N more" line that expands it. The footer says what ↵ does on the
+ * selected row, which for a group header is to open the group's lead session.
  *
  * All state and behaviour live in the shared
  * [AgentsOverviewBackingViewModel]; this file only draws its state as plain
@@ -53,15 +54,31 @@ private var chipElement: HTMLElement? = null
 private var overlayElement: HTMLElement? = null
 private var searchInput: HTMLInputElement? = null
 private var listElement: HTMLElement? = null
+private var hintElement: HTMLElement? = null
 private var shownRows: List<Row> = emptyList()
 private var searchTimer: Int? = null
 private var peekTimer: Int? = null
+private var clockTimer: Int? = null
+private var lastState: AgentsOverviewBackingViewModel.State? = null
+
+/** The footer's key legend, shown unless a group header is selected. */
+private const val DEFAULT_HINT =
+    "type to search · ↑↓ select · ↵ jump or resume · → peek at its screen · ⌘⌫ close session · esc close"
+
+/**
+ * The footer's key legend for a member the file lists but Lunamux does not host: there is no
+ * session to jump to, peek at or close, so those keys are left out.
+ */
+private const val UNHOSTED_HINT = "type to search · ↑↓ select · nothing to open for this member · esc close"
 
 /** Pause after the last key press before the query is sent to the server. */
 private const val SEARCH_DEBOUNCE_MS = 150
 
 /** How often an open live peek asks for a fresh screen. */
 private const val PEEK_REFRESH_MS = 2_000
+
+/** How often the open list redraws on its own, so ages move and a working row that has gone quiet stops moving. */
+private const val CLOCK_TICK_MS = 30_000
 
 /**
  * Register the configurable **agents overview** hotkey (default ⌘⇧A) with the
@@ -112,6 +129,7 @@ internal fun buildAgentsOverviewTopbarAction(): TopbarAction {
 
 /** Redraw the chip, and the overlay if it is open, from [state]. */
 private fun renderAgentsOverview(state: AgentsOverviewBackingViewModel.State) {
+    lastState = state
     renderChip(state)
     if (state.open) {
         ensureOverlay(state.query)
@@ -120,6 +138,31 @@ private fun renderAgentsOverview(state: AgentsOverviewBackingViewModel.State) {
         closeOverlayElement()
     }
     keepPeekFresh(state.peek?.live == true)
+    keepClockTicking(state.open)
+}
+
+/**
+ * Start or stop the timer that redraws the open list every [CLOCK_TICK_MS], keeping the scroll
+ * position. Nothing else changes the picture while the server is silent, and a hung agent is
+ * exactly the case where it must change.
+ *
+ * @param needed whether the overlay is open.
+ */
+private fun keepClockTicking(needed: Boolean) {
+    if (needed && clockTimer == null) {
+        clockTimer = kotlinx.browser.window.setInterval({
+            val state = lastState
+            val list = listElement
+            if (state != null && state.open && list != null) {
+                val top = list.scrollTop
+                renderList(state)
+                list.scrollTop = top
+            }
+        }, CLOCK_TICK_MS)
+    } else if (!needed) {
+        clockTimer?.let { kotlinx.browser.window.clearInterval(it) }
+        clockTimer = null
+    }
 }
 
 /**
@@ -196,14 +239,15 @@ private fun ensureOverlay(query: String) {
 
     panel.appendChild(input)
     panel.appendChild(list)
-    panel.appendChild(div("ao-hint").also {
-        it.textContent = "type to search · ↑↓ select · ↵ jump or resume · → peek at its screen · ⌘⌫ close session · esc close"
-    })
+    val hint = div("ao-hint")
+    hint.textContent = DEFAULT_HINT
+    panel.appendChild(hint)
     backdrop.appendChild(panel)
     document.body?.appendChild(backdrop)
     overlayElement = backdrop
     searchInput = input
     listElement = list
+    hintElement = hint
     input.focus()
 }
 
@@ -214,6 +258,7 @@ private fun closeOverlayElement() {
     overlayElement = null
     searchInput = null
     listElement = null
+    hintElement = null
     shownRows = emptyList()
 }
 
@@ -270,6 +315,8 @@ private fun renderList(state: AgentsOverviewBackingViewModel.State) {
     val list = listElement ?: return
     list.textContent = ""
     shownRows = state.rows
+    hintElement?.textContent = groupHint(state)
+        ?: if (state.rows.getOrNull(state.selected)?.unhosted == true) UNHOSTED_HINT else DEFAULT_HINT
     if (state.rows.isEmpty()) {
         list.appendChild(div("ao-empty").also { it.textContent = state.emptyText })
         return
@@ -313,6 +360,18 @@ private fun renderList(state: AgentsOverviewBackingViewModel.State) {
         }
     }
     (list.querySelector(".ao-selected") as? HTMLElement)?.asDynamic().scrollIntoView(js("({block: 'nearest'})"))
+}
+
+/**
+ * What ↵ does when a group header is selected, and what the lead session last said, for the
+ * footer; null for any other selection. Named after the group's tag, so a group tagged
+ * `PROGRAMME` reads "↵ opens the programme session".
+ */
+private fun groupHint(state: AgentsOverviewBackingViewModel.State): String? {
+    val row = state.rows.getOrNull(state.selected)?.takeIf { it.kind == Kind.GROUP } ?: return null
+    val group = state.groups[row.groupId] ?: return null
+    val said = group.leadLastSaid?.let { " · it last said: $it" } ?: ""
+    return "↵ opens the ${group.tag?.lowercase() ?: "lead"} session$said"
 }
 
 /** Where a search matched, in words, for the line under a result. */
@@ -381,24 +440,37 @@ private fun buildRow(row: Row, index: Int, selected: Boolean, peek: AgentsOvervi
     row.repo?.let { main.appendChild(span("ao-repo", it)) }
     el.appendChild(main)
 
+    // A working row shows a working glyph and, when Lunamux hosts it, what the agent is doing now;
+    // once nothing has been heard from it for a while the glyph stops and the age says so.
+    val activity = row.activityMillis?.takeIf { row.state == "working" }
+    val quiet = activity != null && AgentsOverviewBackingViewModel.isQuiet(activity, kotlin.js.Date.now().toLong())
     val now = div("ao-now")
     val error = row.error
     if (error != null) {
         now.classList.add("ao-error")
         now.textContent = error
     } else {
-        row.label?.let { now.appendChild(span("ao-label", "$it  ")) }
-        now.appendChild(document.createTextNode(when {
+        if (row.state == "working") {
+            now.classList.add("ao-has-work")
+            now.appendChild(workingGlyph(active = activity != null && !quiet))
+        }
+        val text = span("ao-now-text", "")
+        row.label?.let { text.appendChild(span("ao-label", "$it  ")) }
+        text.appendChild(document.createTextNode(when {
             needs -> row.question ?: row.nowLine ?: "Needs you"
-            else -> row.nowLine ?: if (row.state == "working") "Working" else ""
+            else -> row.nowLine ?: if (row.state == "working" && activity == null) "Working" else ""
         }))
+        now.appendChild(text)
     }
     el.appendChild(now)
 
-    el.appendChild(span("ao-age", formatAge(row.sinceMillis)))
+    el.appendChild(
+        if (quiet) span("ao-age ao-quiet", "quiet ${formatAge(activity!!)}")
+        else span("ao-age", formatAge(row.sinceMillis)),
+    )
     val actions = span("ao-actions", "")
-    actions.appendChild(span("ao-action", row.actionLabel))
-    if (selected) {
+    if (row.actionLabel.isNotEmpty()) actions.appendChild(span("ao-action", row.actionLabel))
+    if (selected && !row.unhosted) {
         actions.appendChild(iconButton("Peek at its screen", "›", peek != null) {
             launchAgentsOverview { if (peek != null) agentsOverview.closePeek() else agentsOverview.peek() }
         })
@@ -422,9 +494,9 @@ private fun buildRow(row: Row, index: Int, selected: Boolean, peek: AgentsOvervi
 }
 
 /**
- * The header of a group box: chevron, title, tag pill, repo, link chip, the count line with the
- * needs-you part highlighted, its age and (when selected) a peek button. A selected header adds a
- * second line saying what ↵ opens and what the lead session last said.
+ * The header of a group box, on one line: chevron, title, repo, link chip when the group has one,
+ * the count line with the needs-you part highlighted, and its age. What ↵ opens is told in the
+ * footer ([groupHint]); a failed open of the lead adds an error line under the header.
  *
  * Clicking the chevron or the count line shows or hides the members; clicking anywhere else
  * opens the lead like ↵ does.
@@ -463,7 +535,10 @@ private fun buildGroupHeader(
 
     val main = div("ao-main")
     main.appendChild(span("ao-title ao-group-title", row.title))
-    group?.tag?.let { main.appendChild(span("ao-pill", it.uppercase())) }
+    if (group != null && group.workingCount > 0) {
+        val busy = group.activityMillis?.let { !AgentsOverviewBackingViewModel.isQuiet(it, kotlin.js.Date.now().toLong()) } == true
+        main.appendChild(workingGlyph(active = busy))
+    }
     group?.repo?.let { main.appendChild(span("ao-repo", it)) }
     val url = group?.linkUrl
     if (url != null) {
@@ -483,7 +558,10 @@ private fun buildGroupHeader(
     counts.className = "ao-counts"
     if (group != null) {
         if (group.needYouCount > 0) counts.appendChild(span("ao-counts-need", "${group.needYouCount} needs you"))
-        // One span per count, kept on one line, so the line only wraps between counts.
+        counts.title = listOfNotNull(
+            "${group.needYouCount} needs you".takeIf { group.needYouCount > 0 },
+            group.summary.takeIf { it.isNotEmpty() },
+        ).joinToString(" · ")
         val rest = group.summary.split(" · ").filter { it.isNotEmpty() }
         rest.forEachIndexed { i, part ->
             if (i > 0 || group.needYouCount > 0) counts.appendChild(document.createTextNode(" · "))
@@ -497,26 +575,14 @@ private fun buildGroupHeader(
     el.appendChild(counts)
 
     el.appendChild(span("ao-age", if (row.sinceMillis > 0) formatAge(row.sinceMillis) else ""))
-    val actions = span("ao-actions", "")
-    if (selected) {
-        actions.appendChild(iconButton("Peek at the lead session's screen", "›", peek != null) {
-            launchAgentsOverview { if (peek != null) agentsOverview.closePeek() else agentsOverview.peek() }
-        })
-    }
-    el.appendChild(actions)
+    el.appendChild(span("ao-actions", ""))
 
-    if (selected || row.error != null) {
-        val tag = group?.tag?.lowercase() ?: "lead"
-        val said = group?.leadLastSaid?.let { " · it last said: $it" } ?: ""
-        val line = div("ao-note" + if (row.error != null) " ao-error" else "")
-        line.textContent = row.error ?: "↵ opens the $tag session$said"
-        el.appendChild(line)
-    }
+    row.error?.let { el.appendChild(div("ao-note ao-error").also { line -> line.textContent = it }) }
     if (peek != null) el.appendChild(buildPeek(peek))
     return el
 }
 
-/** The "+ 1 working, 1 in review" line under a collapsed group; ↵ or a click shows every member. */
+/** The quiet "2 more" line under a collapsed group; ↵ or a click shows every member. */
 private fun buildGroupMore(row: Row, index: Int, selected: Boolean): HTMLElement {
     val el = div("ao-row ao-group-more ao-group-end" + if (selected) " ao-selected" else "")
     el.setAttribute("data-index", index.toString())
