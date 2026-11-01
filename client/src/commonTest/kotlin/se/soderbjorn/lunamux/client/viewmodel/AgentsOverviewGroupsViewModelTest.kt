@@ -563,6 +563,15 @@ class AgentsOverviewGroupsViewModelTest {
     }
 
     @Test
+    fun withNoSessionsAndNoGroupsThereAreNoRowsAndNothingIsSelected() {
+        show(emptyList())
+        vm.open()
+        assertTrue(vm.state.rows.isEmpty())
+        assertNull(vm.state.selectedId)
+        assertFalse(vm.state.chipVisible)
+    }
+
+    @Test
     fun theSelectionStaysOnItsRowWhenRowsAppearAboveIt() {
         show(emptyList(), session("a", "needs_you", since = 1_000), session("b", "needs_you", since = 2_000), session("c", "working"))
         vm.open()

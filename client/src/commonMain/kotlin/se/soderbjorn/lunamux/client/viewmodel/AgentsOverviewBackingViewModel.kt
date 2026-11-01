@@ -896,15 +896,7 @@ class AgentsOverviewBackingViewModel(
             units.mapNotNull { u -> u.group.lead.recordId?.takeIf { u.leadLive } }
         val unclaimed = sessions.filter { it.id !in claimed }
             .map { s -> s to toRow(s, panes[s.leafId], resumeError(s.id)) }
-        // Two sessions with the same title and no repository to tell them apart (two agents asked the
-        // same thing in different folders) show the folder each runs in.
-        val titleCount = unclaimed.groupingBy { (_, row) -> row.title }.eachCount()
-        val singles = unclaimed.map { (s, row) ->
-            if (row.repo == null && (titleCount[row.title] ?: 0) > 1) {
-                val folder = folderOf(s)
-                row.copy(repo = folder, where = folder)
-            } else row
-        }
+        val singles = unclaimed.map { (_, row) -> row }
 
         // A group stays in NOW until all its runs have ended; it is ranked beside the single sessions
         // that need the user or work, by its most urgent run.
