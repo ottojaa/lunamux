@@ -47,6 +47,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
 import se.soderbjorn.lunamux.ClaudeUsageMonitor
+import se.soderbjorn.lunamux.TaskIndex
 import se.soderbjorn.lunamux.auth.DeviceAuth
 import se.soderbjorn.lunamux.persistence.SettingsRepository
 import se.soderbjorn.lunamux.readAuthToken
@@ -108,13 +109,17 @@ private suspend fun ApplicationCall.mcpAuthorize(repo: SettingsRepository): McpS
  *
  * @param settingsRepo the SQLite-backed settings store (auth, kill switch).
  * @param usageMonitor the Claude usage monitor backing `get_claude_usage`.
+ * @param taskIndex the task index behind the task tools; when null (examples) those tools are
+ *   not offered.
  */
 fun Route.mcpRoutes(
     settingsRepo: SettingsRepository,
     usageMonitor: ClaudeUsageMonitor,
+    taskIndex: TaskIndex? = null,
 ) {
     registerMcpReadTools(settingsRepo, usageMonitor)
-    registerMcpWriteTools(settingsRepo)
+    registerMcpWriteTools(settingsRepo, taskIndex)
+    if (taskIndex != null) registerMcpTaskTools(taskIndex)
     registerMcpConsoleTools()
 
     post("/mcp") {

@@ -251,20 +251,21 @@ sealed class WindowEnvelope {
     ) : WindowEnvelope()
 
     /**
-     * The agent session groups declared by group files on the server's
-     * machine, already matched to the session records they name. Sent on
-     * connect, right after [AgentSessions], and again whenever a group file or
-     * a record changes. The lead session's start command is deliberately not
-     * part of it: the server keeps it and [WindowCommand.OpenAgentGroupLead]
-     * names the group instead. Older clients fail to decode this frame and
-     * drop it, which is harmless.
+     * The tasks that have something to say beyond their sessions: every task a task file
+     * declares and every task agents made that holds at least one session. A session joins a
+     * task through [AgentSessionSummary.taskId]; this frame names the tasks, their titles, their
+     * file-declared members and whether the task has an `open` action. The `open` command is
+     * deliberately not part of it: the server keeps it and [WindowCommand.OpenTask] names the
+     * task instead. Sent on connect, right after [AgentSessions], and again whenever a task file,
+     * a task or a session record changes. Older clients fail to decode this frame and drop it,
+     * which is harmless.
      *
-     * @param groups the groups, in no particular order
-     * @see AgentGroup
+     * @param tasks the tasks, in no particular order
+     * @see AgentTask
      */
     @Serializable
-    @SerialName("agentGroups")
-    data class AgentGroups(val groups: List<AgentGroup>) : WindowEnvelope()
+    @SerialName("agentTasks")
+    data class AgentTasks(val tasks: List<AgentTask>) : WindowEnvelope()
 
     /**
      * A failed agents-overview request, sent only to the connection that made
@@ -352,7 +353,8 @@ sealed class WindowEnvelope {
  * @param leafId the pane the agent runs in (meaningful while the record is open).
  * @param endedAt epoch millis when the record ended, or null while open.
  * @param lastSaid first line of the last paragraph of the agent's latest reply, at most 160
- *   characters, or null before it has said anything; shown on a group header for its lead.
+ *   characters, or null before it has said anything; a row shows it when the session has no
+ *   tool line.
  * @param lastActivityAt epoch millis of the last hook event the server folded into this record
  *   (a prompt, a tool starting or finishing, a stop), or null when none has arrived since the
  *   server started. [stateSince] cannot stand in for it, because it does not move while an
@@ -360,6 +362,9 @@ sealed class WindowEnvelope {
  * @param firstPrompt first line of what the user first asked the session, at most 160 characters,
  *   or null before a prompt was seen; the overview shows it after "❯" when a row has no tool line
  *   or last reply of its own.
+ * @param taskId the id of the [AgentTask] this session belongs to, or null when it is a task of
+ *   its own. Decided by the server's task index (an agent's explicit choice, then a task file's
+ *   match); a client never works it out itself.
  */
 @Serializable
 data class AgentSessionSummary(
@@ -380,6 +385,7 @@ data class AgentSessionSummary(
     val lastSaid: String? = null,
     val lastActivityAt: Long? = null,
     val firstPrompt: String? = null,
+    val taskId: String? = null,
 )
 
 /**
@@ -557,75 +563,59 @@ enum class DiffLineType {
 }
 
 /**
- * One group of agent sessions as the agents overview draws it: a box with a
- * header (the group) and its members.
+ * One task as the agents overview draws it: a name, the sessions that belong to it (they carry
+ * its id in [AgentSessionSummary.taskId]) and, for a task a tool declares in a task file, the
+ * members that file lists.
  *
- * Built by the server's group watcher from one group file and the session
- * records, pushed in [WindowEnvelope.AgentGroups] and ordered by the client's
- * agents overview view model.
+ * Built by the server's task index from task files, the tasks agents made and the session
+ * records, pushed in [WindowEnvelope.AgentTasks] and ordered by the client's agents overview
+ * view model. A task with several sessions, or with an `open` action, is drawn as an expansion
+ * panel; a task with one session and no `open` is drawn as that session's plain row.
  *
- * @param id the group's id from its file; what [WindowCommand.OpenAgentGroupLead] names.
- * @param title the group's name.
- * @param tag short label for the pill on the header, such as `PROGRAMME`, or null for none.
+ * @param id the task's id: a file's `id`, or the id the `create_task` tool returned; what
+ *   [WindowCommand.OpenTask] names.
+ * @param title the task's name. A file's title wins over the title of an agent-made task with the
+ *   same id.
  * @param repo repository name shown beside the title, or null.
- * @param linkLabel text of the header's link chip, or null when the group has no link.
- * @param linkUrl the link's `http(s)` address; null exactly when [linkLabel] is.
- * @param lead the lead session.
- * @param members the group's members, in the file's order.
- * @param refreshedAtMillis epoch millis the group file was last written or touched (its modification
- *   time), or null when unknown. A file nobody has refreshed for a while no longer says anything
- *   about its members; the overview marks such rows stale from this alone.
+ * @param source `file` when a task file declares the task (also when agents added sessions to it),
+ *   `agents` when only the MCP tools made it.
+ * @param hasOpen whether the task file gives an `open` action the header can run.
+ * @param members the members the task file lists, in the file's order; empty for an agent-made task.
+ * @param refreshedAtMillis epoch millis the task file was last written or touched (its modification
+ *   time), or null when no file declares the task. A file nobody has refreshed for a while no longer
+ *   says anything about its members; the overview marks such rows stale from this alone.
  */
 @Serializable
-data class AgentGroup(
+data class AgentTask(
     val id: String,
     val title: String,
-    val tag: String? = null,
     val repo: String? = null,
-    val linkLabel: String? = null,
-    val linkUrl: String? = null,
-    val lead: AgentGroupLead,
-    val members: List<AgentGroupMember> = emptyList(),
+    val source: String = "agents",
+    val hasOpen: Boolean = false,
+    val members: List<AgentTaskMember> = emptyList(),
     val refreshedAtMillis: Long? = null,
 )
 
 /**
- * The lead session of an [AgentGroup]: the one session the header opens.
+ * One member a task file lists for an [AgentTask]. A member Lunamux hosts takes its state, line
+ * and age from its session record; any other shows what the file says.
  *
- * @param folder absolute folder the lead runs in; a new tab opens here when it is not open.
- * @param recordId the open session record in [folder], or null when none is open.
- * @param live whether that record's pane is in the layout, so the header can jump to it.
- * @param lastSaid what the lead's record last said (see [AgentSessionSummary.lastSaid]), or null.
- * @param named whether [recordId] is the session the group file names with `lead.sessionId`. Only a
- *   named lead is the programme's own session and is drawn as its header; a record that is merely
- *   the newest one in [folder] still serves the header's open, but is listed like any other session.
- */
-@Serializable
-data class AgentGroupLead(
-    val folder: String,
-    val recordId: String? = null,
-    val live: Boolean = false,
-    val lastSaid: String? = null,
-    val named: Boolean = false,
-)
-
-/**
- * One member of an [AgentGroup]. A member Lunamux hosts takes its state, line and
- * age from its session record; any other shows what the group file says.
- *
+ * @param key the member's id inside its task, unique within it: the file's `sessionId` when that is
+ *   given and not repeated, else a number from the member's place in the file. It names the member in
+ *   [WindowCommand.OpenTaskMember] and keeps a row's identity through a redraw.
  * @param title the member's name, always the file's.
  * @param links ticket keys or other short labels shown beside the title.
  * @param state `needs_you`, `working`, `idle` or `ended`.
- * @param label a state word the file gave ("in review"), used in the group's summary line; null for the default.
+ * @param label a state word the file gave ("in review"), used in the task's summary line; null for the default.
  * @param line one line about what the member is doing or waiting for, or null.
  * @param sinceMillis epoch millis when the member entered [state].
  * @param recordId the session record the member matched, or null when Lunamux does not host it.
- * @param sessionId the id of the member's background session as the file gave it, or null. It is
- *   what [WindowCommand.OpenAgentGroupMember] names; the command that attaches to it is built by
- *   the server and never travels.
+ * @param sessionId the id of the member's background session as the file gave it, or null. The
+ *   command that attaches to it is built by the server from this id and never travels.
  */
 @Serializable
-data class AgentGroupMember(
+data class AgentTaskMember(
+    val key: String,
     val title: String,
     val links: List<String> = emptyList(),
     val state: String,

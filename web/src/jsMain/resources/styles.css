@@ -3675,7 +3675,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-stale > .ao-s, .ao-stale > .ao-t, .ao-stale > .ao-w, .ao-stale > .ao-a { opacity: 0.55; }
 .ao-stale > .ao-n:not(.ao-n-error) { opacity: 0.55; }
 
-/* A programme is an expansion panel: the whole header toggles, "open" opens its session. */
+/* A task with several sessions is an expansion panel: the whole header toggles, its action (jump, open) is the ↵. */
 .ao-head { margin-top: 8px; }
 .ao-sec + .ao-head { margin-top: 0; }
 .ao-head .ao-t { font-weight: 700; }

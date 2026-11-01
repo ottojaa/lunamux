@@ -132,6 +132,13 @@ class AgentSessionTracker(
      */
     private val gitCache = ConcurrentHashMap<String, Pair<Long, GitInfo>>()
 
+    /**
+     * Tasks promised to panes whose agent has not started yet, by layout leaf id (leaf ids survive
+     * restarts, terminal session ids do not). The next record opened in the leaf takes the task.
+     * Kept in memory only: a promise the server forgets on restart is one the agent can repeat.
+     */
+    private val pendingTasks = HashMap<String, String>()
+
     private val _summaries = MutableStateFlow<List<AgentSessionSummary>>(emptyList())
 
     /**
@@ -344,12 +351,57 @@ class AgentSessionTracker(
     /**
      * Every record held in memory (each open one and the recent ended ones), copied under the lock.
      *
-     * Called by [AgentGroupsWatcher] whenever [summaries] changes, because a summary lacks
-     * the agent's own session id that group members are matched by.
+     * Called by [TaskIndex] whenever [summaries] changes, because a summary lacks the agent's own
+     * session id that task file members are matched by.
      *
      * @return the records, oldest first.
      */
     fun snapshot(): List<AgentSessionRecord> = synchronized(lock) { records.values.toList() }
+
+    /**
+     * The open record of a terminal session, if an agent runs in it.
+     *
+     * Called by [TaskIndex] when an agent joins a pane to a task: the id the MCP tools use for a
+     * pane is its terminal session id.
+     *
+     * @param terminalSessionId the `LUNAMUX_SESSION_ID` of the pane.
+     * @return the pane's open record, or null when no agent is running in it.
+     */
+    fun openRecordOf(terminalSessionId: String): AgentSessionRecord? = synchronized(lock) { openFor(terminalSessionId) }
+
+    /**
+     * Put a record in a task, or take it out of its task.
+     *
+     * Called by [TaskIndex] for the MCP `add_to_task` and `remove_from_task` tools. The change is
+     * stored and pushed like any other change to the record.
+     *
+     * @param recordId the record's id.
+     * @param taskId the task to join, or null to leave the task the agent chose.
+     * @return false when the record is not held in memory, true otherwise.
+     */
+    fun setTask(recordId: String, taskId: String?): Boolean = synchronized(lock) {
+        val rec = records[recordId] ?: return false
+        if (rec.taskId != taskId) {
+            put(rec.copy(taskId = taskId))
+            publish()
+        }
+        true
+    }
+
+    /**
+     * Promise a task to the next agent session that opens in a pane.
+     *
+     * Called by [TaskIndex] for a pane that has no agent yet (a window just created with a task,
+     * or a shell the agent grouped before starting a session in it). [open] and the reopening of a
+     * resumed record read the promise and clear it.
+     *
+     * @param leafId the pane's layout leaf id.
+     * @param taskId the task the pane's next session joins, or null to withdraw the promise.
+     */
+    fun setPendingTask(leafId: String, taskId: String?) = synchronized(lock) {
+        if (taskId == null) pendingTasks.remove(leafId) else pendingTasks[leafId] = taskId
+        Unit
+    }
 
     /**
      * The record held in memory (every open one and the recent ended ones), without
@@ -389,8 +441,10 @@ class AgentSessionTracker(
         if (current != null && current.agent == CLAUDE) {
             if (agentId == null || current.agentSessionId == agentId) return current
             if (current.agentSessionId == null && current.source == SOURCE_SCREEN) {
-                return current.copy(agentSessionId = agentId, source = SOURCE_HOOKS, transcriptPath = transcript)
-                    .also { put(it) }
+                return current.copy(
+                    agentSessionId = agentId, source = SOURCE_HOOKS, transcriptPath = transcript,
+                    taskId = current.taskId ?: taskOfEarlier(agentId),
+                ).also { put(it) }
             }
         }
         if (current != null) end(current, pane.screenText())
@@ -410,6 +464,7 @@ class AgentSessionTracker(
                 question = null,
                 lastScreen = null,
                 endedAt = null,
+                taskId = pane.leafId?.let { pendingTasks.remove(it) } ?: earlier.taskId,
             ).also { put(it) }
         }
         return open(pane, CLAUDE, SOURCE_HOOKS, agentId, transcript)
@@ -423,6 +478,16 @@ class AgentSessionTracker(
         if (cached != null && now - cached.first < GIT_CACHE_MS) return
         gitCache[cwd] = now to gitInfo(cwd)
     }
+
+    /**
+     * The task of the newest earlier record of the same Claude conversation that has one, so that a
+     * resumed chat stays in its task even when it gets a new record (its pane was reopened before
+     * the hook named the conversation).
+     */
+    private fun taskOfEarlier(agentSessionId: String): String? =
+        records.values.filter { it.agent == CLAUDE && it.agentSessionId == agentSessionId && it.taskId != null }
+            .maxByOrNull { it.createdAt }?.taskId
+            ?: repo.findAgentSession(CLAUDE, agentSessionId)?.taskId
 
     private fun open(
         pane: PaneSnapshot, agent: String, source: String, agentSessionId: String?, transcriptPath: String?,
@@ -447,6 +512,7 @@ class AgentSessionTracker(
             state = IDLE,
             stateSince = now,
             createdAt = now,
+            taskId = pane.leafId?.let { pendingTasks.remove(it) } ?: agentSessionId?.let(::taskOfEarlier),
         ).also { put(it) }
     }
 
@@ -521,6 +587,7 @@ internal fun AgentSessionRecord.toSummary() = AgentSessionSummary(
     nowLine = nowLine, question = question, leafId = leafId, endedAt = endedAt,
     lastSaid = lastSaid,
     firstPrompt = firstPrompt?.let(::firstPromptLine),
+    taskId = taskId,
 )
 
 private const val TOOL_LINE_MAX = 160

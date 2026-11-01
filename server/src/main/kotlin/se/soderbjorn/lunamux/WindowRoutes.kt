@@ -309,8 +309,8 @@ internal class WindowConnectionContext(
     val agentTracker: AgentSessionTracker? = null,
     /** The Claude Code settings editor behind the App Settings Connect row; null where it is not wired up. */
     val claudeHooks: ClaudeHooks? = null,
-    /** The group files behind the overview's group boxes; null where groups are not wired up. */
-    val agentGroups: AgentGroupsWatcher? = null,
+    /** Which task each agent session belongs to, behind the overview's task rows; null where tasks are not wired up. */
+    val taskIndex: TaskIndex? = null,
 ) {
     private val gitWatchers = ConcurrentHashMap<String, GitWatchHandle>()
 
@@ -379,7 +379,7 @@ internal fun Route.windowRoutes(
     usageMonitor: ClaudeUsageMonitor,
     agentTracker: AgentSessionTracker,
     claudeHooks: ClaudeHooks,
-    agentGroups: AgentGroupsWatcher? = null,
+    taskIndex: TaskIndex? = null,
 ) {
     webSocket("/window") {
         val token = call.readAuthToken()
@@ -444,26 +444,30 @@ internal fun Route.windowRoutes(
         // reaches the overview straight away. The Claude connection flag rides
         // along because the settings row needs it with the same lifetime.
         claudeHooks.refresh()
-        // Groups ride in the same job, sessions first, so a client that receives a group
+        // Tasks ride in the same job, sessions first, so a client that receives a task
         // already holds the records it names. A frame is sent only when its part changed.
+        // Each summary carries the task the index decided for it; the tracker only knows the
+        // task an agent named explicitly.
         val agentSessionsPushJob = launch {
             var sentSessions: Pair<List<AgentSessionSummary>, Boolean>? = null
-            var sentGroups: List<AgentGroup>? = null
+            var sentTasks: List<AgentTask>? = null
             combine(
                 agentTracker.summaries,
                 claudeHooks.connected,
-                agentGroups?.groups ?: MutableStateFlow(emptyList()),
-            ) { sessions, connected, groups -> Triple(sessions, connected, groups) }
-                .collect { (sessions, connected, groups) ->
-                    if (sentSessions != sessions to connected) {
-                        sentSessions = sessions to connected
-                        send(Frame.Text(windowJson.encodeToString<WindowEnvelope>(WindowEnvelope.AgentSessions(sessions, connected))))
-                    }
-                    if (agentGroups != null && sentGroups != groups) {
-                        sentGroups = groups
-                        send(Frame.Text(windowJson.encodeToString<WindowEnvelope>(WindowEnvelope.AgentGroups(groups))))
-                    }
+                taskIndex?.state ?: MutableStateFlow(TaskSnapshot()),
+            ) { sessions, connected, snapshot ->
+                val withTasks = sessions.map { it.copy(taskId = snapshot.assignment[it.id]) }
+                Triple(withTasks, connected, snapshot.tasks)
+            }.collect { (sessions, connected, tasks) ->
+                if (sentSessions != sessions to connected) {
+                    sentSessions = sessions to connected
+                    send(Frame.Text(windowJson.encodeToString<WindowEnvelope>(WindowEnvelope.AgentSessions(sessions, connected))))
                 }
+                if (taskIndex != null && sentTasks != tasks) {
+                    sentTasks = tasks
+                    send(Frame.Text(windowJson.encodeToString<WindowEnvelope>(WindowEnvelope.AgentTasks(tasks))))
+                }
+            }
         }
 
         val usagePushJob = launch {
@@ -502,7 +506,7 @@ internal fun Route.windowRoutes(
             supportsWorlds = supportsWorlds,
             agentTracker = agentTracker,
             claudeHooks = claudeHooks,
-            agentGroups = agentGroups,
+            taskIndex = taskIndex,
         )
 
         try {
@@ -783,8 +787,8 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
             WindowState.addTab(worldId = worldId)
         }
         is WindowCommand.ResumeAgentSession -> resumeAgentSession(cmd.recordId, ctx)
-        is WindowCommand.OpenAgentGroupLead -> openAgentGroupLead(cmd.groupId, ctx)
-        is WindowCommand.OpenAgentGroupMember -> openAgentGroupMember(cmd.groupId, cmd.sessionId, ctx)
+        is WindowCommand.OpenTask -> openTask(cmd.taskId, ctx)
+        is WindowCommand.OpenTaskMember -> openTaskMember(cmd.taskId, cmd.memberKey, ctx)
         is WindowCommand.SearchAgentSessions -> ctx.scope.launch {
             // Off the socket's loop: the query reads SQLite and may run git for resume notes.
             runCatching {
@@ -1036,77 +1040,89 @@ private suspend fun resumeAgentSession(recordId: String, ctx: WindowConnectionCo
 }
 
 /**
- * Start a group's lead session in a new tab, unless it is already open.
+ * Start a task's declared `open` action in a new tab.
  *
- * Called by [handleWindowCommand] for [WindowCommand.OpenAgentGroupLead]. The group is
- * looked up in the watcher, so the line that gets typed is the one the group file
- * declares, never anything the client sent. When the lead is already open the
- * client jumps to it by itself and nothing is answered. A group that no longer
- * exists, or a lead folder that is gone, is answered with an
+ * Called by [handleWindowCommand] for [WindowCommand.OpenTask], when a person presses ↵ on a
+ * task whose file declares an `open` action and none of its sessions is live. The task is
+ * looked up in the index, so the line that gets typed is the one the task file declares, never
+ * anything the client sent. A task that no longer exists, a task whose file declares no `open`
+ * action and an `open` folder that is gone are answered with an
  * [WindowEnvelope.AgentSessionError] (record id null) and no tab is created.
  *
- * @param groupId the [AgentGroup.id] named by the client.
+ * @param taskId the [AgentTask.id] named by the client.
  * @param ctx the connection that asked, which receives any error.
  * @param open opens the tab and types the command; [openTabRunning] except in tests.
+ * @see openTaskMember
  */
-internal suspend fun openAgentGroupLead(
-    groupId: String,
+internal suspend fun openTask(
+    taskId: String,
     ctx: WindowConnectionContext,
     open: (folder: String, title: String, command: String?) -> Unit = ::openTabRunning,
 ) {
-    val found = ctx.agentGroups?.find(groupId)
-    if (found == null) {
-        ctx.send(WindowEnvelope.AgentSessionError(null, "That group no longer exists."))
+    val file = ctx.taskIndex?.fileTask(taskId)
+    if (file == null) {
+        ctx.send(WindowEnvelope.AgentSessionError(null, "That task no longer exists."))
         return
     }
-    val (group, command) = found
-    if (group.lead.live) return
-    val folderExists = withContext(Dispatchers.IO) { java.io.File(group.lead.folder).isDirectory }
+    val action = file.open
+    if (action == null) {
+        ctx.send(WindowEnvelope.AgentSessionError(null, "${file.title} does not say how to open it."))
+        return
+    }
+    val folderExists = withContext(Dispatchers.IO) { java.io.File(action.folder).isDirectory }
     if (!folderExists) {
-        ctx.send(WindowEnvelope.AgentSessionError(null, "The folder of ${group.title}'s lead session no longer exists: ${group.lead.folder}"))
+        ctx.send(WindowEnvelope.AgentSessionError(null, "The folder of ${file.title} no longer exists: ${action.folder}"))
         return
     }
-    open(group.lead.folder, group.title, command)
+    open(action.folder, file.title, action.command)
 }
 
 /**
- * Open a programme run in a new tab with `claude attach`.
+ * Attach to a session a task file declares but Lunamux does not host, in a new tab.
  *
- * Called by [handleWindowCommand] for [WindowCommand.OpenAgentGroupMember]. The group is looked
- * up in the watcher and the run must be one of its members, so the id that is typed is one the
- * group file declared; the line itself, `claude attach <id>`, is built here from that id and
- * never taken from a client. The tab starts in the group's lead folder (the member's own folder
- * is not in the file) and is named like the run. A group or run that is gone, an id that is not
- * a plain session id or a lead folder that no longer exists is answered with an
+ * Called by [handleWindowCommand] for [WindowCommand.OpenTaskMember]. The task is looked up in
+ * the index and the member by its key, so the id that is typed is one the task file declared; the
+ * line itself, `claude attach <id>`, is built here and never taken from a client. The tab starts in
+ * the task's `open` folder, else the member's own `match.folder`, else the home folder, and is
+ * named like the member. A task or member that is gone, a member with no session id, an id that
+ * is not a plain session id or a folder that no longer exists is answered with an
  * [WindowEnvelope.AgentSessionError] (record id null) and no tab is created.
  *
- * @param groupId the [AgentGroup.id] named by the client.
- * @param sessionId the [AgentGroupMember.sessionId] named by the client.
+ * @param taskId the [AgentTask.id] named by the client.
+ * @param memberKey the [AgentTaskMember.key] named by the client.
  * @param ctx the connection that asked, which receives any error.
  * @param open opens the tab and types the command; [openTabRunning] except in tests.
+ * @see openTask
  */
-internal suspend fun openAgentGroupMember(
-    groupId: String,
-    sessionId: String,
+internal suspend fun openTaskMember(
+    taskId: String,
+    memberKey: String,
     ctx: WindowConnectionContext,
     open: (folder: String, title: String, command: String?) -> Unit = ::openTabRunning,
 ) {
-    val group = ctx.agentGroups?.find(groupId)?.first
-    val member = group?.members?.firstOrNull { it.sessionId == sessionId }
-    if (group == null || member == null) {
-        ctx.send(WindowEnvelope.AgentSessionError(null, "That run is no longer in its programme."))
+    val file = ctx.taskIndex?.fileTask(taskId)
+    val declared = file?.members?.firstOrNull { it.member.key == memberKey }
+    if (file == null || declared == null) {
+        ctx.send(WindowEnvelope.AgentSessionError(null, "That session is no longer in its task."))
+        return
+    }
+    val member = declared.member
+    val sessionId = member.sessionId
+    if (sessionId == null) {
+        ctx.send(WindowEnvelope.AgentSessionError(null, "${member.title} has no session id to attach to."))
         return
     }
     if (!isPlainSessionId(sessionId)) {
         ctx.send(WindowEnvelope.AgentSessionError(null, "${member.title} has a session id Lunamux will not type into a shell."))
         return
     }
-    val folderExists = withContext(Dispatchers.IO) { java.io.File(group.lead.folder).isDirectory }
+    val folder = file.open?.folder ?: declared.matchFolder ?: System.getProperty("user.home")
+    val folderExists = withContext(Dispatchers.IO) { java.io.File(folder).isDirectory }
     if (!folderExists) {
-        ctx.send(WindowEnvelope.AgentSessionError(null, "The folder of ${group.title} no longer exists: ${group.lead.folder}"))
+        ctx.send(WindowEnvelope.AgentSessionError(null, "The folder of ${file.title} no longer exists: $folder"))
         return
     }
-    open(group.lead.folder, member.title, "claude attach $sessionId")
+    open(folder, member.title, "claude attach $sessionId")
 }
 
 /**
@@ -1114,7 +1130,7 @@ internal suspend fun openAgentGroupMember(
  * into its shell the way the MCP `run` tool does.
  *
  * Called by [resumeAgentSession] to start an agent again and by the
- * open-group-lead route to start a group's lead session. The command is typed,
+ * open-task route to run a task file's `open` action. The command is typed,
  * not executed by Lunamux, so the user's own shell and profile run it.
  *
  * @param folder absolute folder the tab's shell starts in; the caller has checked it exists.

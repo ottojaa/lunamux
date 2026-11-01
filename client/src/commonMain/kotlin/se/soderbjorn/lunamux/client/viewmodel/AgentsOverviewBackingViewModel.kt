@@ -12,22 +12,25 @@
  * screen, and close it after a confirmation that names what would be lost.
  * The view only renders [State] and forwards key presses.
  *
- * Every row is one line of a single grid whose second column is the state glyph. Groups declared
- * by group files are expansion panels: a header row whose counts say what its runs are doing,
- * followed by the runs that need the user, or by every run, most urgent first, once the panel is
- * expanded. A group stays in NOW while any of its runs has not ended, ranked beside single
- * sessions by its most urgent run, and its header opens the group's lead session. A run Lunamux
- * does not host opens with `claude attach <session id>` in a new tab; the id comes from the group
- * file and the server builds the command. The lead session is a row of its box only while it
- * needs the user or works; otherwise the header's "open" is how to reach it.
+ * Every row is one line of a single grid whose second column is the state glyph. The unit is a
+ * task. A task with two or more sessions, or whose task file gives an `open` action, is an
+ * expansion panel: a header row whose counts say what its sessions are doing, followed by the
+ * sessions that need the user or work, or by every session, most urgent first, once the panel is
+ * expanded. A task with one session and no `open` action is drawn as that session's plain row. A
+ * task stays in NOW while any of its sessions has not ended, ranked beside single sessions by its
+ * most urgent session. The header's ↵ goes to the session that most needs the person (a ◆ that
+ * has waited longest, else the busiest working one); with no live session it runs the task's
+ * `open` action, and with neither it expands or collapses the panel. A session Lunamux does not
+ * host opens with `claude attach <session id>` in a new tab; the id comes from the task file and
+ * the server builds the command.
  *
  * The selection is a row id, not an index, so it stays on its row while rows appear and
  * disappear, and it opens on the ◆ that has waited longest.
  *
  * @see se.soderbjorn.lunamux.AgentSessionSummary
- * @see se.soderbjorn.lunamux.AgentGroup
+ * @see se.soderbjorn.lunamux.AgentTask
  * @see WindowStateRepository.agentSessions
- * @see WindowStateRepository.agentGroups
+ * @see WindowStateRepository.agentTasks
  */
 package se.soderbjorn.lunamux.client.viewmodel
 
@@ -41,9 +44,9 @@ import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
-import se.soderbjorn.lunamux.AgentGroup
-import se.soderbjorn.lunamux.AgentGroupMember
 import se.soderbjorn.lunamux.AgentSessionSummary
+import se.soderbjorn.lunamux.AgentTask
+import se.soderbjorn.lunamux.AgentTaskMember
 import se.soderbjorn.lunamux.LeafNode
 import se.soderbjorn.lunamux.TabConfig
 import se.soderbjorn.lunamux.WindowCommand
@@ -102,8 +105,10 @@ class AgentsOverviewBackingViewModel(
      * @property isLive whether the agent's pane is still open, so ↵ jumps to it.
      * @property canResume whether ↵ opens a new tab for it (an ended row).
      * @property actionLabel the word of the ↵ action: `jump`, `resume` or `open folder` for a
-     *   session; `jump`, `resume` or `open` for a run; `open` for a group header; empty for a run
-     *   Lunamux has no session for and the file gave no session id, which has nothing to open.
+     *   session; `jump`, `resume` or `open` for a task's session; for a task header `jump` (a
+     *   live session needs the person or works), else `open` (the task has an `open` action), else
+     *   empty (↵ then expands or collapses it); empty for a session Lunamux has no record of and the
+     *   file gave no session id, which has nothing to open.
      * @property error a message from the last failed resume of this row, or null.
      * @property canClose whether × and ⌘⌫ can close it: it has an open pane.
      * @property field in a search result, where the query was found: `title`, `prompt`,
@@ -115,18 +120,21 @@ class AgentsOverviewBackingViewModel(
      * @property resumeNote what Resume will do when it is not the plain case (for example
      *   "Worktree removed. Resume recreates it from branch x."); shown for search results and the
      *   selected row, null otherwise.
-     * @property kind what the row is: a session (or group run) or a group header. Only
+     * @property kind what the row is: a session (or a task's session) or a task header. Only
      *   [RowKind.SESSION] rows exist in a search.
-     * @property groupId the group a header or run belongs to; null for a single session.
-     * @property unhosted true for a group run Lunamux does not host (it has no session record);
-     *   it shows what the group file says, and ↵ opens it with `claude attach` when [sessionId] is set.
-     * @property label a group run's status word from the group file ("in review", "done"), shown
-     *   before [status]; null for a run that works or needs the user, whose live line says it all.
+     * @property taskId the task a header or a task's session belongs to; null for a session that
+     *   is a task of its own.
+     * @property memberKey for a session the task file lists, the file member's key, which names it
+     *   to the server; null for every other row.
+     * @property unhosted true for a task member Lunamux does not host (it has no session record);
+     *   it shows what the task file says, and ↵ opens it with `claude attach` when [sessionId] is set.
+     * @property label a task member's status word from the task file ("in review", "done"), shown
+     *   before [status]; null for a member that works or needs the user, whose live line says it all.
      * @property activityMillis for a working row, epoch millis of its last sign of life: the newer
-     *   of the session's last activity (when Lunamux hosts it) and the time its group file was last
-     *   refreshed (when the file declares the run). Null for a row that is not working. The view
+     *   of the session's last activity (when Lunamux hosts it) and the time its task file was last
+     *   refreshed (when the file declares the member). Null for a row that is not working. The view
      *   animates the working glyph only while [isWorkingLive] says so.
-     * @property fileRefreshedMillis for a group run Lunamux does not host, epoch millis the group
+     * @property fileRefreshedMillis for a task member Lunamux does not host, epoch millis the task
      *   file that declares it was last refreshed; null for every other row. The view marks the row
      *   stale when [isStale] says so.
      * @property glyph which state glyph column B draws; the working glyph still needs [isWorkingLive]
@@ -135,9 +143,9 @@ class AgentsOverviewBackingViewModel(
      *   the last tool line of a working row, what an idle or closed row last said, falling back to
      *   "❯ " plus its first prompt. Never blank on a row without a [label].
      * @property where column D: the repository of a session or header, or the pull request ("#22")
-     *   of a run; null when there is none.
-     * @property sessionId for a run Lunamux does not host, the id the group file gave for it, which
-     *   `claude attach` takes; null otherwise.
+     *   of a task member; null when there is none.
+     * @property sessionId for a task member Lunamux does not host, the id the task file gave for it,
+     *   which `claude attach` takes; null otherwise.
      */
     data class Row(
         val id: String,
@@ -160,7 +168,8 @@ class AgentsOverviewBackingViewModel(
         val matchLength: Int = 0,
         val resumeNote: String? = null,
         val kind: RowKind = RowKind.SESSION,
-        val groupId: String? = null,
+        val taskId: String? = null,
+        val memberKey: String? = null,
         val unhosted: Boolean = false,
         val label: String? = null,
         val activityMillis: Long? = null,
@@ -173,11 +182,11 @@ class AgentsOverviewBackingViewModel(
 
     /** What a [Row] stands for. */
     enum class RowKind {
-        /** A session, or a group run (then [Row.groupId] is set). */
+        /** A session, or a task's session (then [Row.taskId] is set). */
         SESSION,
 
-        /** The header of a group. [Row.id] is `group:<id>`. */
-        GROUP,
+        /** The header of a task panel. [Row.id] is `task:<id>`. */
+        TASK,
     }
 
     /** The state glyph a row draws in column B. */
@@ -200,28 +209,28 @@ class AgentsOverviewBackingViewModel(
         /** ·: closed; can be resumed. */
         CLOSED,
 
-        /** Nothing: a group header (it shows the working glyph through [Group.activityMillis]). */
+        /** Nothing: a task header (it shows the working glyph through [Task.activityMillis]). */
         NONE,
     }
 
     /** Which key hints the footer shows; chosen by the selected row. */
     enum class Footer {
-        /** A live session or a run in a Lunamux pane. */
+        /** A live session or a task member in a Lunamux pane. */
         LIVE,
 
         /** A closed session. */
         CLOSED,
 
-        /** A collapsed group header. */
-        GROUP_COLLAPSED,
+        /** A collapsed task header. */
+        TASK_COLLAPSED,
 
-        /** An expanded group header. */
-        GROUP_EXPANDED,
+        /** An expanded task header. */
+        TASK_EXPANDED,
 
-        /** A run Lunamux has no pane for and the file gave no session id for. */
+        /** A task member Lunamux has no pane for and the file gave no session id for. */
         NO_SESSION,
 
-        /** A run Lunamux has no pane for but `claude attach` can open. */
+        /** A task member Lunamux has no pane for but `claude attach` can open. */
         RUN_ATTACH,
 
         /** Nothing is selected. */
@@ -229,24 +238,28 @@ class AgentsOverviewBackingViewModel(
     }
 
     /**
-     * What the view needs to draw one group's header.
+     * What the view needs to draw one task panel's header.
      *
-     * @property id the group's id.
-     * @property title the group's name.
+     * @property id the task's id.
+     * @property title the task's name.
      * @property repo repository name, or null.
-     * @property needYouCount runs that need the user; drawn highlighted before [summary].
-     * @property workingCount runs at work.
+     * @property needYouCount sessions that need the user; drawn highlighted before [summary].
+     * @property workingCount sessions at work.
      * @property summary the rest of the header's count line, without the needs-you part
      *   ("1 working · 1 in review · 2 done"): in the fixed order working, in review, queued,
      *   other labels as the file gave them, paused, done, with empty counts left out; empty when
-     *   every run needs the user.
-     * @property expanded whether every run shows rather than only those that need the user.
-     * @property leadLive whether the lead session is open, so ↵ on the header jumps to it.
-     * @property activityMillis the latest sign of life among the working runs (see
+     *   every session needs the user.
+     * @property expanded whether every session shows rather than only those that need the user or work.
+     * @property jumpRecordId the record of the live session that most needs the person, which ↵ on
+     *   the header jumps to: the ◆ that has waited longest, else the working session with the
+     *   freshest sign of life; null when no session of the task is open.
+     * @property hasOpen whether the task file gives an `open` action, which ↵ runs when no session
+     *   is open.
+     * @property activityMillis the latest sign of life among the working sessions (see
      *   [Row.activityMillis]); null when none works, so the header's working glyph is empty. The
      *   header draws the moving glyph while [isWorkingLive] says that stamp is fresh.
      */
-    data class Group(
+    data class Task(
         val id: String,
         val title: String,
         val repo: String?,
@@ -254,7 +267,8 @@ class AgentsOverviewBackingViewModel(
         val workingCount: Int,
         val summary: String,
         val expanded: Boolean,
-        val leadLive: Boolean,
+        val jumpRecordId: String?,
+        val hasOpen: Boolean,
         val activityMillis: Long? = null,
     )
 
@@ -311,8 +325,9 @@ class AgentsOverviewBackingViewModel(
      * @property selectedId the id of the highlighted row, or null when there are no rows.
      * @property peek the screen popover, or null while it is closed.
      * @property confirm the close confirmation, or null while none is asked.
-     * @property groups the groups drawn in [now] and [earlier], by group id.
-     * @property hasSessions whether any agent session or group has ever been recorded, which is
+     * @property tasks the task panels drawn in [now] and [earlier], by task id; a task drawn as a
+     *   plain session row is not in it.
+     * @property hasSessions whether any agent session or task has ever been recorded, which is
      *   when the toolbar chip shows.
      * @property footer which key hints the footer shows for the selected row.
      */
@@ -330,7 +345,7 @@ class AgentsOverviewBackingViewModel(
         val selectedId: String? = null,
         val peek: Peek? = null,
         val confirm: Confirm? = null,
-        val groups: Map<String, Group> = emptyMap(),
+        val tasks: Map<String, Task> = emptyMap(),
         val hasSessions: Boolean = false,
         val footer: Footer = Footer.NONE,
     ) {
@@ -390,13 +405,13 @@ class AgentsOverviewBackingViewModel(
         val peekOpen: Boolean = false,
         val confirmRowId: String? = null,
         val confirmOnClose: Boolean = false,
-        val expandedGroups: Set<String> = emptySet(),
+        val expandedTasks: Set<String> = emptySet(),
     )
 
     /** Everything [build] reads, taken from [windowState] and [ui] in one go. */
     private data class Inputs(
         val sessions: List<AgentSessionSummary>,
-        val groups: List<AgentGroup>,
+        val tasks: List<AgentTask>,
         val config: WindowConfig?,
         val error: String?,
         val matches: WindowEnvelope.AgentSessionMatches?,
@@ -429,7 +444,7 @@ class AgentsOverviewBackingViewModel(
     val stateFlow: Flow<State> = combine(
         listOf<Flow<Any?>>(
             windowState.agentSessions,
-            windowState.agentGroups,
+            windowState.agentTasks,
             windowState.config,
             windowState.agentSessionError,
             windowState.agentMatches,
@@ -442,7 +457,7 @@ class AgentsOverviewBackingViewModel(
         build(
             Inputs(
                 v[0] as List<AgentSessionSummary>,
-                v[1] as List<AgentGroup>,
+                v[1] as List<AgentTask>,
                 v[2] as WindowConfig?,
                 v[3] as String?,
                 v[4] as WindowEnvelope.AgentSessionMatches?,
@@ -464,7 +479,7 @@ class AgentsOverviewBackingViewModel(
 
     private fun inputs() = Inputs(
         windowState.agentSessions.value,
-        windowState.agentGroups.value,
+        windowState.agentTasks.value,
         windowState.config.value,
         windowState.agentSessionError.value,
         windowState.agentMatches.value,
@@ -482,31 +497,31 @@ class AgentsOverviewBackingViewModel(
         if (current.resumingId != null &&
             windowState.config.value?.effectiveActiveTabId != current.resumeFromTab
         ) {
-            ui.value = Ui(expandedGroups = current.expandedGroups)
+            ui.value = Ui(expandedTasks = current.expandedTasks)
         }
     }
 
     /**
      * Show the overlay with an empty search and the ◆ row that has waited longest selected (the
-     * first row when nothing needs the user). Groups the user expanded stay expanded. Called by
+     * first row when nothing needs the user). Task panels the user expanded stay expanded. Called by
      * ⌘⇧A and the chip.
      */
     fun open() {
         windowState.clearAgentSessionError()
         inspected = null
-        val fresh = Ui(open = true, expandedGroups = ui.value.expandedGroups)
+        val fresh = Ui(open = true, expandedTasks = ui.value.expandedTasks)
         val first = build(inputs().copy(ui = fresh))
         ui.value = fresh.copy(selectedId = first.selectedId, selectedHint = maxOf(first.selected, 0))
     }
 
     /**
-     * Hide the overlay and forget the search. Groups the user expanded stay expanded for as long
+     * Hide the overlay and forget the search. Task panels the user expanded stay expanded for as long
      * as the app runs. Called by esc and after a jump or resume.
      */
     fun close() {
         windowState.clearAgentSessionError()
         inspected = null
-        ui.value = Ui(expandedGroups = ui.value.expandedGroups)
+        ui.value = Ui(expandedTasks = ui.value.expandedTasks)
     }
 
     /** Open the overlay if it is closed, close it otherwise. */
@@ -556,7 +571,7 @@ class AgentsOverviewBackingViewModel(
     /**
      * Highlight the row with [rowId], as a mouse click does. Does nothing for an id that is not listed.
      *
-     * Called by the view when a header is clicked, before it toggles the group.
+     * Called by the view when a header is clicked, before it toggles the panel.
      *
      * @param rowId the [Row.id] to select.
      */
@@ -598,7 +613,7 @@ class AgentsOverviewBackingViewModel(
     suspend fun inspectSelected(force: Boolean = false) {
         val current = state
         val row = current.selectedRow ?: return
-        val recordId = recordIdOf(row, windowState.agentGroups.value) ?: return
+        val recordId = recordIdOf(row, current.tasks) ?: return
         val key = "$recordId/${row.isLive}"
         if (!force && inspected == key) return
         inspected = key
@@ -607,13 +622,13 @@ class AgentsOverviewBackingViewModel(
 
     /**
      * Open the peek popover on the selected row and fetch its screen. Called for →
-     * (with the caret at the end of the search text). On a group header it peeks the lead
-     * session, and does nothing when the lead has no record.
+     * (with the caret at the end of the search text). On a task header it peeks the session
+     * ↵ would jump to, and does nothing when no session of the task is open.
      */
     suspend fun peek() {
         val current = state
         val row = current.selectedRow ?: return
-        if (recordIdOf(row, windowState.agentGroups.value) == null) return
+        if (recordIdOf(row, current.tasks) == null) return
         ui.update { it.copy(peekOpen = true) }
         inspectSelected(force = true)
     }
@@ -680,16 +695,18 @@ class AgentsOverviewBackingViewModel(
     }
 
     /**
-     * Do [row]'s action: jump to a live pane, resume an ended session, open a group's lead
-     * session, or attach to a run Lunamux does not host. Does nothing for a run with no session.
+     * Do [row]'s action: jump to a live pane, resume an ended session, attach to a task member
+     * Lunamux does not host, or, on a task header, go to the session that most needs the person.
+     * Does nothing for a member with no session.
      *
      * Called when a row is clicked and for ↵ (through [activateSelected]).
      *
      * @param row the row to act on.
+     * @see activateTask
      */
     suspend fun activate(row: Row) {
         when {
-            row.kind == RowKind.GROUP -> openLead(row)
+            row.kind == RowKind.TASK -> activateTask(row)
             row.unhosted -> openMember(row)
             row.isLive -> jump(row)
             row.canResume -> resume(row)
@@ -697,20 +714,42 @@ class AgentsOverviewBackingViewModel(
     }
 
     /**
-     * Expand a collapsed group or collapse an expanded one, keeping the highlight on its header.
+     * Do what ↵ on a task header does: jump to the live session that most needs the person (the ◆
+     * that has waited longest, else the working session with the freshest sign of life); with no
+     * open session, run the task's `open` action; with neither, expand or collapse the panel.
      *
-     * Called by a click on a group header (outside its "open"), and by [toggleSelected].
+     * Called by [activate] for a header row.
      *
-     * @param groupId the group to toggle.
+     * @param row the header row; its [Row.taskId] names the task.
+     * @see Task.jumpRecordId
+     * @see Task.hasOpen
      */
-    fun toggleGroup(groupId: String) = setExpanded(groupId, groupId !in ui.value.expandedGroups)
+    suspend fun activateTask(row: Row) {
+        val taskId = row.taskId ?: return
+        val task = state.tasks[taskId] ?: return
+        when {
+            task.jumpRecordId != null -> jumpToRecord(task.jumpRecordId)
+            task.hasOpen -> openTask(row)
+            else -> toggleTask(taskId)
+        }
+    }
 
-    private fun setExpanded(groupId: String, expanded: Boolean) {
-        val header = state.rows.indexOfFirst { it.kind == RowKind.GROUP && it.groupId == groupId }
+    /**
+     * Expand a collapsed task panel or collapse an expanded one, keeping the highlight on its header.
+     *
+     * Called by a click on a task header (outside its "open"), and by [toggleSelected] and by ↵ on a
+     * header with nothing to jump to or open.
+     *
+     * @param taskId the task to toggle.
+     */
+    fun toggleTask(taskId: String) = setExpanded(taskId, taskId !in ui.value.expandedTasks)
+
+    private fun setExpanded(taskId: String, expanded: Boolean) {
+        val header = state.rows.indexOfFirst { it.kind == RowKind.TASK && it.taskId == taskId }
         ui.update {
             it.copy(
-                expandedGroups = if (expanded) it.expandedGroups + groupId else it.expandedGroups - groupId,
-                selectedId = if (header >= 0) "$GROUP_PREFIX$groupId" else it.selectedId,
+                expandedTasks = if (expanded) it.expandedTasks + taskId else it.expandedTasks - taskId,
+                selectedId = if (header >= 0) "$TASK_PREFIX$taskId" else it.selectedId,
                 selectedHint = if (header >= 0) header else it.selectedHint,
                 peekOpen = false,
                 confirmRowId = null,
@@ -719,24 +758,24 @@ class AgentsOverviewBackingViewModel(
     }
 
     /**
-     * Step into the selected row: on a group header expand it, or, when it already is expanded,
-     * select its first run; on a session or run peek at its screen.
+     * Step into the selected row: on a task header expand it, or, when it already is expanded,
+     * select its first session; on a session peek at its screen.
      *
      * Called for → (with the caret at the end of the search text).
      */
     suspend fun stepIn() {
         val current = state
         val row = current.selectedRow ?: return
-        if (row.kind != RowKind.GROUP) return peek()
-        val groupId = row.groupId ?: return
-        if (current.groups[groupId]?.expanded != true) return setExpanded(groupId, true)
+        if (row.kind != RowKind.TASK) return peek()
+        val taskId = row.taskId ?: return
+        if (current.tasks[taskId]?.expanded != true) return setExpanded(taskId, true)
         val index = current.rows.indexOfFirst { it.id == row.id }
-        current.rows.getOrNull(index + 1)?.takeIf { it.groupId == groupId && it.kind == RowKind.SESSION }?.let { select(it.id) }
+        current.rows.getOrNull(index + 1)?.takeIf { it.taskId == taskId && it.kind == RowKind.SESSION }?.let { select(it.id) }
     }
 
     /**
-     * Step out of the selected row: close an open peek; otherwise on a run select its header, and
-     * on an expanded header collapse it.
+     * Step out of the selected row: close an open peek; otherwise on a task's session select its
+     * header, and on an expanded header collapse it.
      *
      * Called for ← (with the caret at the start of the search text).
      */
@@ -745,13 +784,13 @@ class AgentsOverviewBackingViewModel(
         val row = current.selectedRow ?: return
         when {
             current.peek != null -> closePeek()
-            row.kind == RowKind.SESSION && row.groupId != null -> select("$GROUP_PREFIX${row.groupId}")
-            row.kind == RowKind.GROUP && current.groups[row.groupId]?.expanded == true -> setExpanded(row.groupId!!, false)
+            row.kind == RowKind.SESSION && row.taskId != null && row.taskId in current.tasks -> select("$TASK_PREFIX${row.taskId}")
+            row.kind == RowKind.TASK && current.tasks[row.taskId]?.expanded == true -> setExpanded(row.taskId!!, false)
         }
     }
 
     /**
-     * Toggle what the selected row holds: a group header's runs, or a session's peek. Does
+     * Toggle what the selected row holds: a task header's sessions, or a session's peek. Does
      * nothing while a search is typed, because a space then belongs to the query.
      *
      * Called for space.
@@ -761,53 +800,50 @@ class AgentsOverviewBackingViewModel(
         if (current.query.isNotEmpty()) return
         val row = current.selectedRow ?: return
         when {
-            row.kind == RowKind.GROUP -> row.groupId?.let(::toggleGroup)
+            row.kind == RowKind.TASK -> row.taskId?.let(::toggleTask)
             current.peek != null -> closePeek()
             else -> peek()
         }
     }
 
     /**
-     * Open a group's lead session: jump to it when it is open, else ask the server to start it
-     * in a new tab. The overlay stays open until the new tab is active or the server says why
-     * it could not, exactly as for [resume].
+     * Run a task's `open` action: ask the server to open a tab in the folder the task file names
+     * and start the session there. The overlay stays open until the new tab is active or the
+     * server says why it could not, exactly as for [resume].
      *
-     * Called for ↵ on a group header and for a click on its "open".
+     * Called by [activateTask] when no session of the task is open, and for a click on the
+     * header's "open".
      *
-     * @param row the header row; its [Row.groupId] names the group.
+     * @param row the header row; its [Row.taskId] names the task.
      */
-    suspend fun openLead(row: Row) {
-        val groupId = row.groupId ?: return
-        val leadRecord = windowState.agentGroups.value.firstOrNull { it.id == groupId }?.lead?.recordId
-        if (leadRecord != null && state.groups[groupId]?.leadLive == true) {
-            jumpToRecord(leadRecord)
-            return
-        }
+    suspend fun openTask(row: Row) {
+        val taskId = row.taskId ?: return
         windowState.clearAgentSessionError()
         ui.update {
             it.copy(resumingId = row.id, resumeFromTab = windowState.config.value?.effectiveActiveTabId)
         }
-        send(WindowCommand.OpenAgentGroupLead(groupId))
+        send(WindowCommand.OpenTask(taskId))
     }
 
     /**
-     * Open a run Lunamux does not host in a new tab with `claude attach`. Only the group and the
-     * session id go to the server, which checks the id against the group file and builds the
+     * Open a task member Lunamux does not host in a new tab with `claude attach`. Only the task and
+     * the member's key go to the server, which finds the session id in the task file and builds the
      * command. The overlay stays open until the new tab is active or the server says why it
-     * could not. Does nothing for a run whose file gave no session id.
+     * could not. Does nothing for a member whose file gave no session id.
      *
-     * Called by [activate] for ↵ or a click on such a run.
+     * Called by [activate] for ↵ or a click on such a member.
      *
-     * @param row the run; its [Row.groupId] and [Row.sessionId] name what to attach to.
+     * @param row the member; its [Row.taskId] and [Row.memberKey] name what to attach to.
      */
     suspend fun openMember(row: Row) {
-        val groupId = row.groupId ?: return
-        val sessionId = row.sessionId ?: return
+        val taskId = row.taskId ?: return
+        val memberKey = row.memberKey ?: return
+        if (row.sessionId == null) return
         windowState.clearAgentSessionError()
         ui.update {
             it.copy(resumingId = row.id, resumeFromTab = windowState.config.value?.effectiveActiveTabId)
         }
-        send(WindowCommand.OpenAgentGroupMember(groupId, sessionId))
+        send(WindowCommand.OpenTaskMember(taskId, memberKey))
     }
 
     /**
@@ -848,25 +884,49 @@ class AgentsOverviewBackingViewModel(
         send(WindowCommand.ResumeAgentSession(row.id))
     }
 
-    /** One run of a group, paired with the session summary it matched (null when Lunamux does not host it). */
-    private class Run(val member: AgentGroupMember, val session: AgentSessionSummary?, val fileIndex: Int)
+    /**
+     * One session of a task, paired with the session summary it matched (null when Lunamux does not
+     * host it).
+     *
+     * @property member what the task says about the session: the file's member, or one made from
+     *   the session itself.
+     * @property session the hosted session behind it, or null.
+     * @property order its place among the task's sessions: the file's order, then hosted-only sessions.
+     * @property fromFile whether a task file lists it, so the server can open it by [AgentTaskMember.key].
+     */
+    private class Run(val member: AgentTaskMember, val session: AgentSessionSummary?, val order: Int, val fromFile: Boolean)
 
-    /** A group with its runs, ready to become rows. */
-    private class GroupUnit(
-        val group: AgentGroup,
+    /**
+     * A task with its sessions, ready to become rows.
+     *
+     * @property task the task as the server sent it.
+     * @property runs its sessions.
+     * @property panel whether it is drawn as an expansion panel; false means its one session is a plain row.
+     * @property rank 0 when a session needs the person, 1 when one works, [GRACE_RANK] for a task of
+     *   hosted sessions that went quiet less than [IDLE_GRACE_MS] ago, else [OPEN_WORK_RANK].
+     * @property since the time that decides its place among tasks of the same rank.
+     * @property ended whether every session has ended.
+     * @property settled whether no session needs the person or works, no task file speaks for the
+     *   task, and the last activity of its sessions is older than [IDLE_GRACE_MS]: it belongs in
+     *   EARLIER like an idle single session, though none of its sessions has ended.
+     * @property jumpRecordId the open session that most needs the person, or null.
+     */
+    private class TaskUnit(
+        val task: AgentTask,
         val runs: List<Run>,
+        val panel: Boolean,
         val rank: Int,
         val since: Long,
-        val leadLive: Boolean,
-        val leadId: String?,
         val ended: Boolean,
+        val settled: Boolean,
+        val jumpRecordId: String?,
     )
 
-    /** How a run is counted and ordered: the bucket a header count and the expanded order use. */
+    /** How a session is counted and ordered: the bucket a header count and the expanded order use. */
     private class Bucket(val order: Int, val name: String)
 
     private fun build(input: Inputs): State {
-        val (sessions, groupFiles, config, error, matches, inspection, ui) = input
+        val (sessions, taskList, config, error, matches, inspection, ui) = input
         val nowMillis = clock()
         val panes = config?.let(::paneLocations).orEmpty()
         val query = ui.query.trim()
@@ -890,16 +950,16 @@ class AgentsOverviewBackingViewModel(
             )
         }
 
-        val units = groupFiles.map { g -> unitOf(g, byId, panes) }
-        // A session a group run matched, or the open lead, is drawn inside its group, not again as a single.
-        val claimed = units.flatMap { u -> u.runs.mapNotNull { it.session?.id } }.toSet() +
-            units.mapNotNull { u -> u.group.lead.recordId?.takeIf { u.leadLive && u.group.lead.named } }
-        val unclaimed = sessions.filter { it.id !in claimed }
-            .map { s -> s to toRow(s, panes[s.leafId], resumeError(s.id)) }
-        val singles = unclaimed.map { (_, row) -> row }
+        val sessionsByTask = sessions.filter { it.taskId != null }.groupBy { it.taskId!! }
+        val units = taskList.mapNotNull { t -> unitOf(t, byId, sessionsByTask[t.id].orEmpty(), panes, nowMillis) }
+        val taskStates = units.filter { it.panel }.associate { it.task.id to taskOf(it, ui) }
+        // A session a task unit holds is drawn inside it, not again as a single.
+        val claimed = units.flatMap { u -> u.runs.mapNotNull { it.session?.id } }.toSet()
+        val singles = sessions.filter { it.id !in claimed }
+            .map { s -> toRow(s, panes[s.leafId], resumeError(s.id)) }
 
-        // A group stays in NOW until all its runs have ended; it is ranked beside the single sessions
-        // that need the user or work, by its most urgent run.
+        // A task stays in NOW until all its sessions have ended; it is ranked beside the single
+        // sessions that need the user or work, by its most urgent session.
         class Placed(val rank: Int, val since: Long, val rows: List<Row>)
         // An idle session stays in NOW for a while after its last activity, so a chat that finishes
         // a turn does not jump to EARLIER and back as the next turn starts.
@@ -913,21 +973,21 @@ class AgentsOverviewBackingViewModel(
                 val s = byId.getValue(row.id)
                 add(Placed(GRACE_RANK, s.lastActivityAt ?: s.stateSince, listOf(row)))
             }
-            units.filter { !it.ended }
-                .forEach { add(Placed(it.rank, it.since, groupRows(it, groupFiles, panes, ui, resumeError))) }
+            units.filter { !it.ended && !it.settled }
+                .forEach { add(Placed(it.rank, it.since, taskRows(it, taskStates, panes, ui, resumeError))) }
         }.sortedWith(
             compareBy<Placed> { it.rank }.thenBy { if (it.rank >= OPEN_WORK_RANK) -it.since else it.since },
         )
         val now = urgent.flatMap { it.rows }
 
-        // EARLIER: open idle singles first, then finished programmes and closed sessions, newest first.
+        // EARLIER: open idle singles first, then finished tasks and closed sessions, newest first.
         class Earlier(val since: Long, val rows: List<Row>)
         val gracedIds = graced.mapTo(HashSet()) { it.id }
         val idleSingles = singles.filter { it.state != NEEDS_YOU && it.state != WORKING && it.state != ENDED && it.id !in gracedIds }
             .sortedByDescending { it.sinceMillis }
         val closedUnits = (
             singles.filter { it.state == ENDED }.map { Earlier(it.sinceMillis, listOf(it)) } +
-                units.filter { it.ended }.map { Earlier(it.since, groupRows(it, groupFiles, panes, ui, resumeError)) }
+                units.filter { it.ended || it.settled }.map { Earlier(it.since, taskRows(it, taskStates, panes, ui, resumeError)) }
             ).sortedByDescending { it.since }
         val earlierUnits = idleSingles.map { Earlier(it.sinceMillis, listOf(it)) } + closedUnits
         val shownEarlier = if (ui.showAllEarlier) earlierUnits else earlierUnits.take(EARLIER_LIMIT)
@@ -945,12 +1005,12 @@ class AgentsOverviewBackingViewModel(
 
         // The selected row of a plain list also tells what Resume will do, from the inspection.
         val shown = if (matchMode || selectedId == null) listed else listed.map { row ->
-            if (row.id == selectedId) row.copy(resumeNote = recordIdOf(row, groupFiles)?.let(::inspectionOf)?.resumeNote) else row
+            if (row.id == selectedId) row.copy(resumeNote = recordIdOf(row, taskStates)?.let(::inspectionOf)?.resumeNote) else row
         }
         val selectedRow = shown.firstOrNull { it.id == selectedId }
 
         val peek = if (ui.peekOpen && selectedRow != null) {
-            val said = recordIdOf(selectedRow, groupFiles)?.let(::inspectionOf)?.takeIf { it.live == selectedRow.isLive }
+            val said = recordIdOf(selectedRow, taskStates)?.let(::inspectionOf)?.takeIf { it.live == selectedRow.isLive }
             Peek(
                 live = selectedRow.isLive,
                 title = selectedRow.title,
@@ -976,9 +1036,8 @@ class AgentsOverviewBackingViewModel(
         // Once a resume has switched to the new tab the overlay has done its job;
         // settleResume then resets the inputs so it stays closed.
         val resumed = ui.resumingId != null && config?.effectiveActiveTabId != ui.resumeFromTab
-        val groupStates = units.associate { it.group.id to groupOf(it, ui) }
-        val groupNeeds = units.sumOf { u -> u.runs.count { it.member.state == NEEDS_YOU } }
-        val groupWorking = units.sumOf { u -> u.runs.count { it.member.state == WORKING } }
+        val taskNeeds = units.sumOf { u -> u.runs.count { it.member.state == NEEDS_YOU } }
+        val taskWorking = units.sumOf { u -> u.runs.count { it.member.state == WORKING } }
         return State(
             open = ui.open && !resumed,
             query = ui.query,
@@ -988,14 +1047,14 @@ class AgentsOverviewBackingViewModel(
             now = if (matchMode) emptyList() else shown.take(now.size),
             earlier = if (matchMode) emptyList() else shown.drop(now.size),
             earlierHidden = earlierUnits.size - shownEarlier.size,
-            needYouCount = singles.count { it.state == NEEDS_YOU } + groupNeeds,
-            workingCount = singles.count { it.state == WORKING } + groupWorking,
+            needYouCount = singles.count { it.state == NEEDS_YOU } + taskNeeds,
+            workingCount = singles.count { it.state == WORKING } + taskWorking,
             selectedId = selectedId,
             peek = peek,
             confirm = confirm,
-            groups = if (matchMode) emptyMap() else groupStates,
-            hasSessions = sessions.isNotEmpty() || groupFiles.any { it.members.isNotEmpty() },
-            footer = footerOf(selectedRow, groupStates),
+            tasks = if (matchMode) emptyMap() else taskStates,
+            hasSessions = sessions.isNotEmpty() || taskList.any { it.members.isNotEmpty() },
+            footer = footerOf(selectedRow, taskStates),
         )
     }
 
@@ -1004,42 +1063,76 @@ class AgentsOverviewBackingViewModel(
         rows.filter { it.glyph == Glyph.NEEDS_YOU }.minByOrNull { it.sinceMillis }
 
     /** Which key hints go with [row]. */
-    private fun footerOf(row: Row?, groups: Map<String, Group>): Footer = when {
+    private fun footerOf(row: Row?, tasks: Map<String, Task>): Footer = when {
         row == null -> Footer.NONE
-        row.kind == RowKind.GROUP -> if (groups[row.groupId]?.expanded == true) Footer.GROUP_EXPANDED else Footer.GROUP_COLLAPSED
+        row.kind == RowKind.TASK -> if (tasks[row.taskId]?.expanded == true) Footer.TASK_EXPANDED else Footer.TASK_COLLAPSED
         row.unhosted -> if (row.sessionId != null) Footer.RUN_ATTACH else Footer.NO_SESSION
         row.isLive -> Footer.LIVE
         else -> Footer.CLOSED
     }
 
     /**
-     * Pair [g]'s runs with the sessions they match and work out where the group sits. The lead
-     * session joins the runs only while it needs the user or works.
+     * Pair a task's sessions with the hosted sessions they match and work out where the task sits.
+     *
+     * The task's sessions are the members its file lists plus every hosted session that carries
+     * its id and no member of the file claimed. A task with one hosted session and no `open`
+     * action has no unit: that session stays a plain row of its own. A task with one session the
+     * file lists and no `open` action is a unit drawn as that session's row; any other task with
+     * sessions or an `open` action is a panel.
+     *
+     * @param t the task.
+     * @param byId all session summaries by record id.
+     * @param hosted the hosted sessions whose [AgentSessionSummary.taskId] is [t]'s id.
+     * @param panes where the layout holds each pane, to tell which sessions are open.
+     * @param nowMillis the current time, which decides whether a task of idle hosted sessions is
+     *   still inside the grace a single idle session gets.
+     * @return the unit, or null when the task is not drawn as anything but its one session.
      */
-    private fun unitOf(g: AgentGroup, byId: Map<String, AgentSessionSummary>, panes: Map<String?, PaneLocation>): GroupUnit {
-        // Open means a session Lunamux lists whose pane is in the layout, so Jump has somewhere to go.
-        val leadSummary = g.lead.recordId?.let(byId::get)
-        val leadLive = g.lead.live && leadSummary != null && panes[leadSummary.leafId] != null
-        val leadRun = leadSummary?.takeIf { leadLive && g.lead.named && (it.state == NEEDS_YOU || it.state == WORKING) }
-            ?.let { Run(leadMemberOf(g, it), it, -1) }
-        val runs = listOfNotNull(leadRun) + g.members.mapIndexed { i, m -> Run(m, m.recordId?.let(byId::get), i) }
+    private fun unitOf(
+        t: AgentTask,
+        byId: Map<String, AgentSessionSummary>,
+        hosted: List<AgentSessionSummary>,
+        panes: Map<String?, PaneLocation>,
+        nowMillis: Long,
+    ): TaskUnit? {
+        val fileRuns = t.members.mapIndexed { i, m -> Run(m, m.recordId?.let(byId::get), i, true) }
+        val matched = fileRuns.mapNotNullTo(HashSet()) { it.session?.id }
+        val extraRuns = hosted.filter { it.id !in matched }
+            .mapIndexed { i, s -> Run(memberOf(s), s, fileRuns.size + i, false) }
+        val runs = fileRuns + extraRuns
+        if (runs.isEmpty() && !t.hasOpen) return null
+        if (runs.size == 1 && !t.hasOpen && !runs[0].fromFile) return null
+        val panel = runs.size >= 2 || t.hasOpen
         val ended = runs.all { it.member.state == ENDED }
-        val rank = when {
+        val urgentRank = when {
             runs.any { it.member.state == NEEDS_YOU } -> 0
             runs.any { it.member.state == WORKING } -> 1
             else -> OPEN_WORK_RANK
         }
+        // A task file speaks for its task, so the task stays in NOW while it has work to do. A task
+        // of hosted sessions only has no such word: like one idle session, it stays for the grace
+        // after the last activity and then moves to EARLIER.
+        val lastActivity = runs.mapNotNull { r -> r.session?.let { it.lastActivityAt ?: it.stateSince } }.maxOrNull()
+        val hostedOnly = t.source != "file"
+        val quiet = hostedOnly && urgentRank == OPEN_WORK_RANK && !runs.all { it.member.state == ENDED }
+        val settled = quiet && (lastActivity == null || !inGrace(lastActivity, nowMillis))
+        val rank = if (quiet && !settled) GRACE_RANK else urgentRank
         val since = when {
-            runs.isEmpty() -> 0L
-            rank == OPEN_WORK_RANK -> runs.maxOf { it.member.sinceMillis }
-            else -> runs.filter { rankOf(it.member.state) == rank }.minOf { it.member.sinceMillis }
+            runs.isEmpty() -> t.refreshedAtMillis ?: 0L
+            quiet -> lastActivity ?: runs.maxOf { it.member.sinceMillis }
+            urgentRank == OPEN_WORK_RANK -> runs.maxOf { it.member.sinceMillis }
+            else -> runs.filter { rankOf(it.member.state) == urgentRank }.minOf { it.member.sinceMillis }
         }
-        return GroupUnit(g, runs, rank, since, leadLive, leadSummary?.id.takeIf { leadLive }, ended)
+        // Open means a session Lunamux lists whose pane is in the layout, so Jump has somewhere to go.
+        val open = runs.filter { r -> r.session != null && r.session.state != ENDED && panes[r.session.leafId] != null }
+        val jump = open.filter { it.member.state == NEEDS_YOU }.minByOrNull { it.member.sinceMillis }
+            ?: open.filter { it.member.state == WORKING }.maxByOrNull { it.session!!.lastActivityAt ?: it.session.stateSince }
+        return TaskUnit(t, runs, panel, rank, since, ended, settled, jump?.session?.id)
     }
 
     /** The record behind [row] that peek and inspection ask the server about, or null when there is none. */
-    private fun recordIdOf(row: Row, groups: List<AgentGroup>): String? = when {
-        row.kind == RowKind.GROUP -> groups.firstOrNull { it.id == row.groupId }?.lead?.recordId
+    private fun recordIdOf(row: Row, tasks: Map<String, Task>): String? = when {
+        row.kind == RowKind.TASK -> tasks[row.taskId]?.jumpRecordId
         row.kind == RowKind.SESSION && !row.unhosted -> row.id
         else -> null
     }
@@ -1051,7 +1144,7 @@ class AgentsOverviewBackingViewModel(
     }
 
     /** Which count and which place in the expanded order [m] has, from its state and the file's label. */
-    private fun bucketOf(m: AgentGroupMember): Bucket {
+    private fun bucketOf(m: AgentTaskMember): Bucket {
         if (m.state == NEEDS_YOU) return Bucket(0, "needs you")
         if (m.state == WORKING) return Bucket(1, "working")
         if (m.state == ENDED) return Bucket(6, "done")
@@ -1060,7 +1153,7 @@ class AgentsOverviewBackingViewModel(
         return when {
             lower.startsWith("in review") -> Bucket(2, "in review")
             lower == "queued" || lower == "waiting" -> Bucket(3, "queued")
-            lower.startsWith("paused") || lower.startsWith("held") -> Bucket(5, "paused")
+            lower.startsWith("paused") -> Bucket(5, "paused")
             lower == "done" || lower == "ready" -> Bucket(6, "done")
             label.isEmpty() -> Bucket(4, "idle")
             else -> Bucket(4, label)
@@ -1068,28 +1161,29 @@ class AgentsOverviewBackingViewModel(
     }
 
     /** The header the view draws for [u]. */
-    private fun groupOf(u: GroupUnit, ui: Ui): Group {
-        val g = u.group
+    private fun taskOf(u: TaskUnit, ui: Ui): Task {
+        val t = u.task
         val buckets = u.runs.map { bucketOf(it.member) }
         val counted = buckets.filter { it.order > 0 }.groupBy { it.name }
             .entries.sortedBy { (_, list) -> list.first().order }
-        return Group(
-            id = g.id, title = g.title, repo = g.repo,
+        return Task(
+            id = t.id, title = t.title, repo = t.repo,
             needYouCount = u.runs.count { it.member.state == NEEDS_YOU },
             workingCount = u.runs.count { it.member.state == WORKING },
             summary = counted.joinToString(" · ") { (name, list) -> "${list.size} $name" }
-                .ifEmpty { if (u.runs.isEmpty()) "no runs" else "" },
-            expanded = g.id in ui.expandedGroups,
-            leadLive = u.leadLive,
+                .ifEmpty { if (u.runs.isEmpty()) "no sessions" else "" },
+            expanded = t.id in ui.expandedTasks,
+            jumpRecordId = u.jumpRecordId,
+            hasOpen = t.hasOpen,
             activityMillis = u.runs.filter { it.member.state == WORKING }
-                .mapNotNull { workingActivity(it, g.refreshedAtMillis) }.maxOrNull(),
+                .mapNotNull { workingActivity(it, t.refreshedAtMillis) }.maxOrNull(),
         )
     }
 
     /**
-     * The last sign of life of a working run: the newer of its hosted session's last activity and
-     * the time the group file declaring it was last refreshed. A run outside Lunamux has only the
-     * file; a file that is still being refreshed keeps its working runs live.
+     * The last sign of life of a working session: the newer of its hosted session's last activity
+     * and the time the task file declaring it was last refreshed. A member outside Lunamux has only
+     * the file; a file that is still being refreshed keeps its working members live.
      */
     private fun workingActivity(run: Run, refreshed: Long?): Long? {
         val hosted = run.session?.let { it.lastActivityAt ?: it.stateSince }
@@ -1097,53 +1191,62 @@ class AgentsOverviewBackingViewModel(
     }
 
     /**
-     * The row the open lead session of [g] shows as among its runs: titled after the group's tag
-     * ("Programme session"), with the session's own state, question or last tool line and age.
+     * A task member made from a hosted session no task file lists: its own title, state, question
+     * or last tool line and age.
+     *
+     * @param s the hosted session.
+     * @return the member, keyed by the record id.
      */
-    private fun leadMemberOf(g: AgentGroup, s: AgentSessionSummary) = AgentGroupMember(
-        title = leadTitle(g.tag),
+    private fun memberOf(s: AgentSessionSummary) = AgentTaskMember(
+        key = s.id,
+        title = titleOf(s),
+        links = s.links,
         state = s.state,
         line = if (s.state == NEEDS_YOU) s.question ?: s.nowLine else s.nowLine,
         sinceMillis = s.stateSince,
         recordId = s.id,
     )
 
-    /** What the lead session is called among its group's runs: "Programme session", or "Lead session" without a tag. */
-    private fun leadTitle(tag: String?): String =
-        (tag?.trim()?.takeIf { it.isNotEmpty() } ?: "lead").lowercase().replaceFirstChar { it.uppercase() } + " session"
-
     /**
-     * The rows of one group: its header, then, while collapsed, the runs that need the user, or,
-     * once expanded, every run in the order needs you (longest waiting first), working, in review,
-     * queued, other labels, paused, done; the file's order within a bucket.
+     * The rows of one task unit. A plain unit is its one session's row. A panel is its header,
+     * then, while collapsed, the sessions that need the user (longest waiting first) and those
+     * that work (most recent first), or, once expanded, every session in the order needs you,
+     * working, in review, queued, other labels, paused, done; the file's order within a bucket.
      */
-    private fun groupRows(
-        u: GroupUnit,
-        groupFiles: List<AgentGroup>,
+    private fun taskRows(
+        u: TaskUnit,
+        tasks: Map<String, Task>,
         panes: Map<String?, PaneLocation>,
         ui: Ui,
         resumeError: (String) -> String?,
     ): List<Row> {
-        val g = u.group
-        val expanded = g.id in ui.expandedGroups
-        val header = Row(
-            id = "$GROUP_PREFIX${g.id}", agent = "", state = stateOfRank(u.rank), title = g.title,
-            links = emptyList(), repo = g.repo, nowLine = null, question = null, sinceMillis = u.since,
-            isLive = u.leadLive, canResume = !u.leadLive,
-            actionLabel = "open",
-            error = resumeError("$GROUP_PREFIX${g.id}"), kind = RowKind.GROUP, groupId = g.id,
-            glyph = Glyph.NONE,
-            status = "",
-        )
-        val rows = u.runs.map { run ->
-            run to runRow(g, run, panes, resumeError)
+        val t = u.task
+        val rows = u.runs.map { run -> run to runRow(t, run, panes, resumeError) }
+        if (!u.panel) return rows.map { it.second }
+        val header = tasks.getValue(t.id).let { task ->
+            Row(
+                id = "$TASK_PREFIX${t.id}", agent = "", state = stateOfRank(u.rank), title = t.title,
+                links = emptyList(), repo = t.repo, nowLine = null, question = null, sinceMillis = u.since,
+                isLive = task.jumpRecordId != null, canResume = false,
+                actionLabel = when {
+                    task.jumpRecordId != null -> "jump"
+                    task.hasOpen -> "open"
+                    else -> ""
+                },
+                error = resumeError("$TASK_PREFIX${t.id}"), kind = RowKind.TASK, taskId = t.id,
+                glyph = Glyph.NONE,
+                status = "",
+            )
         }
-        val shown = if (expanded) {
+        val shown = if (t.id in ui.expandedTasks) {
             rows.sortedWith(
                 compareBy<Pair<Run, Row>> { bucketOf(it.first.member).order }
                     .thenBy { if (it.first.member.state == NEEDS_YOU) it.first.member.sinceMillis else 0L },
             )
-        } else rows.filter { it.first.member.state == NEEDS_YOU }.sortedBy { it.first.member.sinceMillis }
+        } else {
+            rows.filter { it.first.member.state == NEEDS_YOU }.sortedBy { it.first.member.sinceMillis } +
+                rows.filter { it.first.member.state == WORKING }.sortedByDescending { it.first.member.sinceMillis }
+        }
         return listOf(header) + shown.map { it.second }
     }
 
@@ -1153,13 +1256,13 @@ class AgentsOverviewBackingViewModel(
         else -> IDLE
     }
 
-    /** One run of [g] as a row: the file's state and wording, over the hosted session's pane when there is one. */
-    private fun runRow(g: AgentGroup, run: Run, panes: Map<String?, PaneLocation>, resumeError: (String) -> String?): Row {
+    /** One session of [t] as a row: the task's state and wording, over the hosted session's pane when there is one. */
+    private fun runRow(t: AgentTask, run: Run, panes: Map<String?, PaneLocation>, resumeError: (String) -> String?): Row {
         val m = run.member
         val s = run.session
-        // A run the file gives a session id is identified by it, so a writer that inserts or reorders
-        // members does not move the selection onto another run; without one, its place in the file.
-        val rowId = if (s != null) s.id else "$MEMBER_PREFIX${g.id}:${m.sessionId ?: run.fileIndex}"
+        // A member that has no session record is identified by its key, which the server makes unique
+        // within the task, so a writer that inserts or reorders members does not move the selection.
+        val rowId = if (s != null) s.id else "$MEMBER_PREFIX${t.id}:${m.key}"
         val base = if (s != null) {
             toRow(s, panes[s.leafId], resumeError(s.id))
         } else {
@@ -1168,7 +1271,7 @@ class AgentsOverviewBackingViewModel(
                 links = m.links, repo = null, nowLine = null, question = null, sinceMillis = m.sinceMillis,
                 isLive = false, canResume = false, actionLabel = "",
                 error = resumeError(rowId), unhosted = true,
-                fileRefreshedMillis = g.refreshedAtMillis, sessionId = m.sessionId,
+                fileRefreshedMillis = t.refreshedAtMillis, sessionId = m.sessionId,
             )
         }
         val bucket = bucketOf(m)
@@ -1180,14 +1283,14 @@ class AgentsOverviewBackingViewModel(
         val status = when (m.state) {
             NEEDS_YOU -> line ?: s?.question ?: "waiting at a prompt"
             WORKING -> line ?: hostedLine ?: firstPrompt ?: if (s == null && m.label != null) "" else "—"
-            // A finished run's line that only repeats its pull request is dropped: the PR has its own column.
+            // A finished member's line that only repeats its pull request is dropped: the PR has its own column.
             else -> (line?.takeIf { it != pr } ?: said ?: firstPrompt)
                 ?: if (bucket.order == 6 || m.label != null) "" else "—"
         }
         return base.copy(
             title = m.title,
             state = m.state,
-            // Only the keys the file gives; the ones read from a session's branch are not the feed's.
+            // Only the keys the task gives; the ones read from a session's branch are not the feed's.
             links = m.links,
             actionLabel = when {
                 base.isLive -> "jump"
@@ -1198,11 +1301,12 @@ class AgentsOverviewBackingViewModel(
             sinceMillis = m.sinceMillis,
             nowLine = if (m.state == NEEDS_YOU) null else line,
             question = if (m.state == NEEDS_YOU) line else null,
-            groupId = g.id,
-            // The file's word ("coding") goes with a state only the file vouches for: a hosted run's
-            // live state wins over what the file said, so its label is dropped while it works.
+            taskId = t.id,
+            memberKey = m.key.takeIf { run.fromFile },
+            // The file's word ("coding") goes with a state only the file vouches for: a hosted
+            // member's live state wins over what the file said, so its label is dropped while it works.
             label = m.label?.trim()?.takeIf { it.isNotEmpty() && (m.state == IDLE || m.state == ENDED || (m.state == WORKING && s == null)) },
-            activityMillis = if (m.state == WORKING) workingActivity(run, g.refreshedAtMillis) else null,
+            activityMillis = if (m.state == WORKING) workingActivity(run, t.refreshedAtMillis) else null,
             glyph = when (bucket.order) {
                 0 -> Glyph.NEEDS_YOU
                 1 -> Glyph.WORKING
@@ -1239,10 +1343,7 @@ class AgentsOverviewBackingViewModel(
 
     private fun toRow(s: AgentSessionSummary, where: PaneLocation?, error: String?): Row {
         val live = s.state != ENDED && where != null
-        val title = s.title?.takeIf { it.isNotBlank() }
-            ?: s.branch?.takeIf { it.isNotBlank() }
-            ?: folderOf(s)
-            ?: s.agent
+        val title = titleOf(s)
         val ended = s.state == ENDED
         return Row(
             id = s.id,
@@ -1274,6 +1375,13 @@ class AgentsOverviewBackingViewModel(
             where = s.repo ?: folderOf(s),
         )
     }
+
+    /** A session's display title: its own title, else its branch, else its folder, else the agent's name. */
+    private fun titleOf(s: AgentSessionSummary): String =
+        s.title?.takeIf { it.isNotBlank() }
+            ?: s.branch?.takeIf { it.isNotBlank() }
+            ?: folderOf(s)
+            ?: s.agent
 
     /**
      * The folder a session runs in, as the overview's folder column shows it when there is no
@@ -1356,21 +1464,21 @@ class AgentsOverviewBackingViewModel(
         fun isQuiet(activityMillis: Long, nowMillis: Long): Boolean = nowMillis - activityMillis >= QUIET_AFTER_MS
 
         /**
-         * How long a group file may go without being refreshed before what it says about members
+         * How long a task file may go without being refreshed before what it says about members
          * Lunamux does not host is treated as stale. The writer touches an unchanged file at least
-         * every two minutes while a run works, so twenty minutes of silence means the
+         * every two minutes while a member works, so twenty minutes of silence means the
          * writer stopped and the file's states are no longer news.
          */
         const val STALE_AFTER_MS = 20L * 60_000L
 
         /**
-         * Whether a group file has gone stale: it was last refreshed [STALE_AFTER_MS] or more ago.
+         * Whether a task file has gone stale: it was last refreshed [STALE_AFTER_MS] or more ago.
          * A pure function of the clock, like [isQuiet], so the web view's periodic redraw can flip a
          * row to stale with no new input from the server.
          *
          * Called by the web overview on every redraw for each row with a [Row.fileRefreshedMillis].
          *
-         * @param refreshedMillis epoch millis the group file was last refreshed.
+         * @param refreshedMillis epoch millis the task file was last refreshed.
          * @param nowMillis the current epoch millis.
          * @return true when the gap is at least [STALE_AFTER_MS].
          * @see Row.fileRefreshedMillis
@@ -1379,12 +1487,12 @@ class AgentsOverviewBackingViewModel(
 
         /**
          * Whether a working row's glyph should move: it has a sign of life that is not yet
-         * [QUIET_AFTER_MS] old. For a run Lunamux does not host that sign is the group file's
-         * refresh time, so a file that is still being refreshed keeps its working runs live.
+         * [QUIET_AFTER_MS] old. For a member Lunamux does not host that sign is the task file's
+         * refresh time, so a file that is still being refreshed keeps its working members live.
          *
          * Called by the web overview for each row and header when it draws the state glyph.
          *
-         * @param activityMillis [Row.activityMillis] or [Group.activityMillis]; null means nothing works.
+         * @param activityMillis [Row.activityMillis] or [Task.activityMillis]; null means nothing works.
          * @param nowMillis the current epoch millis.
          * @return true when the glyph should animate.
          * @see isQuiet
@@ -1393,7 +1501,7 @@ class AgentsOverviewBackingViewModel(
             activityMillis != null && !isQuiet(activityMillis, nowMillis)
 
         /**
-         * "2 need you" / "1 needs you": the plural form shared by the chip and the group headers.
+         * "2 need you" / "1 needs you": the plural form shared by the chip and the task headers.
          *
          * @param n how many need the user.
          * @return the count and the right verb.
@@ -1402,7 +1510,7 @@ class AgentsOverviewBackingViewModel(
 
         /**
          * The prefix of a working row's status when its sign of life is old: "stale 25m · " for a
-         * run whose group file has not been refreshed for [STALE_AFTER_MS], else "quiet 6m · " once
+         * member whose task file has not been refreshed for [STALE_AFTER_MS], else "quiet 6m · " once
          * [QUIET_AFTER_MS] has passed; empty otherwise.
          *
          * Called by the web overview for each working row on every redraw.
@@ -1423,7 +1531,7 @@ class AgentsOverviewBackingViewModel(
             return ""
         }
 
-        private const val GROUP_PREFIX = "group:"
+        private const val TASK_PREFIX = "task:"
         private const val MEMBER_PREFIX = "member:"
         private const val OPEN_WORK_RANK = 2
         private const val GRACE_RANK = 3

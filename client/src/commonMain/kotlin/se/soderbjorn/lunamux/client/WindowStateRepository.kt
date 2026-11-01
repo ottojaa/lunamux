@@ -24,7 +24,7 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import se.soderbjorn.lunula.core.PersistKeys
-import se.soderbjorn.lunamux.AgentGroup
+import se.soderbjorn.lunamux.AgentTask
 import se.soderbjorn.lunamux.AgentSessionSummary
 import se.soderbjorn.lunamux.WindowConfig
 import se.soderbjorn.lunamux.WindowEnvelope
@@ -127,10 +127,10 @@ class WindowStateRepository {
     /** Observable agent sessions; the source of the agents overview. */
     val agentSessions: StateFlow<List<AgentSessionSummary>> = _agentSessions.asStateFlow()
 
-    /** The agent session groups the server last reported, already matched to their sessions. */
-    private val _agentGroups = MutableStateFlow<List<AgentGroup>>(emptyList())
-    /** Observable agent groups; with [agentSessions] the source of the agents overview's group boxes. */
-    val agentGroups: StateFlow<List<AgentGroup>> = _agentGroups.asStateFlow()
+    /** The tasks the server last reported; sessions point at theirs through `AgentSessionSummary.taskId`. */
+    private val _agentTasks = MutableStateFlow<List<AgentTask>>(emptyList())
+    /** Observable tasks; with [agentSessions] the source of the agents overview's task panels. */
+    val agentTasks: StateFlow<List<AgentTask>> = _agentTasks.asStateFlow()
 
     /** Whether the Claude Code settings file currently holds Lunamux's hook entries. */
     private val _claudeConnected = MutableStateFlow(false)
@@ -196,14 +196,14 @@ class WindowStateRepository {
     }
 
     /**
-     * Replace the cached agent session groups.
+     * Replace the cached tasks.
      *
-     * Called by [WindowSocket] when an `AgentGroups` envelope arrives.
+     * Called by [WindowSocket] when an `AgentTasks` envelope arrives.
      *
-     * @param groups the server's current groups.
+     * @param tasks the server's current tasks.
      */
-    fun updateAgentGroups(groups: List<AgentGroup>) {
-        _agentGroups.value = groups
+    fun updateAgentTasks(tasks: List<AgentTask>) {
+        _agentTasks.value = tasks
     }
 
     /**
