@@ -609,6 +609,9 @@ data class AgentGroupLead(
  * @param line one line about what the member is doing or waiting for, or null.
  * @param sinceMillis epoch millis when the member entered [state].
  * @param recordId the session record the member matched, or null when Lunamux does not host it.
+ * @param sessionId the id of the member's background session as the file gave it, or null. It is
+ *   what [WindowCommand.OpenAgentGroupMember] names; the command that attaches to it is built by
+ *   the server and never travels.
  */
 @Serializable
 data class AgentGroupMember(
@@ -619,4 +622,5 @@ data class AgentGroupMember(
     val line: String? = null,
     val sinceMillis: Long = 0,
     val recordId: String? = null,
+    val sessionId: String? = null,
 )

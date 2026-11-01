@@ -247,4 +247,20 @@ class AgentGroupsWatcherTest {
         watcher.reload()
         assertEquals(1, warnings.count { "repeats the id" in it })
     }
+
+    @Test
+    fun `a member keeps the session id the file gives it, trimmed, and none when it is blank or absent`() {
+        write(
+            "g1.json",
+            groupJson(
+                members = listOf(
+                    member("Has id", extra = ",\"sessionId\":\"  ab12cd  \""),
+                    member("Blank id", extra = ",\"sessionId\":\"   \""),
+                    member("No id"),
+                ).joinToString(","),
+            ),
+        )
+        watcher.reload()
+        assertEquals(listOf("ab12cd", null, null), watcher.groups.value.single().members.map { it.sessionId })
+    }
 }

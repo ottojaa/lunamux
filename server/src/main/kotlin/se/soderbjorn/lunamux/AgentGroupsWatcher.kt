@@ -95,6 +95,8 @@ internal data class GroupFileMatch(val agentSessionId: String? = null, val folde
  * @property label a state word for the summary line, such as "in review".
  * @property line one line about what the member is doing.
  * @property since ISO-8601 time the member entered [state].
+ * @property sessionId the id `claude attach` takes for the member's background session; only the id
+ *   is read from the file, the command is always built by the server.
  */
 @Serializable
 internal data class GroupFileMember(
@@ -105,6 +107,7 @@ internal data class GroupFileMember(
     val label: String? = null,
     val line: String? = null,
     val since: String? = null,
+    val sessionId: String? = null,
 )
 
 /**
@@ -269,6 +272,7 @@ class AgentGroupsWatcher(
             members += AgentGroupMember(
                 title = mTitle, links = m.links, state = state!!, label = m.label?.takeIf { it.isNotBlank() },
                 line = m.line?.takeIf { it.isNotBlank() }, sinceMillis = instant(m.since) ?: modified,
+                sessionId = m.sessionId?.trim()?.takeIf { it.isNotEmpty() },
             )
         }
         val url = file.link?.url?.takeIf { it.startsWith("http://") || it.startsWith("https://") }

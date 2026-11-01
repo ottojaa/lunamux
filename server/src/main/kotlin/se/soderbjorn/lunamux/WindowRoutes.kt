@@ -784,6 +784,7 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
         }
         is WindowCommand.ResumeAgentSession -> resumeAgentSession(cmd.recordId, ctx)
         is WindowCommand.OpenAgentGroupLead -> openAgentGroupLead(cmd.groupId, ctx)
+        is WindowCommand.OpenAgentGroupMember -> openAgentGroupMember(cmd.groupId, cmd.sessionId, ctx)
         is WindowCommand.SearchAgentSessions -> ctx.scope.launch {
             // Off the socket's loop: the query reads SQLite and may run git for resume notes.
             runCatching {
@@ -1066,6 +1067,46 @@ internal suspend fun openAgentGroupLead(
         return
     }
     open(group.lead.folder, group.title, command)
+}
+
+/**
+ * Open a programme run in a new tab with `claude attach`.
+ *
+ * Called by [handleWindowCommand] for [WindowCommand.OpenAgentGroupMember]. The group is looked
+ * up in the watcher and the run must be one of its members, so the id that is typed is one the
+ * group file declared; the line itself, `claude attach <id>`, is built here from that id and
+ * never taken from a client. The tab starts in the group's lead folder (the member's own folder
+ * is not in the file) and is named like the run. A group or run that is gone, an id that is not
+ * a plain session id or a lead folder that no longer exists is answered with an
+ * [WindowEnvelope.AgentSessionError] (record id null) and no tab is created.
+ *
+ * @param groupId the [AgentGroup.id] named by the client.
+ * @param sessionId the [AgentGroupMember.sessionId] named by the client.
+ * @param ctx the connection that asked, which receives any error.
+ * @param open opens the tab and types the command; [openTabRunning] except in tests.
+ */
+internal suspend fun openAgentGroupMember(
+    groupId: String,
+    sessionId: String,
+    ctx: WindowConnectionContext,
+    open: (folder: String, title: String, command: String?) -> Unit = ::openTabRunning,
+) {
+    val group = ctx.agentGroups?.find(groupId)?.first
+    val member = group?.members?.firstOrNull { it.sessionId == sessionId }
+    if (group == null || member == null) {
+        ctx.send(WindowEnvelope.AgentSessionError(null, "That run is no longer in its programme."))
+        return
+    }
+    if (!isPlainSessionId(sessionId)) {
+        ctx.send(WindowEnvelope.AgentSessionError(null, "${member.title} has a session id Lunamux will not type into a shell."))
+        return
+    }
+    val folderExists = withContext(Dispatchers.IO) { java.io.File(group.lead.folder).isDirectory }
+    if (!folderExists) {
+        ctx.send(WindowEnvelope.AgentSessionError(null, "The folder of ${group.title} no longer exists: ${group.lead.folder}"))
+        return
+    }
+    open(group.lead.folder, member.title, "claude attach $sessionId")
 }
 
 /**
