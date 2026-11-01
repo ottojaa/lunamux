@@ -65,6 +65,12 @@ private var lastState: AgentsOverviewBackingViewModel.State? = null
 private const val DEFAULT_HINT =
     "type to search · ↑↓ select · ↵ jump or resume · → peek at its screen · ⌘⌫ close session · esc close"
 
+/**
+ * The footer's key legend for a member the file lists but Lunamux does not host: there is no
+ * session to jump to, peek at or close, so those keys are left out.
+ */
+private const val UNHOSTED_HINT = "type to search · ↑↓ select · nothing to open for this member · esc close"
+
 /** Pause after the last key press before the query is sent to the server. */
 private const val SEARCH_DEBOUNCE_MS = 150
 
@@ -309,7 +315,8 @@ private fun renderList(state: AgentsOverviewBackingViewModel.State) {
     val list = listElement ?: return
     list.textContent = ""
     shownRows = state.rows
-    hintElement?.textContent = groupHint(state) ?: DEFAULT_HINT
+    hintElement?.textContent = groupHint(state)
+        ?: if (state.rows.getOrNull(state.selected)?.unhosted == true) UNHOSTED_HINT else DEFAULT_HINT
     if (state.rows.isEmpty()) {
         list.appendChild(div("ao-empty").also { it.textContent = state.emptyText })
         return

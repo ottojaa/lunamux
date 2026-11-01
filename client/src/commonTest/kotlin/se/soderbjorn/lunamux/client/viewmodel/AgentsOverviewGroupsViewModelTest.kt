@@ -298,6 +298,18 @@ class AgentsOverviewGroupsViewModelTest {
     }
 
     @Test
+    fun theMoreRowDoesNotCountAQuietLeadThatTheHeaderCountsLeaveOut() {
+        layout("leaf-lead")
+        show(
+            listOf(group(members = listOf(member("a", "idle", label = "ready to test")), leadRecord = "lead", leadLive = true)),
+            session("lead", "idle"),
+        )
+        val rows = vm.state.rows
+        assertEquals("1 ready to test", vm.state.groups.getValue("g1").summary)
+        assertEquals("1 more", rows.single { it.id == "more:g1" }.title)
+    }
+
+    @Test
     fun aWorkingRowThatLunamuxHostsCarriesItsLastSignOfLifeAndNothingElseDoes() {
         layout("leaf-w1", "leaf-w2", "leaf-i1")
         show(

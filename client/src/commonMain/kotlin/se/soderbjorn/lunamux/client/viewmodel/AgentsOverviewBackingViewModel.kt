@@ -911,7 +911,11 @@ class AgentsOverviewBackingViewModel(
                 label = m.label,
             )
         }
-        val hidden = if (expanded) emptyList() else memberRows.filter { (m, _) -> m.state != NEEDS_YOU }
+        // A quiet lead is left out of the header counts, so it is left out of "N more" as well: the
+        // two must add up to the same members.
+        val hidden = if (expanded) emptyList() else memberRows.filter { (m, _) ->
+            m.state != NEEDS_YOU && (u.leadId == null || m.recordId != u.leadId || m.state == WORKING)
+        }
         val shown = if (expanded) memberRows else memberRows.filter { (m, _) -> m.state == NEEDS_YOU }
         val more = if (hidden.isEmpty()) emptyList() else listOf(
             Row(
