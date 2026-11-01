@@ -482,7 +482,7 @@ private fun buildGroupHeader(
     counts.asDynamic().type = "button"
     counts.className = "ao-counts"
     if (group != null) {
-        if (group.needYouCount > 0) counts.appendChild(span("ao-counts-need", "${group.needYouCount} need you"))
+        if (group.needYouCount > 0) counts.appendChild(span("ao-counts-need", "${group.needYouCount} needs you"))
         if (group.needYouCount > 0 && group.summary.isNotEmpty()) counts.appendChild(span("ao-counts-rest", " · "))
         counts.appendChild(span("ao-counts-rest", group.summary))
     }

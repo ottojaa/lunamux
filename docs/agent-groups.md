@@ -16,7 +16,7 @@ build a file under a dot-name and rename it into place.
 ## What the person sees
 
 - The box has a header (title, a tag pill, the repo, a link chip) and a count line such as
-  **1 need you** · 1 working · 1 in review.
+  **1 needs you** · 1 working · 1 in review.
 - Collapsed, only the members that need the user show, followed by a `+ 1 working, 1 in review`
   line. ↵ on it, or a click on the chevron or the count line, shows every member.
 - The box sits in **NOW** while any member needs the user or works, ranked by its most urgent

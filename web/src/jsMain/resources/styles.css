@@ -3716,9 +3716,11 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     border: 1px solid #2a5662;
     border-radius: 10px 10px 0 0;
     align-items: center;
-    /* The title column takes the width its title and chips need, so the counts never squeeze it. */
-    grid-template-columns: 22px minmax(0, max-content) minmax(0, 1fr) 64px 150px;
+    /* The title column takes the width its title and chips need, up to half the row, so a long
+       title shortens with an ellipsis and the counts keep room to be read. */
+    grid-template-columns: 22px fit-content(50%) minmax(0, 1fr) 64px 150px;
 }
+.ao-group .ao-repo { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ao-group.ao-group-end { border-radius: 10px; }
 .ao-group.ao-selected { border-color: var(--t-accent, #56d4e6); }
 .ao-chevron {
