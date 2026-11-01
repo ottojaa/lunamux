@@ -506,15 +506,18 @@ class SettingsRepository(
     }
 
     /**
-     * The most recently ended records, newest first.
+     * The most recently ended records that ended at or after [since], newest first.
      *
-     * Called by the tracker when it builds the list pushed to clients.
+     * Called by the tracker when it builds the list pushed to clients, and by
+     * tests that read back what was saved. Imported history is never returned:
+     * it is only found by search.
      *
-     * @param limit how many to return.
-     * @return ended records ordered by end time.
+     * @param since earliest end time to include, in epoch milliseconds (inclusive).
+     * @param limit how many to return at most.
+     * @return ended records ordered by end time, newest first.
      */
-    fun loadRecentEndedAgentSessions(limit: Long): List<AgentSessionRecord> =
-        database.settingsQueries.selectRecentEndedAgentSessions(limit, ::toAgentSessionRecord).executeAsList()
+    fun loadRecentEndedAgentSessions(since: Long, limit: Long): List<AgentSessionRecord> =
+        database.settingsQueries.selectRecentEndedAgentSessions(since, limit, ::toAgentSessionRecord).executeAsList()
 
     /**
      * Look up a record by the agent's own session id.
@@ -674,6 +677,19 @@ class SettingsRepository(
             )
         }.executeAsList()
     }
+
+    /**
+     * The records stored with one of [taskIds], newest first, at most 200.
+     *
+     * Called by [se.soderbjorn.lunamux.AgentSessionSearch] so a query that matches a task's
+     * title finds that task's sessions however old they are. Imported history is included.
+     *
+     * @param taskIds the tasks to read; empty gives an empty list without querying.
+     * @return the records, with no transcript or screen windows.
+     */
+    fun loadAgentSessionsOfTasks(taskIds: Collection<String>): List<AgentSessionRecord> =
+        if (taskIds.isEmpty()) emptyList()
+        else database.settingsQueries.selectAgentSessionsByTaskIds(taskIds, ::toAgentSessionRecord).executeAsList()
 
     /**
      * Read a raw string value from the settings key/value store.

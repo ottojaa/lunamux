@@ -157,7 +157,7 @@ class AgentSessionTracker(
     fun start() = synchronized(lock) {
         repo.endOpenAgentSessions(clock())
         records.clear()
-        repo.loadRecentEndedAgentSessions(RECENT_ENDED).forEach { records[it.id] = it }
+        repo.loadRecentEndedAgentSessions(clock() - HISTORY_WINDOW_MS, HISTORY_MAX).forEach { records[it.id] = it }
         publish()
     }
 
@@ -539,10 +539,17 @@ class AgentSessionTracker(
             .onFailure { log.warn("Failed to persist agent session {}", stored.id, it) }
     }
 
-    /** Drop the oldest ended records from memory beyond [RECENT_ENDED]; they stay in the database. */
+    /**
+     * Drop ended records from memory once they are older than [HISTORY_WINDOW_MS]
+     * or beyond the newest [HISTORY_MAX]; they stay in the database and search
+     * still finds them. Called after a record ends.
+     */
     private fun trim() {
+        val oldest = clock() - HISTORY_WINDOW_MS
         val ended = records.values.filter { it.state == ENDED }.sortedByDescending { it.endedAt }
-        ended.drop(RECENT_ENDED.toInt()).forEach { records.remove(it.id) }
+        ended.forEachIndexed { index, rec ->
+            if (index >= HISTORY_MAX || (rec.endedAt ?: 0L) < oldest) records.remove(rec.id)
+        }
     }
 
     private fun openRecords() = records.values.filter { it.state != ENDED }
@@ -562,7 +569,20 @@ class AgentSessionTracker(
         const val WORKING = "working"
         const val IDLE = "idle"
         const val ENDED = "ended"
-        const val RECENT_ENDED = 50L
+
+        /**
+         * How far back ended sessions are kept in memory and pushed to clients: the
+         * overview lists two weeks. The edge is inclusive here; the client lists no
+         * more than this, so a row it shows is never missing from the server.
+         */
+        const val HISTORY_WINDOW_MS = 14L * 24 * 60 * 60 * 1000
+
+        /**
+         * Most ended records held in memory. [publish] sends every record held on each
+         * change, so this bounds the payload (a summary is a few hundred bytes, so
+         * 300 is about 100 KB at worst) however busy two weeks were.
+         */
+        const val HISTORY_MAX = 300L
 
         /** How old a screen-derived activity stamp must be before a working poll renews it. */
         const val ACTIVITY_REFRESH_MS = 30_000L

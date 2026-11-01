@@ -11,6 +11,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import se.soderbjorn.lunamux.persistence.AgentSessionRecord
 import se.soderbjorn.lunamux.persistence.SettingsRepository
 import java.io.File
 import kotlin.test.Test
@@ -397,6 +398,52 @@ class AgentSessionTrackerTest {
         assertEquals("ended", row.state)
         assertEquals(9_000, row.endedAt)
         assertNotEquals(null, restarted.find(row.id))
+    }
+
+    @Test
+    fun `a restart brings back ended records from the last fourteen days, the edge included, and no older`() {
+        val day = 24L * 60 * 60 * 1000
+        now = 100 * day
+        fun ended(id: String, at: Long, source: String = "hooks") = repo.saveAgentSession(
+            AgentSessionRecord(id = id, agent = "claude", source = source, state = "ended", stateSince = at,
+                createdAt = at, endedAt = at),
+        )
+        ended("fresh", now - day)
+        ended("edge", now - 14 * day)
+        ended("stale", now - 14 * day - 1)
+        ended("imported", now - day, source = "import")
+        assertEquals(setOf("fresh", "edge"), tracker().summaries.value.map { it.id }.toSet())
+    }
+
+    @Test
+    fun `ended records beyond the newest three hundred stay out of memory but in the database`() {
+        now = 1_000_000
+        repeat(310) { i ->
+            repo.saveAgentSession(
+                AgentSessionRecord(id = "e$i", agent = "claude", source = "hooks", state = "ended",
+                    stateSince = now - i, createdAt = now - i, endedAt = now - i),
+            )
+        }
+        val t = tracker()
+        assertEquals(300, t.summaries.value.size)
+        assertEquals(false, t.summaries.value.any { it.id == "e300" })
+        assertNotEquals(null, t.find("e300"))
+    }
+
+    @Test
+    fun `a record that ends drops the ended records that have aged out of the window`() {
+        val day = 24L * 60 * 60 * 1000
+        now = 100 * day
+        val t = tracker()
+        t.onHook(pane(), event("SessionStart", "a-1"))
+        t.onHook(pane(), event("SessionEnd", "a-1"))
+        assertEquals(1, t.summaries.value.size)
+        // The first record stays in memory until another one ends and trims.
+        now += 15 * day
+        t.onHook(pane("s2"), event("SessionStart", "a-2"))
+        t.onHook(pane("s2"), event("SessionEnd", "a-2"))
+        assertEquals(1, t.summaries.value.size)
+        assertEquals(now, t.summaries.value.single().endedAt)
     }
 
     @Test

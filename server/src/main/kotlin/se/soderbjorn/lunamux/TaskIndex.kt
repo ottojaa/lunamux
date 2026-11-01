@@ -125,6 +125,49 @@ class TaskIndex(
     fun fileTask(taskId: String): TaskFile? = files.value.firstOrNull { it.id == taskId }
 
     /**
+     * The name of a task, whether or not any session of it is in memory.
+     *
+     * Called by [AgentSessionSearch] to label a match and to find the sessions of a task whose
+     * title matches the query. Unlike [state], which lists only tasks that hold a session in
+     * memory, this knows every task file and every agent-made task row. A task file's title wins
+     * over the row with the same id.
+     *
+     * @param taskId the task's id.
+     * @return the title, or null when no file and no row has that id.
+     */
+    fun titleOf(taskId: String): String? = synchronized(lock) {
+        files.value.firstOrNull { it.id == taskId }?.title ?: rows.firstOrNull { it.id == taskId }?.title
+    }
+
+    /**
+     * The ids of the tasks whose title contains [text], ignoring case.
+     *
+     * Called by [AgentSessionSearch] before it queries, so sessions that ended long ago are
+     * found through their task even though no field of their own matches.
+     *
+     * @param text what the user typed, already trimmed.
+     * @return task ids from files and agent-made rows, using each task's effective title.
+     */
+    fun taskIdsTitled(text: String): Set<String> = synchronized(lock) {
+        (files.value.map { it.id } + rows.map { it.id }).toSet()
+            .filter { titleOf(it)?.contains(text, ignoreCase = true) == true }
+            .toSet()
+    }
+
+    /**
+     * The task a record belongs to, as the overview shows it.
+     *
+     * Called by [AgentSessionSearch]. A session in memory takes the assignment [state] made; one
+     * that is only in the database falls back to the task id it was stored with, if that task
+     * still exists.
+     *
+     * @param record the session record.
+     * @return the task id, or null when the session is a task of its own.
+     */
+    fun taskIdOf(record: AgentSessionRecord): String? =
+        _state.value.assignment[record.id] ?: record.taskId?.takeIf { titleOf(it) != null }
+
+    /**
      * Rebuild [state] from the files, the task rows and the records. Cheap enough to run on every
      * record change; called by [start]'s collector and by every mutating method.
      */

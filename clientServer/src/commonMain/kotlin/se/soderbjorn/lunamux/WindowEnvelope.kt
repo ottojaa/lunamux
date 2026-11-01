@@ -290,7 +290,8 @@ sealed class WindowEnvelope {
      *   arrives after the user typed something else
      * @param matches at most 50, best first: title, first prompt, branch or
      *   links, then transcript or last screen; open sessions before ended ones,
-     *   newest first within each
+     *   newest first within each. A session whose task's title holds the query
+     *   comes after the title matches and before the first-prompt ones.
      * @see AgentSessionMatch
      */
     @Serializable
@@ -393,15 +394,17 @@ data class AgentSessionSummary(
  * where the query was found in it.
  *
  * @param summary the session, with its live state when it is open
- * @param field where the best match is: `title`, `prompt`, `branch`, `links`,
- *   `transcript` or `screen`
+ * @param field where the best match is: `title`, `task`, `prompt`, `branch`,
+ *   `links`, `transcript` or `screen`
  * @param snippet about 40 characters either side of the match on one line, or
- *   null for a `title` match (the title itself is highlighted)
+ *   null for a `title` or `task` match (the title itself is highlighted)
  * @param start where the match begins inside [snippet], or inside the title
- *   for a `title` match
+ *   for a `title` match, or inside [taskTitle] for a `task` match
  * @param length how many characters the match covers
  * @param resumeNote what Resume would do for an ended session whose folder is gone
  *   (see [WindowEnvelope.AgentSessionInspection.resumeNote]); null otherwise
+ * @param taskTitle the title of the task the session belongs to, set on every match
+ *   of a session that is in a task, so the result can say "in task X"; null otherwise
  */
 @Serializable
 data class AgentSessionMatch(
@@ -411,6 +414,7 @@ data class AgentSessionMatch(
     val start: Int = 0,
     val length: Int = 0,
     val resumeNote: String? = null,
+    val taskTitle: String? = null,
 )
 
 /**
