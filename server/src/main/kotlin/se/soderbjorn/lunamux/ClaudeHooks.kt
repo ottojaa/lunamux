@@ -12,7 +12,7 @@
  * (exit 0, no output) when they are absent, so Claude Code runs outside
  * Lunamux are unaffected.
  *
- * @see AgentEventRoutes
+ * @see agentEventRoutes
  * @see AgentSessionTracker
  */
 package se.soderbjorn.lunamux
@@ -37,10 +37,11 @@ import java.nio.file.StandardCopyOption
  * Reads and edits the `hooks` section of a Claude Code settings file.
  *
  * Every other key in the file is passed through untouched. The file is
- * parsed first and never written if it is not valid JSON; before a change the
- * old file is copied to `<name>.bak`, and the new content is written to a
- * temporary file and moved into place so a crash cannot leave a half-written
- * file.
+ * parsed first and never written if it is not valid JSON. Before the first
+ * change the user's file is copied to `<name>.bak` (later edits leave that copy
+ * alone), and the new content is written to a temporary file next to the real
+ * file and moved into place, so a crash cannot leave a half-written file and a
+ * symlinked settings file stays a symlink.
  *
  * Created once in `main()`; the `/window` socket reads [connected] and calls
  * [connect] / [disconnect] for the App Settings row.
@@ -115,11 +116,20 @@ class ClaudeHooks(
         } else JsonObject(emptyMap())
         val next = transform(root)
         return runCatching {
-            file.absoluteFile.parentFile?.mkdirs()
-            if (file.exists()) Files.copy(file.toPath(), File(file.path + ".bak").toPath(), StandardCopyOption.REPLACE_EXISTING)
-            val tmp = File(file.path + ".lunamux-tmp")
-            tmp.writeText(PRETTY.encodeToString(JsonElement.serializer(), next) + "\n")
-            Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+            // Work on the real file so a symlinked settings file stays a symlink and keeps its mode.
+            val target = if (file.exists()) file.toPath().toRealPath() else file.toPath()
+            target.toFile().absoluteFile.parentFile?.mkdirs()
+            if (Files.exists(target)) {
+                // Keep the user's own file: the backup is made once and never overwritten by a later edit.
+                val backup = File(target.toString() + ".bak").toPath()
+                if (!Files.exists(backup)) Files.copy(target, backup)
+            }
+            val tmp = File(target.toString() + ".lunamux-tmp").toPath()
+            Files.write(tmp, (PRETTY.encodeToString(JsonElement.serializer(), next) + "\n").toByteArray())
+            if (Files.exists(target)) {
+                runCatching { Files.setPosixFilePermissions(tmp, Files.getPosixFilePermissions(target)) }
+            }
+            Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
             _connected.value = readConnected()
             null
         }.getOrElse { "Could not write ${file.path}: ${it.message}" }

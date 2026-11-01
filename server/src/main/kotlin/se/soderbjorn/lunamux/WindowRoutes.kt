@@ -291,7 +291,9 @@ internal class WindowConnectionContext(
      * active world; old clients always add to the default (first) world.
      */
     val supportsWorlds: Boolean = false,
+    /** The agent session record behind the agents overview; null where the overview is not wired up. */
     val agentTracker: AgentSessionTracker? = null,
+    /** The Claude Code settings editor behind the App Settings Connect row; null where it is not wired up. */
     val claudeHooks: ClaudeHooks? = null,
 ) {
     private val gitWatchers = ConcurrentHashMap<String, GitWatchHandle>()
@@ -914,6 +916,16 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
 }
 
 /**
+ * Whether [id] is safe to type into a shell as an argument: letters, digits,
+ * `-` and `_` only. Claude's own ids are UUIDs, but the id in a record came
+ * from a hook request body, so it is checked before it reaches the PTY.
+ *
+ * @param id the agent's session id as stored on the record.
+ * @return true when it contains nothing the shell would interpret.
+ */
+private fun isPlainSessionId(id: String): Boolean = id.isNotEmpty() && id.length <= 100 && id.all { it.isLetterOrDigit() || it == '-' || it == '_' }
+
+/**
  * Open a new tab for an agent session and start its agent again.
  *
  * Called by [handleWindowCommand] for [WindowCommand.ResumeAgentSession]. The
@@ -938,7 +950,7 @@ private suspend fun resumeAgentSession(recordId: String, ctx: WindowConnectionCo
         return
     }
     val command = when (rec.agent) {
-        "claude" -> rec.agentSessionId?.let { "claude --resume $it" } ?: "claude --continue"
+        "claude" -> rec.agentSessionId?.takeIf(::isPlainSessionId)?.let { "claude --resume $it" } ?: "claude --continue"
         "codex" -> "codex resume"
         else -> null
     }

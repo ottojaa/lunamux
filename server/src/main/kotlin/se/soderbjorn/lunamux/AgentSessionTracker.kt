@@ -35,7 +35,8 @@ import se.soderbjorn.lunamux.persistence.AgentSessionRecord
 import se.soderbjorn.lunamux.persistence.SettingsRepository
 import java.io.File
 import java.util.UUID
-import java.util.concurrent.TimeUnit
+import java.nio.file.Path
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * What the tracker needs to know about one live terminal session.
@@ -107,6 +108,12 @@ class AgentSessionTracker(
     /** Ids of hook-fed `needs_you` records whose pane screen has been seen showing the prompt. */
     private val promptSeen = HashSet<String>()
 
+    /**
+     * Git facts per folder, filled by [warmGit] before the lock is taken so a slow
+     * repository never holds up closing panes; [open] only reads it.
+     */
+    private val gitCache = ConcurrentHashMap<String, Pair<Long, GitInfo>>()
+
     private val _summaries = MutableStateFlow<List<AgentSessionSummary>>(emptyList())
 
     /**
@@ -139,7 +146,15 @@ class AgentSessionTracker(
      *
      * @param panes every live terminal session.
      */
-    fun onPoll(panes: List<PaneSnapshot>) = synchronized(lock) {
+    fun onPoll(panes: List<PaneSnapshot>) {
+        val toOpen = synchronized(lock) {
+            panes.filter { it.alive && it.agent != null && it.state != null && openFor(it.terminalSessionId) == null }
+        }
+        toOpen.forEach { warmGit(it.cwd) }
+        applyPoll(panes)
+    }
+
+    private fun applyPoll(panes: List<PaneSnapshot>) = synchronized(lock) {
         val live = panes.associateBy { it.terminalSessionId }
         for (r in openRecords()) {
             val pane = live[r.terminalSessionId]
@@ -195,8 +210,14 @@ class AgentSessionTracker(
      * @param pane the pane the event came from; events from unknown panes are ignored.
      * @param event the hook's stdin JSON.
      */
-    fun onHook(pane: PaneSnapshot?, event: JsonObject) = synchronized(lock) {
-        if (pane == null) return@synchronized
+    fun onHook(pane: PaneSnapshot?, event: JsonObject) {
+        if (pane == null) return
+        val known = synchronized(lock) { openFor(pane.terminalSessionId)?.agentSessionId }
+        if (known == null || known != event.str("session_id")) warmGit(pane.cwd)
+        applyHook(pane, event)
+    }
+
+    private fun applyHook(pane: PaneSnapshot, event: JsonObject) = synchronized(lock) {
         val name = event.str("hook_event_name") ?: return@synchronized
         val agentId = event.str("session_id")
         val transcript = event.str("transcript_path")
@@ -221,8 +242,12 @@ class AgentSessionTracker(
             "PostToolUse" -> set(WORKING)
             "Notification" -> {
                 // The idle reminder fires a minute after a turn ends and is not a request.
-                if (event.str("notification_type") == "idle_prompt") return@synchronized
-                set(NEEDS_YOU, nowLine = null, question = event.str("message")?.take(QUESTION_MAX))
+                // It is recognised by its type, or by its text in case a version omits the type.
+                val message = event.str("message")
+                if (event.str("notification_type") == "idle_prompt" ||
+                    message?.contains("waiting for your input", ignoreCase = true) == true
+                ) return@synchronized
+                set(NEEDS_YOU, nowLine = null, question = message?.take(QUESTION_MAX))
             }
             "Stop" -> {
                 val last = event.str("last_assistant_message")?.trim().orEmpty()
@@ -318,10 +343,19 @@ class AgentSessionTracker(
         return open(pane, CLAUDE, SOURCE_HOOKS, agentId, transcript)
     }
 
+    /** Read git facts for [cwd] unless a read from the last minute is cached. Never call with the lock held. */
+    private fun warmGit(cwd: String?) {
+        if (cwd.isNullOrBlank()) return
+        val now = clock()
+        val cached = gitCache[cwd]
+        if (cached != null && now - cached.first < GIT_CACHE_MS) return
+        gitCache[cwd] = now to gitInfo(cwd)
+    }
+
     private fun open(
         pane: PaneSnapshot, agent: String, source: String, agentSessionId: String?, transcriptPath: String?,
     ): AgentSessionRecord {
-        val git = gitInfo(pane.cwd)
+        val git = pane.cwd?.let { gitCache[it]?.second } ?: GitInfo()
         val now = clock()
         return AgentSessionRecord(
             id = newId(),
@@ -396,6 +430,7 @@ class AgentSessionTracker(
         const val RECENT_ENDED = 50L
         const val PROMPT_MAX = 500
         const val QUESTION_MAX = 400
+        const val GIT_CACHE_MS = 60_000L
     }
 }
 
@@ -478,13 +513,8 @@ fun readGitInfo(cwd: String?): GitInfo {
     )
 }
 
-private fun git(cwd: String, vararg args: String): String? = runCatching {
-    val p = ProcessBuilder(listOf("git", "-C", cwd) + args).redirectErrorStream(false).start()
-    p.outputStream.close()
-    val out = p.inputStream.bufferedReader().readText().trim()
-    if (!p.waitFor(3, TimeUnit.SECONDS)) { p.destroyForcibly(); return@runCatching null }
-    if (p.exitValue() == 0) out else null
-}.getOrNull()
+private fun git(cwd: String, vararg args: String): String? =
+    GitCatalog.runGit(Path.of(cwd), *args)?.trim()
 
 /**
  * Snapshot a live terminal session for the tracker.

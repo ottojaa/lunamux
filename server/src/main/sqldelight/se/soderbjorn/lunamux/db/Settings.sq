@@ -63,9 +63,6 @@ INSERT OR REPLACE INTO agent_sessions(
     question, last_screen, created_at, ended_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
-selectOpenAgentSessions:
-SELECT * FROM agent_sessions WHERE state != 'ended' ORDER BY created_at;
-
 selectRecentEndedAgentSessions:
 SELECT * FROM agent_sessions WHERE state = 'ended' ORDER BY ended_at DESC LIMIT ?;
 

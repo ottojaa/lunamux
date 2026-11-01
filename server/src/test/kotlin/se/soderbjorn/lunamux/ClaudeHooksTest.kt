@@ -72,6 +72,31 @@ class ClaudeHooksTest {
     }
 
     @Test
+    fun `the backup keeps the file from before Lunamux across connect and disconnect`() {
+        file.writeText(userSettings)
+        val hooks = ClaudeHooks(file)
+        assertNull(hooks.connect())
+        assertNull(hooks.disconnect())
+        assertEquals(userSettings, File(file.path + ".bak").readText())
+    }
+
+    @Test
+    fun `a symlinked settings file stays a symlink and the target receives the change`() {
+        val real = File(dir, "dotfiles/claude-settings.json").apply { parentFile.mkdirs(); writeText(userSettings) }
+        java.nio.file.Files.createSymbolicLink(file.toPath(), real.toPath())
+        val hooks = ClaudeHooks(file)
+
+        assertNull(hooks.connect())
+        assertTrue(java.nio.file.Files.isSymbolicLink(file.toPath()))
+        assertTrue(real.readText().contains("lunamux-agent-events"))
+        assertTrue(hooks.connected.value)
+
+        assertNull(hooks.disconnect())
+        assertTrue(java.nio.file.Files.isSymbolicLink(file.toPath()))
+        assertFalse(real.readText().contains("lunamux-agent-events"))
+    }
+
+    @Test
     fun `connecting twice does not duplicate the entries`() {
         file.writeText(userSettings)
         val hooks = ClaudeHooks(file)

@@ -17,6 +17,7 @@ package se.soderbjorn.lunamux.client.viewmodel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import se.soderbjorn.lunamux.AgentSessionSummary
 import se.soderbjorn.lunamux.LeafNode
@@ -137,15 +138,33 @@ class AgentsOverviewBackingViewModel(
         windowState.agentSessionError,
         ui,
     ) { sessions, config, error, ui -> build(sessions, config, error, ui) }
+        .onEach { settleResume() }
 
     /** The state right now, for key handlers that must act on what is on screen. */
     val state: State
-        get() = build(
-            windowState.agentSessions.value,
-            windowState.config.value,
-            windowState.agentSessionError.value,
-            ui.value,
-        )
+        get() {
+            settleResume()
+            return build(
+                windowState.agentSessions.value,
+                windowState.config.value,
+                windowState.agentSessionError.value,
+                ui.value,
+            )
+        }
+
+    /**
+     * Forget a resume once its new tab is active, so the overlay is closed for good
+     * rather than hidden: returning to the tab the user started from must not
+     * bring it back.
+     */
+    private fun settleResume() {
+        val current = ui.value
+        if (current.resumingId != null &&
+            windowState.config.value?.effectiveActiveTabId != current.resumeFromTab
+        ) {
+            ui.value = Ui()
+        }
+    }
 
     /** Show the overlay with an empty search and the first row selected. Called by ⌘⇧A and the chip. */
     fun open() {
@@ -259,7 +278,8 @@ class AgentsOverviewBackingViewModel(
         val showAll = ui.showAllEarlier || query.isNotEmpty()
         val earlier = if (showAll) earlierAll else earlierAll.take(EARLIER_LIMIT)
         val visible = now.size + earlier.size
-        // Once a resume has switched to the new tab the overlay has done its job.
+        // Once a resume has switched to the new tab the overlay has done its job;
+        // settleResume then resets the inputs so it stays closed.
         val resumed = ui.resumingId != null && config?.effectiveActiveTabId != ui.resumeFromTab
         return State(
             open = ui.open && !resumed,

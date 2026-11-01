@@ -474,16 +474,6 @@ class SettingsRepository(
     }
 
     /**
-     * Every record that has not ended, oldest first.
-     *
-     * Called by the tracker at startup to close records a crash left open.
-     *
-     * @return the open records, including their `lastScreen`.
-     */
-    fun loadOpenAgentSessions(): List<AgentSessionRecord> =
-        database.settingsQueries.selectOpenAgentSessions(::toAgentSessionRecord).executeAsList()
-
-    /**
      * The most recently ended records, newest first.
      *
      * Called by the tracker when it builds the list pushed to clients.

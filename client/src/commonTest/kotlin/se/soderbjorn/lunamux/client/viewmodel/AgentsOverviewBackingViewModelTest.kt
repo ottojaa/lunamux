@@ -196,6 +196,19 @@ class AgentsOverviewBackingViewModelTest {
     }
 
     @Test
+    fun returningToTheTabAResumeStartedFromDoesNotReopenTheOverlay() = runNow {
+        layout(leaf("leaf-x"))
+        windowState.updateAgentSessions(listOf(session("old", "ended", leaf = null, endedAt = 9)), true)
+        vm.open()
+        vm.activateSelected()
+        windowState.updateConfig(WindowConfig(tabs = listOf(TabConfig("tab-1", "one"), TabConfig("tab-2", "two")), activeTabId = "tab-2"))
+        assertFalse(vm.state.open)
+
+        windowState.updateConfig(WindowConfig(tabs = listOf(TabConfig("tab-1", "one"), TabConfig("tab-2", "two")), activeTabId = "tab-1"))
+        assertFalse(vm.state.open)
+    }
+
+    @Test
     fun aFailedResumeShowsItsMessageOnTheRow() = runNow {
         layout(leaf("leaf-x"))
         windowState.updateAgentSessions(listOf(session("old", "ended", leaf = null, endedAt = 9)), true)

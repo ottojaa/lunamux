@@ -169,6 +169,17 @@ class AgentSessionTrackerTest {
     }
 
     @Test
+    fun `the idle reminder is recognised by its text when the type is missing`() {
+        val t = tracker()
+        val p = pane()
+        t.onHook(p, event("Stop", "a-1", "last_assistant_message" to "Done."))
+        t.onHook(p, event("Notification", "a-1", "message" to "Claude is waiting for your input"))
+        assertEquals("idle", t.summaries.value.single().state)
+        t.onHook(p, event("Notification", "a-1", "message" to "Claude needs your permission to use Bash"))
+        assertEquals("needs_you", t.summaries.value.single().state)
+    }
+
+    @Test
     fun `session end closes the record with the screen and the lingering screen state does not reopen it`() {
         val t = tracker()
         val p = pane(screen = "bye")
