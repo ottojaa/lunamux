@@ -127,6 +127,7 @@ class AgentSessionTrackerTest {
         assertEquals("Bash", row.nowLine)
         assertEquals("Refactor tracker", row.title)
         assertEquals("please run the tests", repo.findAgentSessionById(row.id)!!.firstPrompt)
+        assertEquals("please run the tests", row.firstPrompt, "the summary carries the first prompt for the overview")
 
         t.onHook(p, toolEvent("Bash", """{"command":"./gradlew test\nsecond line","description":"x"}"""))
         assertEquals("Bash ./gradlew test", t.summaries.value.single().nowLine)
@@ -429,5 +430,12 @@ class AgentSessionTrackerTest {
         row = t.summaries.value.single()
         assertEquals("ended", row.state)
         assertNull(row.lastActivityAt)
+    }
+
+    @Test
+    fun `a first prompt is cut to its first non-blank line and a sane length`() {
+        assertEquals("fix the bug", firstPromptLine("\n  fix the bug  \nthen more\n"))
+        assertNull(firstPromptLine("   \n\t"))
+        assertEquals(160, firstPromptLine("x".repeat(500))!!.length)
     }
 }

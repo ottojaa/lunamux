@@ -355,6 +355,9 @@ sealed class WindowEnvelope {
  *   (a prompt, a tool starting or finishing, a stop), or null when none has arrived since the
  *   server started. [stateSince] cannot stand in for it, because it does not move while an
  *   agent keeps working; the overview uses this to tell a busy session from a hung one.
+ * @param firstPrompt first line of what the user first asked the session, at most 160 characters,
+ *   or null before a prompt was seen; the overview shows it after "❯" when a row has no tool line
+ *   or last reply of its own.
  */
 @Serializable
 data class AgentSessionSummary(
@@ -373,6 +376,7 @@ data class AgentSessionSummary(
     val endedAt: Long? = null,
     val lastSaid: String? = null,
     val lastActivityAt: Long? = null,
+    val firstPrompt: String? = null,
 )
 
 /**

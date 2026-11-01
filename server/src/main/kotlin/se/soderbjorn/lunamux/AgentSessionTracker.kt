@@ -518,9 +518,23 @@ internal fun AgentSessionRecord.toSummary() = AgentSessionSummary(
     title = title, links = links, repo = repo, branch = branch, cwd = cwd,
     nowLine = nowLine, question = question, leafId = leafId, endedAt = endedAt,
     lastSaid = lastSaid,
+    firstPrompt = firstPrompt?.let(::firstPromptLine),
 )
 
 private const val TOOL_LINE_MAX = 160
+private const val FIRST_PROMPT_MAX = 160
+
+/**
+ * The first line of what the user first asked a session, cut for a status cell.
+ *
+ * Called by [toSummary]; the overview shows it after "❯" for a row that has no tool line or
+ * last reply to show.
+ *
+ * @param prompt the stored first prompt (up to 500 characters, any number of lines).
+ * @return its first non-blank line, at most [FIRST_PROMPT_MAX] characters, or null when blank.
+ */
+internal fun firstPromptLine(prompt: String): String? =
+    prompt.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }?.take(FIRST_PROMPT_MAX)
 private const val LAST_SAID_MAX = 160
 
 /**

@@ -80,10 +80,10 @@ class AgentsOverviewBackingViewModelTest {
     }
 
     @Test
-    fun earlierHoldsIdleAndEndedNewestFirstAndCutsAtFiveUntilMore() {
+    fun earlierListsOpenIdleSessionsThenClosedOnesNewestFirstAndCutsAtFiveUntilMore() {
         val rows = (1..7).map { session("e$it", if (it % 2 == 0) "idle" else "ended", since = it * 1_000L, endedAt = it * 1_000L) }
         windowState.updateAgentSessions(rows, false)
-        assertEquals(listOf("e7", "e6", "e5", "e4", "e3"), vm.state.earlier.map { it.id })
+        assertEquals(listOf("e6", "e4", "e2", "e7", "e5"), vm.state.earlier.map { it.id })
         assertEquals(2, vm.state.earlierHidden)
         vm.showMoreEarlier()
         assertEquals(7, vm.state.earlier.size)
@@ -104,9 +104,24 @@ class AgentsOverviewBackingViewModelTest {
     }
 
     @Test
-    fun chipHidesWhenNothingNeedsYouOrWorks() {
-        windowState.updateAgentSessions(listOf(session("d", "idle"), session("e", "ended", endedAt = 5)), true)
+    fun chipStaysWhenAllAgentsAreIdleAndSaysSoAndOnlyHidesWithNoSessionsAtAll() {
         assertFalse(vm.state.chipVisible)
+        windowState.updateAgentSessions(listOf(session("d", "idle"), session("e", "ended", endedAt = 5)), true)
+        assertTrue(vm.state.chipVisible)
+        assertNull(vm.state.chipNeeds)
+        assertEquals("agents idle", vm.state.chipRest)
+    }
+
+    @Test
+    fun chipWordingFollowsTheCounts() {
+        fun chip(vararg rows: AgentSessionSummary): Pair<String?, String?> {
+            windowState.updateAgentSessions(rows.toList(), true)
+            return vm.state.chipNeeds to vm.state.chipRest
+        }
+        assertEquals("2 need you" to "1 working", chip(session("a", "needs_you"), session("b", "needs_you"), session("c", "working")))
+        assertEquals("1 needs you" to null, chip(session("a", "needs_you")))
+        assertEquals(null to "3 working", chip(session("a", "working"), session("b", "working"), session("c", "working")))
+        assertEquals(null to "agents idle", chip(session("a", "idle")))
     }
 
     @Test
@@ -178,7 +193,7 @@ class AgentsOverviewBackingViewModelTest {
         assertEquals(0 to 6, s.rows[0].matchStart to s.rows[0].matchLength)
         assertEquals("…a needle here…", s.rows[1].snippet)
         assertEquals("Worktree removed. Resume recreates it from branch x.", s.rows[2].resumeNote)
-        assertEquals("Resume", s.rows[2].actionLabel)
+        assertEquals("resume", s.rows[2].actionLabel)
     }
 
     @Test
@@ -205,7 +220,7 @@ class AgentsOverviewBackingViewModelTest {
         val row = vm.state.rows.single()
         assertEquals("needs_you", row.state)
         assertTrue(row.isLive)
-        assertEquals("Jump", row.actionLabel)
+        assertEquals("jump", row.actionLabel)
     }
 
     @Test
@@ -417,7 +432,7 @@ class AgentsOverviewBackingViewModelTest {
         layout(leaf("leaf-x"))
         windowState.updateAgentSessions(listOf(session("old", "ended", leaf = null, endedAt = 9)), true)
         vm.open()
-        assertEquals("Resume", vm.state.rows.single().actionLabel)
+        assertEquals("resume", vm.state.rows.single().actionLabel)
         vm.activateSelected()
         assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("old")), sent)
         assertTrue(vm.state.open)
@@ -455,6 +470,6 @@ class AgentsOverviewBackingViewModelTest {
     @Test
     fun geminiOffersOpenFolderInsteadOfResume() {
         windowState.updateAgentSessions(listOf(session("g", "ended", agent = "gemini", leaf = null, endedAt = 3)), true)
-        assertEquals("Open folder", vm.state.rows.single().actionLabel)
+        assertEquals("open folder", vm.state.rows.single().actionLabel)
     }
 }
