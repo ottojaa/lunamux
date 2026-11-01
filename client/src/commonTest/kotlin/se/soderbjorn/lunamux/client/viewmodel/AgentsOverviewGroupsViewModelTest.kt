@@ -48,10 +48,10 @@ class AgentsOverviewGroupsViewModelTest {
         id: String, state: String, since: Long = 1_000, endedAt: Long? = null, title: String = "session $id",
         repo: String? = "proj", cwd: String = "/work/proj", links: List<String> = emptyList(),
         nowLine: String? = null, question: String? = null, lastActivityAt: Long? = null,
-        lastSaid: String? = null, firstPrompt: String? = null,
+        lastSaid: String? = null, firstPrompt: String? = null, cwdHome: Boolean = false,
     ) = AgentSessionSummary(
         id = id, agent = "claude", state = state, stateSince = since, title = title, links = links,
-        repo = repo, branch = null, cwd = cwd, nowLine = nowLine, question = question,
+        repo = repo, branch = null, cwd = cwd, cwdHome = cwdHome, nowLine = nowLine, question = question,
         leafId = "leaf-$id".takeIf { endedAt == null }, endedAt = endedAt, lastActivityAt = lastActivityAt,
         lastSaid = lastSaid, firstPrompt = firstPrompt,
     )
@@ -651,7 +651,7 @@ class AgentsOverviewGroupsViewModelTest {
     }
 
     @Test
-    fun twoSessionsWithTheSameTitleAndNoRepositoryShowTheFolderTheyRunIn() {
+    fun sessionsWithTheSameTitleAndNoRepositoryEachShowTheFolderTheyRunIn() {
         layout("leaf-a", "leaf-b", "leaf-c")
         show(
             emptyList(),
@@ -660,7 +660,7 @@ class AgentsOverviewGroupsViewModelTest {
             session("c", "idle", title = "Something else", repo = null, cwd = "/Users/me/other"),
         )
         val repos = vm.state.rows.associate { it.id to it.where }
-        assertEquals(mapOf("a" to "proj", "b" to "notes", "c" to null), repos)
+        assertEquals(mapOf("a" to "proj", "b" to "notes", "c" to "other"), repos)
     }
 
     @Test
@@ -758,6 +758,21 @@ class AgentsOverviewGroupsViewModelTest {
         val header = rows.getValue("group:g1")
         assertEquals("", header.status)
         assertEquals("1 working", vm.state.groups.getValue("g1").summary)
+    }
+
+    @Test
+    fun aRowOutsideARepositoryShowsItsFolderAndHomeAsATilde() {
+        layout("leaf-home", "leaf-scratch", "leaf-repo")
+        show(
+            emptyList(),
+            session("home", "working", title = "Chat at home", repo = null, cwd = "/Users/someone", cwdHome = true),
+            session("scratch", "working", title = "Notes", repo = null, cwd = "/work/scratch/"),
+            session("repo", "working", title = "In a repo", repo = "proj", cwd = "/work/proj"),
+        )
+        val rows = vm.state.rows.associateBy { it.id }
+        assertEquals("~", rows.getValue("home").where)
+        assertEquals("scratch", rows.getValue("scratch").where)
+        assertEquals("proj", rows.getValue("repo").where)
     }
 
     private companion object {

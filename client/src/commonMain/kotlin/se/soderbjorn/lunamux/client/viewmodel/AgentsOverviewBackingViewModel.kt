@@ -901,7 +901,7 @@ class AgentsOverviewBackingViewModel(
         val titleCount = unclaimed.groupingBy { (_, row) -> row.title }.eachCount()
         val singles = unclaimed.map { (s, row) ->
             if (row.repo == null && (titleCount[row.title] ?: 0) > 1) {
-                val folder = s.cwd?.trimEnd('/')?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+                val folder = folderOf(s)
                 row.copy(repo = folder, where = folder)
             } else row
         }
@@ -1247,7 +1247,7 @@ class AgentsOverviewBackingViewModel(
         val live = s.state != ENDED && where != null
         val title = s.title?.takeIf { it.isNotBlank() }
             ?: s.branch?.takeIf { it.isNotBlank() }
-            ?: s.cwd?.trimEnd('/')?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+            ?: folderOf(s)
             ?: s.agent
         val ended = s.state == ENDED
         return Row(
@@ -1277,9 +1277,23 @@ class AgentsOverviewBackingViewModel(
                 else -> Glyph.CLOSED
             },
             status = statusOf(s),
-            where = s.repo,
+            where = s.repo ?: folderOf(s),
         )
     }
+
+    /**
+     * The folder a session runs in, as the overview's folder column shows it when there is no
+     * repository: "~" for the user's home folder, else the last path segment, else null.
+     *
+     * Called by [toRow] for the column and the title fallback, and by the duplicate-title rule
+     * in `build`. Home is named "~" so a chat started there is not shown under the user's name.
+     *
+     * @param s the session.
+     * @return the label, or null when the session has no folder.
+     */
+    private fun folderOf(s: AgentSessionSummary): String? =
+        if (s.cwdHome) "~"
+        else s.cwd?.trimEnd('/')?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
 
     /** A session's status line: its question, last tool line or last words, else its first prompt, else a dash. */
     private fun statusOf(s: AgentSessionSummary): String {

@@ -517,6 +517,7 @@ class AgentSessionTracker(
 internal fun AgentSessionRecord.toSummary() = AgentSessionSummary(
     id = id, agent = agent, state = state, stateSince = stateSince,
     title = title, links = links, repo = repo, branch = branch, cwd = cwd,
+    cwdHome = cwd != null && prettifyPath(cwd) == "~",
     nowLine = nowLine, question = question, leafId = leafId, endedAt = endedAt,
     lastSaid = lastSaid,
     firstPrompt = firstPrompt?.let(::firstPromptLine),

@@ -345,6 +345,8 @@ sealed class WindowEnvelope {
  * @param repo name of the git repository folder, or null outside one.
  * @param branch branch the agent was started on, or null.
  * @param cwd folder the agent ran in.
+ * @param cwdHome true when [cwd] is the home folder of the user running the server; the overview
+ *   shows such a row's folder as "~" (a client cannot tell, because it does not know the home path).
  * @param nowLine the last tool line ("Bash ./gradlew test"), or null.
  * @param question what the agent is asking while [state] is `needs_you`.
  * @param leafId the pane the agent runs in (meaningful while the record is open).
@@ -370,6 +372,7 @@ data class AgentSessionSummary(
     val repo: String? = null,
     val branch: String? = null,
     val cwd: String? = null,
+    val cwdHome: Boolean = false,
     val nowLine: String? = null,
     val question: String? = null,
     val leafId: String? = null,
