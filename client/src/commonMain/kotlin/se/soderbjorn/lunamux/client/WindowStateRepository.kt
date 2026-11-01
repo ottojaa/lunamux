@@ -24,6 +24,7 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import se.soderbjorn.lunula.core.PersistKeys
+import se.soderbjorn.lunamux.AgentGroup
 import se.soderbjorn.lunamux.AgentSessionSummary
 import se.soderbjorn.lunamux.WindowConfig
 import se.soderbjorn.lunamux.WindowEnvelope
@@ -126,6 +127,11 @@ class WindowStateRepository {
     /** Observable agent sessions; the source of the agents overview. */
     val agentSessions: StateFlow<List<AgentSessionSummary>> = _agentSessions.asStateFlow()
 
+    /** The agent session groups the server last reported, already matched to their sessions. */
+    private val _agentGroups = MutableStateFlow<List<AgentGroup>>(emptyList())
+    /** Observable agent groups; with [agentSessions] the source of the agents overview's group boxes. */
+    val agentGroups: StateFlow<List<AgentGroup>> = _agentGroups.asStateFlow()
+
     /** Whether the Claude Code settings file currently holds Lunamux's hook entries. */
     private val _claudeConnected = MutableStateFlow(false)
     /** Observable Claude Code connection flag for the App Settings row. */
@@ -187,6 +193,17 @@ class WindowStateRepository {
     fun updateAgentSessions(sessions: List<AgentSessionSummary>, claudeConnected: Boolean) {
         _agentSessions.value = sessions
         _claudeConnected.value = claudeConnected
+    }
+
+    /**
+     * Replace the cached agent session groups.
+     *
+     * Called by [WindowSocket] when an `AgentGroups` envelope arrives.
+     *
+     * @param groups the server's current groups.
+     */
+    fun updateAgentGroups(groups: List<AgentGroup>) {
+        _agentGroups.value = groups
     }
 
     /**

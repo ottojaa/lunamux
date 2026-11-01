@@ -51,6 +51,22 @@ object AppPaths {
     }
 
     /**
+     * Folder the agents overview reads agent group files from.
+     *
+     * Called by [Application.main] for the group watcher. Always `~/.lunamux/agent-groups`
+     * unless `-Dlunamux.agentGroupsDir=<dir>` names another folder (dev servers and tests).
+     * It is deliberately not under [dataDir]: other tools write there, so it must be
+     * easy to find and independent of the database location.
+     *
+     * @return the folder; it may not exist.
+     */
+    fun agentGroupsDir(): File {
+        val override = System.getProperty("lunamux.agentGroupsDir")
+        if (!override.isNullOrBlank()) return File(override)
+        return File(System.getProperty("user.home"), ".lunamux/agent-groups")
+    }
+
+    /**
      * Directory for auxiliary on-disk state (shell init bootstrap files, etc.).
      * Tracks the database file's parent so a `-Dlunamux.dbPath` override
      * keeps everything together for tests and packaged installs.

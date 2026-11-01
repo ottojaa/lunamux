@@ -46,6 +46,9 @@ package se.soderbjorn.lunamux.persistence
  * @property repoRoot absolute path of the repository's main checkout (the parent of
  *   `--git-common-dir`), or null outside git and for records made before it was kept.
  *   Resume uses it to recreate a removed worktree.
+ * @property lastSaid the first line of the last paragraph of the agent's most recent reply
+ *   (at most 160 characters), or null before it has said anything. A group's header shows it
+ *   as what its lead session last said.
  */
 data class AgentSessionRecord(
     val id: String,
@@ -70,4 +73,5 @@ data class AgentSessionRecord(
     val createdAt: Long = 0,
     val endedAt: Long? = null,
     val repoRoot: String? = null,
+    val lastSaid: String? = null,
 )

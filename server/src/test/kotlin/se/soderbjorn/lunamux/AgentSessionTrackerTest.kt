@@ -160,6 +160,24 @@ class AgentSessionTrackerTest {
     }
 
     @Test
+    fun `stop remembers the first line of the last paragraph, for questions too`() {
+        val t = tracker()
+        val p = pane()
+        t.onHook(p, event("Stop", "a-1", "last_assistant_message" to "Long intro.\n\nThree runs are ready.\nSecond line."))
+        assertEquals("Three runs are ready.", t.summaries.value.single().lastSaid)
+
+        t.onHook(p, event("UserPromptSubmit", "a-1", "prompt" to "go"))
+        t.onHook(p, event("Stop", "a-1", "last_assistant_message" to "Which of the two should I merge first?"))
+        val row = t.summaries.value.single()
+        assertEquals("needs_you", row.state)
+        assertEquals("Which of the two should I merge first?", row.lastSaid)
+
+        t.onHook(p, event("UserPromptSubmit", "a-1", "prompt" to "the first"))
+        t.onHook(p, event("Stop", "a-1", "last_assistant_message" to "x".repeat(400)))
+        assertEquals(160, t.summaries.value.single().lastSaid!!.length)
+    }
+
+    @Test
     fun `the idle reminder notification does not ask for you`() {
         val t = tracker()
         val p = pane()

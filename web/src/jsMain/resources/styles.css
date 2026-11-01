@@ -3708,6 +3708,60 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-selected .ao-action { opacity: 1; color: var(--t-accent, #56d4e6); }
 .ao-more { padding: 6px 4px; font-size: 12px; text-decoration: underline; opacity: 0.7; cursor: pointer; }
 .ao-empty { padding: 24px 4px; text-align: center; opacity: 0.6; }
+
+/* A programme group: a header, its members indented under it, and a "+ more" line, drawn as one box. */
+.ao-group {
+    margin-top: 6px;
+    background: color-mix(in srgb, var(--t-accent, #56d4e6) 12%, var(--t-surface, #0f2a32));
+    border: 1px solid var(--t-border, #2a5662);
+    border-radius: 10px 10px 0 0;
+    align-items: center;
+    /* The title column takes the width its title and chips need, up to half the row, so a long
+       title shortens with an ellipsis and the counts keep room to be read. */
+    grid-template-columns: 22px fit-content(50%) minmax(0, 1fr) 64px 150px;
+}
+.ao-group .ao-repo { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ao-group.ao-group-end { border-radius: 10px; }
+.ao-group.ao-selected { border-color: var(--t-accent, #56d4e6); }
+.ao-chevron {
+    width: 22px; height: 22px; padding: 0; border: none; background: transparent;
+    color: var(--t-text-dim, #a9c6cd); font-size: 16px; line-height: 1; cursor: pointer;
+}
+.ao-group-title { font-weight: 700; color: var(--t-text, #e8f6f8); flex: 0 1 auto; }
+.ao-pill {
+    flex: none; padding: 1px 7px; border-radius: 4px;
+    background: color-mix(in srgb, var(--t-accent, #56d4e6) 18%, var(--t-surface, #16343d)); color: var(--t-text-dim, #a9c6cd); font-size: 10px; letter-spacing: 0.06em;
+}
+.ao-link-chip {
+    flex: none; padding: 1px 7px; border: 1px solid var(--t-border, #2a5662); border-radius: 5px;
+    font-size: 11px; color: var(--t-text-dim, #a9dfe8); text-decoration: none; white-space: nowrap;
+}
+.ao-counts {
+    justify-self: start; padding: 0; border: none; background: transparent;
+    font: inherit; font-size: 12px; text-align: left; cursor: pointer;
+}
+.ao-counts-need { color: var(--t-warn, #f2b84b); font-weight: 700; }
+.ao-counts span { white-space: nowrap; }
+.ao-counts-rest { color: var(--t-text-dim, #a9c6cd); }
+.ao-group .ao-age { color: var(--t-warn, #f2b84b); opacity: 1; }
+.ao-group .ao-note { grid-column: 2 / -1; padding: 0; }
+.ao-member, .ao-group-more {
+    background: color-mix(in srgb, var(--t-accent, #56d4e6) 6%, var(--t-surface, #0d2228));
+    border: 1px solid var(--t-border, #2a5662);
+    border-top-color: transparent;
+    border-bottom-color: transparent;
+    border-radius: 0;
+}
+.ao-member.ao-needs { background: color-mix(in srgb, var(--t-warn, #f2b84b) 10%, var(--t-surface, #1d1c14)); }
+.ao-member .ao-main { padding-left: 24px; }
+.ao-label { font-weight: 700; color: var(--t-text-dim, #a9c6cd); }
+.ao-member.ao-group-end, .ao-group-more.ao-group-end {
+    border-bottom-color: var(--t-border, #2a5662);
+    border-radius: 0 0 10px 10px;
+}
+.ao-member.ao-selected, .ao-group-more.ao-selected { border-color: var(--t-accent, #56d4e6); }
+.ao-group-more { display: block; padding: 4px 12px 8px 60px; font-size: 12px; }
+.ao-more-text { color: var(--t-text-dim, #9fb6bc); text-decoration: underline; }
 .ao-hint {
     padding: 8px 14px;
     border-top: 1px solid var(--t-border, #2a5662);
