@@ -1,7 +1,8 @@
 /**
  * The agents overview in the web client: a topbar chip that says how many agent sessions need the
  * user and how many work, and the ⌘⇧A overlay that lists every agentic-CLI session (Claude Code,
- * Codex, Gemini) as one terminal-style table under "Now" and "Earlier".
+ * Codex, Gemini) as one terminal-style table: "Now", then what finished or went quiet under
+ * "Last few days" and "Last two weeks" (a heading with nothing under it is not drawn).
  *
  * Every row is the same seven-column grid: a gutter (the task chevron or its tree lines), the
  * state glyph (the only place a state is drawn as a glyph), the title, where it runs, a status
@@ -286,7 +287,7 @@ private fun closeOverlayElement() {
  * A task header folds on a click anywhere except its action, which does what ↵ does on the header
  * (jump to the session that most needs the person, else run the task's `open` action, else fold),
  * and its `open` control, which runs the task's `open` action even while a session is live;
- * the "+ N more" line shows the rest of Earlier; any other row is selected and done
+ * the "+ N more" line shows the rest of the last two weeks; any other row is selected and done
  * (jumped to, resumed or opened), as ↵ would.
  *
  * @param target the element that was clicked, or null.
@@ -367,7 +368,8 @@ private fun launchAgentsOverview(block: suspend () -> Unit) {
 
 /**
  * Rebuild the list and the footer from [state]: search results under a "N MATCHES" heading while
- * searching, otherwise the "NOW" and "EARLIER" sections. The selected row is highlighted and
+ * searching, otherwise the "NOW" section and the two EARLIER bands, "LAST FEW DAYS" and
+ * "LAST TWO WEEKS". The selected row is highlighted and
  * carries the peek; the close confirmation follows the row it asks about.
  *
  * @param state the view model's current state.
@@ -402,9 +404,13 @@ private fun renderList(state: AgentsOverviewBackingViewModel.State) {
             list.appendChild(div("ao-sec").also { it.textContent = "NOW" })
             add(state.now)
         }
-        if (state.earlier.isNotEmpty()) {
-            list.appendChild(div("ao-sec").also { it.textContent = "EARLIER" })
-            add(state.earlier)
+        if (state.recent.isNotEmpty()) {
+            list.appendChild(div("ao-sec").also { it.textContent = "LAST FEW DAYS" })
+            add(state.recent)
+        }
+        if (state.fortnight.isNotEmpty()) {
+            list.appendChild(div("ao-sec").also { it.textContent = "LAST TWO WEEKS" })
+            add(state.fortnight)
             if (state.earlierHidden > 0) list.appendChild(buildMoreLine(state.earlierHidden))
         }
     }
@@ -454,6 +460,7 @@ private fun footerSegments(state: AgentsOverviewBackingViewModel.State): List<Fo
 
 /** Where a search matched, in words, for the line under a result. */
 private fun fieldLabel(field: String?): String = when (field) {
+    "task" -> "in task"
     "prompt" -> "first prompt"
     "branch" -> "branch"
     "links" -> "links"
@@ -580,7 +587,7 @@ private fun inPanel(row: Row, state: AgentsOverviewBackingViewModel.State): Bool
  * status mid-bright, the rest dim. The selected row shows its action as "↵ jump" and the like at
  * the right end; a header shows where its ↵ goes ("jump" or "open"), or "↵ expand" / "↵ collapse"
  * when it only folds, and, when its task has an `open` action and ↵ jumps, an `open` control of
- * its own in the age column. Search snippets, the resume note, an open peek and
+ * its own in the age column. Search snippets, the "in task X" line, the resume note, an open peek and
  * a failed open's error span the row's full width underneath.
  *
  * @param row the row to draw.
@@ -629,12 +636,14 @@ private fun buildRow(
 
     el.appendChild(span("ao-w", if (isHead) task?.repo ?: "" else row.where ?: ""))
     el.appendChild(if (isHead) countsCell(task) else statusCell(row, now))
-    // A header has no age. When ↵ on it jumps to a live session but its task also has an `open`
-    // action, that column holds the `open` control so the action stays reachable.
+    // A header in NOW has no age; one in EARLIER shows how long ago its newest session was active.
+    // When ↵ on a header jumps to a live session but its task also has an `open` action, that
+    // column holds the `open` control so the action stays reachable.
     if (isHead && task?.hasOpen == true && row.actionLabel == "jump") {
         el.appendChild(span("ao-a ao-open", "open"))
     } else {
-        el.appendChild(span("ao-a", if (isHead || row.sinceMillis <= 0) "" else formatAge(row.sinceMillis)))
+        val age = if (isHead) task?.ageMillis else row.sinceMillis
+        el.appendChild(span("ao-a", if (age == null || age <= 0) "" else formatAge(age)))
     }
     el.appendChild(
         span(
@@ -655,16 +664,24 @@ private fun buildRow(
         snip.appendChild(highlighted(row.snippet!!, row.matchStart, row.matchLength))
         el.appendChild(snip)
     }
+    // Every result that sits in a task says so; a match on the task's own title highlights it there.
+    row.taskTitle?.let { taskTitle ->
+        val line = div("ao-snippet ao-task-line")
+        line.appendChild(span("ao-snippet-label", "${fieldLabel("task")} "))
+        if (row.field == "task") line.appendChild(highlighted(taskTitle, row.matchStart, row.matchLength))
+        else line.appendChild(document.createTextNode(taskTitle))
+        el.appendChild(line)
+    }
     row.resumeNote?.let { el.appendChild(div("ao-note").also { n -> n.textContent = it }) }
     state.peek?.takeIf { selected }?.let { el.appendChild(buildPeek(it)) }
     return el
 }
 
 /**
- * The dim "+ 6 more" line that ends Earlier. It is not a row anyone can select; a click shows the
- * rest.
+ * The dim "+ 6 more" line that ends the last two weeks. It is not a row anyone can select; a click
+ * shows the rest.
  *
- * @param hidden how many Earlier entries are still hidden.
+ * @param hidden how many entries of that band are still hidden.
  * @return the line, laid out on the same grid as a row.
  */
 private fun buildMoreLine(hidden: Int): HTMLElement {
