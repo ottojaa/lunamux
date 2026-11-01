@@ -18,6 +18,13 @@ Note that there is no cloud component - remote access requires being on the same
 
 If you want information about installation / deployment, usage or features, check out the comprehensive [manual](https://www.lunamux.dev/#/docs).
 
+### Tasks in the agents overview
+
+The agents overview (⌘⇧A) shows tasks: every agent session belongs to one, agents group their
+own sessions through the Lunamux MCP tools, and tools that run sessions Lunamux does not host can
+declare them in a task file. See [docs/tasks.md](docs/tasks.md) for what the person sees, the
+tools and the file format.
+
 ## Architecture
 
 I use Kotlin for this project because I really like the language, and Kotlin Multiplatform makes it easy to share code across components. I however do **not** use Compose Multiplatform because I generally want platforms to have a native UI (which is not to say that there are no situations where that might be appropriate -- decide on a case-by-case basis, not religiously). For this project, I have made an exception for the Mac app, choosing to go with an embedded web app inside Electron, using Kotlin's DOM APIs.
