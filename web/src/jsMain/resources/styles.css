@@ -3630,7 +3630,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 /* The one grid every row uses. */
 .ao-row {
     display: grid;
-    grid-template-columns: 2ch 2ch 38ch 12ch minmax(0, 1fr) 4ch 8ch;
+    grid-template-columns: 2ch 2ch 38ch 12ch minmax(0, 1fr) 4ch 10ch;
     column-gap: 1.5ch;
     align-items: start;
     padding: 0 1ch;
@@ -3759,13 +3759,13 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 
 /* Narrow panels: drop the where column first, then shorten titles, then the footer's words. */
 @container ao (max-width: 900px) {
-    .ao-row { grid-template-columns: 2ch 2ch 28ch minmax(0, 1fr) 4ch 8ch; }
+    .ao-row { grid-template-columns: 2ch 2ch 28ch minmax(0, 1fr) 4ch 10ch; }
     .ao-row > .ao-w { display: none; }
     .ao-pr-inline { display: inline; }
     .ao-seg-move { display: none; }
 }
 @container ao (max-width: 640px) {
-    .ao-row { grid-template-columns: 2ch 2ch 22ch minmax(0, 1fr) 4ch 8ch; }
+    .ao-row { grid-template-columns: 2ch 2ch 22ch minmax(0, 1fr) 4ch 10ch; }
     .ao-seg-back { display: none; }
 }
 
