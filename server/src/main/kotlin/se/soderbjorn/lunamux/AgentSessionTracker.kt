@@ -121,6 +121,12 @@ class AgentSessionTracker(
     private val promptSeen = HashSet<String>()
 
     /**
+     * When each open record last received a hook event, by record id. Kept in memory only: it
+     * is empty after a restart, and a record with no entry publishes no activity time.
+     */
+    private val lastActivity = HashMap<String, Long>()
+
+    /**
      * Git facts per folder, filled by [warmGit] before the lock is taken so a slow
      * repository never holds up closing panes; [open] only reads it.
      */
@@ -206,6 +212,9 @@ class AgentSessionTracker(
                 "working" -> WORKING
                 else -> IDLE
             }
+            // A record no hook feeds is followed by the screen alone, so a screen that shows work
+            // is the only sign of life it will ever give.
+            if (state == WORKING) lastActivity[rec.id] = clock()
             var next = rec
             if (state == WORKING && rec.title == null) next = next.copy(title = cleanTitle(pane.programTitle))
             if (state != rec.state) {
@@ -281,6 +290,7 @@ class AgentSessionTracker(
             }
             else -> return@synchronized
         }
+        lastActivity[rec.id] = now
         put(rec)
         publish()
     }
@@ -431,6 +441,7 @@ class AgentSessionTracker(
     }
 
     private fun end(rec: AgentSessionRecord, screen: String?) {
+        lastActivity.remove(rec.id)
         val now = clock()
         val ended = rec.copy(
             state = ENDED,
@@ -464,7 +475,7 @@ class AgentSessionTracker(
         records.values.firstOrNull { it.state != ENDED && it.terminalSessionId == terminalSessionId }
 
     private fun publish() {
-        _summaries.value = records.values.map { it.toSummary() }
+        _summaries.value = records.values.map { it.toSummary().copy(lastActivityAt = lastActivity[it.id]) }
     }
 
     private companion object {

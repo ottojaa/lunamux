@@ -375,4 +375,29 @@ class AgentSessionTrackerTest {
         t.onHook(pane(agent = "claude", state = "working"), event("SessionStart", "a-1"))
         assertTrue(!t.hasUnidentifiedClaudeIn("/work/repo"))
     }
+
+    @Test
+    fun `every folded hook event stamps the activity time, which the state clock does not follow`() {
+        val t = tracker()
+        t.onPoll(listOf(pane(agent = "claude", state = "working")))
+        assertEquals(1_000, t.summaries.value.single().lastActivityAt, "a screen that shows work is a sign of life for a record no hook feeds")
+
+        now = 10_000
+        t.onHook(pane(agent = "claude", state = "working"), toolEvent("Bash", """{"command":"ls"}"""))
+        now = 40_000
+        t.onHook(pane(agent = "claude", state = "working"), event("PostToolUse"))
+        var row = t.summaries.value.single()
+        assertEquals(40_000, row.lastActivityAt)
+        assertEquals(1_000, row.stateSince, "it has been working since the first poll, so the state clock stays put")
+
+        now = 90_000
+        t.onPoll(listOf(pane(agent = "claude", state = "working")))
+        t.onHook(pane(agent = "claude", state = "working"), event("Notification", "a-1", "notification_type" to "idle_prompt"))
+        assertEquals(40_000, t.summaries.value.single().lastActivityAt, "once hooks feed it, a poll or the idle reminder is not activity")
+
+        t.onSessionDestroyed("s1", "bye")
+        row = t.summaries.value.single()
+        assertEquals("ended", row.state)
+        assertNull(row.lastActivityAt)
+    }
 }
