@@ -279,7 +279,8 @@ class AgentSessionTracker(
                 // The idle reminder fires a minute after a turn ends and is not a request.
                 // It is recognised by its type, or by its text in case a version omits the type.
                 val message = event.str("message")
-                if (event.str("notification_type") == "idle_prompt" ||
+                val type = event.str("notification_type")
+                if (type == "idle_prompt" || type == "auth_success" ||
                     message?.contains("waiting for your input", ignoreCase = true) == true
                 ) return@synchronized
                 set(NEEDS_YOU, nowLine = null, question = message?.take(QUESTION_MAX))
@@ -287,9 +288,9 @@ class AgentSessionTracker(
             "Stop" -> {
                 val last = event.str("last_assistant_message")?.trim().orEmpty()
                 if (last.isNotEmpty()) rec = rec.copy(lastSaid = lastSaidOf(last))
-                if (last.endsWith("?")) {
-                    set(NEEDS_YOU, nowLine = null, question = last.substringAfterLast("\n\n").take(QUESTION_MAX))
-                } else set(IDLE, nowLine = null)
+                val asked = bareQuestionOf(last)
+                if (asked != null) set(NEEDS_YOU, nowLine = null, question = asked.take(QUESTION_MAX))
+                else set(IDLE, nowLine = null)
             }
             "SessionEnd" -> {
                 end(rec, pane.screenText())
@@ -548,6 +549,34 @@ private const val LAST_SAID_MAX = 160
  */
 internal fun lastSaidOf(message: String): String =
     message.trim().substringAfterLast("\n\n").trim().lineSequence().first().trim().take(LAST_SAID_MAX)
+
+/**
+ * The question a finished turn leaves for the owner, or null when the turn is just a reply.
+ *
+ * A turn that ends in a reply, even one that closes with an offer ("... Want me to go ahead?"),
+ * is idle: the chat is not blocked on anything. Only a closing paragraph that is a single
+ * question counts: one line, one sentence, ending in "?".
+ *
+ * Called from the tracker's `Stop` hook handling.
+ *
+ * @param message the assistant's last message of the turn, already trimmed.
+ * @return the closing question, or null when the message is a reply.
+ * @see QUESTION_SENTENCE_MAX
+ */
+internal fun bareQuestionOf(message: String): String? {
+    val paragraph = message.trim().substringAfterLast("\n\n").trim()
+    if (!paragraph.endsWith("?") || paragraph.length > QUESTION_SENTENCE_MAX) return null
+    val body = paragraph.dropLast(1)
+    if ('\n' in body || SENTENCE_BREAK.containsMatchIn(body)) return null
+    return paragraph
+}
+
+/** Longest closing paragraph that still reads as one question rather than a reply with an offer. */
+private const val QUESTION_SENTENCE_MAX = 200
+
+/** A sentence end inside a paragraph: its terminator followed by a space. */
+private val SENTENCE_BREAK = Regex("""[.!?:;]\s""")
+
 private const val SCREEN_LINES = 200
 private val TICKET_KEY = Regex("""\b[A-Z][A-Z0-9]+-\d+\b""")
 

@@ -72,9 +72,13 @@ internal data class GroupFileLink(val label: String? = null, val url: String? = 
  *
  * @property command the line typed into a new tab's shell to start the lead session.
  * @property folder absolute folder the lead session runs in (a leading `~/` is expanded).
+ * @property sessionId the agent session id (Claude's `session_id`) of the programme's home
+ *   conversation, when it is a session the owner already has open. A session with this id is the
+ *   group's lead wherever it runs, so the overview shows it as the header and not a second time.
+ *   Absent means the lead is found by [folder] alone.
  */
 @Serializable
-internal data class GroupFileLead(val command: String? = null, val folder: String? = null)
+internal data class GroupFileLead(val command: String? = null, val folder: String? = null, val sessionId: String? = null)
 
 /**
  * How a group file ties a member to a session Lunamux hosts.
@@ -118,6 +122,7 @@ internal data class GroupFileMember(
  * @property group the group as the clients get it, with member and lead fields still unresolved.
  * @property command the lead's start command; never leaves the server.
  * @property leadFolder canonical lead folder.
+ * @property leadSessionId the agent session id the file names as the lead, or null.
  * @property matches per member (same order as the group's members), the canonical match
  *   folder and agent session id the member asks for.
  */
@@ -125,6 +130,7 @@ private class ParsedGroup(
     val group: AgentGroup,
     val command: String,
     val leadFolder: String,
+    val leadSessionId: String?,
     val matches: List<GroupFileMatch?>,
 )
 
@@ -282,7 +288,7 @@ class AgentGroupsWatcher(
             linkLabel = if (url != null) label ?: url else null, linkUrl = url,
             lead = AgentGroupLead(folder = leadFolder), members = members, refreshedAtMillis = modified,
         )
-        return ParsedGroup(group, command, leadFolder, matches)
+        return ParsedGroup(group, command, leadFolder, lead.sessionId?.trim()?.takeIf { it.isNotEmpty() }, matches)
     }
 
     private fun resolveGroup(p: ParsedGroup, recs: List<AgentSessionRecord>): AgentGroup {
@@ -290,7 +296,10 @@ class AgentGroupsWatcher(
         fun cwdOf(r: AgentSessionRecord) = r.cwd?.let { canon.getOrPut(it) { canonical(it) } }
         val newestFirst = recs.sortedByDescending { it.createdAt }
         val leadRecs = newestFirst.filter { cwdOf(it) == p.leadFolder }
-        val leadRec = leadRecs.firstOrNull { isOpen(it) } ?: leadRecs.firstOrNull()
+        // A session the file names is the lead wherever it runs; otherwise the lead is the newest
+        // session in the lead folder, an open one first.
+        val leadRec = p.leadSessionId?.let { sid -> newestFirst.firstOrNull { it.agentSessionId == sid } }
+            ?: leadRecs.firstOrNull { isOpen(it) } ?: leadRecs.firstOrNull()
         val lead = AgentGroupLead(
             folder = p.leadFolder,
             recordId = leadRec?.id,
@@ -300,7 +309,7 @@ class AgentGroupsWatcher(
         val claimed = HashSet<String>()
         val members = p.group.members.mapIndexed { i, m ->
             val want = p.matches[i]
-            val candidates = newestFirst.filter { it.id !in claimed && cwdOf(it) != p.leadFolder }
+            val candidates = newestFirst.filter { it.id !in claimed && it.id != leadRec?.id && cwdOf(it) != p.leadFolder }
             val rec = want?.agentSessionId?.let { sid -> candidates.firstOrNull { it.agentSessionId == sid } }
                 ?: want?.folder?.let { folder ->
                     candidates.firstOrNull { r ->

@@ -38,6 +38,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import kotlinx.datetime.Clock
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import se.soderbjorn.lunamux.AgentGroup
@@ -73,11 +74,14 @@ private data class PaneLocation(val worldId: String?, val tabId: String, val lea
  * @param scope where the fire-and-forget inspection requests (sent when the
  *   selection changes) run. The default runs them in place until they suspend,
  *   so a `send` that returns at once is observable immediately.
+ * @param clock the current epoch millis, read whenever the state is built; it decides which
+ *   idle sessions are still inside their [IDLE_GRACE_MS]. Tests pass a fixed one.
  * @param send sends a command to the server, normally `windowSocket::send`.
  */
 class AgentsOverviewBackingViewModel(
     private val windowState: WindowStateRepository,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
+    private val clock: () -> Long = { Clock.System.now().toEpochMilliseconds() },
     private val send: suspend (WindowCommand) -> Unit,
 ) {
     /**
@@ -402,6 +406,19 @@ class AgentsOverviewBackingViewModel(
 
     private val ui = MutableStateFlow(Ui())
 
+    /** Bumped by [tick] so the state is built again when only the clock has moved. */
+    private val clockTick = MutableStateFlow(0)
+
+    /**
+     * Build the state again against the current time.
+     *
+     * Called by the web view's periodic redraw: an idle session leaves NOW once its grace
+     * period has passed, which no server message announces.
+     *
+     * @see IDLE_GRACE_MS
+     */
+    fun tick() = clockTick.update { it + 1 }
+
     /** The row and liveness last inspected, so a redraw does not ask the server again. */
     private var inspected: String? = null
 
@@ -418,6 +435,7 @@ class AgentsOverviewBackingViewModel(
             windowState.agentMatches,
             windowState.agentInspection,
             ui,
+            clockTick,
         ),
     ) { v ->
         @Suppress("UNCHECKED_CAST")
@@ -849,6 +867,7 @@ class AgentsOverviewBackingViewModel(
 
     private fun build(input: Inputs): State {
         val (sessions, groupFiles, config, error, matches, inspection, ui) = input
+        val nowMillis = clock()
         val panes = config?.let(::paneLocations).orEmpty()
         val query = ui.query.trim()
         val matchMode = query.length >= MIN_QUERY
@@ -890,19 +909,29 @@ class AgentsOverviewBackingViewModel(
         // A group stays in NOW until all its runs have ended; it is ranked beside the single sessions
         // that need the user or work, by its most urgent run.
         class Placed(val rank: Int, val since: Long, val rows: List<Row>)
+        // An idle session stays in NOW for a while after its last activity, so a chat that finishes
+        // a turn does not jump to EARLIER and back as the next turn starts.
+        val graced = singles.filter { row ->
+            row.state == IDLE && byId[row.id]?.let { inGrace(it.lastActivityAt ?: it.stateSince, nowMillis) } == true
+        }
         val urgent = buildList {
             singles.filter { it.state == NEEDS_YOU || it.state == WORKING }
                 .forEach { add(Placed(rankOf(it.state), it.sinceMillis, listOf(it))) }
+            graced.forEach { row ->
+                val s = byId.getValue(row.id)
+                add(Placed(GRACE_RANK, s.lastActivityAt ?: s.stateSince, listOf(row)))
+            }
             units.filter { !it.ended }
                 .forEach { add(Placed(it.rank, it.since, groupRows(it, groupFiles, panes, ui, resumeError))) }
         }.sortedWith(
-            compareBy<Placed> { it.rank }.thenBy { if (it.rank == OPEN_WORK_RANK) -it.since else it.since },
+            compareBy<Placed> { it.rank }.thenBy { if (it.rank >= OPEN_WORK_RANK) -it.since else it.since },
         )
         val now = urgent.flatMap { it.rows }
 
         // EARLIER: open idle singles first, then finished programmes and closed sessions, newest first.
         class Earlier(val since: Long, val rows: List<Row>)
-        val idleSingles = singles.filter { it.state != NEEDS_YOU && it.state != WORKING && it.state != ENDED }
+        val gracedIds = graced.mapTo(HashSet()) { it.id }
+        val idleSingles = singles.filter { it.state != NEEDS_YOU && it.state != WORKING && it.state != ENDED && it.id !in gracedIds }
             .sortedByDescending { it.sinceMillis }
         val closedUnits = (
             singles.filter { it.state == ENDED }.map { Earlier(it.sinceMillis, listOf(it)) } +
@@ -1156,7 +1185,7 @@ class AgentsOverviewBackingViewModel(
         val hostedLine = s?.nowLine?.trim()?.takeIf { it.isNotEmpty() }
         val status = when (m.state) {
             NEEDS_YOU -> line ?: s?.question ?: "waiting at a prompt"
-            WORKING -> line ?: hostedLine ?: firstPrompt ?: "—"
+            WORKING -> line ?: hostedLine ?: firstPrompt ?: if (s == null && m.label != null) "" else "—"
             // A finished run's line that only repeats its pull request is dropped: the PR has its own column.
             else -> (line?.takeIf { it != pr } ?: said ?: firstPrompt)
                 ?: if (bucket.order == 6 || m.label != null) "" else "—"
@@ -1173,10 +1202,12 @@ class AgentsOverviewBackingViewModel(
                 else -> ""
             },
             sinceMillis = m.sinceMillis,
-            nowLine = if (m.state == NEEDS_YOU) null else m.line,
-            question = if (m.state == NEEDS_YOU) m.line else null,
+            nowLine = if (m.state == NEEDS_YOU) null else line,
+            question = if (m.state == NEEDS_YOU) line else null,
             groupId = g.id,
-            label = m.label?.trim()?.takeIf { it.isNotEmpty() && (m.state == IDLE || m.state == ENDED) },
+            // The file's word ("coding") goes with a state only the file vouches for: a hosted run's
+            // live state wins over what the file said, so its label is dropped while it works.
+            label = m.label?.trim()?.takeIf { it.isNotEmpty() && (m.state == IDLE || m.state == ENDED || (m.state == WORKING && s == null)) },
             activityMillis = if (m.state == WORKING) workingActivity(run, g.refreshedAtMillis) else null,
             glyph = when (bucket.order) {
                 0 -> Glyph.NEEDS_YOU
@@ -1226,8 +1257,8 @@ class AgentsOverviewBackingViewModel(
             title = title,
             links = s.links,
             repo = s.repo,
-            nowLine = s.nowLine,
-            question = s.question,
+            nowLine = s.nowLine?.takeIf { it.isNotBlank() },
+            question = s.question?.takeIf { it.isNotBlank() },
             sinceMillis = if (ended) s.endedAt ?: s.stateSince else s.stateSince,
             isLive = live,
             canResume = !live,
@@ -1271,6 +1302,25 @@ class AgentsOverviewBackingViewModel(
     private fun locate(config: WindowConfig, leafId: String): PaneLocation? = paneLocations(config)[leafId]
 
     companion object {
+        /**
+         * How long an idle session stays in NOW after its last activity before it moves to
+         * EARLIER. It keeps "going on now" from swapping with "earlier" every time a chat ends
+         * a turn.
+         */
+        const val IDLE_GRACE_MS = 10L * 60_000L
+
+        /**
+         * Whether a session idle since [activityMillis] is still inside [IDLE_GRACE_MS].
+         * The grace ends exactly [IDLE_GRACE_MS] after the activity.
+         *
+         * Called by [build] for every idle single session on each state build.
+         *
+         * @param activityMillis epoch millis of the session's last activity.
+         * @param nowMillis the current epoch millis.
+         * @return true while less than [IDLE_GRACE_MS] has passed.
+         */
+        fun inGrace(activityMillis: Long, nowMillis: Long): Boolean = nowMillis - activityMillis < IDLE_GRACE_MS
+
         /** How many EARLIER rows show before "More". */
         const val EARLIER_LIMIT = 5
 
@@ -1369,6 +1419,7 @@ class AgentsOverviewBackingViewModel(
         private const val GROUP_PREFIX = "group:"
         private const val MEMBER_PREFIX = "member:"
         private const val OPEN_WORK_RANK = 2
+        private const val GRACE_RANK = 3
         private const val IDLE = "idle"
         private val PR_LINK = Regex("#\\d+")
         private const val NEEDS_YOU = "needs_you"

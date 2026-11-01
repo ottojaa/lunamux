@@ -1,14 +1,14 @@
 /**
- * The small glyph the agents overview draws to say "this agent is working": beside a working
- * session's status and beside a programme group's title while any of its members works.
+ * The small glyph the agents overview draws to say "this agent is working": in the state column of
+ * a working row, and in the header of a programme while any of its runs works.
  *
  * It is one component whose look is entirely its [WorkingGlyphSpec] (the frames and their
  * timings), so changing the glyph means changing [BRAILLE_PAIR_TURN], not the drawing code.
  * Each glyph is two stacked layers; a shared clock sets the incoming layer to the next frame and
  * lets CSS fade it in while the other fades out. A glyph that is not busy (a session that has
- * gone quiet) and every glyph under the reduced-motion preference is drawn still and, for the
- * quiet one, dimmed. The look of the box and its resting state are the `.ao-work*` rules in
- * `styles.css`.
+ * gone quiet) is drawn still and dimmed; every glyph under the reduced-motion preference is drawn
+ * still but keeps the accent colour. The look of the box and its resting state are the `.ao-work*`
+ * rules in `styles.css`.
  *
  * @see workingGlyph
  * @see WorkingGlyphSpec
@@ -71,11 +71,12 @@ private fun tick() {
 /**
  * Build the working glyph.
  *
- * Called by the agents overview for each working row and for a group header with working
- * members.
+ * Called by the agents overview for the state column of each working row and of a programme
+ * header with a working run.
  *
- * @param active whether the agent has been heard from lately; false draws the first frame still
- *   and dimmed.
+ * @param active whether the work is live (heard from lately, see
+ *   [se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.isWorkingLive]); false
+ *   draws the first frame still and dimmed.
  * @param spec the frames and timings.
  * @return a small inline element, hidden from assistive technology (the row's text says the rest).
  */

@@ -41,7 +41,8 @@ class AgentsOverviewGroupsViewModelTest {
 
     private val sent = mutableListOf<WindowCommand>()
     private val windowState = WindowStateRepository()
-    private val vm = AgentsOverviewBackingViewModel(windowState) { sent += it }
+    private var now = 10_000_000L
+    private val vm = AgentsOverviewBackingViewModel(windowState, clock = { now }) { sent += it }
 
     private fun session(
         id: String, state: String, since: Long = 1_000, endedAt: Long? = null, title: String = "session $id",
@@ -249,6 +250,62 @@ class AgentsOverviewGroupsViewModelTest {
     }
 
     @Test
+    fun aWorkingRunOnlyTheFileVouchesForKeepsItsLabelAndAHostedOneDropsIt() {
+        layout("leaf-h")
+        show(
+            listOf(group(members = listOf(
+                member("file only", "working", label = "coding", line = "Edit a.kt"),
+                member("bare", "working", since = 2_000, label = "fixing"),
+                member("hosted", "working", since = 3_000, label = "queued", recordId = "h", line = "Edit b.kt"),
+            ))),
+            session("h", "working"),
+        )
+        vm.toggleGroup("g1")
+        val rows = vm.state.rows.associateBy { it.title }
+        assertEquals("coding", rows.getValue("file only").label)
+        assertEquals("Edit a.kt", rows.getValue("file only").status)
+        assertEquals("fixing", rows.getValue("bare").label)
+        assertEquals("", rows.getValue("bare").status)
+        assertNull(rows.getValue("hosted").label)
+    }
+
+    @Test
+    fun theHomeSessionOfAProgrammeIsTheHeaderAndIsNotListedAgain() {
+        layout("leaf-home", "leaf-other")
+        show(
+            listOf(group(members = listOf(member("a", "working")), leadRecord = "home", leadLive = true)),
+            session("home", "idle", title = "Lunamux agent overview"),
+            session("other", "idle", title = "Something else"),
+        )
+        val titles = vm.state.rows.map { it.title }
+        assertFalse("Lunamux agent overview" in titles)
+        assertEquals(1, titles.count { it == "Release g1" })
+        // A session the group does not name as its lead stays where it was.
+        assertTrue("Something else" in titles)
+    }
+
+    @Test
+    fun aProgrammeWhoseHomeSessionIsNotNamedFoldsNothing() {
+        layout("leaf-home")
+        show(listOf(group(members = listOf(member("a", "working")))), session("home", "idle", title = "Lunamux agent overview"))
+        assertTrue("Lunamux agent overview" in vm.state.rows.map { it.title })
+    }
+
+    @Test
+    fun aHomeSessionThatWorksIsFoldedIntoItsProgrammeAsAProgrammeRun() {
+        layout("leaf-home")
+        show(
+            listOf(group(members = emptyList(), leadRecord = "home", leadLive = true)),
+            session("home", "working", title = "Lunamux agent overview", nowLine = "Edit file"),
+        )
+        vm.toggleGroup("g1")
+        val rows = vm.state.rows
+        assertEquals(0, rows.count { it.title == "Lunamux agent overview" })
+        assertEquals(1, rows.count { it.title == "Programme session" })
+        assertEquals(listOf("group:g1"), rows.filter { it.kind == RowKind.GROUP }.map { it.id })
+    }
+
+    @Test
     fun returnOnAHeaderOpensTheLeadInANewTabWhenItIsNotOpen() = runNow {
         layout("leaf-other")
         show(listOf(group(members = listOf(member("a", "working")))))
@@ -378,8 +435,12 @@ class AgentsOverviewGroupsViewModelTest {
     }
 
     @Test
-    fun aLabelIsShownOnlyOnRunsThatAreIdleOrEnded() {
-        show(listOf(group(members = listOf(member("w", "working", label = "in review"), member("i", "idle", label = "in review")))))
+    fun aLabelIsShownOnIdleAndEndedRunsAndNotOnAHostedWorkingOne() {
+        layout("leaf-w")
+        show(
+            listOf(group(members = listOf(member("w", "working", label = "in review", recordId = "w"), member("i", "idle", label = "in review")))),
+            session("w", "working"),
+        )
         vm.toggleGroup("g1")
         val labels = vm.state.rows.filter { it.kind == RowKind.SESSION }.associate { it.title to it.label }
         assertEquals(mapOf("w" to null, "i" to "in review"), labels)
@@ -615,6 +676,88 @@ class AgentsOverviewGroupsViewModelTest {
         show(emptyList(), session("a", "working"), session("b", "idle"))
         assertTrue(vm.state.rows.all { it.kind == RowKind.SESSION && !it.unhosted })
         assertTrue(vm.state.groups.isEmpty())
+    }
+
+    @Test
+    fun anIdleSessionStaysInNowForTenMinutesAfterItsLastActivityAndThenMovesToEarlier() {
+        val grace = AgentsOverviewBackingViewModel.IDLE_GRACE_MS
+        assertEquals(10L * 60_000L, grace)
+        layout("leaf-chat")
+        show(emptyList(), session("chat", "idle", since = now - grace - 5_000, lastActivityAt = now - grace + 1))
+        assertEquals(listOf("chat"), vm.state.now.map { it.id }, "one millisecond short of the grace")
+        assertTrue(vm.state.earlier.isEmpty())
+        assertEquals(Glyph.WAITING, vm.state.now.single().glyph, "idle, never a diamond")
+
+        now += 1
+        vm.tick()
+        assertTrue(vm.state.now.isEmpty(), "the grace is over exactly ten minutes after the activity")
+        assertEquals(listOf("chat"), vm.state.earlier.map { it.id })
+    }
+
+    @Test
+    fun theGraceFollowsTheLastActivityAndFallsBackToWhenTheSessionWentIdle() {
+        show(
+            emptyList(),
+            session("recent", "idle", since = now - 60_000),
+            session("old", "idle", since = now - 11 * 60_000),
+            session("busy-then-idle", "idle", since = now - 20 * 60_000, lastActivityAt = now - 30_000),
+        )
+        assertEquals(listOf("busy-then-idle", "recent"), vm.state.now.map { it.id }, "newest activity first")
+        assertEquals(listOf("old"), vm.state.earlier.map { it.id })
+    }
+
+    @Test
+    fun aGracedIdleSessionRanksBehindEverythingThatNeedsYouOrWorksAndAClosedOneNeverGetsGrace() {
+        show(
+            listOf(group(members = listOf(member("run", "idle", label = "queued")))),
+            session("graced", "idle", since = now - 1_000),
+            session("work", "working", since = now - 5_000),
+            session("need", "needs_you", since = now - 9_000),
+            session("closed", "ended", since = now - 2_000, endedAt = now - 1_000),
+        )
+        assertEquals(listOf("need", "work", "group:g1", "graced"), vm.state.now.map { it.id })
+        assertEquals(listOf("closed"), vm.state.earlier.map { it.id })
+        assertEquals(1, vm.state.needYouCount)
+    }
+
+    @Test
+    fun anEmptyOrBlankLineRendersAsNothingForARunAndNeverLeavesASeparatorOrAnEmptyStatus() {
+        show(
+            listOf(group(members = listOf(
+                member("needs", "needs_you", line = "   "),
+                member("working", "working", line = ""),
+                member("review", "idle", label = "in review · round 2", line = "  "),
+                member("idle", "idle", line = " "),
+            ))),
+        )
+        vm.toggleGroup("g1")
+        val byTitle = vm.state.rows.filter { it.kind == RowKind.SESSION }.associateBy { it.title }
+        assertEquals("waiting at a prompt", byTitle.getValue("needs").status)
+        assertNull(byTitle.getValue("needs").question)
+        assertEquals("—", byTitle.getValue("working").status)
+        assertNull(byTitle.getValue("working").nowLine)
+        assertEquals("", byTitle.getValue("review").status)
+        assertEquals("in review · round 2", byTitle.getValue("review").label)
+        assertEquals("—", byTitle.getValue("idle").status)
+        assertTrue(byTitle.values.none { it.status.isBlank() && it.label == null && it.glyph != Glyph.DONE })
+    }
+
+    @Test
+    fun aBlankLineOnASessionFallsBackToItsFirstPromptAndTheProgrammeHeaderStaysCountsOnly() {
+        layout("leaf-w")
+        show(
+            listOf(group(members = listOf(member("hosted", "working", recordId = "w", line = "  ")))),
+            session("w", "working", nowLine = "   ", firstPrompt = "Fix the thing"),
+            session("single", "working", nowLine = "  ", question = " "),
+        )
+        vm.toggleGroup("g1")
+        val rows = vm.state.rows.associateBy { it.id }
+        assertEquals("❯ Fix the thing", rows.getValue("w").status)
+        assertEquals("—", rows.getValue("single").status)
+        assertNull(rows.getValue("single").nowLine)
+        val header = rows.getValue("group:g1")
+        assertEquals("", header.status)
+        assertEquals("1 working", vm.state.groups.getValue("g1").summary)
     }
 
     private companion object {

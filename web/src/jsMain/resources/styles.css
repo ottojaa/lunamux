@@ -3529,26 +3529,42 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 }
 
 /* ── Agents overview (AgentsOverview.kt) ──
-   Topbar chip plus the ⌘⇧A overlay. Needs-you rows use the amber accent,
-   working rows the cyan one; history rows are dimmed. Lifted above the pane
-   modals so it opens over whatever is on screen. */
+   Topbar chip plus the ⌘⇧A overlay, drawn as a terminal table: every row is the same seven-column
+   grid (gutter, state, title, where, status, age, action) and the state glyph is the only place a
+   state is a glyph. Colour says state and nothing else: amber needs you, the accent working, red a
+   failed open; every other text is a shade of the theme's text colour. Lifted above the pane
+   modals so it opens over whatever is on screen. The colours below follow the active theme and
+   fall back to the dark teal defaults. */
+.ao-chip, .ao-panel {
+    --ao-surface: var(--dt-window-bg, var(--t-surface, #0c1a1e));
+    --ao-text: var(--t-text, #cfe3e2);
+    --ao-muted: color-mix(in srgb, var(--ao-text) 72%, var(--ao-surface));
+    --ao-dim: var(--t-text-dim, #6f8f92);
+    --ao-faint: color-mix(in srgb, var(--ao-dim) 52%, var(--ao-surface));
+    --ao-line: var(--t-border, #1b3136);
+    --ao-sel: color-mix(in srgb, var(--t-accent, #5fd4d0) 14%, var(--ao-surface));
+    --ao-accent: var(--t-accent, #5fd4d0);
+    --ao-warn: var(--t-warn, #f2c14e);
+    --ao-error: var(--t-danger, #ff7b72);
+    --ao-mono: var(--dt-font-mono, 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
 .ao-chip {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 1ch;
     height: 24px;
-    padding: 0 8px;
-    border: 1px solid var(--t-border, rgba(255, 255, 255, 0.15));
+    padding: 0 10px;
+    border: 1px solid var(--ao-line);
     border-radius: 12px;
     background: transparent;
-    color: var(--t-text, var(--text-primary));
-    font: 600 12px/1 var(--dt-font-sidebar, system-ui, sans-serif);
+    color: var(--ao-dim);
+    font: 12px/1 var(--ao-mono);
     cursor: pointer;
 }
-.ao-chip:hover { background: var(--t-hover, rgba(255, 255, 255, 0.08)); }
-.ao-chip-need { color: #f2b84b; }
-.ao-chip-work { color: #56d4e6; }
-.ao-chip-sep { opacity: 0.4; }
+.ao-chip:hover { background: var(--ao-sel); }
+.ao-chip-need { color: var(--ao-warn); font-weight: 600; }
+.ao-chip-sep { color: var(--ao-faint); }
 
 .ao-backdrop {
     position: fixed;
@@ -3557,228 +3573,242 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     display: flex;
     align-items: flex-start;
     justify-content: center;
-    padding-top: 12vh;
+    padding-top: 56px;
     background: rgba(0, 0, 0, 0.45);
 }
 .ao-panel {
-    width: min(1200px, 90vw);
-    max-height: 70vh;
+    container: ao / inline-size;
+    width: min(1180px, calc(100vw - 48px));
+    max-height: calc(100vh - 112px);
     display: flex;
     flex-direction: column;
-    border: 1px solid var(--t-border, #2a5662);
-    border-radius: 12px;
-    background: var(--dt-window-bg, var(--t-surface, #0b1d23));
-    color: var(--t-text, #e8f6f8);
-    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
-    font: 13px/1.35 var(--dt-font-sidebar, system-ui, sans-serif);
+    border: 1px solid var(--ao-line);
+    border-radius: 8px;
+    background: var(--ao-surface);
+    color: var(--ao-text);
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+    font: 13px/1.6 var(--ao-mono);
     overflow: hidden;
 }
+
+.ao-search-line {
+    display: flex;
+    align-items: center;
+    gap: 1ch;
+    flex: none;
+    height: 44px;
+    padding: 0 2ch;
+    border-bottom: 1px solid var(--ao-line);
+}
+.ao-prompt { color: var(--ao-accent); font-weight: 700; }
 .ao-search {
-    margin: 12px;
-    padding: 9px 12px;
-    border: 1px solid var(--t-accent, #56d4e6);
-    border-radius: 8px;
+    flex: 1;
+    min-width: 0;
+    padding: 0;
+    border: 0;
     background: transparent;
     color: inherit;
     font: inherit;
-    font-size: 14px;
     outline: none;
 }
-.ao-list { flex: 1; overflow-y: auto; padding: 0 12px 8px; }
-.ao-heading {
-    padding: 10px 4px 4px;
+.ao-search::placeholder { color: var(--ao-dim); }
+
+.ao-list { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 1ch 10px; }
+.ao-sec {
+    display: flex;
+    align-items: center;
+    gap: 1.5ch;
+    height: 30px;
+    padding: 0 1ch;
     font-size: 11px;
-    letter-spacing: 0.1em;
-    opacity: 0.6;
+    letter-spacing: 0.12em;
+    color: var(--ao-dim);
 }
+.ao-sec::after { content: ""; flex: 1; height: 1px; background: var(--ao-line); }
+.ao-empty { padding: 24px 1ch; color: var(--ao-dim); }
+
+/* The one grid every row uses. */
 .ao-row {
     display: grid;
-    /* The title column is wider than the status column, so a long title is read before a long
-       status is cut; the age column fits "quiet 12m". */
-    grid-template-columns: 22px minmax(0, 1.5fr) minmax(0, 1fr) 88px 120px;
+    grid-template-columns: 2ch 2ch 38ch 12ch minmax(0, 1fr) 4ch 8ch;
+    column-gap: 1.5ch;
     align-items: start;
-    gap: 8px;
-    padding: 8px 6px;
-    border: 1px solid transparent;
-    border-radius: 8px;
-    cursor: pointer;
+    padding: 0 1ch;
+    line-height: 26px;
     position: relative;
+    cursor: pointer;
 }
-.ao-row.ao-needs { background: rgba(242, 184, 75, 0.08); }
-.ao-row.ao-selected { border-color: var(--t-accent, #56d4e6); }
-.ao-row.ao-history .ao-title { opacity: 0.75; }
-.ao-icon { text-align: center; }
-.ao-state-needs_you { color: #f2b84b; }
-.ao-state-working { color: #56d4e6; }
-.ao-state-idle, .ao-state-ended { color: #86a0a8; }
-.ao-main { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.ao-glyph { color: #e0957f; }
-.ao-tag {
-    padding: 0 5px;
-    border: 1px solid #86a0a8;
-    border-radius: 4px;
-    color: #86a0a8;
-    font-size: 10px;
-}
-.ao-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ao-link, .ao-repo { flex: none; font-size: 11px; opacity: 0.65; }
-.ao-now { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.8; }
-.ao-needs .ao-now {
+.ao-row > span { min-width: 0; }
+.ao-row:hover { background: color-mix(in srgb, var(--ao-sel) 55%, transparent); }
+.ao-row.ao-sel { background: var(--ao-sel); box-shadow: inset 2px 0 0 var(--ao-accent); }
+
+.ao-gut { align-self: stretch; position: relative; color: var(--ao-dim); user-select: none; }
+.ao-s { display: flex; justify-content: center; color: var(--ao-dim); }
+.ao-t, .ao-w, .ao-n { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ao-w { color: var(--ao-dim); }
+.ao-n { color: var(--ao-dim); }
+.ao-a { text-align: right; color: var(--ao-dim); }
+.ao-x { text-align: right; white-space: nowrap; color: var(--ao-dim); }
+.ao-row.ao-sel .ao-x { color: var(--ao-text); }
+.ao-agent { color: var(--ao-dim); }
+.ao-n-faint { color: var(--ao-faint); }
+.ao-n-error { color: var(--ao-error); }
+.ao-pr-inline { display: none; color: var(--ao-dim); }
+.ao-g-need { color: var(--ao-warn); }
+
+/* Needs you: the brightest status text, which may wrap to two lines. */
+.ao-need .ao-n {
+    color: var(--ao-text);
     white-space: normal;
     display: -webkit-box;
-    -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
-    color: #f6d48c;
+    -webkit-line-clamp: 2;
+    line-height: 20px;
+    padding: 3px 0;
+}
+.ao-need .ao-n.ao-n-error { color: var(--ao-error); }
+.ao-need .ao-a { color: var(--ao-text); }
+/* Working: a moving glyph and a mid-bright status. */
+.ao-working .ao-n { color: var(--ao-muted); }
+.ao-working .ao-n.ao-n-error { color: var(--ao-error); }
+/* A file nobody has refreshed for a while no longer says anything: its rows recede. */
+.ao-stale > .ao-s, .ao-stale > .ao-t, .ao-stale > .ao-w, .ao-stale > .ao-a { opacity: 0.55; }
+.ao-stale > .ao-n:not(.ao-n-error) { opacity: 0.55; }
+
+/* A programme is an expansion panel: the whole header toggles, "open" opens its session. */
+.ao-head { margin-top: 8px; }
+.ao-sec + .ao-head { margin-top: 0; }
+.ao-head .ao-t { font-weight: 700; }
+.ao-head .ao-x { color: var(--ao-muted); }
+.ao-head .ao-x:hover { color: var(--ao-text); text-decoration: underline; text-underline-offset: 3px; }
+.ao-head.ao-sel .ao-x { color: var(--ao-text); }
+.ao-cn { color: var(--ao-warn); font-weight: 600; }
+
+/* Runs: tree lines in the gutter, titles not indented. */
+.ao-mem .ao-gut::before {
+    content: "";
+    position: absolute;
+    left: calc(0.5ch - 0.5px);
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--ao-faint);
+}
+.ao-mem.ao-last .ao-gut::before { bottom: auto; height: 13px; }
+.ao-mem .ao-gut::after {
+    content: "";
+    position: absolute;
+    left: calc(0.5ch - 0.5px);
+    top: 13px;
+    width: 2.4ch;
+    height: 1px;
+    background: var(--ao-faint);
+}
+.ao-head.ao-kids .ao-gut::after {
+    content: "";
+    position: absolute;
+    left: calc(0.5ch - 0.5px);
+    top: 20px;
+    bottom: 0;
+    width: 1px;
+    background: var(--ao-faint);
+}
+.ao-mem.ao-last { margin-bottom: 8px; }
+
+/* Earlier. */
+.ao-past .ao-t { color: var(--ao-muted); }
+.ao-more { cursor: pointer; }
+.ao-more .ao-t { color: var(--ao-dim); }
+
+/* The working glyph: two layers stacked in one box and cross-faded by the script. It is drawn in
+   the accent at full opacity while the work is live; at rest the first frame is shown still and
+   dimmed. The box is 19px high and centred in the 26px row, inside the 2ch state column. */
+.ao-work {
+    position: relative;
+    flex: none;
+    display: inline-block;
+    width: 2ch;
+    height: 26px;
+    font-size: 19px;
+    line-height: 26px;
+    text-align: center;
+    color: var(--ao-accent);
     opacity: 1;
 }
-.ao-now.ao-error { color: #ff7b72; opacity: 1; }
-.ao-age { text-align: right; white-space: nowrap; opacity: 0.6; }
-.ao-age.ao-quiet { opacity: 0.45; }
-.ao-now.ao-quiet { opacity: 0.45; }
-/* A working row (or group) carries the working glyph beside its text. */
-.ao-now.ao-has-work { display: flex; align-items: center; gap: 6px; }
-.ao-now-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The working glyph: two layers stacked in one small box and cross-faded by the script; at rest
-   (quiet) the first frame is shown still and dimmed. */
-.ao-work {
-    position: relative; flex: none; display: inline-block; width: 1em; height: 1.2em;
-    font-size: 15px; line-height: 1.2em; text-align: center; color: var(--t-accent, #56d4e6);
-}
 .ao-work-layer { position: absolute; inset: 0; opacity: 0; }
-.ao-work-rest { opacity: 0.5; }
-.ao-needs .ao-age { color: #f2b84b; opacity: 1; }
-.ao-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
-.ao-action { text-align: right; opacity: 0.7; white-space: nowrap; }
-.ao-icon-btn {
-    width: 24px;
-    height: 24px;
-    padding: 0;
-    border: 1px solid var(--t-border, #2a5662);
-    border-radius: 6px;
-    background: transparent;
-    color: #a9dfe8;
-    font: inherit;
-    line-height: 1;
-    cursor: pointer;
-}
-.ao-icon-btn:hover, .ao-icon-btn.ao-pressed { background: #1d4a56; }
-.ao-mark { background: #3d321a; color: #f6d48c; border-radius: 3px; padding: 0 2px; }
-.ao-snippet, .ao-note {
-    grid-column: 2 / -1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
+.ao-work:not(.ao-work-rest) { text-shadow: 0 0 8px color-mix(in srgb, var(--ao-accent) 55%, transparent); }
+.ao-work-rest { color: var(--ao-dim); opacity: 1; }
+
+/* Footer: keys in the text colour, words dim; it changes with the selection. */
+.ao-foot {
+    display: flex;
+    align-items: center;
+    gap: 3ch;
+    flex: none;
+    height: 30px;
+    padding: 0 2ch;
+    border-top: 1px solid var(--ao-line);
+    font-size: 11.5px;
+    color: var(--ao-dim);
     white-space: nowrap;
-    font-size: 12px;
-    color: #a9c6cd;
-}
-.ao-snippet-label { color: #86a0a8; }
-.ao-note { color: #9fb6bc; white-space: normal; }
-.ao-peek {
-    position: absolute;
-    z-index: 10;
-    top: calc(100% + 4px);
-    left: 46px;
-    right: 130px;
-    padding: 10px 14px 12px;
-    border: 1px solid var(--t-border, #2a5662);
-    border-radius: 8px;
-    background: #061217;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
-    cursor: default;
-}
-.ao-peek-title { padding-bottom: 6px; font-size: 10px; letter-spacing: 0.1em; color: #86a0a8; }
-.ao-peek-line {
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: pre;
-    font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
-    color: #cfe1e5;
 }
+.ao-seg { cursor: default; }
+.ao-seg[data-key]:not([data-key=""]) { cursor: pointer; }
+.ao-k { color: var(--ao-text); margin-right: 0.8ch; }
+
+/* Narrow panels: drop the where column first, then shorten titles, then the footer's words. */
+@container ao (max-width: 900px) {
+    .ao-row { grid-template-columns: 2ch 2ch 28ch minmax(0, 1fr) 4ch 8ch; }
+    .ao-row > .ao-w { display: none; }
+    .ao-pr-inline { display: inline; }
+    .ao-seg-move { display: none; }
+}
+@container ao (max-width: 640px) {
+    .ao-row { grid-template-columns: 2ch 2ch 22ch minmax(0, 1fr) 4ch 8ch; }
+    .ao-seg-back { display: none; }
+}
+
+/* Under a row, across its full width: where a search matched, the resume note and the peek. */
+.ao-snippet, .ao-note, .ao-peek { grid-column: 3 / -1; min-width: 0; }
+.ao-snippet, .ao-note { color: var(--ao-dim); line-height: 20px; padding-bottom: 4px; white-space: normal; }
+.ao-snippet-label { color: var(--ao-muted); }
+.ao-mark { background: color-mix(in srgb, var(--ao-warn) 28%, transparent); color: var(--ao-text); padding: 0 2px; }
+.ao-peek {
+    margin: 2px 0 8px;
+    padding: 8px 2ch 10px;
+    border-left: 1px solid var(--ao-faint);
+    background: var(--ao-surface);
+    cursor: default;
+    line-height: 1.55;
+}
+.ao-peek-title { padding-bottom: 6px; font-size: 11px; letter-spacing: 0.12em; color: var(--ao-dim); }
+.ao-peek-line { overflow: hidden; text-overflow: ellipsis; white-space: pre; font-size: 12px; color: var(--ao-muted); }
+
+/* Closing a live session asks first. */
 .ao-confirm {
     display: flex;
     align-items: center;
-    gap: 10px;
-    margin-top: 2px;
-    padding: 8px 14px;
-    border-radius: 8px;
-    background: #1d1511;
-    box-shadow: inset 0 0 0 1.5px #b0603a;
+    gap: 2ch;
+    margin: 2px 1ch 8px;
+    padding: 8px 2ch;
+    border-left: 2px solid var(--ao-error);
+    background: var(--ao-sel);
+    line-height: 1.5;
 }
 .ao-confirm-text { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.ao-confirm-warn { font-size: 12px; color: #f2b84b; }
+.ao-confirm-warn { font-size: 12px; color: var(--ao-warn); }
 .ao-btn {
-    height: 30px;
+    height: 28px;
     padding: 0 12px;
-    border: 1.5px solid transparent;
-    border-radius: 6px;
+    border: 1px solid var(--ao-line);
     background: transparent;
     color: inherit;
     font: inherit;
     font-size: 12px;
     cursor: pointer;
 }
-.ao-btn-danger { background: #e0795a; color: #1a0d08; font-weight: 700; }
-.ao-btn-focus { border-color: #56d4e6; }
-.ao-selected .ao-action { opacity: 1; color: var(--t-accent, #56d4e6); }
-.ao-more { padding: 6px 4px; font-size: 12px; text-decoration: underline; opacity: 0.7; cursor: pointer; }
-.ao-empty { padding: 24px 4px; text-align: center; opacity: 0.6; }
+.ao-btn-danger { border-color: var(--ao-error); color: var(--ao-error); }
+.ao-btn-focus { border-color: var(--ao-accent); box-shadow: inset 0 0 0 1px var(--ao-accent); }
 
-/* A programme group: a one-line header, its members indented once under it, and a quiet "N more" line, drawn as one box. */
-.ao-group {
-    margin-top: 6px;
-    background: color-mix(in srgb, var(--t-accent, #56d4e6) 12%, var(--t-surface, #0f2a32));
-    border: 1px solid var(--t-border, #2a5662);
-    border-radius: 10px 10px 0 0;
-    align-items: center;
-    /* The title column takes the width its title and chips need, up to two fifths of the row, so a long
-       title shortens with an ellipsis and the counts keep room to be read. */
-    grid-template-columns: 22px fit-content(40%) minmax(0, 1fr) 88px 120px;
-}
-.ao-group .ao-repo { flex: none; max-width: 14em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ao-group.ao-group-end { border-radius: 10px; }
-.ao-group.ao-selected { border-color: var(--t-accent, #56d4e6); }
-.ao-chevron {
-    width: 22px; height: 22px; padding: 0; border: none; background: transparent;
-    color: var(--t-text-dim, #a9c6cd); font-size: 16px; line-height: 1; cursor: pointer;
-}
-.ao-group-title { font-weight: 700; color: var(--t-text, #e8f6f8); flex: 0 1 auto; }
-.ao-link-chip {
-    flex: none; padding: 1px 7px; border: 1px solid var(--t-border, #2a5662); border-radius: 5px;
-    font-size: 11px; color: var(--t-text-dim, #a9dfe8); text-decoration: none; white-space: nowrap;
-}
-.ao-counts {
-    justify-self: start; padding: 0; border: none; background: transparent;
-    font: inherit; font-size: 12px; text-align: left; cursor: pointer;
-    /* One line: when the counts do not fit they are cut with an ellipsis (the full text is the tooltip),
-       before the title is. */
-    min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.ao-counts-need { color: var(--t-warn, #f2b84b); font-weight: 700; }
-.ao-counts-rest { color: var(--t-text-dim, #a9c6cd); }
-.ao-group .ao-age { color: var(--t-warn, #f2b84b); opacity: 1; }
-.ao-group .ao-note { grid-column: 2 / -1; padding: 0; }
-.ao-member, .ao-group-more {
-    background: color-mix(in srgb, var(--t-accent, #56d4e6) 6%, var(--t-surface, #0d2228));
-    border: 1px solid var(--t-border, #2a5662);
-    border-top-color: transparent;
-    border-bottom-color: transparent;
-    border-radius: 0;
-}
-.ao-member.ao-needs { background: color-mix(in srgb, var(--t-warn, #f2b84b) 10%, var(--t-surface, #1d1c14)); }
-.ao-member .ao-main { padding-left: 24px; }
-.ao-label { font-weight: 700; color: var(--t-text-dim, #a9c6cd); }
-.ao-member.ao-group-end, .ao-group-more.ao-group-end {
-    border-bottom-color: var(--t-border, #2a5662);
-    border-radius: 0 0 10px 10px;
-}
-.ao-member.ao-selected, .ao-group-more.ao-selected { border-color: var(--t-accent, #56d4e6); }
-.ao-group-more { display: block; padding: 4px 12px 8px 60px; font-size: 12px; }
-.ao-more-text { color: var(--t-text-dim, #9fb6bc); }
-.ao-hint {
-    padding: 8px 14px;
-    border-top: 1px solid var(--t-border, #2a5662);
-    font-size: 11px;
-    opacity: 0.6;
-}
 .lunamux-app-settings-claude-error { color: #ff7b72; font-size: 12px; }

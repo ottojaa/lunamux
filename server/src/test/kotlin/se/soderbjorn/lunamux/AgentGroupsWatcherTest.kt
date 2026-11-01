@@ -36,9 +36,13 @@ class AgentGroupsWatcherTest {
         leadFolder: String = folder("lead"),
         members: String = "",
         extra: String = "",
-    ) = """{"version":1,"id":"$id","title":"Group $id","tag":"PROGRAMME","repo":"lunamux",
+        leadSessionId: String? = null,
+    ): String {
+        val leadId = if (leadSessionId == null) "" else ""","sessionId":"$leadSessionId""""
+        return """{"version":1,"id":"$id","title":"Group $id","tag":"PROGRAMME","repo":"lunamux",
         "link":{"label":"AOV","url":"https://example.org/board"},"updatedAt":"2026-11-01T13:31:51Z",
-        "lead":{"command":"claude 'go'","folder":"$leadFolder"},"members":[$members] $extra}"""
+        "lead":{"command":"claude 'go'","folder":"$leadFolder"$leadId},"members":[$members] $extra}"""
+    }
 
     private fun member(title: String, state: String = "idle", match: String = "", extra: String = "") =
         """{"title":"$title","state":"$state","since":"2026-11-01T11:41:43Z" ${if (match.isEmpty()) "" else ""","match":$match"""} $extra}"""
@@ -220,6 +224,37 @@ class AgentGroupsWatcherTest {
         assertEquals("lead-rec", l.recordId)
         assertEquals(false, l.live)
         assertEquals("said lead-rec", l.lastSaid)
+    }
+
+    @Test
+    fun `a lead named by session id is that session wherever it runs, and is not also a member`() {
+        val lead = folder("lead")
+        val elsewhere = folder("elsewhere")
+        write("g1.json", groupJson(leadFolder = lead, leadSessionId = "home-id", members = member("m", "idle", """{"folder":"$elsewhere"}""")))
+        records = listOf(
+            rec("home", elsewhere, agentSessionId = "home-id", createdAt = 1),
+            rec("folder-twin", lead, agentSessionId = "other", createdAt = 2),
+        )
+        watcher.reload()
+        val g = watcher.groups.value.single()
+        assertEquals("home", g.lead.recordId)
+        assertEquals(true, g.lead.live)
+        assertEquals("said home", g.lead.lastSaid)
+        // The home session sits in a folder a member also asks for; it stays the lead.
+        assertNull(g.members.single().recordId)
+    }
+
+    @Test
+    fun `a lead session id nothing matches falls back to the lead folder, and a file without one never names a session`() {
+        val lead = folder("lead")
+        write("g1.json", groupJson(leadFolder = lead, leadSessionId = "absent"))
+        records = listOf(rec("in-folder", lead, agentSessionId = "x"), rec("elsewhere", folder("elsewhere"), agentSessionId = "home-id"))
+        watcher.reload()
+        assertEquals("in-folder", watcher.groups.value.single().lead.recordId)
+
+        write("g1.json", groupJson(leadFolder = folder("empty-lead")))
+        watcher.reload()
+        assertNull(watcher.groups.value.single().lead.recordId)
     }
 
     @Test

@@ -161,6 +161,47 @@ class AgentSessionTrackerTest {
     }
 
     @Test
+    fun `a finished turn that ends in a reply is idle even when the reply closes with an offer`() {
+        val t = tracker()
+        val p = pane()
+        val replies = listOf(
+            "I'd do 1 and skip 2, since your CLAUDE.md already covers it. Want me to go ahead?",
+            "Both options work.\n\nThe first is smaller.\nThe second is safer, shall I take it?",
+            "All done. Shall I also update the docs?",
+        )
+        for (reply in replies) {
+            t.onHook(p, event("UserPromptSubmit", "a-1", "prompt" to "go"))
+            t.onHook(p, event("Stop", "a-1", "last_assistant_message" to reply))
+            val row = t.summaries.value.single()
+            assertEquals("idle", row.state, reply)
+            assertNull(row.question, reply)
+        }
+    }
+
+    @Test
+    fun `a permission request asks for you and an approval or sign-in notice does not`() {
+        val t = tracker()
+        val p = pane()
+        t.onHook(p, event("Stop", "a-1", "last_assistant_message" to "Done."))
+        t.onHook(p, event("Notification", "a-1", "notification_type" to "auth_success", "message" to "Signed in"))
+        assertEquals("idle", t.summaries.value.single().state)
+        t.onHook(p, event("Notification", "a-1", "notification_type" to "permission_prompt", "message" to "Claude needs your permission to use Bash"))
+        val row = t.summaries.value.single()
+        assertEquals("needs_you", row.state)
+        assertEquals("Claude needs your permission to use Bash", row.question)
+    }
+
+    @Test
+    fun `a closing question of one sentence asks for you and shows the question as its line`() {
+        val t = tracker()
+        val p = pane()
+        t.onHook(p, event("Stop", "a-1", "last_assistant_message" to "Two runs are ready.\n\nWhich of the two should I merge first?"))
+        val row = t.summaries.value.single()
+        assertEquals("needs_you", row.state)
+        assertEquals("Which of the two should I merge first?", row.question)
+    }
+
+    @Test
     fun `stop remembers the first line of the last paragraph, for questions too`() {
         val t = tracker()
         val p = pane()
