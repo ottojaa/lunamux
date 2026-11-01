@@ -100,12 +100,19 @@ fun main() {
     val port = System.getProperty("lunamux.port")?.toIntOrNull()
         ?: SERVER_TLS_PORT
     AgentEvents.port = port
-    val agentTracker = AgentSessionTracker(repo).also { it.start() }
+    val searchIndexer = AgentSearchIndexer(repo)
+    val agentTracker = AgentSessionTracker(repo, onEnded = searchIndexer::indexEnded).also { it.start() }
     val claudeHooks = ClaudeHooks()
+    // Sessions recorded before search existed get their text now.
+    searchIndexer.backfill()
     TerminalSessions.onDestroy = agentTracker::onSessionDestroyed
     WindowState.initialize(repo)
 
     val persistenceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    // Claude Code's own transcript history is imported (for search only) whenever
+    // Claude Code is connected: at start if it already is, and when the user connects it.
+    persistenceScope.launch { claudeHooks.connected.collect { if (it) searchIndexer.importHistory() } }
 
     // Opt-in program-set terminal titles (OSC 0/2). Mirror the toggle into
     // TerminalSessions' stable flag flow: per-session watchers re-collect on

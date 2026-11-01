@@ -551,7 +551,8 @@ fun connectWindow() {
                     // state from this envelope, and the stateFlow collector in
                     // main.kt calls applyAll().
                 }
-                is WindowEnvelope.AgentSessions, is WindowEnvelope.AgentSessionError -> {
+                is WindowEnvelope.AgentSessions, is WindowEnvelope.AgentSessionError,
+                is WindowEnvelope.AgentSessionMatches, is WindowEnvelope.AgentSessionInspection -> {
                     // Handled reactively: the agents overview view model reads
                     // these from the shared window state (see AgentsOverview.kt).
                 }

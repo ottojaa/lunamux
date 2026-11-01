@@ -52,6 +52,8 @@ import java.util.concurrent.ConcurrentHashMap
  * @property agent `claude`, `codex` or `gemini` when the screen shows one, else null.
  * @property state the resolved screen state: `waiting`, `working` or null.
  * @property alive whether the session's process is still running.
+ * @property customName the name the user gave the pane (F2), if any. It becomes the
+ *   record's title so the name outlives the pane.
  * @property screenText reads the rendered screen as plain text.
  */
 data class PaneSnapshot(
@@ -62,6 +64,7 @@ data class PaneSnapshot(
     val agent: String? = null,
     val state: String? = null,
     val alive: Boolean = true,
+    val customName: String? = null,
     val screenText: () -> String? = { null },
 )
 
@@ -71,8 +74,14 @@ data class PaneSnapshot(
  * @property repo folder name of the repository's main checkout.
  * @property branch current branch, null on a detached HEAD.
  * @property worktreePath root of the linked worktree the folder is in; null in a main checkout.
+ * @property repoRoot absolute path of the repository's main checkout; null outside git.
  */
-data class GitInfo(val repo: String? = null, val branch: String? = null, val worktreePath: String? = null)
+data class GitInfo(
+    val repo: String? = null,
+    val branch: String? = null,
+    val worktreePath: String? = null,
+    val repoRoot: String? = null,
+)
 
 /**
  * Owns the `agent_sessions` table and the in-memory view of it.
@@ -88,6 +97,8 @@ data class GitInfo(val repo: String? = null, val branch: String? = null, val wor
  * @param gitInfo reads git metadata for a folder; replaced in tests.
  * @param clock epoch-millis time source; replaced in tests.
  * @param newId mints record ids; replaced in tests.
+ * @param onEnded called, with the tracker's lock held, each time a record ends; it must only
+ *   hand the record to another thread (the search indexer reads the transcript there).
  * @see PaneSnapshot
  */
 class AgentSessionTracker(
@@ -95,6 +106,7 @@ class AgentSessionTracker(
     private val gitInfo: (String?) -> GitInfo = ::readGitInfo,
     private val clock: () -> Long = System::currentTimeMillis,
     private val newId: () -> String = { UUID.randomUUID().toString() },
+    private val onEnded: (AgentSessionRecord) -> Unit = {},
 ) {
     private val log = LoggerFactory.getLogger(AgentSessionTracker::class.java)
     private val lock = Any()
@@ -171,6 +183,11 @@ class AgentSessionTracker(
                 if (pane.alive && pane.agent != null && pane.state != null && pane.terminalSessionId !in awaitScreenClear) {
                     rec = open(pane, pane.agent, SOURCE_SCREEN, agentSessionId = null, transcriptPath = null)
                 } else continue
+            }
+            val name = pane.customName?.trim()?.takeIf { it.isNotEmpty() }
+            if (name != null && name != rec.title) {
+                rec = rec.copy(title = name)
+                put(rec)
             }
             if (rec.source != SOURCE_SCREEN) {
                 // Claude Code sends no event when a permission prompt is approved, so
@@ -304,6 +321,17 @@ class AgentSessionTracker(
     fun find(id: String): AgentSessionRecord? = synchronized(lock) { records[id] ?: repo.findAgentSessionById(id) }
 
     /**
+     * The record held in memory (every open one and the recent ended ones), without
+     * touching the database.
+     *
+     * Called by search so a hit on an open session shows its live state.
+     *
+     * @param id the record id.
+     * @return the in-memory record, or null.
+     */
+    fun cached(id: String): AgentSessionRecord? = synchronized(lock) { records[id] }
+
+    /**
      * Pick the record a hook event belongs to, creating or adopting one.
      *
      * Keeps one open record per pane: the pane's open record is reused when
@@ -368,6 +396,8 @@ class AgentSessionTracker(
             repo = git.repo,
             branch = git.branch,
             worktreePath = git.worktreePath,
+            repoRoot = git.repoRoot,
+            title = pane.customName?.trim()?.takeIf { it.isNotEmpty() },
             transcriptPath = transcriptPath,
             links = ticketKeys(git.branch),
             state = IDLE,
@@ -378,17 +408,17 @@ class AgentSessionTracker(
 
     private fun end(rec: AgentSessionRecord, screen: String?) {
         val now = clock()
-        put(
-            rec.copy(
-                state = ENDED,
-                stateSince = now,
-                endedAt = now,
-                nowLine = null,
-                question = null,
-                lastScreen = screen?.let(::lastLines) ?: rec.lastScreen,
-            ),
+        val ended = rec.copy(
+            state = ENDED,
+            stateSince = now,
+            endedAt = now,
+            nowLine = null,
+            question = null,
+            lastScreen = screen?.let(::lastLines) ?: rec.lastScreen,
         )
+        put(ended)
         trim()
+        runCatching { onEnded(ended) }.onFailure { log.warn("Ended-session hook failed for {}", ended.id, it) }
     }
 
     private fun put(rec: AgentSessionRecord) {
@@ -410,13 +440,7 @@ class AgentSessionTracker(
         records.values.firstOrNull { it.state != ENDED && it.terminalSessionId == terminalSessionId }
 
     private fun publish() {
-        _summaries.value = records.values.map {
-            AgentSessionSummary(
-                id = it.id, agent = it.agent, state = it.state, stateSince = it.stateSince,
-                title = it.title, links = it.links, repo = it.repo, branch = it.branch, cwd = it.cwd,
-                nowLine = it.nowLine, question = it.question, leafId = it.leafId, endedAt = it.endedAt,
-            )
-        }
+        _summaries.value = records.values.map { it.toSummary() }
     }
 
     private companion object {
@@ -433,6 +457,20 @@ class AgentSessionTracker(
         const val GIT_CACHE_MS = 60_000L
     }
 }
+
+/**
+ * The row the clients see for this record.
+ *
+ * Used by the tracker's published list and by search results.
+ *
+ * @receiver the stored record.
+ * @return its summary.
+ */
+internal fun AgentSessionRecord.toSummary() = AgentSessionSummary(
+    id = id, agent = agent, state = state, stateSince = stateSince,
+    title = title, links = links, repo = repo, branch = branch, cwd = cwd,
+    nowLine = nowLine, question = question, leafId = leafId, endedAt = endedAt,
+)
 
 private const val TOOL_LINE_MAX = 160
 private const val SCREEN_LINES = 200
@@ -510,6 +548,7 @@ fun readGitInfo(cwd: String?): GitInfo {
         repo = (mainRoot ?: File(top)).name,
         branch = branch,
         worktreePath = if (isLinked) top else null,
+        repoRoot = (mainRoot ?: File(top)).path,
     )
 }
 
@@ -533,6 +572,7 @@ internal fun livePaneSnapshot(id: String, states: Map<String, String?> = emptyMa
         leafId = WindowState.leafIdOfSession(id),
         cwd = session.cwd.value,
         programTitle = session.programTitle.value,
+        customName = WindowState.customNameOfSession(id),
         agent = TerminalSessions.agentOf(id),
         state = states[id],
         alive = session.isProcessAlive(),
