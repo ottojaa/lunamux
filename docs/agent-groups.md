@@ -40,6 +40,10 @@ build a file under a dot-name and rename it into place.
   the group title carries the same glyph while any member works. When nothing has been heard from
   a session for five minutes the glyph stops and dims, and the age reads `quiet 6m`. The glyph
   is still when the browser asks for reduced motion.
+- A member Lunamux has no session for is only as fresh as its file. When the file's modified time
+  is twenty minutes old, those members are dimmed, have no working glyph, and their age reads
+  `stale 25m`. A member with a session follows the session, not the file. The counts do not
+  change when a file goes stale: they are the file's claim, and only the rows show its age.
 - Members count in the topbar chip next to ordinary sessions; held members do not.
 
 ## Format
@@ -139,6 +143,10 @@ box's first row, and what it last said is shown in the footer while the header i
 - **Replace atomically.** Write the new content to a temporary name (starting with `.`) in the
   same folder and rename it over the old file. Lunamux notices changes by modified time and size
   and re-reads about every three seconds, so a state change shows up within a poll.
+- **Keep the file fresh while the programme runs.** Staleness is read from the file's modified
+  time, not from `updatedAt`. A writer that has nothing new to say must still touch the file
+  (set its modified time, leaving content and format alone) at least every ten minutes, or its
+  members read as stale after twenty. The orchestrator's writer does this on every controller tick.
 - **To remove a group**, delete its file. The box disappears within a poll. Lunamux keeps nothing
   about it.
 

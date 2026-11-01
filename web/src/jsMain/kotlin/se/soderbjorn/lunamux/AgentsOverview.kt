@@ -444,13 +444,18 @@ private fun buildRow(row: Row, index: Int, selected: Boolean, peek: AgentsOvervi
     // once nothing has been heard from it for a while the glyph stops and the age says so.
     val activity = row.activityMillis?.takeIf { row.state == "working" }
     val quiet = activity != null && AgentsOverviewBackingViewModel.isQuiet(activity, kotlin.js.Date.now().toLong())
+    // A group member the file declares and Lunamux does not host is only as fresh as the file: once
+    // nobody has refreshed it for a while its state is dimmed, not drawn as news.
+    val stale = row.fileRefreshedMillis?.let { AgentsOverviewBackingViewModel.isStale(it, kotlin.js.Date.now().toLong()) } == true
     val now = div("ao-now")
     val error = row.error
     if (error != null) {
+        // An error is never dimmed: it is the one thing on the row the person has to read.
         now.classList.add("ao-error")
         now.textContent = error
     } else {
-        if (row.state == "working") {
+        if (stale) now.classList.add("ao-quiet")
+        if (row.state == "working" && !stale) {
             now.classList.add("ao-has-work")
             now.appendChild(workingGlyph(active = activity != null && !quiet))
         }
@@ -466,6 +471,7 @@ private fun buildRow(row: Row, index: Int, selected: Boolean, peek: AgentsOvervi
 
     el.appendChild(
         if (quiet) span("ao-age ao-quiet", "quiet ${formatAge(activity!!)}")
+        else if (stale) span("ao-age ao-quiet", "stale ${formatAge(row.fileRefreshedMillis!!)}")
         else span("ao-age", formatAge(row.sinceMillis)),
     )
     val actions = span("ao-actions", "")

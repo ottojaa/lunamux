@@ -565,6 +565,9 @@ enum class DiffLineType {
  * @param linkUrl the link's `http(s)` address; null exactly when [linkLabel] is.
  * @param lead the lead session.
  * @param members the group's members, in the file's order.
+ * @param refreshedAtMillis epoch millis the group file was last written or touched (its modification
+ *   time), or null when unknown. A file nobody has refreshed for a while no longer says anything
+ *   about its members; the overview marks such rows stale from this alone.
  */
 @Serializable
 data class AgentGroup(
@@ -576,6 +579,7 @@ data class AgentGroup(
     val linkUrl: String? = null,
     val lead: AgentGroupLead,
     val members: List<AgentGroupMember> = emptyList(),
+    val refreshedAtMillis: Long? = null,
 )
 
 /**
