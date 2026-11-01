@@ -1009,8 +1009,25 @@ private suspend fun resumeAgentSession(recordId: String, ctx: WindowConnectionCo
         "codex" -> "codex resume"
         else -> null
     }
-    val tabId = WindowState.addTab(WindowState.activeWorldId(), initialCwd = cwd)
-    WindowState.renameTab(tabId, rec.title ?: rec.branch ?: java.io.File(cwd).name)
+    openTabRunning(cwd, rec.title ?: rec.branch ?: java.io.File(cwd).name, command)
+}
+
+/**
+ * Open a new tab in the active world, starting in [folder], and type [command]
+ * into its shell the way the MCP `run` tool does.
+ *
+ * Called by [resumeAgentSession] to start an agent again and by the
+ * open-group-lead route to start a group's lead session. The command is typed,
+ * not executed by Lunamux, so the user's own shell and profile run it.
+ *
+ * @param folder absolute folder the tab's shell starts in; the caller has checked it exists.
+ * @param title the tab's name.
+ * @param command the line to type, or null to open the tab and type nothing.
+ * @see WindowState.addTab
+ */
+internal fun openTabRunning(folder: String, title: String, command: String?) {
+    val tabId = WindowState.addTab(WindowState.activeWorldId(), initialCwd = folder)
+    WindowState.renameTab(tabId, title)
     val sessionId = WindowState.config.value.worlds.flatMap { it.tabs }
         .firstOrNull { it.id == tabId }?.panes?.firstOrNull()?.leaf?.sessionId
     if (command != null && sessionId != null) {
