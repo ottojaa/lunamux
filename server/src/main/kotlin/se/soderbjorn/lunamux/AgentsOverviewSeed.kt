@@ -163,8 +163,8 @@ object AgentsOverviewSeed {
     }
 
     /**
-     * Write the task files: one live task that needs the person and works, one whose file has
-     * gone stale, and two whose members have all ended.
+     * Write the task files: one live task that needs the person and works, one whose members are all
+     * done but have not ended, one whose file has gone stale, and two whose members have all ended.
      *
      * Called by [seed]. Each file is written under a dot-name and renamed into place, as a real
      * writer would.
@@ -213,6 +213,18 @@ object AgentsOverviewSeed {
             ),
             mtimeAgo = 0,
         )
+        // Every member is done but none has ended, the way a programme holds finished pull
+        // requests for its merge rule. A file-declared task stays in NOW while a session has not
+        // ended, so this shows how that reads when nothing is moving or waiting.
+        task(
+            "seed-release-train", "Release train", "lunamux",
+            listOf(
+                member("Tasks panel", "idle", HOUR, label = "done", links = listOf("#231")),
+                member("Search by task", "idle", 3 * HOUR, label = "done", links = listOf("#232")),
+                member("Seed script", "idle", 5 * HOUR, label = "done", links = listOf("#233")),
+            ),
+            mtimeAgo = 0,
+        )
         task(
             "seed-nightly-sync", "Nightly sync", "ops",
             listOf(member("Sync worker", "working", 2 * HOUR, line = "Copying the ledger")),
@@ -234,7 +246,7 @@ object AgentsOverviewSeed {
             ),
             mtimeAgo = 9 * DAY,
         )
-        return 4
+        return 5
     }
 
     /**

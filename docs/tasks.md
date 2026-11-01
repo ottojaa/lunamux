@@ -90,7 +90,7 @@ words only.
 
 `scripts/seed-agents-overview.sh <db file> <tasks folder>` fills a scratch database and folder
 with about twenty ended sessions (last active today, 1, 2, 6, 12 and 30 days ago), five
-agent-made tasks and four task files. Seed while the scratch server is stopped, then start it on
+agent-made tasks and five task files. Seed while the scratch server is stopped, then start it on
 its own port with `-Dlunamux.dbPath`, `-Dlunamux.tasksDir`, `-Dlunamux.agentGroupsDir` and
 `-Dlunamux.claudeProjects` pointing at scratch paths (`./gradlew :server:run` forwards all four).
 The script's header lists what to look at, and the cases that need a running agent.

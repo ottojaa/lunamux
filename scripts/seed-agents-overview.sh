@@ -5,7 +5,7 @@
 #   scripts/seed-agents-overview.sh <db file> <tasks folder>
 #
 # Writes 21 ended agent sessions last active today, 1, 2, 6, 12 and 30 days ago, five
-# agent-made tasks, and four task files. Run it again to refresh the ages (it replaces its own
+# agent-made tasks, and five task files. Run it again to refresh the ages (it replaces its own
 # records and touches nothing else). The ages are counted from the moment it runs, so seed again
 # on the day you look. Seed while the scratch server is STOPPED: the server reads its sessions
 # and tasks once when it starts, and it ends any session still open.
@@ -25,7 +25,9 @@
 # Open https://localhost:8471, press ⌘⇧A and look at:
 #
 #   NOW              "Access control" (◆ needs you, one working, one in review) and
-#                    "Nightly sync", whose file is 25 minutes old, so its worker reads "stale 25m".
+#                    "Nightly sync", whose file is 25 minutes old, so its worker reads "stale 25m",
+#                    and "Release train", a file task whose three sessions are all done but none
+#                    has ended: it stays in NOW, with nothing moving or waiting in it.
 #   LAST FEW DAYS    everything ended within 3 days, all listed, newest first: today's two
 #                    sessions, "Rate limiter rewrite" and "Auth token refresh" (a session from
 #                    yesterday and one from 10 days ago: the task is as recent as its newest),

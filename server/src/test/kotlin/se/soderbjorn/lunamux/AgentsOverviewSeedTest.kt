@@ -32,7 +32,7 @@ class AgentsOverviewSeedTest {
     fun `the seed holds about twenty ended sessions spread over the ages the overview is read at`() {
         val summary = AgentsOverviewSeed.seed(db, tasksDir, now)
         assertEquals(21, summary.sessions)
-        assertEquals(4, tasksDir.listFiles { f -> f.name.endsWith(".json") }!!.size)
+        assertEquals(5, tasksDir.listFiles { f -> f.name.endsWith(".json") }!!.size)
 
         val repo = repo()
         val kept = repo.loadRecentEndedAgentSessions(now - 14 * day, 300)
