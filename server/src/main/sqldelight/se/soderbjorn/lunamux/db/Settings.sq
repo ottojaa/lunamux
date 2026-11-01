@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
     created_at          INTEGER NOT NULL,
     ended_at            INTEGER,
     repo_root           TEXT,
-    search_text         TEXT
+    search_text         TEXT,
+    last_said           TEXT
 );
 
 selectByKey:
@@ -64,28 +65,28 @@ upsertAgentSession:
 INSERT OR REPLACE INTO agent_sessions(
     id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
     worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at, repo_root, search_text
+    question, last_screen, created_at, ended_at, repo_root, search_text, last_said
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-    (SELECT search_text FROM agent_sessions WHERE id = ?));
+    (SELECT search_text FROM agent_sessions WHERE id = ?), ?);
 
 -- The hot reads below name their columns so the long search_text never rides
 -- along; imported history (source = 'import') is only ever found by search.
 selectRecentEndedAgentSessions:
 SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
     worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at, repo_root
+    question, last_screen, created_at, ended_at, repo_root, last_said
 FROM agent_sessions WHERE state = 'ended' AND source != 'import' ORDER BY ended_at DESC LIMIT ?;
 
 selectAgentSessionByAgentId:
 SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
     worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at, repo_root
+    question, last_screen, created_at, ended_at, repo_root, last_said
 FROM agent_sessions WHERE agent = ? AND agent_session_id = ? ORDER BY created_at DESC LIMIT 1;
 
 selectAgentSessionById:
 SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
     worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at, repo_root
+    question, last_screen, created_at, ended_at, repo_root, last_said
 FROM agent_sessions WHERE id = ?;
 
 endOpenAgentSessions:
@@ -104,7 +105,7 @@ WHERE state = 'ended' AND transcript_path IS NOT NULL AND search_text IS NULL;
 searchAgentSessions:
 SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
     worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, created_at, ended_at, repo_root,
+    question, created_at, ended_at, repo_root, last_said,
     CASE WHEN search_text LIKE :pattern ESCAPE '\'
         THEN substr(search_text, max(1, instr(lower(search_text), lower(:raw)) - 80), 240) END AS transcript_window,
     CASE WHEN last_screen LIKE :pattern ESCAPE '\'

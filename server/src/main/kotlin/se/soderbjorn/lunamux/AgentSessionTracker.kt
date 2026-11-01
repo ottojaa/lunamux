@@ -268,6 +268,7 @@ class AgentSessionTracker(
             }
             "Stop" -> {
                 val last = event.str("last_assistant_message")?.trim().orEmpty()
+                if (last.isNotEmpty()) rec = rec.copy(lastSaid = lastSaidOf(last))
                 if (last.endsWith("?")) {
                     set(NEEDS_YOU, nowLine = null, question = last.substringAfterLast("\n\n").take(QUESTION_MAX))
                 } else set(IDLE, nowLine = null)
@@ -483,9 +484,23 @@ internal fun AgentSessionRecord.toSummary() = AgentSessionSummary(
     id = id, agent = agent, state = state, stateSince = stateSince,
     title = title, links = links, repo = repo, branch = branch, cwd = cwd,
     nowLine = nowLine, question = question, leafId = leafId, endedAt = endedAt,
+    lastSaid = lastSaid,
 )
 
 private const val TOOL_LINE_MAX = 160
+private const val LAST_SAID_MAX = 160
+
+/**
+ * The part of an assistant reply worth showing as "what it last said": the first line of
+ * the last paragraph, cut to [LAST_SAID_MAX] characters.
+ *
+ * Called by [AgentSessionTracker] on every Stop hook, for questions and statements alike.
+ *
+ * @param message the full, trimmed reply text.
+ * @return the first line of its last paragraph (possibly empty for blank input).
+ */
+internal fun lastSaidOf(message: String): String =
+    message.trim().substringAfterLast("\n\n").trim().lineSequence().first().trim().take(LAST_SAID_MAX)
 private const val SCREEN_LINES = 200
 private val TICKET_KEY = Regex("""\b[A-Z][A-Z0-9]+-\d+\b""")
 

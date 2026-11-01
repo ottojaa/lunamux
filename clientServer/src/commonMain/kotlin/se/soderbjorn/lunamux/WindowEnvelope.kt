@@ -333,6 +333,8 @@ sealed class WindowEnvelope {
  * @param question what the agent is asking while [state] is `needs_you`.
  * @param leafId the pane the agent runs in (meaningful while the record is open).
  * @param endedAt epoch millis when the record ended, or null while open.
+ * @param lastSaid first line of the last paragraph of the agent's latest reply, at most 160
+ *   characters, or null before it has said anything; shown on a group header for its lead.
  */
 @Serializable
 data class AgentSessionSummary(
@@ -349,6 +351,7 @@ data class AgentSessionSummary(
     val question: String? = null,
     val leafId: String? = null,
     val endedAt: Long? = null,
+    val lastSaid: String? = null,
 )
 
 /**
