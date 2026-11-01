@@ -32,6 +32,7 @@ import io.ktor.websocket.close
 import io.ktor.websocket.readText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -308,6 +309,8 @@ internal class WindowConnectionContext(
     val agentTracker: AgentSessionTracker? = null,
     /** The Claude Code settings editor behind the App Settings Connect row; null where it is not wired up. */
     val claudeHooks: ClaudeHooks? = null,
+    /** The group files behind the overview's group boxes; null where groups are not wired up. */
+    val agentGroups: AgentGroupsWatcher? = null,
 ) {
     private val gitWatchers = ConcurrentHashMap<String, GitWatchHandle>()
 
@@ -376,6 +379,7 @@ internal fun Route.windowRoutes(
     usageMonitor: ClaudeUsageMonitor,
     agentTracker: AgentSessionTracker,
     claudeHooks: ClaudeHooks,
+    agentGroups: AgentGroupsWatcher? = null,
 ) {
     webSocket("/window") {
         val token = call.readAuthToken()
@@ -440,10 +444,26 @@ internal fun Route.windowRoutes(
         // reaches the overview straight away. The Claude connection flag rides
         // along because the settings row needs it with the same lifetime.
         claudeHooks.refresh()
+        // Groups ride in the same job, sessions first, so a client that receives a group
+        // already holds the records it names. A frame is sent only when its part changed.
         val agentSessionsPushJob = launch {
-            combine(agentTracker.summaries, claudeHooks.connected) { sessions, connected ->
-                WindowEnvelope.AgentSessions(sessions, connected)
-            }.collect { env -> send(Frame.Text(windowJson.encodeToString<WindowEnvelope>(env))) }
+            var sentSessions: Pair<List<AgentSessionSummary>, Boolean>? = null
+            var sentGroups: List<AgentGroup>? = null
+            combine(
+                agentTracker.summaries,
+                claudeHooks.connected,
+                agentGroups?.groups ?: MutableStateFlow(emptyList()),
+            ) { sessions, connected, groups -> Triple(sessions, connected, groups) }
+                .collect { (sessions, connected, groups) ->
+                    if (sentSessions != sessions to connected) {
+                        sentSessions = sessions to connected
+                        send(Frame.Text(windowJson.encodeToString<WindowEnvelope>(WindowEnvelope.AgentSessions(sessions, connected))))
+                    }
+                    if (agentGroups != null && sentGroups != groups) {
+                        sentGroups = groups
+                        send(Frame.Text(windowJson.encodeToString<WindowEnvelope>(WindowEnvelope.AgentGroups(groups))))
+                    }
+                }
         }
 
         val usagePushJob = launch {
@@ -482,6 +502,7 @@ internal fun Route.windowRoutes(
             supportsWorlds = supportsWorlds,
             agentTracker = agentTracker,
             claudeHooks = claudeHooks,
+            agentGroups = agentGroups,
         )
 
         try {
@@ -762,6 +783,7 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
             WindowState.addTab(worldId = worldId)
         }
         is WindowCommand.ResumeAgentSession -> resumeAgentSession(cmd.recordId, ctx)
+        is WindowCommand.OpenAgentGroupLead -> openAgentGroupLead(cmd.groupId, ctx)
         is WindowCommand.SearchAgentSessions -> ctx.scope.launch {
             // Off the socket's loop: the query reads SQLite and may run git for resume notes.
             runCatching {
@@ -1010,6 +1032,40 @@ private suspend fun resumeAgentSession(recordId: String, ctx: WindowConnectionCo
         else -> null
     }
     openTabRunning(cwd, rec.title ?: rec.branch ?: java.io.File(cwd).name, command)
+}
+
+/**
+ * Start a group's lead session in a new tab, unless it is already open.
+ *
+ * Called by [handleWindowCommand] for [WindowCommand.OpenAgentGroupLead]. The group is
+ * looked up in the watcher, so the line that gets typed is the one the group file
+ * declares, never anything the client sent. When the lead is already open the
+ * client jumps to it by itself and nothing is answered. A group that no longer
+ * exists, or a lead folder that is gone, is answered with an
+ * [WindowEnvelope.AgentSessionError] (record id null) and no tab is created.
+ *
+ * @param groupId the [AgentGroup.id] named by the client.
+ * @param ctx the connection that asked, which receives any error.
+ * @param open opens the tab and types the command; [openTabRunning] except in tests.
+ */
+internal suspend fun openAgentGroupLead(
+    groupId: String,
+    ctx: WindowConnectionContext,
+    open: (folder: String, title: String, command: String?) -> Unit = ::openTabRunning,
+) {
+    val found = ctx.agentGroups?.find(groupId)
+    if (found == null) {
+        ctx.send(WindowEnvelope.AgentSessionError(null, "That group no longer exists."))
+        return
+    }
+    val (group, command) = found
+    if (group.lead.live) return
+    val folderExists = withContext(Dispatchers.IO) { java.io.File(group.lead.folder).isDirectory }
+    if (!folderExists) {
+        ctx.send(WindowEnvelope.AgentSessionError(null, "The folder of ${group.title}'s lead session no longer exists: ${group.lead.folder}"))
+        return
+    }
+    open(group.lead.folder, group.title, command)
 }
 
 /**

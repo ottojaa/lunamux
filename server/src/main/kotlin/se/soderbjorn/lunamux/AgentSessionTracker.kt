@@ -322,6 +322,16 @@ class AgentSessionTracker(
     fun find(id: String): AgentSessionRecord? = synchronized(lock) { records[id] ?: repo.findAgentSessionById(id) }
 
     /**
+     * Every record held in memory (each open one and the recent ended ones), copied under the lock.
+     *
+     * Called by [AgentGroupsWatcher] whenever [summaries] changes, because a summary lacks
+     * the agent's own session id that group members are matched by.
+     *
+     * @return the records, oldest first.
+     */
+    fun snapshot(): List<AgentSessionRecord> = synchronized(lock) { records.values.toList() }
+
+    /**
      * The record held in memory (every open one and the recent ended ones), without
      * touching the database.
      *

@@ -104,12 +104,14 @@ fun main() {
     val agentTracker = AgentSessionTracker(repo, onEnded = searchIndexer::indexEnded).also { it.start() }
     searchIndexer.runningIn = agentTracker::hasUnidentifiedClaudeIn
     val claudeHooks = ClaudeHooks()
+    val agentGroups = AgentGroupsWatcher(AppPaths.agentGroupsDir(), agentTracker::snapshot, agentTracker.summaries)
     // Sessions recorded before search existed get their text now.
     searchIndexer.backfill()
     TerminalSessions.onDestroy = agentTracker::onSessionDestroyed
     WindowState.initialize(repo)
 
     val persistenceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    agentGroups.start(persistenceScope)
 
     // Claude Code's own transcript history is imported (for search only) whenever
     // Claude Code is connected: at start if it already is, and when the user connects it.
@@ -191,7 +193,7 @@ fun main() {
                 this.port = port
             }
         },
-        module = { module(repo, sessionStates, usageMonitor, scrollbackSaver, agentTracker, claudeHooks) }
+        module = { module(repo, sessionStates, usageMonitor, scrollbackSaver, agentTracker, claudeHooks, agentGroups) }
     )
 
     if (java.awt.GraphicsEnvironment.isHeadless()) {
@@ -226,6 +228,7 @@ fun main() {
  *                        JVM shutdown hook
  * @param agentTracker    the agent session records, pushed to clients and fed by hook events
  * @param claudeHooks     the Claude Code settings editor behind the Connect/Disconnect row
+ * @param agentGroups     the agent group files read from disk, pushed to clients as groups
  */
 fun Application.module(
     settingsRepo: SettingsRepository,
@@ -234,6 +237,7 @@ fun Application.module(
     scrollbackSaver: ScrollbackSaver,
     agentTracker: AgentSessionTracker,
     claudeHooks: ClaudeHooks,
+    agentGroups: AgentGroupsWatcher? = null,
 ) {
     install(ContentNegotiation) { json() }
     install(WebSockets) {
@@ -266,7 +270,7 @@ fun Application.module(
         uiSettingsRoutes(settingsRepo)
         ptyRoutes(settingsRepo)
         agentRoutes(settingsRepo)
-        windowRoutes(settingsRepo, sessionStates, usageMonitor, agentTracker, claudeHooks)
+        windowRoutes(settingsRepo, sessionStates, usageMonitor, agentTracker, claudeHooks, agentGroups)
         agentEventRoutes(agentTracker)
         adminRoutes(settingsRepo, scrollbackSaver)
         // MCP endpoint (localhost-only, MCP-token gated) — see mcp/McpRoutes.kt.

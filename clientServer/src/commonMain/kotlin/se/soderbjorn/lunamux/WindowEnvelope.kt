@@ -251,6 +251,22 @@ sealed class WindowEnvelope {
     ) : WindowEnvelope()
 
     /**
+     * The agent session groups declared by group files on the server's
+     * machine, already matched to the session records they name. Sent on
+     * connect, right after [AgentSessions], and again whenever a group file or
+     * a record changes. The lead session's start command is deliberately not
+     * part of it: the server keeps it and [WindowCommand.OpenAgentGroupLead]
+     * names the group instead. Older clients fail to decode this frame and
+     * drop it, which is harmless.
+     *
+     * @param groups the groups, in no particular order
+     * @see AgentGroup
+     */
+    @Serializable
+    @SerialName("agentGroups")
+    data class AgentGroups(val groups: List<AgentGroup>) : WindowEnvelope()
+
+    /**
      * A failed agents-overview request, sent only to the connection that made
      * it: resuming a session whose folder is gone, or connecting Claude Code
      * when its settings file cannot be edited.
@@ -527,3 +543,71 @@ enum class DiffLineType {
     /** Line removed from the old file. */
     Deletion
 }
+
+/**
+ * One group of agent sessions as the agents overview draws it: a box with a
+ * header (the group) and its members.
+ *
+ * Built by the server's group watcher from one group file and the session
+ * records, pushed in [WindowEnvelope.AgentGroups] and ordered by the client's
+ * agents overview view model.
+ *
+ * @param id the group's id from its file; what [WindowCommand.OpenAgentGroupLead] names.
+ * @param title the group's name.
+ * @param tag short label for the pill on the header, such as `PROGRAMME`, or null for none.
+ * @param repo repository name shown beside the title, or null.
+ * @param linkLabel text of the header's link chip, or null when the group has no link.
+ * @param linkUrl the link's `http(s)` address; null exactly when [linkLabel] is.
+ * @param lead the lead session.
+ * @param members the group's members, in the file's order.
+ */
+@Serializable
+data class AgentGroup(
+    val id: String,
+    val title: String,
+    val tag: String? = null,
+    val repo: String? = null,
+    val linkLabel: String? = null,
+    val linkUrl: String? = null,
+    val lead: AgentGroupLead,
+    val members: List<AgentGroupMember> = emptyList(),
+)
+
+/**
+ * The lead session of an [AgentGroup]: the one session the header opens.
+ *
+ * @param folder absolute folder the lead runs in; a new tab opens here when it is not open.
+ * @param recordId the open session record in [folder], or null when none is open.
+ * @param live whether that record's pane is in the layout, so the header can jump to it.
+ * @param lastSaid what the lead's record last said (see [AgentSessionSummary.lastSaid]), or null.
+ */
+@Serializable
+data class AgentGroupLead(
+    val folder: String,
+    val recordId: String? = null,
+    val live: Boolean = false,
+    val lastSaid: String? = null,
+)
+
+/**
+ * One member of an [AgentGroup]. A member Lunamux hosts takes its state, line and
+ * age from its session record; any other shows what the group file says.
+ *
+ * @param title the member's name, always the file's.
+ * @param links ticket keys or other short labels shown beside the title.
+ * @param state `needs_you`, `working`, `idle` or `ended`.
+ * @param label a state word the file gave ("in review"), used in the group's summary line; null for the default.
+ * @param line one line about what the member is doing or waiting for, or null.
+ * @param sinceMillis epoch millis when the member entered [state].
+ * @param recordId the session record the member matched, or null when Lunamux does not host it.
+ */
+@Serializable
+data class AgentGroupMember(
+    val title: String,
+    val links: List<String> = emptyList(),
+    val state: String,
+    val label: String? = null,
+    val line: String? = null,
+    val sinceMillis: Long = 0,
+    val recordId: String? = null,
+)

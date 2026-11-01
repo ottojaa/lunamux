@@ -285,6 +285,22 @@ sealed class WindowCommand {
     data class ResumeAgentSession(val recordId: String) : WindowCommand()
 
     /**
+     * Open the lead session of an agent session group. The server looks the
+     * group up among the group files it reads, so the command that gets
+     * typed always comes from the file and never from a client. When the
+     * lead is already open the client jumps to it itself and the server
+     * answers nothing; otherwise the server opens a tab named like the group
+     * in the lead's folder and types the lead's start command. A group or
+     * folder that no longer exists is answered with
+     * [WindowEnvelope.AgentSessionError] (record id null).
+     *
+     * @param groupId the [AgentGroup.id] of the group whose header was opened
+     */
+    @Serializable
+    @SerialName("openAgentGroupLead")
+    data class OpenAgentGroupLead(val groupId: String) : WindowCommand()
+
+    /**
      * Search every agent session ever recorded, open or closed, plus Claude Code
      * sessions imported from before Lunamux recorded them. The server answers
      * on the asking connection only with [WindowEnvelope.AgentSessionMatches].
