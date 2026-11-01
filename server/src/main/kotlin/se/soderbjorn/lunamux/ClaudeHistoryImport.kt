@@ -53,31 +53,56 @@ object ClaudeHistoryImport {
      * (whether Lunamux ran it or an earlier import made it) is left alone. Each import writes
      * the record and its search text; one unreadable file does not stop the rest.
      *
+     * Files not modified since the previous complete run are skipped without being opened: that
+     * run already imported them or decided to leave them out. The time the previous run began is
+     * kept in the settings store under [WATERMARK_KEY], and moves forward only when no file
+     * failed or was held back, so an unreadable one is tried again.
+     *
+     * A transcript whose folder has a Claude session open in a pane that Lunamux has seen only
+     * on screen (no session id yet) is held back: that session may be this very transcript, and
+     * importing it would leave two records for one conversation once its first hook arrives.
+     *
      * @param repo the store to write records to.
      * @param projects the folder of per-project transcript folders.
+     * @param runningIn tells whether an unidentified Claude session is open in a folder; held-back
+     *   transcripts are those for which it returns true.
      * @param newId mints record ids; replaced in tests.
      * @return how many records were created.
      */
     fun run(
         repo: SettingsRepository,
         projects: File = projectsDir(),
+        runningIn: (String) -> Boolean = { false },
         newId: () -> String = { UUID.randomUUID().toString() },
     ): Int {
+        val startedAt = System.currentTimeMillis()
+        val lastRun = repo.getString(WATERMARK_KEY)?.toLongOrNull() ?: 0L
+        var held = false
+        var failed = false
         val files = projects.listFiles { f -> f.isDirectory }.orEmpty()
             .flatMap { dir -> dir.listFiles { f -> f.isFile && f.name.endsWith(".jsonl") }.orEmpty().toList() }
         var imported = 0
         for (file in files) {
+            if (file.lastModified() < lastRun) continue
             runCatching {
                 val sessionId = file.name.removeSuffix(".jsonl")
                 if (repo.findAgentSession(CLAUDE, sessionId) != null) return@runCatching
-                val info = AgentTranscriptText.read(file) ?: return@runCatching
+                val info = AgentTranscriptText.read(file, onlyEntrypoint = "cli") ?: return@runCatching
                 if (info.entrypoint != "cli") return@runCatching
+                if (info.cwd?.let(runningIn) == true) {
+                    held = true
+                    return@runCatching
+                }
                 val record = recordFor(file, sessionId, info, newId())
                 repo.saveAgentSession(record)
                 repo.setAgentSessionSearchText(record.id, info.text)
                 imported++
-            }.onFailure { log.warn("Could not import transcript {}", file, it) }
+            }.onFailure {
+                failed = true
+                log.warn("Could not import transcript {}", file, it)
+            }
         }
+        if (!failed && !held) repo.putString(WATERMARK_KEY, startedAt.toString())
         if (imported > 0) log.info("Imported {} Claude Code sessions from {}", imported, projects)
         return imported
     }
@@ -113,4 +138,7 @@ object ClaudeHistoryImport {
     }
 
     private const val CLAUDE = "claude"
+
+    /** Settings key holding the epoch millis at which the last complete import began. */
+    private const val WATERMARK_KEY = "claudeHistoryImportedAt"
 }

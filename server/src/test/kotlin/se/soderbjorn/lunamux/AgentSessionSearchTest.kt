@@ -134,4 +134,69 @@ class AgentSessionSearchTest {
         save("x", title = "two")
         assertEquals("transcript", search("kept words").single().field)
     }
+
+    private fun git(dir: File, vararg args: String): String {
+        val p = ProcessBuilder(listOf("git", "-c", "user.name=t", "-c", "user.email=t@t", *args))
+            .directory(dir).redirectErrorStream(true).start()
+        val out = p.inputStream.bufferedReader().readText()
+        check(p.waitFor() == 0) { "git ${args.toList()} failed: $out" }
+        return out.trim()
+    }
+
+    private fun inspect(id: String) = AgentSessionSearch.inspect(id, AgentSessionTracker(repo).also { it.start() })
+
+    @Test
+    fun `inspect gives the saved screen, the unsaved work and no unpushed count without a remote`() {
+        val dir = File(dbDir, "proj").apply { mkdirs() }
+        git(dir, "init", "-b", "trunk")
+        File(dir, "a.txt").writeText("a")
+        git(dir, "add", ".")
+        git(dir, "commit", "-m", "one")
+        File(dir, "b.txt").writeText("b")
+        repo.saveAgentSession(
+            AgentSessionRecord(id = "r", agent = "claude", state = "ended", stateSince = 1, createdAt = 1,
+                endedAt = 1, cwd = dir.path, lastScreen = "line one\n\nline two"),
+        )
+
+        val i = assertNotNull(inspect("r"))
+        assertEquals(false, i.live)
+        assertEquals(listOf("line one", "line two"), i.screen)
+        assertEquals(1, i.uncommitted)
+        assertNull(i.unpushed, "every commit is unpushed in a repository with no remote, which is not worth a warning")
+        assertEquals("trunk", i.branch)
+        assertNull(i.resumeNote, "the folder exists, so Resume simply runs in it")
+    }
+
+    @Test
+    fun `inspect counts commits that exist on no remote`() {
+        val remote = File(dbDir, "remote.git")
+        git(dbDir, "init", "--bare", "-b", "trunk", remote.path)
+        val dir = File(dbDir, "withremote").apply { mkdirs() }
+        git(dir, "init", "-b", "trunk")
+        File(dir, "a.txt").writeText("a")
+        git(dir, "add", ".")
+        git(dir, "commit", "-m", "one")
+        git(dir, "remote", "add", "origin", remote.path)
+        git(dir, "push", "-u", "origin", "trunk")
+        File(dir, "a.txt").writeText("changed")
+        git(dir, "commit", "-am", "two")
+        repo.saveAgentSession(
+            AgentSessionRecord(id = "p", agent = "claude", state = "ended", stateSince = 1, createdAt = 1,
+                endedAt = 1, cwd = dir.path),
+        )
+        assertEquals(1, assertNotNull(inspect("p")).unpushed)
+    }
+
+    @Test
+    fun `inspect of a vanished folder explains Resume and an unknown record gives nothing`() {
+        repo.saveAgentSession(
+            AgentSessionRecord(id = "m", agent = "claude", state = "ended", stateSince = 1, createdAt = 1,
+                endedAt = 1, cwd = File(dbDir, "removed").path),
+        )
+        val i = assertNotNull(inspect("m"))
+        assertNull(i.uncommitted)
+        assertNull(i.unpushed)
+        assertNotNull(i.resumeNote)
+        assertNull(inspect("nope"))
+    }
 }

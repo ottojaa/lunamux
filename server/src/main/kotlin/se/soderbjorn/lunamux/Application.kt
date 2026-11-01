@@ -102,6 +102,7 @@ fun main() {
     AgentEvents.port = port
     val searchIndexer = AgentSearchIndexer(repo)
     val agentTracker = AgentSessionTracker(repo, onEnded = searchIndexer::indexEnded).also { it.start() }
+    searchIndexer.runningIn = agentTracker::hasUnidentifiedClaudeIn
     val claudeHooks = ClaudeHooks()
     // Sessions recorded before search existed get their text now.
     searchIndexer.backfill()

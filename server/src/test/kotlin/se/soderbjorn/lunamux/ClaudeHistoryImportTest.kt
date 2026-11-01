@@ -89,4 +89,27 @@ class ClaudeHistoryImportTest {
         File(projects, "empty/bad.jsonl").writeText("garbage")
         assertEquals(0, import())
     }
+
+    @Test
+    fun `a file untouched since the previous complete run is not opened again`() {
+        transcript("p1", "sess-4", "sdk-cli", "/w/app", "headless")
+        assertEquals(0, import())
+
+        // The same file turning into an interactive transcript is only noticed once it changes:
+        // a file older than the last run was already looked at by it.
+        val file = File(projects, "p1/sess-4.jsonl")
+        transcript("p1", "sess-4", "cli", "/w/app", "now interactive")
+        file.setLastModified(System.currentTimeMillis() - 60_000)
+        assertEquals(0, import(), "an old file is skipped")
+        file.setLastModified(System.currentTimeMillis() + 1_000)
+        assertEquals(1, import(), "a modified file is read")
+    }
+
+    @Test
+    fun `a transcript of a folder with an unidentified running session waits for a later run`() {
+        transcript("p1", "sess-5", "cli", "/w/app", "still going")
+        val run = { ClaudeHistoryImport.run(repo, projects, runningIn = { it == "/w/app" }) { "imp${++nextId}" } }
+        assertEquals(0, run(), "held back so the live session is not recorded twice")
+        assertEquals(1, import(), "imported once nothing is running there; the watermark did not move")
+    }
 }

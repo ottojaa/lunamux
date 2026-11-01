@@ -292,7 +292,7 @@ class AgentsOverviewBackingViewModelTest {
         assertEquals(
             listOf(
                 "It is working right now: Bash npm test",
-                "3 uncommitted changes · 1 unpushed commit on feat stay in the worktree.",
+                "3 uncommitted changes · 1 unpushed commit on feat stay in its folder.",
             ),
             confirm.warnings,
         )

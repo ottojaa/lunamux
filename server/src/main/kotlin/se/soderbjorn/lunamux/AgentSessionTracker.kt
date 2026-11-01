@@ -332,6 +332,19 @@ class AgentSessionTracker(
     fun cached(id: String): AgentSessionRecord? = synchronized(lock) { records[id] }
 
     /**
+     * Whether a Claude session that has no agent session id yet is open in [cwd].
+     *
+     * Called by the history import through [AgentSearchIndexer.runningIn]: such a session was
+     * seen on screen only, so its transcript cannot be matched to it by id.
+     *
+     * @param cwd the folder to check.
+     * @return true when an open, unidentified Claude record has exactly that folder.
+     */
+    fun hasUnidentifiedClaudeIn(cwd: String): Boolean = synchronized(lock) {
+        openRecords().any { it.agent == CLAUDE && it.agentSessionId == null && it.cwd == cwd }
+    }
+
+    /**
      * Pick the record a hook event belongs to, creating or adopting one.
      *
      * Keeps one open record per pane: the pane's open record is reused when

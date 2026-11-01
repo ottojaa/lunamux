@@ -346,4 +346,15 @@ class AgentSessionTrackerTest {
         t.onPoll(emptyList())
         assertEquals(listOf("r1"), ended)
     }
+
+    @Test
+    fun `a Claude session seen only on screen counts as unidentified until a hook names it`() {
+        val t = tracker()
+        t.onPoll(listOf(pane(agent = "claude", state = "working")))
+        assertTrue(t.hasUnidentifiedClaudeIn("/work/repo"))
+        assertTrue(!t.hasUnidentifiedClaudeIn("/elsewhere"))
+
+        t.onHook(pane(agent = "claude", state = "working"), event("SessionStart", "a-1"))
+        assertTrue(!t.hasUnidentifiedClaudeIn("/work/repo"))
+    }
 }

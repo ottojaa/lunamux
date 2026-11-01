@@ -36,6 +36,17 @@ class AgentSearchIndexer(
     private val projects: () -> File = ClaudeHistoryImport::projectsDir,
 ) {
     private val log = LoggerFactory.getLogger(AgentSearchIndexer::class.java)
+
+    /**
+     * Tells whether a Claude session without a known id is open in a folder.
+     *
+     * `main()` sets it once the tracker exists (the tracker needs this indexer first). Used by
+     * [importHistory] to hold back a transcript that may belong to a session still running.
+     *
+     * @see AgentSessionTracker.hasUnidentifiedClaudeIn
+     */
+    @Volatile
+    var runningIn: (String) -> Boolean = { false }
     private val worker: ExecutorService = Executors.newSingleThreadExecutor { r ->
         Thread(r, "agent-search-indexer").apply { isDaemon = true }
     }
@@ -71,7 +82,7 @@ class AgentSearchIndexer(
      *
      * @see ClaudeHistoryImport.run
      */
-    fun importHistory() = submit("import") { ClaudeHistoryImport.run(repo, projects()) }
+    fun importHistory() = submit("import") { ClaudeHistoryImport.run(repo, projects(), runningIn) }
 
     /**
      * Wait until every queued job has finished.

@@ -115,6 +115,15 @@ internal fun ApplicationCall.readClientInfo(): DeviceAuth.ClientInfo {
     )
 }
 
+/** Logger for this file's command handlers. */
+private val log = LoggerFactory.getLogger("WindowRoutes")
+
+/** How long an agents-overview inspection may spend on git before it is dropped. */
+private const val INSPECT_TIMEOUT_MS = 8_000L
+
+/** The (connection, record) inspections in flight, so a repeated ask for one is not run twice at once. */
+private val inspecting = java.util.concurrent.ConcurrentHashMap.newKeySet<Pair<WindowConnectionContext, String>>()
+
 /**
  * Lowest client app version whose deserializer knows the `agent` [LeafContent]
  * kind. Older clients have no such subtype registered, so decoding a config
@@ -122,11 +131,6 @@ internal fun ApplicationCall.readClientInfo(): DeviceAuth.ClientInfo {
  * silently drops the entire update — freezing the client on its last layout.
  * We therefore strip agent panes from configs sent to clients below this.
  */
-private val log = LoggerFactory.getLogger("WindowRoutes")
-
-/** How long an agents-overview inspection may spend on git before it is dropped. */
-private const val INSPECT_TIMEOUT_MS = 8_000L
-
 private val MIN_AGENT_PANE_VERSION = intArrayOf(1, 5, 0)
 
 /**
@@ -765,15 +769,27 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
                     AgentSessionSearch.search(ctx.settingsRepo, ctx.agentTracker, cmd.query)
                 }
                 ctx.send(WindowEnvelope.AgentSessionMatches(cmd.query, matches))
-            }.onFailure { log.warn("Agent session search failed", it) }
+            }.onFailure {
+                log.warn("Agent session search failed", it)
+                // Answer anyway, or the overlay would show "Searching…" until the query changes.
+                ctx.send(WindowEnvelope.AgentSessionMatches(cmd.query, emptyList()))
+            }
         }
         is WindowCommand.InspectAgentSession -> ctx.scope.launch {
-            runCatching {
-                val inspection = withTimeoutOrNull(INSPECT_TIMEOUT_MS) {
-                    withContext(Dispatchers.IO) { AgentSessionSearch.inspect(cmd.recordId, ctx.agentTracker) }
-                }
-                if (inspection != null) ctx.send(inspection)
-            }.onFailure { log.warn("Agent session inspect failed", it) }
+            // A live peek asks again every couple of seconds; while git is still busy on the
+            // previous ask for the same row, that ask is enough.
+            val key = ctx to cmd.recordId
+            if (!inspecting.add(key)) return@launch
+            try {
+                runCatching {
+                    val inspection = withTimeoutOrNull(INSPECT_TIMEOUT_MS) {
+                        withContext(Dispatchers.IO) { AgentSessionSearch.inspect(cmd.recordId, ctx.agentTracker) }
+                    }
+                    if (inspection != null) ctx.send(inspection)
+                }.onFailure { log.warn("Agent session inspect failed", it) }
+            } finally {
+                inspecting.remove(key)
+            }
         }
         is WindowCommand.SetClaudeHooks -> {
             val hooks = ctx.claudeHooks ?: return
@@ -985,7 +1001,7 @@ private suspend fun resumeAgentSession(recordId: String, ctx: WindowConnectionCo
                 ctx.send(WindowEnvelope.AgentSessionError(recordId, error))
                 return
             }
-            plan.path
+            AgentResumePlanner.resumeFolder(rec, plan)
         }
     }
     val command = when (rec.agent) {

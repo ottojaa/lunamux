@@ -74,4 +74,16 @@ class AgentTranscriptTextTest {
         assertNull(AgentTranscriptText.extract("/no/such/transcript.jsonl"))
         assertEquals("", AgentTranscriptText.extract(file("").path))
     }
+
+    @Test
+    fun `reading stops at the first line of another entrypoint when only one is wanted`() {
+        val f = file(
+            """{"type":"user","entrypoint":"sdk-cli","message":{"role":"user","content":"headless one"}}""",
+            """{"type":"user","message":{"role":"user","content":"headless two"}}""",
+        )
+        val info = assertNotNull(AgentTranscriptText.read(f, onlyEntrypoint = "cli"))
+        assertEquals("sdk-cli", info.entrypoint)
+        assertEquals("", info.text)
+        assertEquals("headless one\nheadless two", AgentTranscriptText.read(f)!!.text)
+    }
 }

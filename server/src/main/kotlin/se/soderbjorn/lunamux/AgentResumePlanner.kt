@@ -139,6 +139,21 @@ object AgentResumePlanner {
         }
     }
 
+    /**
+     * The folder to open the resumed session in after [recreate] succeeded.
+     *
+     * Claude finds a conversation by the folder it ran in, so a session that ran in a
+     * subfolder of the worktree must resume there, not at the worktree root.
+     *
+     * Called by `resumeAgentSession` once the worktree exists again.
+     *
+     * @param record the session being resumed.
+     * @param plan the recreate plan that was carried out.
+     * @return the record's own folder when it exists again, otherwise the worktree root.
+     */
+    fun resumeFolder(record: AgentSessionRecord, plan: ResumePlan.Recreate): String =
+        record.cwd?.takeIf { File(it).isDirectory } ?: plan.path
+
     /** The recorded main checkout if it still exists, else the repository found above the old worktree path. */
     private fun repoRootFor(record: AgentSessionRecord, worktree: String): String? {
         record.repoRoot?.takeIf { File(it).isDirectory && isRepo(it) }?.let { return it }

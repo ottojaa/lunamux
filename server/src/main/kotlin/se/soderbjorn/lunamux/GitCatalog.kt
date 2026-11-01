@@ -333,10 +333,13 @@ object GitCatalog {
      * Called for the close confirmation in the agents overview.
      *
      * @param cwd the working directory to inspect
-     * @return the commit count, or null when [cwd] is not a git folder
+     * @return the commit count, or null when [cwd] is not a git folder or the repository has no
+     *   remote (every commit would count as unpushed, which is no use as a warning)
      */
-    fun unpushedCount(cwd: Path): Int? =
-        runGit(cwd, "rev-list", "--count", "HEAD", "--not", "--remotes")?.trim()?.toIntOrNull()
+    fun unpushedCount(cwd: Path): Int? {
+        if (runGit(cwd, "remote").isNullOrBlank()) return null
+        return runGit(cwd, "rev-list", "--count", "HEAD", "--not", "--remotes")?.trim()?.toIntOrNull()
+    }
 
     /**
      * Stash all uncommitted changes (including untracked files) with a message.

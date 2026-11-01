@@ -607,7 +607,7 @@ class AgentsOverviewBackingViewModel(
                 if (unpushed > 0) add("$unpushed unpushed ${if (unpushed == 1) "commit" else "commits"}")
             }
             val branch = inspection?.branch?.let { " on $it" }.orEmpty()
-            out += parts.joinToString(" · ") + branch + " stay in the worktree."
+            out += parts.joinToString(" · ") + branch + " stay in its folder."
         }
         return out
     }

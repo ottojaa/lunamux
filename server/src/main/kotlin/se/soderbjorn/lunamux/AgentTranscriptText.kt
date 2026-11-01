@@ -89,9 +89,13 @@ object AgentTranscriptText {
      * tool calls, tool results and thinking are dropped.
      *
      * @param file the transcript file.
+     * @param onlyEntrypoint when set, reading stops at the first line that names a different
+     *   entrypoint, so [ClaudeHistoryImport] does not parse the whole of a background or `-p`
+     *   transcript only to discard it. The returned info then holds the partial text and its
+     *   `entrypoint` shows why it stopped.
      * @return what the file says, or null when it cannot be read.
      */
-    fun read(file: File): TranscriptInfo? {
+    fun read(file: File, onlyEntrypoint: String? = null): TranscriptInfo? {
         if (!file.isFile) return null
         val text = StringBuilder()
         var sessionId: String? = null
@@ -110,6 +114,7 @@ object AgentTranscriptText {
                     cwd = cwd ?: obj.str("cwd")
                     branch = branch ?: obj.str("gitBranch")
                     entrypoint = entrypoint ?: obj.str("entrypoint")
+                    if (onlyEntrypoint != null && entrypoint != null && entrypoint != onlyEntrypoint) break
                     obj.str("timestamp")?.let(::epoch)?.let { t ->
                         if (first == null) first = t
                         last = t

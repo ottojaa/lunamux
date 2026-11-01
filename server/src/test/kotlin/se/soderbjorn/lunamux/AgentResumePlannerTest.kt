@@ -83,6 +83,28 @@ class AgentResumePlannerTest {
     }
 
     @Test
+    fun `a session that ran in a subfolder resumes there after the worktree is recreated`() {
+        makeRepo()
+        val wt = File(main, ".claude/worktrees/feat")
+        git(main, "worktree", "add", "-b", "feat", wt.path)
+        File(wt, "server").mkdirs()
+        File(wt, "server/b.txt").writeText("b")
+        git(wt, "add", ".")
+        git(wt, "commit", "-m", "server")
+        wt.deleteRecursively()
+
+        val sub = File(wt, "server")
+        val rec = record(wt, "feat").copy(cwd = sub.path)
+        val plan = assertIs<ResumePlan.Recreate>(AgentResumePlanner.plan(rec))
+        assertNull(AgentResumePlanner.recreate(plan))
+        assertEquals(sub.path, AgentResumePlanner.resumeFolder(rec, plan))
+
+        // A subfolder the branch no longer has falls back to the worktree root.
+        val gone = rec.copy(cwd = File(wt, "removed-dir").path)
+        assertEquals(wt.path, AgentResumePlanner.resumeFolder(gone, plan))
+    }
+
+    @Test
     fun `a worktree removed with git worktree remove is recreated too`() {
         makeRepo()
         val wt = File(main, ".claude/worktrees/feat")
