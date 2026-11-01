@@ -106,6 +106,7 @@ class AgentsOverviewBackingViewModel(
      * @property groupId the group a header, "+ more" row or member belongs to; null for a single session.
      * @property unhosted true for a group member Lunamux does not host (it has no session record);
      *   ↵ on it opens the group's lead session.
+     * @property label a group member's short status word from the group file ("in review"), or null.
      */
     data class Row(
         val id: String,
@@ -130,6 +131,7 @@ class AgentsOverviewBackingViewModel(
         val kind: RowKind = RowKind.SESSION,
         val groupId: String? = null,
         val unhosted: Boolean = false,
+        val label: String? = null,
     )
 
     /** What a [Row] stands for. */
@@ -844,6 +846,7 @@ class AgentsOverviewBackingViewModel(
                 nowLine = if (m.state == NEEDS_YOU) null else m.line,
                 question = if (m.state == NEEDS_YOU) m.line else null,
                 groupId = g.id,
+                label = m.label,
             )
         }
         val hidden = if (expanded) emptyList() else memberRows.filter { (m, _) -> m.state != NEEDS_YOU }

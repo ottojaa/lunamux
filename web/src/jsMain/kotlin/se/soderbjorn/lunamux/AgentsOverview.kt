@@ -4,7 +4,9 @@
  * lists every agentic-CLI session (Claude Code, Codex, Gemini) under "Now"
  * and "Earlier". Typing two or more characters swaps the lists for search
  * results over every session ever run; → peeks at a session's screen and
- * × / ⌘⌫ close a live one after an inline confirmation.
+ * × / ⌘⌫ close a live one after an inline confirmation. A programme group
+ * declared by a tool is drawn as one box: a header, the members that need the
+ * user, and a "+ more" line that expands it.
  *
  * All state and behaviour live in the shared
  * [AgentsOverviewBackingViewModel]; this file only draws its state as plain
@@ -28,6 +30,7 @@ import org.w3c.dom.events.Event
 import org.w3c.dom.events.KeyboardEvent
 import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel
 import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Row
+import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.RowKind as Kind
 import se.soderbjorn.lunula.web.hotkey.Hotkey
 import se.soderbjorn.lunula.web.hotkey.HotkeyActionSpec
 import se.soderbjorn.lunula.web.hotkey.HotkeyBindings
@@ -238,12 +241,20 @@ private fun onSearchKey(e: KeyboardEvent) {
             launchAgentsOverview { agentsOverview.peek() }
         }
         e.key == "ArrowLeft" && state.peek != null -> { e.preventDefault(); agentsOverview.closePeek() }
+        e.key == "ArrowLeft" && state.query.isEmpty() && selectedExpandedGroup(state) != null -> {
+            e.preventDefault()
+            selectedExpandedGroup(state)?.let { agentsOverview.toggleGroup(it) }
+        }
         e.key == "Backspace" && e.metaKey && state.query.isEmpty() -> {
             e.preventDefault()
             launchAgentsOverview { agentsOverview.requestClose(fromKeyboard = true) }
         }
     }
 }
+
+/** The id of the expanded group the highlighted row belongs to, or null. */
+private fun selectedExpandedGroup(state: AgentsOverviewBackingViewModel.State): String? =
+    state.rows.getOrNull(state.selected)?.groupId?.takeIf { state.groups[it]?.expanded == true }
 
 @OptIn(DelicateCoroutinesApi::class)
 private fun launchAgentsOverview(block: suspend () -> Unit) {
@@ -264,9 +275,21 @@ private fun renderList(state: AgentsOverviewBackingViewModel.State) {
         return
     }
     var index = 0
-    fun add(rows: List<Row>) = rows.forEach { row ->
+    fun add(rows: List<Row>) = rows.forEachIndexed { i, row ->
         val selected = index == state.selected
-        list.appendChild(buildRow(row, index, selected, if (selected) state.peek else null))
+        val endsGroup = row.groupId != null && rows.getOrNull(i + 1)?.groupId != row.groupId
+        list.appendChild(
+            when (row.kind) {
+                Kind.GROUP -> buildGroupHeader(row, state.groups[row.groupId], index, selected, endsGroup, if (selected) state.peek else null)
+                Kind.GROUP_MORE -> buildGroupMore(row, index, selected)
+                else -> buildRow(row, index, selected, if (selected) state.peek else null).also {
+                    if (row.groupId != null) {
+                        it.classList.add("ao-member")
+                        if (endsGroup) it.classList.add("ao-group-end")
+                    }
+                }
+            },
+        )
         state.confirm?.takeIf { it.rowId == row.id }?.let { list.appendChild(buildConfirm(it)) }
         index++
     }
@@ -347,9 +370,9 @@ private fun buildRow(row: Row, index: Int, selected: Boolean, peek: AgentsOvervi
     }))
 
     val main = div("ao-main")
-    main.appendChild(
-        if (row.agent == "claude") span("ao-glyph", "✳") else span("ao-tag", row.agent),
-    )
+    if (row.agent.isNotEmpty()) {
+        main.appendChild(if (row.agent == "claude") span("ao-glyph", "✳") else span("ao-tag", row.agent))
+    }
     val title = span("ao-title", "")
     if (row.field == "title") title.appendChild(highlighted(row.title, row.matchStart, row.matchLength))
     else title.textContent = row.title
@@ -364,10 +387,11 @@ private fun buildRow(row: Row, index: Int, selected: Boolean, peek: AgentsOvervi
         now.classList.add("ao-error")
         now.textContent = error
     } else {
-        now.textContent = when {
+        row.label?.let { now.appendChild(span("ao-label", "$it  ")) }
+        now.appendChild(document.createTextNode(when {
             needs -> row.question ?: row.nowLine ?: "Needs you"
             else -> row.nowLine ?: if (row.state == "working") "Working" else ""
-        }
+        }))
     }
     el.appendChild(now)
 
@@ -394,6 +418,105 @@ private fun buildRow(row: Row, index: Int, selected: Boolean, peek: AgentsOvervi
     }
     row.resumeNote?.let { el.appendChild(div("ao-note").also { n -> n.textContent = it }) }
     if (peek != null) el.appendChild(buildPeek(peek))
+    return el
+}
+
+/**
+ * The header of a group box: chevron, title, tag pill, repo, link chip, the count line with the
+ * needs-you part highlighted, its age and (when selected) a peek button. A selected header adds a
+ * second line saying what ↵ opens and what the lead session last said.
+ *
+ * Clicking the chevron or the count line shows or hides the members; clicking anywhere else
+ * opens the lead like ↵ does.
+ *
+ * @param row the [Kind.GROUP] row.
+ * @param group the group's header data, or null if it vanished since the row was built.
+ * @param index the row's position in the list, for click routing.
+ * @param selected whether it is the highlighted row.
+ * @param endsGroup whether no member rows follow, so the box closes under it.
+ * @param peek the open peek of the lead session, if this header is selected and has one.
+ */
+private fun buildGroupHeader(
+    row: Row,
+    group: AgentsOverviewBackingViewModel.Group?,
+    index: Int,
+    selected: Boolean,
+    endsGroup: Boolean,
+    peek: AgentsOverviewBackingViewModel.Peek?,
+): HTMLElement {
+    val el = div(
+        "ao-row ao-group" + (if (selected) " ao-selected" else "") + (if (endsGroup) " ao-group-end" else ""),
+    )
+    el.setAttribute("data-index", index.toString())
+    val groupId = row.groupId
+
+    val chevron = document.createElement("button") as HTMLElement
+    chevron.asDynamic().type = "button"
+    chevron.className = "ao-chevron"
+    chevron.setAttribute("aria-label", "Show or hide all of the group's sessions")
+    chevron.textContent = if (group?.expanded == true) "⌄" else "›"
+    chevron.addEventListener("click", { e: Event ->
+        e.stopPropagation()
+        if (groupId != null) agentsOverview.toggleGroup(groupId)
+    })
+    el.appendChild(chevron)
+
+    val main = div("ao-main")
+    main.appendChild(span("ao-title ao-group-title", row.title))
+    group?.tag?.let { main.appendChild(span("ao-pill", it.uppercase())) }
+    group?.repo?.let { main.appendChild(span("ao-repo", it)) }
+    val url = group?.linkUrl
+    if (url != null) {
+        val chip = document.createElement("a") as HTMLElement
+        chip.className = "ao-link-chip"
+        chip.setAttribute("href", url)
+        chip.setAttribute("target", "_blank")
+        chip.setAttribute("rel", "noopener noreferrer")
+        chip.textContent = group.linkLabel ?: url
+        chip.addEventListener("click", { e: Event -> e.stopPropagation() })
+        main.appendChild(chip)
+    }
+    el.appendChild(main)
+
+    val counts = document.createElement("button") as HTMLElement
+    counts.asDynamic().type = "button"
+    counts.className = "ao-counts"
+    if (group != null) {
+        if (group.needYouCount > 0) counts.appendChild(span("ao-counts-need", "${group.needYouCount} need you"))
+        if (group.needYouCount > 0 && group.summary.isNotEmpty()) counts.appendChild(span("ao-counts-rest", " · "))
+        counts.appendChild(span("ao-counts-rest", group.summary))
+    }
+    counts.addEventListener("click", { e: Event ->
+        e.stopPropagation()
+        if (groupId != null) agentsOverview.toggleGroup(groupId)
+    })
+    el.appendChild(counts)
+
+    el.appendChild(span("ao-age", if (row.sinceMillis > 0) formatAge(row.sinceMillis) else ""))
+    val actions = span("ao-actions", "")
+    if (selected) {
+        actions.appendChild(iconButton("Peek at the lead session's screen", "›", peek != null) {
+            launchAgentsOverview { if (peek != null) agentsOverview.closePeek() else agentsOverview.peek() }
+        })
+    }
+    el.appendChild(actions)
+
+    if (selected || row.error != null) {
+        val tag = group?.tag?.lowercase() ?: "lead"
+        val said = group?.leadLastSaid?.let { " · it last said: $it" } ?: ""
+        val line = div("ao-note" + if (row.error != null) " ao-error" else "")
+        line.textContent = row.error ?: "↵ opens the $tag session$said"
+        el.appendChild(line)
+    }
+    if (peek != null) el.appendChild(buildPeek(peek))
+    return el
+}
+
+/** The "+ 1 working, 1 in review" line under a collapsed group; ↵ or a click shows every member. */
+private fun buildGroupMore(row: Row, index: Int, selected: Boolean): HTMLElement {
+    val el = div("ao-row ao-group-more ao-group-end" + if (selected) " ao-selected" else "")
+    el.setAttribute("data-index", index.toString())
+    el.appendChild(span("ao-more-text", row.title))
     return el
 }
 
