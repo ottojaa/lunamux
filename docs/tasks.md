@@ -49,6 +49,21 @@ idle, **‖** paused, **✓** done.
   task made only of Lunamux's own sessions behaves like one idle session: it stays in NOW for ten
   minutes after the last activity and then moves to EARLIER. A task whose sessions have all ended
   is in EARLIER.
+- **EARLIER is two bands of tasks, newest first.** **LAST FEW DAYS** holds the tasks last active
+  within three days, all of them. **LAST TWO WEEKS** holds those between three and fourteen days
+  old; it shows the first five and a **+ N more** line (a click on it shows the rest). A band
+  with nothing in it has no heading. Older tasks are not listed, but search still finds them.
+  - A task's age is its newest session's: a task with a session from yesterday and one from ten
+    days ago is in the first band. A single session is a task of its own.
+  - Both edges are inclusive on the older side: exactly three days old is still in the first band,
+    exactly fourteen still listed.
+  - A task in EARLIER is a collapsed panel: its title, its repo, **3 sessions** and its age.
+    Expanding it (click, →, space) lists its sessions, and ↵ on one jumps to it or resumes it.
+    ↵ on the header expands the panel when the task has no open session and no `open` action.
+  - An idle pane that has been open for more than fourteen days is no longer listed either. It
+    is still hosted, and search finds it.
+  - The server keeps the ended sessions of the last fourteen days, at most 300, and pushes them
+    to every window; older records stay in the database for search only.
 - A working session shows the turning glyph while there is a recent sign of life, and the glyph
   stops and dims otherwise. For a session Lunamux hosts the sign is its activity; for one outside
   Lunamux it is the file's modified time. After five minutes without a sign the age reads
@@ -59,6 +74,26 @@ idle, **‖** paused, **✓** done.
 
 Sessions of Claude Code report their state through hooks. For Codex and Gemini the state comes
 from reading the screen, so it is a best guess and lags a little.
+
+## Searching sessions
+
+The search box over the list looks through every session ever hosted, however old. A session
+matches on its own title, its **task's title**, its first prompt, its branch and links, its
+conversation or its last screen, and results are ranked in that order. A match through the task
+reads "in task Invoice export migration" under the session's row, so a session whose own words
+never mention the work can still be found by what the work was called. A session is found through
+its task when it was put in it through the tools, or when a task file places it and it is still
+known to the server; an old session that a task file once placed by folder is found by its own
+words only.
+
+## Trying it out
+
+`scripts/seed-agents-overview.sh <db file> <tasks folder>` fills a scratch database and folder
+with about twenty ended sessions (last active today, 1, 2, 6, 12 and 30 days ago), five
+agent-made tasks and five task files. Seed while the scratch server is stopped, then start it on
+its own port with `-Dlunamux.dbPath`, `-Dlunamux.tasksDir`, `-Dlunamux.agentGroupsDir` and
+`-Dlunamux.claudeProjects` pointing at scratch paths (`./gradlew :server:run` forwards all four).
+The script's header lists what to look at, and the cases that need a running agent.
 
 ## Grouping sessions from an agent
 

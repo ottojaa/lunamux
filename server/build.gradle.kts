@@ -130,7 +130,8 @@ sqldelight {
 // These settings are overridable from the command line:
 //
 //     ./gradlew :server:run -Dlunamux.port=8460 -Dlunamux.dbPath=/tmp/mine.db \
-//         -Dlunamux.tasksDir=/tmp/mine-tasks -Dlunamux.agentGroupsDir=/tmp/mine-groups
+//         -Dlunamux.tasksDir=/tmp/mine-tasks -Dlunamux.agentGroupsDir=/tmp/mine-groups \
+//         -Dlunamux.claudeProjects=/tmp/mine-projects
 //
 // The forwarding below is load-bearing and not redundant. A `-D` on the
 // gradlew command line sets the property on the *Gradle daemon* JVM, and
@@ -156,11 +157,22 @@ tasks.named<JavaExec>("run") {
     systemProperty("lunamux.port", portOverride)
     systemProperty("lunamux.dbPath", dbPathOverride)
     // The folders of task files are forwarded for the same reason: without them a dev server
-    // reads the task files of the Lunamux that runs for real on this machine.
-    for (name in listOf("lunamux.tasksDir", "lunamux.agentGroupsDir")) {
+    // reads the task files of the Lunamux that runs for real on this machine. The folder of Claude
+    // transcripts goes along: a dev server would otherwise import the owner's real history.
+    for (name in listOf("lunamux.tasksDir", "lunamux.agentGroupsDir", "lunamux.claudeProjects")) {
         providers.systemProperty(name).orNull?.let { systemProperty(name, it) }
     }
     doFirst {
         logger.lifecycle("Lunamux dev server: port $portOverride, db $dbPathOverride")
     }
+}
+
+// Fills a scratch database and task folder with the cases the agents overview shows (see
+// AgentsOverviewSeed). Run it through scripts/seed-agents-overview.sh while the scratch server
+// is stopped. `--args` carries the two paths.
+tasks.register<JavaExec>("seedAgentsOverview") {
+    group = "application"
+    description = "Seeds a scratch database and task folder for the agents overview."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("se.soderbjorn.lunamux.AgentsOverviewSeed")
 }

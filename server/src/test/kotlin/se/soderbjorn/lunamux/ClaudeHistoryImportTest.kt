@@ -66,20 +66,20 @@ class ClaudeHistoryImportTest {
         )
         transcript("p1", "sess-2", "cli", "/w/app", "hello")
         assertEquals(0, import())
-        assertEquals(1, repo.loadRecentEndedAgentSessions(50).size)
+        assertEquals(1, repo.loadRecentEndedAgentSessions(0, 50).size)
     }
 
     @Test
     fun `imported sessions are not in Earlier but a resumed one is`() {
         transcript("p1", "sess-3", "cli", "/w/app", "hello world")
         import()
-        assertTrue(repo.loadRecentEndedAgentSessions(50).isEmpty())
+        assertTrue(repo.loadRecentEndedAgentSessions(0, 50).isEmpty())
         assertEquals(1, repo.searchAgentSessions("hello").size)
 
         // Resuming it in Lunamux makes the tracker record a hook-sourced record on the same row.
         val imported = repo.findAgentSession("claude", "sess-3")!!
         repo.saveAgentSession(imported.copy(source = "hooks"))
-        assertEquals(listOf(imported.id), repo.loadRecentEndedAgentSessions(50).map { it.id })
+        assertEquals(listOf(imported.id), repo.loadRecentEndedAgentSessions(0, 50).map { it.id })
     }
 
     @Test

@@ -48,7 +48,7 @@ class AgentSessionTaskMigrationTest {
         repo.saveAgentSession(loaded.copy(taskId = "fix-login-ab12"))
         assertEquals("fix-login-ab12", repo.findAgentSessionById("prev")!!.taskId)
         assertEquals("fix-login-ab12", repo.searchAgentSessions("kept words").single().record.taskId)
-        assertEquals("fix-login-ab12", repo.loadRecentEndedAgentSessions(10).single().taskId)
+        assertEquals("fix-login-ab12", repo.loadRecentEndedAgentSessions(0, 10).single().taskId)
         // The upsert still carries the stored search text over.
         assertEquals("prev", repo.searchAgentSessions("kept words").single().record.id)
 

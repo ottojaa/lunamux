@@ -53,6 +53,42 @@ class AgentSessionSearchTest {
     }
 
     @Test
+    fun `a session is found through the title of its task, however old, and ranked after its own title`() {
+        // Out of memory (no tracker), nothing in its own fields matches, stored with only the task id.
+        repo.saveAgentTask(SettingsRepository.AgentTaskRow("access-1", "Access control rework", 1, 1))
+        repo.saveAgentSession(
+            AgentSessionRecord(id = "old", agent = "claude", title = "wire the thing", firstPrompt = "do it",
+                branch = "main", state = "ended", stateSince = 1, createdAt = 1, endedAt = 1, taskId = "access-1"),
+        )
+        save("own", title = "Access control notes", at = 2_000)
+        save("prompt", prompt = "explain access control", at = 3_000)
+        val tasks = TaskIndex(repo, AgentSessionTracker(repo), kotlinx.coroutines.flow.MutableStateFlow(emptyList()), { null })
+        val ranked = AgentSessionSearch.search(repo, null, "access control", tasks)
+        assertEquals(listOf("own", "old", "prompt"), ranked.map { it.summary.id })
+        val viaTask = ranked[1]
+        assertEquals("task", viaTask.field)
+        assertEquals("Access control rework", viaTask.taskTitle)
+        assertNull(viaTask.snippet)
+        assertEquals("Access control", "Access control rework".substring(viaTask.start, viaTask.start + viaTask.length))
+        assertNull(ranked[0].taskTitle)
+        // Without a task index only the sessions' own fields are searched.
+        assertEquals(listOf("own", "prompt"), AgentSessionSearch.search(repo, null, "access control").map { it.summary.id })
+    }
+
+    @Test
+    fun `a match on the session itself still names its task`() {
+        repo.saveAgentTask(SettingsRepository.AgentTaskRow("t-1", "Billing", 1, 1))
+        repo.saveAgentSession(
+            AgentSessionRecord(id = "s", agent = "claude", title = "fix invoices", state = "ended",
+                stateSince = 1, createdAt = 1, endedAt = 1, taskId = "t-1"),
+        )
+        val tasks = TaskIndex(repo, AgentSessionTracker(repo), kotlinx.coroutines.flow.MutableStateFlow(emptyList()), { null })
+        val hit = AgentSessionSearch.search(repo, null, "invoices", tasks).single()
+        assertEquals("title", hit.field)
+        assertEquals("Billing", hit.taskTitle)
+    }
+
+    @Test
     fun `within a tier open sessions come first and then the newest`() {
         save("old", title = "alpha work", at = 1_000)
         save("new", title = "alpha again", at = 2_000)

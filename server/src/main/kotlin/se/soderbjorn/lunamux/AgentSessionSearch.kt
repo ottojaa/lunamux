@@ -15,6 +15,7 @@ package se.soderbjorn.lunamux
 
 import se.soderbjorn.lunamux.persistence.AgentSessionRecord
 import se.soderbjorn.lunamux.persistence.SettingsRepository
+import se.soderbjorn.lunamux.persistence.SettingsRepository.AgentSessionHit
 import java.io.File
 import java.nio.file.Path
 
@@ -38,37 +39,60 @@ object AgentSessionSearch {
     private const val PEEK_LINES = 12
 
     /** Rank of each matched field: lower is better. */
-    private val TIER = mapOf("title" to 0, "prompt" to 1, "branch" to 2, "links" to 2, "transcript" to 3, "screen" to 3)
+    private val TIER = mapOf(
+        "title" to 0, "task" to 1, "prompt" to 2, "branch" to 3, "links" to 3, "transcript" to 4, "screen" to 4,
+    )
 
     /**
      * Find and rank the sessions that contain [query].
      *
-     * Case-insensitive substring match over title, first prompt, branch, ticket links, the
-     * conversation text and the last screen. Each session appears once, labelled with its best
-     * field. Order: title, then first prompt, then branch or links, then transcript or screen;
-     * within a tier open sessions come first, then the newest.
+     * Case-insensitive substring match over the session's title, the title of its task, first
+     * prompt, branch, ticket links, the conversation text and the last screen. Each session
+     * appears once, labelled with its best field. Order: title, then task title, then first
+     * prompt, then branch or links, then transcript or screen; within a tier open sessions come
+     * first, then the newest.
+     *
+     * A task's title is not a column of the session, so the sessions of every task whose title
+     * matches are read by task id as well, however old they are, and merged with the rows the
+     * ordinary query found.
      *
      * @param repo the store to search.
      * @param tracker supplies the live record for sessions that are open, so their state is current.
      * @param query what the user typed; surrounding spaces are ignored.
+     * @param tasks says which task each session is in and what that task is called; null searches
+     *   the sessions' own fields only.
      * @return at most [MAX_MATCHES] matches, best first; empty for a query shorter than [MIN_QUERY].
      */
-    fun search(repo: SettingsRepository, tracker: AgentSessionTracker?, query: String): List<AgentSessionMatch> {
+    fun search(
+        repo: SettingsRepository,
+        tracker: AgentSessionTracker?,
+        query: String,
+        tasks: TaskIndex? = null,
+    ): List<AgentSessionMatch> {
         val q = query.trim()
         if (q.length < MIN_QUERY) return emptyList()
-        return repo.searchAgentSessions(q)
+        val hits = repo.searchAgentSessions(q)
+        val matchingTasks = tasks?.taskIdsTitled(q).orEmpty()
+        val seen = hits.mapTo(HashSet()) { it.record.id }
+        val viaTask = if (tasks == null || matchingTasks.isEmpty()) emptyList() else {
+            val stored = repo.loadAgentSessionsOfTasks(matchingTasks)
+            val live = tracker?.snapshot().orEmpty().filter { tasks.taskIdOf(it) in matchingTasks }
+            (stored + live).distinctBy { it.id }.filter { seen.add(it.id) }.map { AgentSessionHit(it, null, null) }
+        }
+        return (hits + viaTask)
             .mapNotNull { hit ->
                 val rec = tracker?.cached(hit.record.id) ?: hit.record
-                val found = bestField(rec, hit.transcriptWindow, hit.screenWindow, q) ?: return@mapNotNull null
-                rec to found
+                val taskTitle = tasks?.taskIdOf(rec)?.let(tasks::titleOf)
+                val found = bestField(rec, taskTitle, hit.transcriptWindow, hit.screenWindow, q) ?: return@mapNotNull null
+                Triple(rec, found, taskTitle)
             }
             .sortedWith(
-                compareBy<Pair<AgentSessionRecord, Found>> { TIER.getValue(it.second.field) }
+                compareBy<Triple<AgentSessionRecord, Found, String?>> { TIER.getValue(it.second.field) }
                     .thenBy { if (it.first.state == "ended") 1 else 0 }
                     .thenByDescending { it.first.endedAt ?: it.first.stateSince },
             )
             .take(MAX_MATCHES)
-            .map { (rec, found) ->
+            .map { (rec, found, taskTitle) ->
                 AgentSessionMatch(
                     summary = rec.toSummary(),
                     field = found.field,
@@ -76,6 +100,7 @@ object AgentSessionSearch {
                     start = found.start,
                     length = found.length,
                     resumeNote = if (rec.state == "ended") AgentResumePlanner.note(AgentResumePlanner.plan(rec)) else null,
+                    taskTitle = taskTitle,
                 )
             }
     }
@@ -112,10 +137,16 @@ object AgentSessionSearch {
     /** One match inside a record: its field, the text to show and where the query sits in it. */
     private class Found(val field: String, val snippet: String?, val start: Int, val length: Int)
 
-    private fun bestField(rec: AgentSessionRecord, transcript: String?, screen: String?, q: String): Found? {
+    private fun bestField(
+        rec: AgentSessionRecord, taskTitle: String?, transcript: String?, screen: String?, q: String,
+    ): Found? {
         rec.title?.let { t ->
             val at = t.indexOf(q, ignoreCase = true)
             if (at >= 0) return Found("title", null, at, q.length)
+        }
+        taskTitle?.let { t ->
+            val at = t.indexOf(q, ignoreCase = true)
+            if (at >= 0) return Found("task", null, at, q.length)
         }
         rec.firstPrompt?.let { snip(it, q) }?.let { return Found("prompt", it.first, it.second, q.length) }
         rec.branch?.let { snip(it, q) }?.let { return Found("branch", it.first, it.second, q.length) }

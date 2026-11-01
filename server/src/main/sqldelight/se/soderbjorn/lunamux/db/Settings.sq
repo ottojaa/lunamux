@@ -83,7 +83,8 @@ selectRecentEndedAgentSessions:
 SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
     worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
     question, last_screen, created_at, ended_at, repo_root, last_said, task_id
-FROM agent_sessions WHERE state = 'ended' AND source != 'import' ORDER BY ended_at DESC LIMIT ?;
+FROM agent_sessions WHERE state = 'ended' AND source != 'import' AND ended_at >= ?
+ORDER BY ended_at DESC LIMIT ?;
 
 selectAgentSessionByAgentId:
 SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
@@ -128,6 +129,15 @@ WHERE title LIKE :pattern ESCAPE '\'
 ORDER BY COALESCE(ended_at, state_since) DESC
 LIMIT 200;
 
+-- Every record stored with one of :taskIds, however old, for search by task title.
+-- The caller keeps :taskIds short (the tasks whose title matched the query).
+selectAgentSessionsByTaskIds:
+SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
+    worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
+    question, last_screen, created_at, ended_at, repo_root, last_said, task_id
+FROM agent_sessions WHERE task_id IN :taskIds
+ORDER BY COALESCE(ended_at, state_since) DESC
+LIMIT 200;
 
 -- Tasks agents made through the MCP tools. A task has no members of its own: a
 -- session belongs to it through agent_sessions.task_id.

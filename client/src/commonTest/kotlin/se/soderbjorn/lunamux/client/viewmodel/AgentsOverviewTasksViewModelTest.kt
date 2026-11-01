@@ -123,7 +123,7 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aTaskWhoseSessionsAllEndedMovesToEarlierBeneathOpenIdleSessionsAndByAge() {
+    fun aTaskWhoseSessionsAllEndedMovesToEarlierAmongTheOtherUnitsNewestFirst() {
         show(
             listOf(
                 task(id = "g1", members = listOf(member("a", "ended", since = 4_000), member("b", "ended", since = 2_000))),
@@ -135,17 +135,108 @@ class AgentsOverviewTasksViewModelTest {
         )
         assertTrue(vm.state.now.isEmpty())
         assertEquals(
-            listOf("idle-open", "closed-new", "task:g1", "closed-old", "task:g2"),
+            listOf("closed-new", "task:g1", "closed-old", "idle-open", "task:g2"),
             vm.state.earlier.map { it.id },
         )
     }
 
     @Test
-    fun aTaskIsOneUnitInTheEarlierLimit() {
-        val tasks = (1..6).map { task(id = "g$it", members = listOf(member("m", "ended", since = it * 100L), member("n", "ended", since = it * 100L))) }
+    fun aTaskIsOneUnitInTheSecondBandsLimit() {
+        now = 30 * DAY // the bands are days wide; the usual clock is only hours in
+        val tasks = (1..6).map {
+            task(id = "g$it", members = listOf(member("m", "ended", since = now - 5 * DAY + it), member("n", "ended", since = now - 5 * DAY + it)))
+        }
         show(tasks)
-        assertEquals(EARLIER_LIMIT, vm.state.earlier.count { it.kind == RowKind.TASK })
+        assertTrue(vm.state.recent.isEmpty())
+        assertEquals(EARLIER_LIMIT, vm.state.fortnight.count { it.kind == RowKind.TASK })
         assertEquals(1, vm.state.earlierHidden)
+    }
+
+    @Test
+    fun theFirstBandTakesWhatIsAtMostThreeDaysOldAndTheSecondUpToFourteenWithBothEdgesInclusive() {
+        now = 30 * DAY // the bands are days wide; the usual clock is only hours in
+        show(
+            emptyList(),
+            session("three", "ended", endedAt = now - 3 * DAY),
+            session("over-three", "ended", endedAt = now - 3 * DAY - 1),
+            session("fourteen", "ended", endedAt = now - 14 * DAY),
+            session("over-fourteen", "ended", endedAt = now - 14 * DAY - 1),
+            session("fresh", "ended", endedAt = now - 1_000),
+        )
+        assertEquals(listOf("fresh", "three"), vm.state.recent.map { it.id })
+        assertEquals(listOf("over-three", "fourteen"), vm.state.fortnight.map { it.id })
+        assertEquals(listOf("fresh", "three", "over-three", "fourteen"), vm.state.rows.map { it.id }, "nothing older is listed")
+    }
+
+    @Test
+    fun aTasksRecencyIsItsNewestSessionSoOneRecentSessionKeepsTheWholeTaskInTheFirstBand() {
+        now = 30 * DAY // the bands are days wide; the usual clock is only hours in
+        show(
+            listOf(
+                task(id = "mixed", members = listOf(member("old", "ended", since = now - 20 * DAY), member("new", "ended", since = now - DAY))),
+                task(id = "slow", members = listOf(member("a", "ended", since = now - 5 * DAY), member("b", "ended", since = now - 10 * DAY))),
+                task(id = "ancient", members = listOf(member("a", "ended", since = now - 20 * DAY), member("b", "ended", since = now - 30 * DAY))),
+            ),
+        )
+        assertEquals(listOf("task:mixed"), vm.state.recent.map { it.id })
+        assertEquals(listOf("task:slow"), vm.state.fortnight.map { it.id })
+        assertEquals(now - DAY, vm.state.tasks.getValue("mixed").ageMillis)
+        assertEquals(now - 5 * DAY, vm.state.tasks.getValue("slow").ageMillis)
+        assertFalse("task:ancient" in vm.state.rows.map { it.id }, "older than two weeks is only found by search")
+    }
+
+    @Test
+    fun moreAppearsOnlyForTheSecondBand() {
+        now = 30 * DAY // the bands are days wide; the usual clock is only hours in
+        val recent = (1..8).map { session("r$it", "ended", endedAt = now - it * 1_000L) }
+        val older = (1..7).map { session("o$it", "ended", endedAt = now - 5 * DAY - it) }
+        show(emptyList(), *(recent + older).toTypedArray())
+        assertEquals(8, vm.state.recent.size, "the first band is never cut")
+        assertEquals(EARLIER_LIMIT, vm.state.fortnight.size)
+        assertEquals(2, vm.state.earlierHidden)
+        vm.showMoreEarlier()
+        assertEquals(7, vm.state.fortnight.size)
+        assertEquals(0, vm.state.earlierHidden)
+    }
+
+    @Test
+    fun anEarlierTaskIsACollapsedHeaderWithItsSessionCountAndAgeAndNowKeepsItsCountsWithoutAge() {
+        now = 30 * DAY // the bands are days wide; the usual clock is only hours in
+        show(
+            listOf(
+                task(id = "done", members = listOf(member("a", "ended", since = now - 2 * DAY), member("b", "ended", since = now - 3 * DAY), member("c", "ended", since = now - 4 * DAY))),
+                task(id = "live", members = listOf(member("x", "working", since = now - 100), member("y", "ended", since = now - DAY))),
+            ),
+        )
+        val done = vm.state.tasks.getValue("done")
+        assertEquals("3 sessions", done.summary)
+        assertEquals(now - 2 * DAY, done.ageMillis)
+        assertEquals(listOf("task:done"), vm.state.recent.map { it.id }, "collapsed: the sessions wait behind the header")
+        val live = vm.state.tasks.getValue("live")
+        assertNull(live.ageMillis)
+        assertTrue(live.summary.contains("done"), live.summary)
+    }
+
+    @Test
+    fun expandingAnEarlierTaskListsItsSessionsAndTheDownArrowCrossesFromTheFirstBandToTheSecond() {
+        now = 30 * DAY // the bands are days wide; the usual clock is only hours in
+        layout()
+        show(
+            listOf(task(id = "g1", members = listOf(member("a", "ended", since = now - DAY, recordId = "s-a"), member("b", "ended", since = now - 2 * DAY, recordId = "s-b")))),
+            session("s-a", "ended", endedAt = now - DAY),
+            session("s-b", "ended", endedAt = now - 2 * DAY),
+            session("later", "ended", endedAt = now - 6 * DAY),
+        )
+        assertEquals(listOf("task:g1"), vm.state.recent.map { it.id })
+        vm.select("task:g1")
+        vm.toggleTask("g1")
+        assertEquals(listOf("task:g1", "s-a", "s-b"), vm.state.recent.map { it.id })
+        assertEquals(listOf("resume", "resume"), vm.state.recent.drop(1).map { it.actionLabel })
+        vm.select("s-b")
+        vm.moveSelection(1)
+        assertEquals("later", vm.state.selectedId, "↓ from the last row of band 1 lands on the first of band 2")
+        vm.moveSelection(-1)
+        assertEquals("s-b", vm.state.selectedId)
     }
 
     @Test
@@ -991,5 +1082,6 @@ class AgentsOverviewTasksViewModelTest {
 
     private companion object {
         const val EARLIER_LIMIT = AgentsOverviewBackingViewModel.EARLIER_LIMIT
+        const val DAY = 24L * 60 * 60_000L
     }
 }
