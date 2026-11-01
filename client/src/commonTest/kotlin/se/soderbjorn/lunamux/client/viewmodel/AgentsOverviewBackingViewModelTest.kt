@@ -37,7 +37,10 @@ class AgentsOverviewBackingViewModelTest {
 
     private val sent = mutableListOf<WindowCommand>()
     private val windowState = WindowStateRepository()
-    private val vm = AgentsOverviewBackingViewModel(windowState) { sent += it }
+    // A fixed clock well past the idle grace, so the sessions built with small `since` values are
+    // old enough for EARLIER and young enough for its first band.
+    private val now = 1_000_000L
+    private val vm = AgentsOverviewBackingViewModel(windowState, clock = { now }) { sent += it }
 
     private fun session(
         id: String, state: String, since: Long = 1_000, title: String? = null, agent: String = "claude",
@@ -80,13 +83,11 @@ class AgentsOverviewBackingViewModelTest {
     }
 
     @Test
-    fun earlierListsOpenIdleSessionsThenClosedOnesNewestFirstAndCutsAtFiveUntilMore() {
+    fun earlierListsOpenIdleAndClosedSessionsTogetherNewestFirstAndCutsOnlyTheSecondBand() {
         val rows = (1..7).map { session("e$it", if (it % 2 == 0) "idle" else "ended", since = it * 1_000L, endedAt = it * 1_000L) }
         windowState.updateAgentSessions(rows, false)
-        assertEquals(listOf("e6", "e4", "e2", "e7", "e5"), vm.state.earlier.map { it.id })
-        assertEquals(2, vm.state.earlierHidden)
-        vm.showMoreEarlier()
-        assertEquals(7, vm.state.earlier.size)
+        assertEquals(listOf("e7", "e6", "e5", "e4", "e3", "e2", "e1"), vm.state.recent.map { it.id }, "all of the first band shows")
+        assertTrue(vm.state.fortnight.isEmpty())
         assertEquals(0, vm.state.earlierHidden)
     }
 
@@ -190,10 +191,33 @@ class AgentsOverviewBackingViewModelTest {
         assertTrue(s.now.isEmpty() && s.earlier.isEmpty())
         assertEquals("3 MATCHES", s.matchHeading)
         assertEquals("title", s.rows[0].field)
+        assertNull(s.rows[0].taskTitle)
         assertEquals(0 to 6, s.rows[0].matchStart to s.rows[0].matchLength)
         assertEquals("…a needle here…", s.rows[1].snippet)
         assertEquals("Worktree removed. Resume recreates it from branch x.", s.rows[2].resumeNote)
         assertEquals("resume", s.rows[2].actionLabel)
+    }
+
+    @Test
+    fun aMatchThroughItsTaskCarriesTheTaskTitleAndKeepsTheHighlightInsideIt() {
+        windowState.updateAgentSessions(emptyList(), true)
+        vm.setQuery("access")
+        answer(
+            "access",
+            AgentSessionMatch(
+                session("old", "ended", leaf = null, endedAt = 5, title = "wire the thing"), "task", null, 0, 6, null,
+                taskTitle = "Access control",
+            ),
+            AgentSessionMatch(
+                session("own", "ended", leaf = null, endedAt = 4, title = "Access notes"), "title", null, 0, 6, null,
+                taskTitle = "Billing",
+            ),
+        )
+        val rows = vm.state.rows
+        assertEquals(listOf("task", "title"), rows.map { it.field })
+        assertEquals(listOf("Access control", "Billing"), rows.map { it.taskTitle })
+        assertEquals(0 to 6, rows[0].matchStart to rows[0].matchLength, "the match sits inside the task title")
+        assertEquals("wire the thing", rows[0].title)
     }
 
     @Test

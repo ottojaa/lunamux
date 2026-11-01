@@ -4,8 +4,8 @@
  * Gemini) Lunamux knows about.
  *
  * The server pushes one list of session summaries; this ViewModel turns it
- * into the two sections the overlay shows (NOW and EARLIER), the chip
- * counts and the keyboard selection. Typing two or more characters switches the
+ * into the sections the overlay shows (NOW, then EARLIER in two recency bands: the last few
+ * days and the last two weeks), the chip counts and the keyboard selection. Typing two or more characters switches the
  * overlay to the server's search over every session ever recorded (titles,
  * first prompts, branches, links and transcripts). The ViewModel carries out
  * what a row offers: jump to its pane, resume it in a new tab, peek at its
@@ -18,7 +18,10 @@
  * sessions that need the user or work, or by every session, most urgent first, once the panel is
  * expanded. A task with one session and no `open` action is drawn as that session's plain row. A
  * task stays in NOW while any of its sessions has not ended, ranked beside single sessions by its
- * most urgent session. The header's ↵ goes to the session that most needs the person (a ◆ that
+ * most urgent session. What has finished or gone quiet moves to EARLIER, by task: a task's
+ * recency is its newest session's activity, so one recent session keeps the whole task in the
+ * first band. A task there is a collapsed panel that says how many sessions it holds and how
+ * long ago it was last active. The header's ↵ goes to the session that most needs the person (a ◆ that
  * has waited longest, else the busiest working one); with no live session it runs the task's
  * `open` action, and with neither it expands or collapses the panel. A session Lunamux does not
  * host opens with `claude attach <session id>` in a new tab; the id comes from the task file and
@@ -111,11 +114,12 @@ class AgentsOverviewBackingViewModel(
      *   file gave no session id, which has nothing to open.
      * @property error a message from the last failed resume of this row, or null.
      * @property canClose whether × and ⌘⌫ can close it: it has an open pane.
-     * @property field in a search result, where the query was found: `title`, `prompt`,
+     * @property field in a search result, where the query was found: `title`, `task`, `prompt`,
      *   `branch`, `links`, `transcript` or `screen`; null outside a search.
      * @property snippet in a search result, the text around the match (null for a title match,
      *   where the title itself is highlighted).
-     * @property matchStart where the match begins, inside [snippet] or, for a title match, [title].
+     * @property matchStart where the match begins, inside [snippet] or, for a title match, [title],
+     *   or, for a task match, [taskTitle].
      * @property matchLength how many characters the match covers; 0 when there is nothing to highlight.
      * @property resumeNote what Resume will do when it is not the plain case (for example
      *   "Worktree removed. Resume recreates it from branch x."); shown for search results and the
@@ -146,6 +150,9 @@ class AgentsOverviewBackingViewModel(
      *   of a task member; null when there is none.
      * @property sessionId for a task member Lunamux does not host, the id the task file gave for it,
      *   which `claude attach` takes; null otherwise.
+     * @property taskTitle in a search result, the title of the task the session belongs to, so the
+     *   result can say "in task X"; null when the session is in no task or outside a search. For a
+     *   `task` match, [matchStart] and [matchLength] mark the query inside it.
      */
     data class Row(
         val id: String,
@@ -178,6 +185,7 @@ class AgentsOverviewBackingViewModel(
         val status: String = "",
         val where: String? = repo,
         val sessionId: String? = null,
+        val taskTitle: String? = null,
     )
 
     /** What a [Row] stands for. */
@@ -258,6 +266,8 @@ class AgentsOverviewBackingViewModel(
      * @property activityMillis the latest sign of life among the working sessions (see
      *   [Row.activityMillis]); null when none works, so the header's working glyph is empty. The
      *   header draws the moving glyph while [isWorkingLive] says that stamp is fresh.
+     * @property ageMillis for a task in EARLIER, epoch millis of its newest session's activity, which
+     *   the header shows as its age; null for a task in NOW, whose header shows counts and no age.
      */
     data class Task(
         val id: String,
@@ -270,6 +280,7 @@ class AgentsOverviewBackingViewModel(
         val jumpRecordId: String?,
         val hasOpen: Boolean,
         val activityMillis: Long? = null,
+        val ageMillis: Long? = null,
     )
 
     /**
@@ -314,18 +325,23 @@ class AgentsOverviewBackingViewModel(
      * @property open whether the overlay is showing.
      * @property query the search text.
      * @property matchMode whether the query is long enough to search every session; the list is
-     *   then [matches] instead of [now] and [earlier].
+     *   .
      * @property matches the server's answer for the current query, best match first; empty until it arrives.
      * @property searching true while a [matchMode] answer for the current query is still on its way.
      * @property now needs-you rows first, then working rows, longest waiting first.
-     * @property earlier idle and ended rows, newest first, cut to [EARLIER_LIMIT] until "More" is pressed.
-     * @property earlierHidden how many earlier rows "More" would reveal.
+     * @property recent EARLIER's first band, "Last few days": idle and ended units whose newest
+     *   activity is at most [RECENT_MS] old, newest first, all shown. A task is one collapsed
+     *   header (its sessions follow once expanded).
+     * @property fortnight EARLIER's second band, "Last two weeks": units between [RECENT_MS] and
+     *   [WINDOW_MS] old, newest first, cut to [EARLIER_LIMIT] units until "More" is pressed.
+     *   Nothing older is listed; search finds it.
+     * @property earlierHidden how many units of [fortnight] "More" would reveal.
      * @property needYouCount rows asking for the user; the chip's first number.
      * @property workingCount rows at work; the chip's second number.
      * @property selectedId the id of the highlighted row, or null when there are no rows.
      * @property peek the screen popover, or null while it is closed.
      * @property confirm the close confirmation, or null while none is asked.
-     * @property tasks the task panels drawn in [now] and [earlier], by task id; a task drawn as a
+     * @property tasks the task panels drawn in [now], [recent] and [fortnight], by task id; a task drawn as a
      *   plain session row is not in it.
      * @property hasSessions whether any agent session or task has ever been recorded, which is
      *   when the toolbar chip shows.
@@ -338,7 +354,8 @@ class AgentsOverviewBackingViewModel(
         val matches: List<Row> = emptyList(),
         val searching: Boolean = false,
         val now: List<Row> = emptyList(),
-        val earlier: List<Row> = emptyList(),
+        val recent: List<Row> = emptyList(),
+        val fortnight: List<Row> = emptyList(),
         val earlierHidden: Int = 0,
         val needYouCount: Int = 0,
         val workingCount: Int = 0,
@@ -349,8 +366,11 @@ class AgentsOverviewBackingViewModel(
         val hasSessions: Boolean = false,
         val footer: Footer = Footer.NONE,
     ) {
-        /** The rows in the order the keyboard walks them: [matches], or [now] then [earlier]. */
-        val rows: List<Row> get() = if (matchMode) matches else now + earlier
+        /** Every EARLIER row: [recent] then [fortnight]. */
+        val earlier: List<Row> get() = recent + fortnight
+
+        /** The rows in the order the keyboard walks them: [matches], or [now], [recent] then [fortnight]. */
+        val rows: List<Row> get() = if (matchMode) matches else now + recent + fortnight
 
         /** Index into [rows] of the highlighted row, or -1 when there is none. */
         val selected: Int get() = rows.indexOfFirst { it.id == selectedId }
@@ -581,7 +601,7 @@ class AgentsOverviewBackingViewModel(
         if (index >= 0) ui.update { it.copy(selectedId = rowId, selectedHint = index, peekOpen = false, confirmRowId = null) }
     }
 
-    /** Reveal the earlier rows beyond the first [EARLIER_LIMIT]. Called by the "More" link. */
+    /** Reveal the second band's units beyond the first [EARLIER_LIMIT]. Called by the "+ N more" line. */
     fun showMoreEarlier() = ui.update { it.copy(showAllEarlier = true) }
 
     /**
@@ -910,6 +930,9 @@ class AgentsOverviewBackingViewModel(
      * @property settled whether no session needs the person or works, no task file speaks for the
      *   task, and the last activity of its sessions is older than [IDLE_GRACE_MS]: it belongs in
      *   EARLIER like an idle single session, though none of its sessions has ended.
+     * @property recency epoch millis of the newest activity of any session of the task: when an ended
+     *   one ended, the last activity of an open one, and the time a task file gives a member. Decides
+     *   the EARLIER band and the order inside it.
      * @property jumpRecordId the open session that most needs the person, or null.
      */
     private class TaskUnit(
@@ -920,6 +943,7 @@ class AgentsOverviewBackingViewModel(
         val since: Long,
         val ended: Boolean,
         val settled: Boolean,
+        val recency: Long,
         val jumpRecordId: String?,
     )
 
@@ -948,6 +972,7 @@ class AgentsOverviewBackingViewModel(
                 matchStart = if (highlight) m.start else 0,
                 matchLength = if (highlight) m.length else 0,
                 resumeNote = m.resumeNote,
+                taskTitle = m.taskTitle,
             )
         }
 
@@ -981,20 +1006,24 @@ class AgentsOverviewBackingViewModel(
         )
         val now = urgent.flatMap { it.rows }
 
-        // EARLIER: open idle singles first, then finished tasks and closed sessions, newest first.
-        class Earlier(val since: Long, val rows: List<Row>)
+        // EARLIER is built from units, a task or a lone session, each placed by its newest activity:
+        // within RECENT_MS it is in the first band, up to WINDOW_MS in the second, older not listed.
+        class Earlier(val recency: Long, val rows: List<Row>)
         val gracedIds = graced.mapTo(HashSet()) { it.id }
-        val idleSingles = singles.filter { it.state != NEEDS_YOU && it.state != WORKING && it.state != ENDED && it.id !in gracedIds }
-            .sortedByDescending { it.sinceMillis }
-        val closedUnits = (
-            singles.filter { it.state == ENDED }.map { Earlier(it.sinceMillis, listOf(it)) } +
-                units.filter { it.ended || it.settled }.map { Earlier(it.since, taskRows(it, taskStates, panes, ui, resumeError)) }
-            ).sortedByDescending { it.since }
-        val earlierUnits = idleSingles.map { Earlier(it.sinceMillis, listOf(it)) } + closedUnits
-        val shownEarlier = if (ui.showAllEarlier) earlierUnits else earlierUnits.take(EARLIER_LIMIT)
-        val earlier = shownEarlier.flatMap { it.rows }
+        val earlierUnits = (
+            singles.filter { it.state != NEEDS_YOU && it.state != WORKING && it.id !in gracedIds }
+                .map { Earlier(byId[it.id]?.let(::activityOf) ?: it.sinceMillis, listOf(it)) } +
+                units.filter { it.ended || it.settled }
+                    .map { Earlier(it.recency, taskRows(it, taskStates, panes, ui, resumeError)) }
+            ).filter { inWindow(it.recency, nowMillis) }
+            .sortedByDescending { it.recency }
+        val recentUnits = earlierUnits.filter { inRecent(it.recency, nowMillis) }
+        val fortnightUnits = earlierUnits.filter { !inRecent(it.recency, nowMillis) }
+        val shownFortnight = if (ui.showAllEarlier) fortnightUnits else fortnightUnits.take(EARLIER_LIMIT)
+        val recent = recentUnits.flatMap { it.rows }
+        val fortnight = shownFortnight.flatMap { it.rows }
 
-        val listed = if (matchMode) matchRows else now + earlier
+        val listed = if (matchMode) matchRows else now + recent + fortnight
         // The selection is the row with the remembered id; when that row is gone, the row now in its place.
         val selectedId = when {
             listed.isEmpty() -> null
@@ -1046,8 +1075,9 @@ class AgentsOverviewBackingViewModel(
             matches = if (matchMode) shown else emptyList(),
             searching = matchMode && answer == null,
             now = if (matchMode) emptyList() else shown.take(now.size),
-            earlier = if (matchMode) emptyList() else shown.drop(now.size),
-            earlierHidden = earlierUnits.size - shownEarlier.size,
+            recent = if (matchMode) emptyList() else shown.drop(now.size).take(recent.size),
+            fortnight = if (matchMode) emptyList() else shown.drop(now.size + recent.size),
+            earlierHidden = fortnightUnits.size - shownFortnight.size,
             needYouCount = singles.count { it.state == NEEDS_YOU } + taskNeeds,
             workingCount = singles.count { it.state == WORKING } + taskWorking,
             selectedId = selectedId,
@@ -1128,7 +1158,9 @@ class AgentsOverviewBackingViewModel(
         val open = runs.filter { r -> r.session != null && r.session.state != ENDED && panes[r.session.leafId] != null }
         val jump = open.filter { it.member.state == NEEDS_YOU }.minByOrNull { it.member.sinceMillis }
             ?: open.filter { it.member.state == WORKING }.maxByOrNull { it.session!!.lastActivityAt ?: it.session.stateSince }
-        return TaskUnit(t, runs, panel, rank, since, ended, settled, jump?.session?.id)
+        val recency = runs.maxOfOrNull { r -> maxOf(r.member.sinceMillis, r.session?.let(::activityOf) ?: 0L) }
+            ?: t.refreshedAtMillis ?: 0L
+        return TaskUnit(t, runs, panel, rank, since, ended, settled, recency, jump?.session?.id)
     }
 
     /** The record behind [row] that peek and inspection ask the server about, or null when there is none. */
@@ -1168,19 +1200,40 @@ class AgentsOverviewBackingViewModel(
         val buckets = u.runs.map { bucketOf(it.member) }
         val counted = buckets.filter { it.order > 0 }.groupBy { it.name }
             .entries.sortedBy { (_, list) -> list.first().order }
+        // In EARLIER a header says how many sessions it holds and how long ago it was last active.
+        val inEarlier = u.ended || u.settled
         return Task(
             id = t.id, title = t.title, repo = repo,
             needYouCount = u.runs.count { it.member.state == NEEDS_YOU },
             workingCount = u.runs.count { it.member.state == WORKING },
-            summary = counted.joinToString(" · ") { (name, list) -> "${list.size} $name" }
-                .ifEmpty { if (u.runs.isEmpty()) "no sessions" else "" },
+            summary = if (inEarlier) {
+                when (u.runs.size) {
+                    0 -> "no sessions"
+                    1 -> "1 session"
+                    else -> "${u.runs.size} sessions"
+                }
+            } else {
+                counted.joinToString(" · ") { (name, list) -> "${list.size} $name" }
+                    .ifEmpty { if (u.runs.isEmpty()) "no sessions" else "" }
+            },
             expanded = t.id in ui.expandedTasks,
             jumpRecordId = u.jumpRecordId,
             hasOpen = t.hasOpen,
             activityMillis = u.runs.filter { it.member.state == WORKING }
                 .mapNotNull { workingActivity(it, t.refreshedAtMillis) }.maxOrNull(),
+            ageMillis = u.recency.takeIf { inEarlier },
         )
     }
+
+    /**
+     * The newest sign of life of a hosted session: when it ended, else its last activity, else the
+     * time it entered its state. This is what places a lone session in an EARLIER band.
+     *
+     * @param s the session.
+     * @return epoch millis.
+     */
+    private fun activityOf(s: AgentSessionSummary): Long =
+        if (s.state == ENDED) s.endedAt ?: s.stateSince else s.lastActivityAt ?: s.stateSince
 
     /**
      * The repository a task header shows: the one its file names, else the repository every one of
@@ -1243,7 +1296,8 @@ class AgentsOverviewBackingViewModel(
         val header = tasks.getValue(t.id).let { task ->
             Row(
                 id = "$TASK_PREFIX${t.id}", agent = "", state = stateOfRank(u.rank), title = t.title,
-                links = emptyList(), repo = headerRepo(u), nowLine = null, question = null, sinceMillis = u.since,
+                links = emptyList(), repo = headerRepo(u), nowLine = null, question = null,
+                sinceMillis = task.ageMillis ?: u.since,
                 isLive = task.jumpRecordId != null, canResume = false,
                 actionLabel = when {
                     task.jumpRecordId != null -> "jump"
@@ -1453,8 +1507,40 @@ class AgentsOverviewBackingViewModel(
          */
         fun inGrace(activityMillis: Long, nowMillis: Long): Boolean = nowMillis - activityMillis < IDLE_GRACE_MS
 
-        /** How many EARLIER rows show before "More". */
+        /** How many units of EARLIER's second band show before "More". */
         const val EARLIER_LIMIT = 5
+
+        /** How old a unit's newest activity may be and still sit in EARLIER's first band, "Last few days": 3 days. */
+        const val RECENT_MS = 3L * 24 * 60 * 60_000L
+
+        /**
+         * How old a unit's newest activity may be and still be listed in EARLIER at all, in the
+         * second band, "Last two weeks": 14 days. The server keeps at least this much history, so
+         * a unit listed here is never missing from the pushed list.
+         */
+        const val WINDOW_MS = 14L * 24 * 60 * 60_000L
+
+        /**
+         * Whether activity at [recencyMillis] belongs to the first EARLIER band. The edge is
+         * inclusive: a unit exactly [RECENT_MS] old is still in the first band.
+         *
+         * Called by [build] for every EARLIER unit.
+         *
+         * @param recencyMillis epoch millis of the unit's newest activity.
+         * @param nowMillis the current epoch millis.
+         * @return true when the unit is at most [RECENT_MS] old.
+         */
+        fun inRecent(recencyMillis: Long, nowMillis: Long): Boolean = nowMillis - recencyMillis <= RECENT_MS
+
+        /**
+         * Whether activity at [recencyMillis] is listed in EARLIER at all. The edge is inclusive: a
+         * unit exactly [WINDOW_MS] old is listed, one millisecond older is not.
+         *
+         * @param recencyMillis epoch millis of the unit's newest activity.
+         * @param nowMillis the current epoch millis.
+         * @return true when the unit is at most [WINDOW_MS] old.
+         */
+        fun inWindow(recencyMillis: Long, nowMillis: Long): Boolean = nowMillis - recencyMillis <= WINDOW_MS
 
         /** The fewest characters that start a search over every session. */
         const val MIN_QUERY = 2
