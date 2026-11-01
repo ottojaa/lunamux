@@ -71,10 +71,10 @@ class AgentsOverviewGroupsViewModelTest {
 
     private fun group(
         id: String = "g1", members: List<AgentGroupMember>, leadRecord: String? = null, leadLive: Boolean = false,
-        lastSaid: String? = null, tag: String? = "Programme", refreshedAtMillis: Long? = null,
+        lastSaid: String? = null, tag: String? = "Programme", refreshedAtMillis: Long? = null, named: Boolean = true,
     ) = AgentGroup(
         id = id, title = "Release $id", tag = tag, repo = "proj",
-        lead = AgentGroupLead(folder = "/work/lead", recordId = leadRecord, live = leadLive, lastSaid = lastSaid),
+        lead = AgentGroupLead(folder = "/work/lead", recordId = leadRecord, live = leadLive, lastSaid = lastSaid, named = named),
         members = members, refreshedAtMillis = refreshedAtMillis,
     )
 
@@ -289,6 +289,21 @@ class AgentsOverviewGroupsViewModelTest {
         layout("leaf-home")
         show(listOf(group(members = listOf(member("a", "working")))), session("home", "idle", title = "Lunamux agent overview"))
         assertTrue("Lunamux agent overview" in vm.state.rows.map { it.title })
+    }
+
+    @Test
+    fun aSessionFoundOnlyByTheLeadFolderIsNotFoldedButStillOpensFromTheHeader() {
+        layout("leaf-home")
+        // The server hands over the newest open session in the lead folder even when the file names
+        // no session; it serves the header's open and nothing else.
+        show(
+            listOf(group(members = listOf(member("a", "working")), leadRecord = "home", leadLive = true, named = false)),
+            session("home", "working", title = "Old home chat", nowLine = "Edit file"),
+        )
+        val titles = vm.state.rows.map { it.title }
+        assertEquals(1, titles.count { it == "Old home chat" })
+        assertTrue(vm.state.rows.none { it.title == "Programme session" || it.title == "Lead session" })
+        assertTrue(vm.state.groups.getValue("g1").leadLive)
     }
 
     @Test
@@ -553,6 +568,38 @@ class AgentsOverviewGroupsViewModelTest {
         vm.open()
         assertEquals("member:g1:0", vm.state.selectedId)
         assertEquals(Footer.NO_SESSION, vm.state.footer)
+    }
+
+    @Test
+    fun whenTheRowTheOverlayOpenedOnDisappearsTheRowNowInItsPlaceIsSelected() {
+        val a = member("a", "needs_you", since = 1_500)
+        show(
+            listOf(group(members = listOf(a))),
+            session("w", "working", since = 1),
+            session("late", "needs_you", since = 3_000),
+        )
+        vm.open()
+        val index = vm.state.selected
+        assertTrue(index > 0)
+        // The run answers and works on: its row is hidden under the collapsed programme.
+        show(
+            listOf(group(members = listOf(a.copy(state = "working")))),
+            session("w", "working", since = 1),
+            session("late", "needs_you", since = 3_000),
+        )
+        assertEquals(vm.state.rows[index.coerceAtMost(vm.state.rows.lastIndex)].id, vm.state.selectedId)
+    }
+
+    @Test
+    fun aRunTheFileGivesASessionIdKeepsItsRowIdWhenTheWriterReordersTheMembers() {
+        val a = member("a", "needs_you", since = 1_000, sessionId = "aaa")
+        val b = member("b", "needs_you", since = 2_000, sessionId = "bbb")
+        show(listOf(group(members = listOf(a, b))))
+        vm.open()
+        vm.select("member:g1:bbb")
+        show(listOf(group(members = listOf(member("new", "needs_you", since = 500, sessionId = "ccc"), a, b))))
+        assertEquals("member:g1:bbb", vm.state.selectedId)
+        assertEquals("b", vm.state.rows.single { it.id == vm.state.selectedId }.title)
     }
 
     @Test

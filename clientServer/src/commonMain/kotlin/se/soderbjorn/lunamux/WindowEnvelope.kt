@@ -596,6 +596,9 @@ data class AgentGroup(
  * @param recordId the open session record in [folder], or null when none is open.
  * @param live whether that record's pane is in the layout, so the header can jump to it.
  * @param lastSaid what the lead's record last said (see [AgentSessionSummary.lastSaid]), or null.
+ * @param named whether [recordId] is the session the group file names with `lead.sessionId`. Only a
+ *   named lead is the programme's own session and is drawn as its header; a record that is merely
+ *   the newest one in [folder] still serves the header's open, but is listed like any other session.
  */
 @Serializable
 data class AgentGroupLead(
@@ -603,6 +606,7 @@ data class AgentGroupLead(
     val recordId: String? = null,
     val live: Boolean = false,
     val lastSaid: String? = null,
+    val named: Boolean = false,
 )
 
 /**

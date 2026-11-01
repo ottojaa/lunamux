@@ -161,6 +161,23 @@ class AgentSessionTrackerTest {
     }
 
     @Test
+    fun `a closing question with a colon or an abbreviation is still one question`() {
+        val t = tracker()
+        val p = pane()
+        val questions = listOf(
+            "Which do you want: the alias or the rename?",
+            "Should I keep the alias (e.g. the old name) or remove it?",
+        )
+        for (q in questions) {
+            t.onHook(p, event("UserPromptSubmit", "a-1", "prompt" to "go"))
+            t.onHook(p, event("Stop", "a-1", "last_assistant_message" to "Done.\n\n$q"))
+            val row = t.summaries.value.single()
+            assertEquals("needs_you", row.state, q)
+            assertEquals(q, row.question)
+        }
+    }
+
+    @Test
     fun `a finished turn that ends in a reply is idle even when the reply closes with an offer`() {
         val t = tracker()
         val p = pane()

@@ -568,15 +568,21 @@ internal fun bareQuestionOf(message: String): String? {
     val paragraph = message.trim().substringAfterLast("\n\n").trim()
     if (!paragraph.endsWith("?") || paragraph.length > QUESTION_SENTENCE_MAX) return null
     val body = paragraph.dropLast(1)
-    if ('\n' in body || SENTENCE_BREAK.containsMatchIn(body)) return null
+    if ('\n' in body || SENTENCE_BREAK.containsMatchIn(body.replace(ABBREVIATION, ""))) return null
     return paragraph
 }
 
 /** Longest closing paragraph that still reads as one question rather than a reply with an offer. */
 private const val QUESTION_SENTENCE_MAX = 200
 
-/** A sentence end inside a paragraph: its terminator followed by a space. */
-private val SENTENCE_BREAK = Regex("""[.!?:;]\s""")
+/**
+ * A sentence end inside a paragraph: `.`, `!` or `?` followed by a space. A colon or semicolon does
+ * not end one, so "Which do you want: the alias or the rename?" stays a single question.
+ */
+private val SENTENCE_BREAK = Regex("""[.!?]\s""")
+
+/** Abbreviations whose full stop is not a sentence end ("e.g. the alias"); removed before looking for breaks. */
+private val ABBREVIATION = Regex("""\b(?:e\.g|i\.e|etc|vs)\.""", RegexOption.IGNORE_CASE)
 
 private const val SCREEN_LINES = 200
 private val TICKET_KEY = Regex("""\b[A-Z][A-Z0-9]+-\d+\b""")

@@ -496,7 +496,7 @@ class AgentsOverviewBackingViewModel(
         inspected = null
         val fresh = Ui(open = true, expandedGroups = ui.value.expandedGroups)
         val first = build(inputs().copy(ui = fresh))
-        ui.value = fresh.copy(selectedId = first.selectedId)
+        ui.value = fresh.copy(selectedId = first.selectedId, selectedHint = maxOf(first.selected, 0))
     }
 
     /**
@@ -893,7 +893,7 @@ class AgentsOverviewBackingViewModel(
         val units = groupFiles.map { g -> unitOf(g, byId, panes) }
         // A session a group run matched, or the open lead, is drawn inside its group, not again as a single.
         val claimed = units.flatMap { u -> u.runs.mapNotNull { it.session?.id } }.toSet() +
-            units.mapNotNull { u -> u.group.lead.recordId?.takeIf { u.leadLive } }
+            units.mapNotNull { u -> u.group.lead.recordId?.takeIf { u.leadLive && u.group.lead.named } }
         val unclaimed = sessions.filter { it.id !in claimed }
             .map { s -> s to toRow(s, panes[s.leafId], resumeError(s.id)) }
         val singles = unclaimed.map { (_, row) -> row }
@@ -1020,7 +1020,7 @@ class AgentsOverviewBackingViewModel(
         // Open means a session Lunamux lists whose pane is in the layout, so Jump has somewhere to go.
         val leadSummary = g.lead.recordId?.let(byId::get)
         val leadLive = g.lead.live && leadSummary != null && panes[leadSummary.leafId] != null
-        val leadRun = leadSummary?.takeIf { leadLive && (it.state == NEEDS_YOU || it.state == WORKING) }
+        val leadRun = leadSummary?.takeIf { leadLive && g.lead.named && (it.state == NEEDS_YOU || it.state == WORKING) }
             ?.let { Run(leadMemberOf(g, it), it, -1) }
         val runs = listOfNotNull(leadRun) + g.members.mapIndexed { i, m -> Run(m, m.recordId?.let(byId::get), i) }
         val ended = runs.all { it.member.state == ENDED }
@@ -1157,7 +1157,9 @@ class AgentsOverviewBackingViewModel(
     private fun runRow(g: AgentGroup, run: Run, panes: Map<String?, PaneLocation>, resumeError: (String) -> String?): Row {
         val m = run.member
         val s = run.session
-        val rowId = if (s != null) s.id else "$MEMBER_PREFIX${g.id}:${run.fileIndex}"
+        // A run the file gives a session id is identified by it, so a writer that inserts or reorders
+        // members does not move the selection onto another run; without one, its place in the file.
+        val rowId = if (s != null) s.id else "$MEMBER_PREFIX${g.id}:${m.sessionId ?: run.fileIndex}"
         val base = if (s != null) {
             toRow(s, panes[s.leafId], resumeError(s.id))
         } else {
@@ -1277,8 +1279,7 @@ class AgentsOverviewBackingViewModel(
      * The folder a session runs in, as the overview's folder column shows it when there is no
      * repository: "~" for the user's home folder, else the last path segment, else null.
      *
-     * Called by [toRow] for the column and the title fallback, and by the duplicate-title rule
-     * in `build`. Home is named "~" so a chat started there is not shown under the user's name.
+     * Called by [toRow] for the column and the title fallback. Home is named "~" so a chat started there is not shown under the user's name.
      *
      * @param s the session.
      * @return the label, or null when the session has no folder.
@@ -1357,8 +1358,8 @@ class AgentsOverviewBackingViewModel(
         /**
          * How long a group file may go without being refreshed before what it says about members
          * Lunamux does not host is treated as stale. The writer touches an unchanged file at least
-         * every ten minutes while its controller runs, so twenty minutes of silence means the
-         * controller stopped and the file's states are no longer news.
+         * every two minutes while a run works, so twenty minutes of silence means the
+         * writer stopped and the file's states are no longer news.
          */
         const val STALE_AFTER_MS = 20L * 60_000L
 

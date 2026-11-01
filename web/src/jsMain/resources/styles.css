@@ -3773,7 +3773,8 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-snippet, .ao-note, .ao-peek { grid-column: 3 / -1; min-width: 0; }
 .ao-snippet, .ao-note { color: var(--ao-dim); line-height: 20px; padding-bottom: 4px; white-space: normal; }
 .ao-snippet-label { color: var(--ao-muted); }
-.ao-mark { background: color-mix(in srgb, var(--ao-warn) 28%, transparent); color: var(--ao-text); padding: 0 2px; }
+/* A search match is underlined in the accent colour, never filled: amber is reserved for needs-you. */
+.ao-mark { background: none; color: var(--ao-text); text-decoration: underline; text-decoration-color: var(--ao-accent); text-decoration-thickness: 2px; text-underline-offset: 3px; }
 .ao-peek {
     margin: 2px 0 8px;
     padding: 8px 2ch 10px;

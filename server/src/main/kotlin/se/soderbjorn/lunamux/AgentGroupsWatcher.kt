@@ -296,15 +296,17 @@ class AgentGroupsWatcher(
         fun cwdOf(r: AgentSessionRecord) = r.cwd?.let { canon.getOrPut(it) { canonical(it) } }
         val newestFirst = recs.sortedByDescending { it.createdAt }
         val leadRecs = newestFirst.filter { cwdOf(it) == p.leadFolder }
-        // A session the file names is the lead wherever it runs; otherwise the lead is the newest
-        // session in the lead folder, an open one first.
-        val leadRec = p.leadSessionId?.let { sid -> newestFirst.firstOrNull { it.agentSessionId == sid } }
-            ?: leadRecs.firstOrNull { isOpen(it) } ?: leadRecs.firstOrNull()
+        // A session the file names is the lead wherever it runs. Without one the header's open still
+        // goes to the newest session in the lead folder (an open one first), but that session is not
+        // the programme's own and stays an ordinary row.
+        val named = p.leadSessionId?.let { sid -> newestFirst.firstOrNull { it.agentSessionId == sid } }
+        val leadRec = named ?: leadRecs.firstOrNull { isOpen(it) } ?: leadRecs.firstOrNull()
         val lead = AgentGroupLead(
             folder = p.leadFolder,
             recordId = leadRec?.id,
             live = leadRec != null && isOpen(leadRec),
             lastSaid = leadRec?.lastSaid,
+            named = named != null,
         )
         val claimed = HashSet<String>()
         val members = p.group.members.mapIndexed { i, m ->

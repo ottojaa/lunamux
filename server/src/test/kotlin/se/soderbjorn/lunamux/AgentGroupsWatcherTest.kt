@@ -213,6 +213,7 @@ class AgentGroupsWatcherTest {
         watcher.resolve()
         var l = watcher.groups.value.single().lead
         assertEquals("lead-rec", l.recordId)
+        assertEquals(false, l.named)
         assertEquals(true, l.live)
         assertEquals("said lead-rec", l.lastSaid)
         // The lead's own record is not also taken as a member.
@@ -238,6 +239,7 @@ class AgentGroupsWatcherTest {
         watcher.reload()
         val g = watcher.groups.value.single()
         assertEquals("home", g.lead.recordId)
+        assertEquals(true, g.lead.named)
         assertEquals(true, g.lead.live)
         assertEquals("said home", g.lead.lastSaid)
         // The home session sits in a folder a member also asks for; it stays the lead.
@@ -251,6 +253,8 @@ class AgentGroupsWatcherTest {
         records = listOf(rec("in-folder", lead, agentSessionId = "x"), rec("elsewhere", folder("elsewhere"), agentSessionId = "home-id"))
         watcher.reload()
         assertEquals("in-folder", watcher.groups.value.single().lead.recordId)
+        // Found by folder only: it serves the header's open, but it is not the programme's own session.
+        assertEquals(false, watcher.groups.value.single().lead.named)
 
         write("g1.json", groupJson(leadFolder = folder("empty-lead")))
         watcher.reload()

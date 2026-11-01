@@ -41,8 +41,8 @@ idle, **‖** paused, **✓** done. A programme is an expansion panel drawn as a
   ended moves to **EARLIER**. A single idle session stays in NOW for ten minutes after its last
   activity, shown idle with its age, and then moves to EARLIER.
 - ↵ on the header goes to the **lead session**: it jumps there if the lead is open, otherwise
-  Lunamux opens a new tab in `lead.folder` and types `lead.command` into it. The footer says so
-  only while a header is selected.
+  Lunamux opens a new tab in `lead.folder` and types `lead.command` into it. "open" at the right
+  end of the header does the same.
 - A live session that is the lead (see `lead.sessionId`) is the header, not a second row. A
   lead that needs the user or works is also a row among the runs, titled `<Tag> session`
   ("Programme session"), with its own question or last tool line.
@@ -105,7 +105,7 @@ One object per file.
 | `version` | no | `1`. |
 | `id` | yes | Unique, stable id of the group. If two files use one id, the newer file wins and a warning is logged. |
 | `title` | yes | The box's name. |
-| `tag` | no | What the programme is called in the lead's row ("Programme session") and, lower-case, in the footer's "↵ opens the … session". Without it both say "lead". |
+| `tag` | no | What the programme is called in the lead's row ("Programme session"). Without it the row says "Lead session". |
 | `repo` | no | Repository name shown beside the title. |
 | `link` | no | `{ "label", "url" }`. Accepted and ignored: the overview draws no link chips. |
 | `updatedAt` | no | ISO-8601 time of the writer's last change. Informational. |
@@ -146,13 +146,14 @@ jumps to it (or opens it in a new tab once closed). Its title stays the file's. 
 member is not listed a second time outside the group, and one session can belong to only one
 member.
 
-The lead is the newest session whose `agentSessionId` equals `lead.sessionId`, wherever it runs;
-without that id, or when no session has it, the newest open session whose working folder equals
-`lead.folder`. It is *open* when that session is running in a pane that is on screen in the
-layout. That session is not matched to members, whatever their `match.folder`, it is the header
-rather than a row of its own, and what it last said is shown in the footer while the header is
-selected. Other chats the person once declared as the programme's home are real chats: they stay
-in the list, and only the session with `lead.sessionId` is folded.
+The lead is the newest session whose `agentSessionId` equals `lead.sessionId`, wherever it runs.
+That session is the header rather than a row of its own, and it is not matched to members,
+whatever their `match.folder`. Without that id, or when no session has it, nothing is folded: the
+header's ↵ and "open" still go to the newest open session whose working folder equals
+`lead.folder` (or start `lead.command` when there is none), but that session stays an ordinary
+row. The lead is *open* when its session is running in a pane that is on screen in the layout.
+Other chats the person once declared as the programme's home are real chats: they stay in the
+list, and only the session with `lead.sessionId` is folded.
 
 ## Writing and removing files
 
