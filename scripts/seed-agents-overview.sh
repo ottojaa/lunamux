@@ -31,7 +31,7 @@
 #                    yesterday and one from 10 days ago: the task is as recent as its newest),
 #                    "Release 4.2" and the 2-day-old session.
 #   LAST TWO WEEKS   3 to 14 days: five units and "+ 2 more" ("Flaky checkout tests", the 6- and
-#                    12-day sessions, "Onboarding emails", "Docs sweep"). Press More to see all.
+#                    12-day sessions, "Onboarding emails", "Docs sweep"). Click the more line to see all.
 #   An EARLIER task  a collapsed panel (title, repo, "3 sessions", age). → expands it; ↵ on a
 #                    session resumes it.
 #   Search           type "invoice": three sessions of "Invoice export migration", 30 days old,

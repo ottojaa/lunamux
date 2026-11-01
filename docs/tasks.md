@@ -51,7 +51,7 @@ idle, **‖** paused, **✓** done.
   is in EARLIER.
 - **EARLIER is two bands of tasks, newest first.** **LAST FEW DAYS** holds the tasks last active
   within three days, all of them. **LAST TWO WEEKS** holds those between three and fourteen days
-  old; it shows the first five and a **+ N more** line (↵ or a click on it shows the rest). A band
+  old; it shows the first five and a **+ N more** line (a click on it shows the rest). A band
   with nothing in it has no heading. Older tasks are not listed, but search still finds them.
   - A task's age is its newest session's: a task with a session from yesterday and one from ten
     days ago is in the first band. A single session is a task of its own.
