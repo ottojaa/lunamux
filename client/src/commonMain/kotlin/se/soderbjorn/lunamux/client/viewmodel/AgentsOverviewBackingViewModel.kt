@@ -12,8 +12,14 @@
  * screen, and close it after a confirmation that names what would be lost.
  * The view only renders [State] and forwards key presses.
  *
+ * Groups declared by group files appear as boxes: a header row, the members that need the
+ * user, and a "+ more" row that expands the rest. A group ranks beside single sessions by
+ * its most urgent member, and its header opens the group's lead session.
+ *
  * @see se.soderbjorn.lunamux.AgentSessionSummary
+ * @see se.soderbjorn.lunamux.AgentGroup
  * @see WindowStateRepository.agentSessions
+ * @see WindowStateRepository.agentGroups
  */
 package se.soderbjorn.lunamux.client.viewmodel
 
@@ -26,6 +32,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
+import se.soderbjorn.lunamux.AgentGroup
+import se.soderbjorn.lunamux.AgentGroupMember
 import se.soderbjorn.lunamux.AgentSessionSummary
 import se.soderbjorn.lunamux.LeafNode
 import se.soderbjorn.lunamux.TabConfig
@@ -93,6 +101,11 @@ class AgentsOverviewBackingViewModel(
      * @property resumeNote what Resume will do when it is not the plain case (for example
      *   "Worktree removed. Resume recreates it from branch x."); shown for search results and the
      *   selected row, null otherwise.
+     * @property kind what the row is: a session (or group member), a group header, or a group's
+     *   "+ more" row. Only [RowKind.SESSION] rows exist in a search.
+     * @property groupId the group a header, "+ more" row or member belongs to; null for a single session.
+     * @property unhosted true for a group member Lunamux does not host (it has no session record);
+     *   ↵ on it opens the group's lead session.
      */
     data class Row(
         val id: String,
@@ -114,6 +127,55 @@ class AgentsOverviewBackingViewModel(
         val matchStart: Int = 0,
         val matchLength: Int = 0,
         val resumeNote: String? = null,
+        val kind: RowKind = RowKind.SESSION,
+        val groupId: String? = null,
+        val unhosted: Boolean = false,
+    )
+
+    /** What a [Row] stands for. */
+    enum class RowKind {
+        /** A session, or a group member (then [Row.groupId] is set). */
+        SESSION,
+
+        /** The header of a group box. [Row.id] is `group:<id>`. */
+        GROUP,
+
+        /** The "+ 1 working, 1 in review" row under a collapsed group. [Row.id] is `more:<id>`. */
+        GROUP_MORE,
+    }
+
+    /**
+     * What the view needs to draw one group's header.
+     *
+     * @property id the group's id.
+     * @property title the group's name.
+     * @property tag the pill text (for example `PROGRAMME`), or null.
+     * @property repo repository name, or null.
+     * @property linkLabel the link chip's text, or null when there is no link.
+     * @property linkUrl the link chip's `http(s)` address.
+     * @property needYouCount members that need the user; drawn highlighted before [summary].
+     * @property workingCount members at work.
+     * @property summary the rest of the header's count line, without the needs-you part
+     *   ("1 working · 1 in review"); empty when every member needs the user.
+     * @property sinceMillis when the most urgent member's wait began; the view turns it into an age.
+     * @property expanded whether every member shows rather than only those that need the user.
+     * @property leadLive whether the lead session is open, so ↵ on the header jumps to it.
+     * @property leadLastSaid what the lead session last said, or null.
+     */
+    data class Group(
+        val id: String,
+        val title: String,
+        val tag: String?,
+        val repo: String?,
+        val linkLabel: String?,
+        val linkUrl: String?,
+        val needYouCount: Int,
+        val workingCount: Int,
+        val summary: String,
+        val sinceMillis: Long,
+        val expanded: Boolean,
+        val leadLive: Boolean,
+        val leadLastSaid: String?,
     )
 
     /**
@@ -169,6 +231,7 @@ class AgentsOverviewBackingViewModel(
      * @property selected index into [rows] of the highlighted row, or -1 when empty.
      * @property peek the screen popover, or null while it is closed.
      * @property confirm the close confirmation, or null while none is asked.
+     * @property groups the groups drawn in [now] and [earlier], by group id.
      */
     data class State(
         val open: Boolean = false,
@@ -184,6 +247,7 @@ class AgentsOverviewBackingViewModel(
         val selected: Int = -1,
         val peek: Peek? = null,
         val confirm: Confirm? = null,
+        val groups: Map<String, Group> = emptyMap(),
     ) {
         /** The rows in the order the keyboard walks them: [matches], or [now] then [earlier]. */
         val rows: List<Row> get() = if (matchMode) matches else now + earlier
@@ -217,11 +281,13 @@ class AgentsOverviewBackingViewModel(
         val peekOpen: Boolean = false,
         val confirmRowId: String? = null,
         val confirmOnClose: Boolean = false,
+        val expandedGroups: Set<String> = emptySet(),
     )
 
     /** Everything [build] reads, taken from [windowState] and [ui] in one go. */
     private data class Inputs(
         val sessions: List<AgentSessionSummary>,
+        val groups: List<AgentGroup>,
         val config: WindowConfig?,
         val error: String?,
         val matches: WindowEnvelope.AgentSessionMatches?,
@@ -239,24 +305,26 @@ class AgentsOverviewBackingViewModel(
      * Collected by the view to redraw the chip and the overlay.
      */
     val stateFlow: Flow<State> = combine(
-        combine(
+        listOf<Flow<Any?>>(
             windowState.agentSessions,
+            windowState.agentGroups,
             windowState.config,
             windowState.agentSessionError,
             windowState.agentMatches,
             windowState.agentInspection,
-        ) { sessions, config, error, matches, inspection -> arrayOf(sessions, config, error, matches, inspection) },
-        ui,
-    ) { server, ui ->
+            ui,
+        ),
+    ) { v ->
         @Suppress("UNCHECKED_CAST")
         build(
             Inputs(
-                server[0] as List<AgentSessionSummary>,
-                server[1] as WindowConfig?,
-                server[2] as String?,
-                server[3] as WindowEnvelope.AgentSessionMatches?,
-                server[4] as WindowEnvelope.AgentSessionInspection?,
-                ui,
+                v[0] as List<AgentSessionSummary>,
+                v[1] as List<AgentGroup>,
+                v[2] as WindowConfig?,
+                v[3] as String?,
+                v[4] as WindowEnvelope.AgentSessionMatches?,
+                v[5] as WindowEnvelope.AgentSessionInspection?,
+                v[6] as Ui,
             ),
         )
     }.onEach {
@@ -273,6 +341,7 @@ class AgentsOverviewBackingViewModel(
 
     private fun inputs() = Inputs(
         windowState.agentSessions.value,
+        windowState.agentGroups.value,
         windowState.config.value,
         windowState.agentSessionError.value,
         windowState.agentMatches.value,
@@ -383,18 +452,22 @@ class AgentsOverviewBackingViewModel(
     suspend fun inspectSelected(force: Boolean = false) {
         val current = state
         val row = current.rows.getOrNull(current.selected) ?: return
-        val key = "${row.id}/${row.isLive}"
+        val recordId = recordIdOf(row, windowState.agentGroups.value) ?: return
+        val key = "$recordId/${row.isLive}"
         if (!force && inspected == key) return
         inspected = key
-        send(WindowCommand.InspectAgentSession(row.id))
+        send(WindowCommand.InspectAgentSession(recordId))
     }
 
     /**
      * Open the peek popover on the selected row and fetch its screen. Called for →
-     * (with the caret at the end of the search text).
+     * (with the caret at the end of the search text). On a group header it peeks the lead
+     * session, and does nothing when the lead has no record.
      */
     suspend fun peek() {
-        if (state.rows.getOrNull(state.selected) == null) return
+        val current = state
+        val row = current.rows.getOrNull(current.selected) ?: return
+        if (recordIdOf(row, windowState.agentGroups.value) == null) return
         ui.update { it.copy(peekOpen = true) }
         inspectSelected(force = true)
     }
@@ -466,7 +539,66 @@ class AgentsOverviewBackingViewModel(
      * @param row the row to jump to or resume.
      */
     suspend fun activate(row: Row) {
-        if (row.isLive) jump(row) else if (row.canResume) resume(row)
+        when {
+            row.kind == RowKind.GROUP_MORE -> row.groupId?.let(::expandGroup)
+            row.kind == RowKind.GROUP || row.unhosted -> openLead(row)
+            row.isLive -> jump(row)
+            row.canResume -> resume(row)
+        }
+    }
+
+    /**
+     * Show every member of a group and move the highlight to its header.
+     *
+     * Called for ↵ or a click on a group's "+ more" row.
+     *
+     * @param groupId the group to expand.
+     * @see toggleGroup
+     */
+    fun expandGroup(groupId: String) = setExpanded(groupId, true)
+
+    /**
+     * Expand a collapsed group or collapse an expanded one, keeping the highlight on its header.
+     *
+     * Called by a click on a group header's chevron or count line, and for ← on a group's rows.
+     *
+     * @param groupId the group to toggle.
+     */
+    fun toggleGroup(groupId: String) = setExpanded(groupId, groupId !in ui.value.expandedGroups)
+
+    private fun setExpanded(groupId: String, expanded: Boolean) {
+        val header = state.rows.indexOfFirst { it.kind == RowKind.GROUP && it.groupId == groupId }
+        ui.update {
+            it.copy(
+                expandedGroups = if (expanded) it.expandedGroups + groupId else it.expandedGroups - groupId,
+                selected = if (header >= 0) header else it.selected,
+                peekOpen = false,
+                confirmRowId = null,
+            )
+        }
+    }
+
+    /**
+     * Open a group's lead session: jump to it when it is open, else ask the server to start it
+     * in a new tab. The overlay stays open until the new tab is active or the server says why
+     * it could not, exactly as for [resume].
+     *
+     * Called for ↵ on a group header and on a member Lunamux does not host.
+     *
+     * @param row the header or member row; its [Row.groupId] names the group.
+     */
+    suspend fun openLead(row: Row) {
+        val groupId = row.groupId ?: return
+        val leadRecord = windowState.agentGroups.value.firstOrNull { it.id == groupId }?.lead?.recordId
+        if (leadRecord != null && state.groups[groupId]?.leadLive == true) {
+            jumpToRecord(leadRecord)
+            return
+        }
+        windowState.clearAgentSessionError()
+        ui.update {
+            it.copy(resumingId = row.id, resumeFromTab = windowState.config.value?.effectiveActiveTabId)
+        }
+        send(WindowCommand.OpenAgentGroupLead(groupId))
     }
 
     /**
@@ -478,9 +610,11 @@ class AgentsOverviewBackingViewModel(
      *
      * @param row a live row.
      */
-    suspend fun jump(row: Row) {
+    suspend fun jump(row: Row) = jumpToRecord(row.id)
+
+    private suspend fun jumpToRecord(recordId: String) {
         val config = windowState.config.value ?: return
-        val leafId = windowState.agentSessions.value.firstOrNull { it.id == row.id }?.leafId ?: return
+        val leafId = windowState.agentSessions.value.firstOrNull { it.id == recordId }?.leafId ?: return
         val where = locate(config, leafId) ?: return
         if (where.worldId != null && where.worldId != config.activeWorldId) {
             send(WindowCommand.SetActiveWorld(where.worldId))
@@ -505,8 +639,17 @@ class AgentsOverviewBackingViewModel(
         send(WindowCommand.ResumeAgentSession(row.id))
     }
 
+    /** A group with its members paired to the session summaries they matched, ready to become rows. */
+    private class GroupUnit(
+        val group: AgentGroup,
+        val members: List<Pair<AgentGroupMember, AgentSessionSummary?>>,
+        val rank: Int,
+        val since: Long,
+        val leadLive: Boolean,
+    )
+
     private fun build(input: Inputs): State {
-        val (sessions, config, error, matches, inspection, ui) = input
+        val (sessions, groupFiles, config, error, matches, inspection, ui) = input
         val panes = config?.let(::paneLocations).orEmpty()
         val query = ui.query.trim()
         val matchMode = query.length >= MIN_QUERY
@@ -529,25 +672,49 @@ class AgentsOverviewBackingViewModel(
             )
         }
 
-        val rows = sessions.map { s -> s to toRow(s, panes[s.leafId], resumeError(s.id)) }
-        val now = rows.filter { (s, _) -> s.state == NEEDS_YOU || s.state == WORKING }
-            .sortedWith(compareBy({ (s, _) -> if (s.state == NEEDS_YOU) 0 else 1 }, { (_, row) -> row.sinceMillis }))
-            .map { it.second }
-        val earlierAll = rows.filter { (s, _) -> s.state != NEEDS_YOU && s.state != WORKING }
+        // A session a group member matched is drawn inside its group box, not again as a single.
+        val units = groupFiles.map { g ->
+            val members = g.members.map { m -> m to m.recordId?.let(byId::get) }
+            val rank = members.minOfOrNull { (m, _) -> rankOf(m.state) } ?: IDLE_RANK
+            val since = when {
+                members.isEmpty() -> 0L
+                rank == IDLE_RANK -> members.maxOf { (m, _) -> m.sinceMillis }
+                else -> members.filter { (m, _) -> rankOf(m.state) == rank }.minOf { (m, _) -> m.sinceMillis }
+            }
+            // Open means a session Lunamux lists whose pane is in the layout, so Jump has somewhere to go.
+            val leadSummary = g.lead.recordId?.let(byId::get)
+            val leadLive = g.lead.live && leadSummary != null && panes[leadSummary.leafId] != null
+            GroupUnit(g, members, rank, since, leadLive)
+        }
+        val claimed = units.flatMap { u -> u.members.mapNotNull { (_, s) -> s?.id } }.toSet()
+        val singles = sessions.filter { it.id !in claimed }
+            .map { s -> s to toRow(s, panes[s.leafId], resumeError(s.id)) }
+
+        // Groups and single sessions are ranked together: urgency first, then who has waited longest.
+        val urgent = buildList {
+            singles.filter { (s, _) -> s.state == NEEDS_YOU || s.state == WORKING }
+                .forEach { (s, row) -> add(Triple(rankOf(s.state), row.sinceMillis, listOf(row))) }
+            units.filter { it.rank < IDLE_RANK }
+                .forEach { u -> add(Triple(u.rank, u.since, groupRows(u, panes, ui, resumeError))) }
+        }.sortedWith(compareBy({ it.first }, { it.second }))
+        val now = urgent.flatMap { it.third }
+        val earlierAll = singles.filter { (s, _) -> s.state != NEEDS_YOU && s.state != WORKING }
             .sortedByDescending { (_, row) -> row.sinceMillis }
             .map { it.second }
         val earlier = if (ui.showAllEarlier) earlierAll else earlierAll.take(EARLIER_LIMIT)
-        val listed = if (matchMode) matchRows else now + earlier
+        val idleGroups = units.filter { it.rank == IDLE_RANK }.sortedByDescending { it.since }
+            .flatMap { groupRows(it, panes, ui, resumeError) }
+        val listed = if (matchMode) matchRows else now + idleGroups + earlier
         val selected = if (listed.isEmpty()) -1 else ui.selected.coerceIn(0, listed.size - 1)
 
         // The selected row of a plain list also tells what Resume will do, from the inspection.
         val shown = if (matchMode || selected < 0) listed else listed.mapIndexed { i, row ->
-            if (i == selected) row.copy(resumeNote = inspectionOf(row.id)?.resumeNote) else row
+            if (i == selected) row.copy(resumeNote = recordIdOf(row, groupFiles)?.let(::inspectionOf)?.resumeNote) else row
         }
         val selectedRow = shown.getOrNull(selected)
 
         val peek = if (ui.peekOpen && selectedRow != null) {
-            val said = inspectionOf(selectedRow.id)?.takeIf { it.live == selectedRow.isLive }
+            val said = recordIdOf(selectedRow, groupFiles)?.let(::inspectionOf)?.takeIf { it.live == selectedRow.isLive }
             Peek(
                 live = selectedRow.isLive,
                 title = selectedRow.title,
@@ -582,12 +749,120 @@ class AgentsOverviewBackingViewModel(
             now = if (matchMode) emptyList() else shown.take(now.size),
             earlier = if (matchMode) emptyList() else shown.drop(now.size),
             earlierHidden = earlierAll.size - earlier.size,
-            needYouCount = sessions.count { it.state == NEEDS_YOU },
-            workingCount = sessions.count { it.state == WORKING },
+            needYouCount = singles.count { (s, _) -> s.state == NEEDS_YOU } +
+                units.sumOf { u -> u.members.count { (m, _) -> m.state == NEEDS_YOU } },
+            workingCount = singles.count { (s, _) -> s.state == WORKING } +
+                units.sumOf { u -> u.members.count { (m, _) -> m.state == WORKING } },
             selected = selected,
             peek = peek,
             confirm = confirm,
+            groups = if (matchMode) emptyMap() else units.associate { it.group.id to groupOf(it, ui) },
         )
+    }
+
+    /** The record behind [row] that peek and inspection ask the server about, or null when there is none. */
+    private fun recordIdOf(row: Row, groups: List<AgentGroup>): String? = when {
+        row.kind == RowKind.GROUP -> groups.firstOrNull { it.id == row.groupId }?.lead?.recordId
+        row.kind == RowKind.SESSION && !row.unhosted -> row.id
+        else -> null
+    }
+
+    private fun rankOf(state: String) = when (state) {
+        NEEDS_YOU -> 0
+        WORKING -> 1
+        else -> IDLE_RANK
+    }
+
+    /** The header the view draws for [u]. */
+    private fun groupOf(
+        u: GroupUnit,
+        ui: Ui,
+    ): Group {
+        val g = u.group
+        val rest = restCounts(u.members.map { it.first }.filter { it.state != NEEDS_YOU })
+        return Group(
+            id = g.id, title = g.title, tag = g.tag, repo = g.repo, linkLabel = g.linkLabel, linkUrl = g.linkUrl,
+            needYouCount = u.members.count { (m, _) -> m.state == NEEDS_YOU },
+            workingCount = u.members.count { (m, _) -> m.state == WORKING },
+            summary = rest.joinToString(" · ").ifEmpty { if (u.members.isEmpty()) "no members" else "" },
+            sinceMillis = u.since,
+            expanded = g.id in ui.expandedGroups,
+            leadLive = u.leadLive,
+            leadLastSaid = g.lead.lastSaid,
+        )
+    }
+
+    /**
+     * "1 working", "1 in review", …: working members first, then the others grouped by their
+     * label (an unlabeled one by its state), in the order the file lists them.
+     */
+    private fun restCounts(members: List<AgentGroupMember>): List<String> {
+        val working = members.count { it.state == WORKING }
+        val others = members.filter { it.state != WORKING }.groupingBy { it.label ?: it.state }.eachCount()
+        return buildList {
+            if (working > 0) add("$working working")
+            others.forEach { (label, n) -> add("$n $label") }
+        }
+    }
+
+    /**
+     * The rows of one group box: its header, then the members that need the user followed by a
+     * "+ more" row, or every member once the group is expanded.
+     */
+    private fun groupRows(
+        u: GroupUnit,
+        panes: Map<String?, PaneLocation>,
+        ui: Ui,
+        resumeError: (String) -> String?,
+    ): List<Row> {
+        val g = u.group
+        val expanded = g.id in ui.expandedGroups
+        val leadSummaryLive = u.leadLive
+        val header = Row(
+            id = "$GROUP_PREFIX${g.id}", agent = "", state = stateOfRank(u.rank), title = g.title,
+            links = emptyList(), repo = g.repo, nowLine = null, question = null, sinceMillis = u.since,
+            isLive = leadSummaryLive, canResume = !leadSummaryLive,
+            actionLabel = if (leadSummaryLive) "Jump" else "Open lead",
+            error = resumeError("$GROUP_PREFIX${g.id}"), kind = RowKind.GROUP, groupId = g.id,
+        )
+        val memberRows = u.members.mapIndexed { i, (m, s) ->
+            val base = if (s != null) {
+                toRow(s, s.leafId.let(panes::get), resumeError(s.id))
+            } else {
+                Row(
+                    id = "$MEMBER_PREFIX${g.id}:$i", agent = "", state = m.state, title = m.title,
+                    links = m.links, repo = null, nowLine = null, question = null, sinceMillis = m.sinceMillis,
+                    isLive = false, canResume = false, actionLabel = "Open lead",
+                    error = resumeError("$MEMBER_PREFIX${g.id}:$i"), unhosted = true,
+                )
+            }
+            m to base.copy(
+                title = m.title,
+                state = m.state,
+                links = m.links.ifEmpty { base.links },
+                sinceMillis = m.sinceMillis,
+                nowLine = if (m.state == NEEDS_YOU) null else m.line,
+                question = if (m.state == NEEDS_YOU) m.line else null,
+                groupId = g.id,
+            )
+        }
+        val hidden = if (expanded) emptyList() else memberRows.filter { (m, _) -> m.state != NEEDS_YOU }
+        val shown = if (expanded) memberRows else memberRows.filter { (m, _) -> m.state == NEEDS_YOU }
+        val more = if (hidden.isEmpty()) emptyList() else listOf(
+            Row(
+                id = "$MORE_PREFIX${g.id}", agent = "", state = IDLE,
+                title = "+ " + restCounts(hidden.map { it.first }).joinToString(", "),
+                links = emptyList(), repo = null, nowLine = null, question = null, sinceMillis = 0,
+                isLive = false, canResume = false, actionLabel = "Show", kind = RowKind.GROUP_MORE, groupId = g.id,
+            ),
+        )
+        return listOf(header) + shown.map { it.second } + more
+    }
+
+    private fun stateOfRank(rank: Int) = when (rank) {
+        0 -> NEEDS_YOU
+        1 -> WORKING
+        else -> IDLE
     }
 
     /** What closing [row] would interrupt or leave behind, one sentence each. */
@@ -658,6 +933,11 @@ class AgentsOverviewBackingViewModel(
         /** The fewest characters that start a search over every session. */
         const val MIN_QUERY = 2
 
+        private const val GROUP_PREFIX = "group:"
+        private const val MEMBER_PREFIX = "member:"
+        private const val MORE_PREFIX = "more:"
+        private const val IDLE_RANK = 2
+        private const val IDLE = "idle"
         private const val NEEDS_YOU = "needs_you"
         private const val WORKING = "working"
         private const val ENDED = "ended"
