@@ -551,7 +551,10 @@ private fun buildGroupHeader(
     counts.className = "ao-counts"
     if (group != null) {
         if (group.needYouCount > 0) counts.appendChild(span("ao-counts-need", "${group.needYouCount} needs you"))
-        // One span per count, kept on one line, so the line only wraps between counts.
+        counts.title = listOfNotNull(
+            "${group.needYouCount} needs you".takeIf { group.needYouCount > 0 },
+            group.summary.takeIf { it.isNotEmpty() },
+        ).joinToString(" · ")
         val rest = group.summary.split(" · ").filter { it.isNotEmpty() }
         rest.forEachIndexed { i, part ->
             if (i > 0 || group.needYouCount > 0) counts.appendChild(document.createTextNode(" · "))

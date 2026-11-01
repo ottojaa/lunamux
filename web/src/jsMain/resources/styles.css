@@ -3635,7 +3635,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-age { text-align: right; white-space: nowrap; opacity: 0.6; }
 .ao-age.ao-quiet { opacity: 0.45; }
 /* A working row (or group) carries the working glyph beside its text. */
-.ao-now.ao-has-work { display: flex; align-items: baseline; gap: 6px; }
+.ao-now.ao-has-work { display: flex; align-items: center; gap: 6px; }
 .ao-now-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The working glyph: two layers stacked in one small box and cross-faded by the script; at rest
    (quiet) the first frame is shown still and dimmed. */
@@ -3749,9 +3749,11 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-counts {
     justify-self: start; padding: 0; border: none; background: transparent;
     font: inherit; font-size: 12px; text-align: left; cursor: pointer;
+    /* One line: when the counts do not fit they are cut with an ellipsis (the full text is the tooltip),
+       before the title is. */
+    min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .ao-counts-need { color: var(--t-warn, #f2b84b); font-weight: 700; }
-.ao-counts span { white-space: nowrap; }
 .ao-counts-rest { color: var(--t-text-dim, #a9c6cd); }
 .ao-group .ao-age { color: var(--t-warn, #f2b84b); opacity: 1; }
 .ao-group .ao-note { grid-column: 2 / -1; padding: 0; }
