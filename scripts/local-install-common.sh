@@ -6,7 +6,7 @@
 #
 #   LUNAMUX_APP_PATH       the installed app            (default /Applications/Lunamux.app)
 #   LUNAMUX_DATA_DIR       the server's data directory  (default ~/Library/Application Support/Termtastic)
-#   LUNAMUX_USERDATA_DIR   Electron's userData directory (default ~/Library/Application Support/lunamux-electron)
+#   LUNAMUX_USERDATA_DIR   Electron's userData directory (default ~/Library/Application Support/termtastic-electron)
 #   LUNAMUX_BACKUP_ROOT    where backups are written    (default ~/Lunamux-backups)
 #   LUNAMUX_PORT           the installed server's port  (default 8443)
 #   LUNAMUX_SKIP_QUIT=1    do not stop the server or the app (scratch runs; logged)
@@ -17,7 +17,9 @@
 
 APP_PATH="${LUNAMUX_APP_PATH:-/Applications/Lunamux.app}"
 DATA_DIR="${LUNAMUX_DATA_DIR:-$HOME/Library/Application Support/Termtastic}"
-USERDATA_DIR="${LUNAMUX_USERDATA_DIR:-$HOME/Library/Application Support/lunamux-electron}"
+# The packaged app pins Electron's userData to the directory the app had before it was renamed
+# (device-auth token, preferences, cookies). lunamux-electron exists but stays empty.
+USERDATA_DIR="${LUNAMUX_USERDATA_DIR:-$HOME/Library/Application Support/termtastic-electron}"
 BACKUP_ROOT="${LUNAMUX_BACKUP_ROOT:-$HOME/Lunamux-backups}"
 PORT="${LUNAMUX_PORT:-8443}"
 DB_NAME="termtastic.db"
@@ -126,6 +128,17 @@ launch_lunamux() {
         log "Starting $APP_PATH"
         open "$APP_PATH"
     fi
+}
+
+# Write directory $1's manifest.env, which local-rollback.sh needs to accept it as a backup. $2 is
+# 1 when an installed app was saved into the directory, otherwise 0.
+write_manifest() {
+    cat > "$1/manifest.env" <<MANIFEST
+APP_PATH='$APP_PATH'
+DATA_DIR='$DATA_DIR'
+USERDATA_DIR='$USERDATA_DIR'
+HAD_APP=$2
+MANIFEST
 }
 
 # A UTC timestamp usable in a directory name.

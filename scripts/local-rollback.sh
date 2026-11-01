@@ -6,9 +6,10 @@
 #
 # What it does, in order:
 #   1. Reads the backup's manifest and checks it holds what it should; changes nothing yet.
-#   2. Saves the CURRENT state (app moved aside, database, tls, shell-init, userData) into
-#      <backup root>/<timestamp>-before-rollback/, so a rollback is itself reversible.
-#   3. Stops the running server (flushing state first) and the app.
+#   2. Stops the running server (flushing state first) and the app.
+#   3. Saves the CURRENT state (app moved aside, database, tls, shell-init, userData) into
+#      <backup root>/<timestamp>-before-rollback/, which carries its own manifest.env, so a
+#      rollback is itself reversible: pass that directory to this script.
 #   4. Puts the backed-up app and data back and starts the app.
 #
 # Sessions the new build had running end at step 3 and return as restored scrollback.
@@ -42,12 +43,16 @@ SAVED="$BACKUP_ROOT/$(stamp)-before-rollback"
 log "Rolling back to $BACKUP"
 log "Current state is kept in $SAVED"
 
-snapshot_data "$SAVED"
+# Stop first, then copy, so the saved state is complete and quiet; nothing is replaced before this.
 stop_lunamux
-
+snapshot_data "$SAVED"
+HAD_CURRENT_APP=0
 if [[ -d "$APP_PATH" ]]; then
     mv "$APP_PATH" "$SAVED/Lunamux.app"
+    HAD_CURRENT_APP=1
 fi
+# With a manifest the saved state is itself a backup this script accepts.
+write_manifest "$SAVED" "$HAD_CURRENT_APP"
 if [[ "$HAD_APP" == "1" ]]; then
     ditto "$BACKUP/Lunamux.app" "$APP_PATH"
     log "Old app restored at $APP_PATH"

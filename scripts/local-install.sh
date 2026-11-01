@@ -7,10 +7,10 @@
 #
 # What it does, in order:
 #   1. Checks the new app and the sqlite3 tool exist; changes nothing yet.
-#   2. Makes a backup directory <backup root>/<timestamp>/ holding the database (taken with
-#      sqlite3 .backup and integrity-checked), tls/, shell-init/ and Electron's userData.
-#   3. Stops the installed server (flushing state first) and the app. This ENDS the running
+#   2. Stops the installed server (flushing state first) and the app. This ENDS the running
 #      terminal sessions: they come back as restored scrollback after the new server starts.
+#   3. Makes a backup directory <backup root>/<timestamp>/ holding the database (taken with
+#      sqlite3 .backup and integrity-checked), tls/, shell-init/ and Electron's userData.
 #   4. Moves the installed app into the backup directory (nothing is deleted) and copies the
 #      new app into its place.
 #   5. Starts the app, and prints the command that undoes all of it.
@@ -19,11 +19,14 @@
 # redirect every path, which is how it is tried out on scratch copies.
 set -euo pipefail
 
+# A relative app path is the caller's, so it is made absolute before moving to the repo root.
+NEW_APP="${1:-}"
+if [[ -n "$NEW_APP" && -d "$NEW_APP" ]]; then NEW_APP="$(cd "$NEW_APP" && pwd)"; fi
+
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # shellcheck source=scripts/local-install-common.sh
 source scripts/local-install-common.sh
 
-NEW_APP="${1:-}"
 if [[ -z "$NEW_APP" ]]; then
     NEW_APP="$(ls -dt electron/dist/mac*/Lunamux.app 2>/dev/null | head -1 || true)"
 fi
@@ -38,15 +41,12 @@ BACKUP="$BACKUP_ROOT/$(stamp)"
 log "Installing $NEW_APP over $APP_PATH"
 log "Backup: $BACKUP"
 
-snapshot_data "$BACKUP"
-cat > "$BACKUP/manifest.env" <<MANIFEST
-APP_PATH='$APP_PATH'
-DATA_DIR='$DATA_DIR'
-USERDATA_DIR='$USERDATA_DIR'
-HAD_APP=$([[ -d "$APP_PATH" ]] && echo 1 || echo 0)
-MANIFEST
-
+# Stop first, then copy: the server writes its last window state and scrollback while it shuts
+# down, and the app's own files are only quiet once it has ended. Nothing has been replaced yet,
+# so a failure to stop leaves the installation as it was.
 stop_lunamux
+snapshot_data "$BACKUP"
+write_manifest "$BACKUP" "$([[ -d "$APP_PATH" ]] && echo 1 || echo 0)"
 
 if [[ -d "$APP_PATH" ]]; then
     mv "$APP_PATH" "$BACKUP/Lunamux.app"

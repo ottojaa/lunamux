@@ -448,12 +448,13 @@ private fun buildRow(row: Row, index: Int, selected: Boolean, peek: AgentsOvervi
     // nobody has refreshed it for a while its state is dimmed, not drawn as news.
     val stale = row.fileRefreshedMillis?.let { AgentsOverviewBackingViewModel.isStale(it, kotlin.js.Date.now().toLong()) } == true
     val now = div("ao-now")
-    if (stale) now.classList.add("ao-quiet")
     val error = row.error
     if (error != null) {
+        // An error is never dimmed: it is the one thing on the row the person has to read.
         now.classList.add("ao-error")
         now.textContent = error
     } else {
+        if (stale) now.classList.add("ao-quiet")
         if (row.state == "working" && !stale) {
             now.classList.add("ao-has-work")
             now.appendChild(workingGlyph(active = activity != null && !quiet))
