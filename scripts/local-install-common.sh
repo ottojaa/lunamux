@@ -41,8 +41,8 @@ wait_port_closed() {
 # one, which outlives the app) and then the app. The server is asked to shut down through its
 # loopback endpoint, which flushes window state and scrollback first; if that fails the
 # listener is sent SIGTERM, whose shutdown hook does the same. Refuses to go on while something
-# still listens on the port. The app is ended with SIGTERM after the server: asking it to quit
-# would open its "quit Lunamux?" dialog and wait for a person.
+# still listens on the port. The app is ended after the server, with SIGTERM and then SIGKILL:
+# the app answers a quit request with its "quit Lunamux?" dialog and waits for a person.
 stop_lunamux() {
     if [[ "${LUNAMUX_SKIP_QUIT:-}" == "1" ]]; then
         log "LUNAMUX_SKIP_QUIT=1: not stopping the server on port $PORT or the app"
@@ -62,16 +62,32 @@ stop_lunamux() {
     else
         log "No server is listening on port $PORT"
     fi
-    if pgrep -f "$APP_PATH/Contents/" >/dev/null 2>&1; then
+    if app_running; then
         log "Ending the app"
+        # SIGTERM first. Electron turns it into a normal quit, and this app answers a quit by
+        # opening its "quit Lunamux?" dialog instead of exiting, so it will usually still be
+        # running afterwards. The server is already down and the data is copied only after this
+        # returns, so ending the app hard is safe: the next step is SIGKILL.
         pkill -TERM -f "$APP_PATH/Contents/" || true
-        local i
-        for i in $(seq 1 20); do
-            pgrep -f "$APP_PATH/Contents/" >/dev/null 2>&1 || return 0
-            sleep 0.5
-        done
+        wait_app_gone 5 && return 0
+        log "The app is still running (it asks before quitting); sending SIGKILL"
+        pkill -KILL -f "$APP_PATH/Contents/" || true
+        wait_app_gone 5 && return 0
         die "the app is still running; stopping here with nothing replaced"
     fi
+}
+
+# True when a process of the installed app (main or helper) is running.
+app_running() { pgrep -f "$APP_PATH/Contents/" >/dev/null 2>&1; }
+
+# Wait up to $1 seconds for the app's processes to be gone. Returns 0 when they are.
+wait_app_gone() {
+    local i
+    for i in $(seq 1 $(($1 * 2))); do
+        app_running || return 0
+        sleep 0.5
+    done
+    return 1
 }
 
 # Copy the server data and Electron userData into directory $1 (created). The database is

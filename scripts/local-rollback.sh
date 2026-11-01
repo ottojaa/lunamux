@@ -15,11 +15,14 @@
 # Sessions the new build had running end at step 3 and return as restored scrollback.
 set -euo pipefail
 
+# A relative backup path is the caller's, so it is made absolute before moving to the repo root.
+BACKUP="${1:-}"
+if [[ -n "$BACKUP" && -d "$BACKUP" ]]; then BACKUP="$(cd "$BACKUP" && pwd)"; fi
+
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # shellcheck source=scripts/local-install-common.sh
 source scripts/local-install-common.sh
 
-BACKUP="${1:-}"
 if [[ -z "$BACKUP" ]]; then
     BACKUP="$(ls -dt "$BACKUP_ROOT"/*/ 2>/dev/null | while read -r d; do
         [[ -f "${d}manifest.env" ]] && { echo "${d%/}"; break; }
