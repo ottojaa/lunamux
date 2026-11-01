@@ -6,6 +6,8 @@
 #   scripts/build-electron-no-notarize.sh) is used.
 #
 # What it does, in order:
+#   0. Refuses to run inside a Lunamux terminal (quitting the app would kill the script halfway);
+#      run it from macOS Terminal.app.
 #   1. Checks the new app and the sqlite3 tool exist; changes nothing yet.
 #   2. Stops the installed server (flushing state first) and the app. This ENDS the running
 #      terminal sessions: they come back as restored scrollback after the new server starts.
@@ -26,6 +28,7 @@ if [[ -n "$NEW_APP" && -d "$NEW_APP" ]]; then NEW_APP="$(cd "$NEW_APP" && pwd)";
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # shellcheck source=scripts/local-install-common.sh
 source scripts/local-install-common.sh
+refuse_inside_lunamux
 
 if [[ -z "$NEW_APP" ]]; then
     NEW_APP="$(ls -dt electron/dist/mac*/Lunamux.app 2>/dev/null | head -1 || true)"

@@ -27,6 +27,22 @@ DB_NAME="termtastic.db"
 log() { printf '==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
+# Refuse to go on when this shell runs inside Lunamux. Both scripts end the app, and a shell that
+# lives in one of its terminals dies with it halfway through, leaving the old app moved away and
+# the new one not yet in place. The process tree is walked upwards from this shell: any ancestor
+# whose executable lives inside Lunamux.app means Lunamux is hosting it. Only the executable's
+# path is looked at, not the whole command line, which can merely mention the app.
+refuse_inside_lunamux() {
+    local p=$$ cmd
+    while [[ -n "$p" && "$p" != 0 && "$p" != 1 ]]; do
+        cmd="$(ps -o comm= -p "$p" 2>/dev/null || true)"
+        if [[ "$cmd" == *"Lunamux.app"* ]]; then
+            die "this shell runs inside Lunamux, and quitting Lunamux would kill it halfway; nothing was changed. Run it from macOS Terminal.app"
+        fi
+        p="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ' || true)"
+    done
+}
+
 # Wait up to $1 seconds for the port to stop listening. Returns 0 when it did.
 wait_port_closed() {
     local i
