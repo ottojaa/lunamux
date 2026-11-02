@@ -16,10 +16,16 @@
  * task. A task with two or more sessions, or whose task file gives an `open` action, is an
  * expansion panel: a header row whose counts say what its sessions are doing, followed by the
  * sessions that need the user or work, or by every session, most urgent first, once the panel is
- * expanded. A task with one session and no `open` action is drawn as that session's plain row. A
- * task stays in NOW while it has open work (a session needs the person or works, or a task file
- * still has a session in review or queued), ranked beside single sessions by its most urgent
- * session. What has finished or gone quiet moves to EARLIER, by task: a task's
+ * expanded. A task with one session and no `open` action is drawn as that session's plain row.
+ *
+ * NOW is the open tabs: a session is in it only while its pane is in a tab that is open, and a
+ * task only while one of its sessions is. The one exception is a session that needs the person,
+ * which stays in NOW wherever it runs, so a question is never filed under EARLIER where the
+ * "more" cut or the two-week window could hide it. Inside that, a task stays in NOW while it has
+ * open work (a session needs the person or works, or a task file still has a session in review
+ * or queued), ranked beside single sessions by its most urgent session. A task is one unit: all
+ * its sessions stay with it while any one of them is in an open tab. What has finished, gone
+ * quiet or is not in an open tab moves to EARLIER, by task: a task's
  * recency is its newest session's activity, so one recent session keeps the whole task in the
  * first band. A task there is a collapsed panel that says how many sessions it holds and how
  * long ago it was last active. The header's ↵ goes to the session that most needs the person (a ◆ that
@@ -962,6 +968,9 @@ class AgentsOverviewBackingViewModel(
      *   one ended, the last activity of an open one, and the time a task file gives a member. Decides
      *   the EARLIER band and the order inside it.
      * @property jumpRecordId the open session that most needs the person, or null.
+     * @property inNow whether the task belongs in NOW: it is neither ended nor settled, and either
+     *   a session needs the person or one of its sessions is in an open tab. Every other task is in
+     *   EARLIER, even one a task file still lists work for.
      */
     private class TaskUnit(
         val task: AgentTask,
@@ -973,6 +982,7 @@ class AgentsOverviewBackingViewModel(
         val settled: Boolean,
         val recency: Long,
         val jumpRecordId: String?,
+        val inNow: Boolean,
     )
 
     /** How a session is counted and ordered: the bucket a header count and the expanded order use. */
@@ -1015,19 +1025,22 @@ class AgentsOverviewBackingViewModel(
         // A task stays in NOW while it has open work and leaves once it is settled (see TaskUnit);
         // it is ranked beside the single sessions that need the user or work, by its most urgent session.
         class Placed(val rank: Int, val since: Long, val rows: List<Row>)
+        // NOW is the sessions in open tabs (a row is live when its pane is in the layout). One that
+        // needs the person is listed wherever it runs; one that works, or an idle one inside its grace,
+        // only while it is in a tab. The rest go to EARLIER by their last activity.
         // An idle session stays in NOW for a while after its last activity, so a chat that finishes
         // a turn does not jump to EARLIER and back as the next turn starts.
         val graced = singles.filter { row ->
-            row.state == IDLE && byId[row.id]?.let { inGrace(it.lastActivityAt ?: it.stateSince, nowMillis) } == true
+            row.isLive && row.state == IDLE && byId[row.id]?.let { inGrace(it.lastActivityAt ?: it.stateSince, nowMillis) } == true
         }
+        val nowSingles = singles.filter { it.state == NEEDS_YOU || (it.isLive && it.state == WORKING) }
         val urgent = buildList {
-            singles.filter { it.state == NEEDS_YOU || it.state == WORKING }
-                .forEach { add(Placed(rankOf(it.state), it.sinceMillis, listOf(it))) }
+            nowSingles.forEach { add(Placed(rankOf(it.state), it.sinceMillis, listOf(it))) }
             graced.forEach { row ->
                 val s = byId.getValue(row.id)
                 add(Placed(GRACE_RANK, s.lastActivityAt ?: s.stateSince, listOf(row)))
             }
-            units.filter { !it.ended && !it.settled }
+            units.filter { it.inNow }
                 .forEach { add(Placed(it.rank, it.since, taskRows(it, taskStates, panes, ui, resumeError))) }
         }.sortedWith(
             compareBy<Placed> { it.rank }.thenBy { if (it.rank >= OPEN_WORK_RANK) -it.since else it.since },
@@ -1037,11 +1050,11 @@ class AgentsOverviewBackingViewModel(
         // EARLIER is built from units, a task or a lone session, each placed by its newest activity:
         // within RECENT_MS it is in the first band, up to WINDOW_MS in the second, older not listed.
         class Earlier(val recency: Long, val rows: List<Row>)
-        val gracedIds = graced.mapTo(HashSet()) { it.id }
+        val nowIds = (nowSingles + graced).mapTo(HashSet()) { it.id }
         val earlierUnits = (
-            singles.filter { it.state != NEEDS_YOU && it.state != WORKING && it.id !in gracedIds }
+            singles.filter { it.id !in nowIds }
                 .map { Earlier(byId[it.id]?.let(::activityOf) ?: it.sinceMillis, listOf(it)) } +
-                units.filter { it.ended || it.settled }
+                units.filter { !it.inNow }
                     .map { Earlier(it.recency, taskRows(it, taskStates, panes, ui, resumeError)) }
             ).filter { inWindow(it.recency, nowMillis) }
             .sortedByDescending { it.recency }
@@ -1095,7 +1108,8 @@ class AgentsOverviewBackingViewModel(
         // settleResume then resets the inputs so it stays closed.
         val resumed = ui.resumingId != null && config?.effectiveActiveTabId != ui.resumeFromTab
         val taskNeeds = units.sumOf { u -> u.runs.count { it.member.state == NEEDS_YOU } }
-        val taskWorking = units.sumOf { u -> u.runs.count { runMoving(it, u.task.refreshedAtMillis, nowMillis) } }
+        // The chip counts what NOW shows: a working session outside every open tab is not counted.
+        val taskWorking = units.filter { it.inNow }.sumOf { u -> u.runs.count { runMoving(it, u.task.refreshedAtMillis, nowMillis) } }
         return State(
             open = ui.open && !resumed,
             query = ui.query,
@@ -1107,7 +1121,7 @@ class AgentsOverviewBackingViewModel(
             fortnight = if (matchMode) emptyList() else shown.drop(now.size + recent.size),
             earlierHidden = fortnightUnits.size - shownFortnight.size,
             needYouCount = singles.count { it.state == NEEDS_YOU } + taskNeeds,
-            workingCount = singles.count { isMoving(it.state == WORKING, it.fileRefreshedMillis, it.activityMillis, nowMillis) } + taskWorking,
+            workingCount = nowSingles.count { isMoving(it.state == WORKING, it.fileRefreshedMillis, it.activityMillis, nowMillis) } + taskWorking,
             selectedId = selectedId,
             peek = peek,
             confirm = confirm,
@@ -1191,7 +1205,10 @@ class AgentsOverviewBackingViewModel(
             ?: open.filter { it.member.state == WORKING }.maxByOrNull { it.session!!.lastActivityAt ?: it.session.stateSince }
         val recency = runs.maxOfOrNull { r -> maxOf(r.member.sinceMillis, r.session?.let(::activityOf) ?: 0L) }
             ?: t.refreshedAtMillis ?: 0L
-        return TaskUnit(t, runs, panel, rank, since, ended, settled, recency, jump?.session?.id)
+        // NOW is the open tabs: a task is in it only while one of its sessions is in a pane the layout
+        // holds. A task waiting on the person is the one exception, so a question is never filed away.
+        val inNow = !ended && !settled && (urgentRank == 0 || open.isNotEmpty())
+        return TaskUnit(t, runs, panel, rank, since, ended, settled, recency, jump?.session?.id, inNow)
     }
 
     /** The record behind [row] that peek and inspection ask the server about, or null when there is none. */
@@ -1243,7 +1260,7 @@ class AgentsOverviewBackingViewModel(
         val counted = buckets.filter { it.order > 0 }.groupBy { it.order to it.name }
             .entries.sortedWith(compareBy({ (key, _) -> key.first }, { (key, _) -> if (key.second == "working") 0 else 1 }, { (key, _) -> if (key.first == 1) key.second else "" }))
         // In EARLIER a header says how many sessions it holds and how long ago it was last active.
-        val inEarlier = u.ended || u.settled
+        val inEarlier = !u.inNow
         return Task(
             id = t.id, title = t.title, repo = repo,
             needYouCount = u.runs.count { it.member.state == NEEDS_YOU },
