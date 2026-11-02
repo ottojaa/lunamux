@@ -72,7 +72,7 @@ in kind.
   same rhythm are as alike as before. On finished sessions in older bands the strip collapses to one
   block near the edge, so it earns its keep on live rows and little elsewhere.
 - **Data source.** New, and generic: the server counts each pane's output per minute and keeps about
-  two weeks of buckets. Nothing orchestrator-specific; any terminal user has the same data. There is
+  two weeks of buckets. Nothing specific to one workflow; any terminal user has the same data. There is
   today only a single `activityMillis`.
 
 ## C. Switchboard (radical): a board with an address for every thread
@@ -105,8 +105,8 @@ in kind.
   hues apart a family is told apart by shape, the place cue and the differing title words.
 - **◆ stays the loudest.** The hue sets leave out the warn yellow and the accent cyan; the ◆ row (A,
   B) or cell (C) is tinted amber with a bar at its edge, and the marks use mid-saturation hues next to the ◆'s full amber.
-- **Seeded collisions.** In the seeded set, 23 threads need 36 possible marks: 7 pairs collide on
-  the raw hash and all are resolved by probing, none repeat. The mark table must be persisted for
+- **Seeded collisions.** In the seeded set, 23 threads need 36 possible marks: 7 threads land on a mark
+  the raw hash had already given away, and probing moves them all, so none repeat. The mark table must be persisted for
   this to hold; a fresh hash alone is not enough.
 - **Glyphs.** The shapes come from Geometric Shapes and Block Elements, rendered here with the overview's bundled font. The two quadrant shapes (▚ and the ◧ half-square) read
   finer than the others at 18 px; a real build should check them in the terminal's own font.
