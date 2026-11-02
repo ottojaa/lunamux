@@ -253,9 +253,11 @@ class AgentsOverviewBackingViewModel(
      * @property title the task's name.
      * @property repo repository name, or null.
      * @property needYouCount sessions that need the user; drawn highlighted before [summary].
-     * @property workingCount sessions at work.
+     * @property workingCount sessions at work, quiet or stale ones included: the header's moving
+     *   glyph needs them, while [summary] counts a quiet or stale one under that word.
      * @property summary the rest of the header's count line, without the needs-you part
-     *   ("1 working · 1 in review · 2 done"): in the fixed order working, in review, queued,
+     *   ("1 working · 1 quiet · 1 in review · 2 done"; a quiet or stale session is counted under that
+     *   word, as its row says, never as working): in the fixed order working, quiet or stale, in review, queued,
      *   other labels as the file gave them, paused, done, with empty counts left out; empty when
      *   every session needs the user.
      * @property expanded whether every session shows rather than only those that need the user or work.
@@ -338,7 +340,8 @@ class AgentsOverviewBackingViewModel(
      *   Nothing older is listed; search finds it.
      * @property earlierHidden how many units of [fortnight] "More" would reveal.
      * @property needYouCount rows asking for the user; the chip's first number.
-     * @property workingCount rows at work; the chip's second number.
+     * @property workingCount sessions that work and are moving (neither quiet nor stale, see
+     *   [isMoving]); the chip's second number.
      * @property selectedId the id of the highlighted row, or null when there are no rows.
      * @property peek the screen popover, or null while it is closed.
      * @property confirm the close confirmation, or null while none is asked.
@@ -916,7 +919,30 @@ class AgentsOverviewBackingViewModel(
      * @property order its place among the task's sessions: the file's order, then hosted-only sessions.
      * @property fromFile whether a task file lists it, so the server can open it by [AgentTaskMember.key].
      */
-    private class Run(val member: AgentTaskMember, val session: AgentSessionSummary?, val order: Int, val fromFile: Boolean)
+    private class Run(val member: AgentTaskMember, val session: AgentSessionSummary?, val order: Int, val fromFile: Boolean) {
+        /**
+         * The task file's refresh time when this member is one Lunamux does not host (the row's
+         * [Row.fileRefreshedMillis]), else null.
+         *
+         * @param refreshed epoch millis the declaring task file was last refreshed, or null.
+         */
+        fun fileRefreshed(refreshed: Long?): Long? = refreshed.takeIf { session == null }
+    }
+
+    /**
+     * Whether [run] is working and really moving (neither quiet nor stale), by the same rule the
+     * row's "quiet 6m" prefix follows.
+     *
+     * Called by [build] for the chip's count.
+     *
+     * @param run the task member.
+     * @param refreshed epoch millis the task file was last refreshed, or null.
+     * @param nowMillis the current time.
+     * @return true when it is counted as working.
+     * @see isMoving
+     */
+    private fun runMoving(run: Run, refreshed: Long?, nowMillis: Long): Boolean =
+        isMoving(run.member.state == WORKING, run.fileRefreshed(refreshed), workingActivity(run, refreshed), nowMillis)
 
     /**
      * A task with its sessions, ready to become rows.
@@ -980,7 +1006,7 @@ class AgentsOverviewBackingViewModel(
 
         val sessionsByTask = sessions.filter { it.taskId != null }.groupBy { it.taskId!! }
         val units = taskList.mapNotNull { t -> unitOf(t, byId, sessionsByTask[t.id].orEmpty(), panes, nowMillis) }
-        val taskStates = units.filter { it.panel }.associate { it.task.id to taskOf(it, ui) }
+        val taskStates = units.filter { it.panel }.associate { it.task.id to taskOf(it, ui, nowMillis) }
         // A session a task unit holds is drawn inside it, not again as a single.
         val claimed = units.flatMap { u -> u.runs.mapNotNull { it.session?.id } }.toSet()
         val singles = sessions.filter { it.id !in claimed }
@@ -1069,7 +1095,7 @@ class AgentsOverviewBackingViewModel(
         // settleResume then resets the inputs so it stays closed.
         val resumed = ui.resumingId != null && config?.effectiveActiveTabId != ui.resumeFromTab
         val taskNeeds = units.sumOf { u -> u.runs.count { it.member.state == NEEDS_YOU } }
-        val taskWorking = units.sumOf { u -> u.runs.count { it.member.state == WORKING } }
+        val taskWorking = units.sumOf { u -> u.runs.count { runMoving(it, u.task.refreshedAtMillis, nowMillis) } }
         return State(
             open = ui.open && !resumed,
             query = ui.query,
@@ -1081,7 +1107,7 @@ class AgentsOverviewBackingViewModel(
             fortnight = if (matchMode) emptyList() else shown.drop(now.size + recent.size),
             earlierHidden = fortnightUnits.size - shownFortnight.size,
             needYouCount = singles.count { it.state == NEEDS_YOU } + taskNeeds,
-            workingCount = singles.count { it.state == WORKING } + taskWorking,
+            workingCount = singles.count { isMoving(it.state == WORKING, it.fileRefreshedMillis, it.activityMillis, nowMillis) } + taskWorking,
             selectedId = selectedId,
             peek = peek,
             confirm = confirm,
@@ -1199,12 +1225,20 @@ class AgentsOverviewBackingViewModel(
     }
 
     /** The header the view draws for [u]. */
-    private fun taskOf(u: TaskUnit, ui: Ui): Task {
+    private fun taskOf(u: TaskUnit, ui: Ui, nowMillis: Long): Task {
         val t = u.task
         val repo = headerRepo(u)
-        val buckets = u.runs.map { bucketOf(it.member) }
+        // A working session that is quiet or stale is counted under that word, as its row says it, not as working.
+        val buckets = u.runs.map { run ->
+            val b = bucketOf(run.member)
+            if (b.order != 1) b else {
+                val word = agePrefixOf(true, run.fileRefreshed(t.refreshedAtMillis), workingActivity(run, t.refreshedAtMillis), nowMillis)
+                    .substringBefore(' ').ifEmpty { b.name }
+                Bucket(b.order, word)
+            }
+        }
         val counted = buckets.filter { it.order > 0 }.groupBy { it.name }
-            .entries.sortedBy { (_, list) -> list.first().order }
+            .entries.sortedWith(compareBy({ (_, list) -> list.first().order }, { (name, _) -> if (name == "working") 0 else 1 }))
         // In EARLIER a header says how many sessions it holds and how long ago it was last active.
         val inEarlier = u.ended || u.settled
         return Task(
@@ -1627,16 +1661,71 @@ class AgentsOverviewBackingViewModel(
          * @param nowMillis the current epoch millis.
          * @return the prefix including its trailing separator, or an empty string.
          */
-        fun agePrefix(row: Row, nowMillis: Long): String {
-            val file = row.fileRefreshedMillis
-            if (row.state == WORKING && file != null && isStale(file, nowMillis)) {
-                return "stale ${(nowMillis - file) / 60_000L}m · "
+        fun agePrefix(row: Row, nowMillis: Long): String =
+            agePrefixOf(row.state == WORKING, row.fileRefreshedMillis, row.activityMillis, nowMillis)
+
+        /**
+         * The one rule behind [agePrefix], [isMoving] and the counts of working sessions, so a row
+         * that reads "quiet 6m" is never counted as working: a working session whose task file has
+         * not been refreshed for [STALE_AFTER_MS] is "stale", one with no sign of life for
+         * [QUIET_AFTER_MS] is "quiet", anything else has no prefix.
+         *
+         * Called by [agePrefix] for a row, by the view model's counts for a session or a task
+         * member, and through [isMoving].
+         *
+         * @param working whether the session's state is working; any other state has no prefix.
+         * @param fileRefreshedMillis epoch millis the declaring task file was last refreshed, for a
+         *   member Lunamux does not host; null otherwise.
+         * @param activityMillis epoch millis of the last sign of life; null when there is none.
+         * @param nowMillis the current epoch millis.
+         * @return "stale 25m · ", "quiet 6m · " or an empty string.
+         * @see agePrefix
+         */
+        fun agePrefixOf(working: Boolean, fileRefreshedMillis: Long?, activityMillis: Long?, nowMillis: Long): String {
+            if (!working) return ""
+            if (fileRefreshedMillis != null && isStale(fileRefreshedMillis, nowMillis)) {
+                return "stale ${(nowMillis - fileRefreshedMillis) / 60_000L}m · "
             }
-            val activity = row.activityMillis
-            if (row.state == WORKING && activity != null && isQuiet(activity, nowMillis)) {
-                return "quiet ${(nowMillis - activity) / 60_000L}m · "
+            if (activityMillis != null && isQuiet(activityMillis, nowMillis)) {
+                return "quiet ${(nowMillis - activityMillis) / 60_000L}m · "
             }
             return ""
+        }
+
+        /**
+         * Whether a working session is really moving: it works and is neither quiet nor stale. This
+         * is what the toolbar chip and a task's count line call "working".
+         *
+         * Called by the view model when it counts working sessions, for singles and for task members.
+         *
+         * @param working whether the session's state is working.
+         * @param fileRefreshedMillis see [agePrefixOf].
+         * @param activityMillis see [agePrefixOf].
+         * @param nowMillis the current epoch millis.
+         * @return true for a working session with a recent sign of life.
+         */
+        fun isMoving(working: Boolean, fileRefreshedMillis: Long?, activityMillis: Long?, nowMillis: Long): Boolean =
+            working && agePrefixOf(true, fileRefreshedMillis, activityMillis, nowMillis).isEmpty()
+
+        /**
+         * Whether a gap belongs above [row] because it follows a task: [previous] is a task header
+         * (collapsed, so none of its sessions are listed) or a session inside a task panel, and
+         * [row] is neither a header (which has its own gap) nor a session of that same task. Without
+         * it a lone session after a collapsed task reads as one of the task's members, though the
+         * unit is the task.
+         *
+         * Called by the web overview for each row of a band as it draws the list.
+         *
+         * @param previous the row listed just above [row] in its band, or null for the band's first.
+         * @param row the row about to be drawn.
+         * @param tasks [State.tasks], which names the tasks drawn as panels.
+         * @return true when the row starts a new unit right after a task.
+         */
+        fun startsAfterTask(previous: Row?, row: Row, tasks: Map<String, Task>): Boolean {
+            if (previous == null || row.kind == RowKind.TASK) return false
+            val afterTask = previous.kind == RowKind.TASK ||
+                (previous.taskId != null && tasks.containsKey(previous.taskId))
+            return afterTask && (row.taskId == null || row.taskId != previous.taskId)
         }
 
         private const val TASK_PREFIX = "task:"

@@ -145,7 +145,8 @@ private fun renderAgentsOverview(state: AgentsOverviewBackingViewModel.State) {
         closeOverlayElement()
     }
     keepPeekFresh(state.peek?.live == true)
-    keepClockTicking(state.open)
+    // The chip counts a session as working only while it is moving, which the clock alone can end.
+    keepClockTicking(state.open || state.workingCount > 0)
 }
 
 /**
@@ -153,7 +154,8 @@ private fun renderAgentsOverview(state: AgentsOverviewBackingViewModel.State) {
  * position. Nothing else changes the picture while the server is silent, and a hung agent is
  * exactly the case where it must change.
  *
- * @param needed whether the overlay is open.
+ * @param needed whether the overlay is open, or a session is counted as working (which only the
+ *   clock can stop, once it goes quiet).
  */
 private fun keepClockTicking(needed: Boolean) {
     if (needed && clockTimer == null) {
@@ -387,11 +389,14 @@ private fun renderList(state: AgentsOverviewBackingViewModel.State) {
     fun add(rows: List<Row>) = rows.forEachIndexed { i, row ->
         val selected = row.id == state.selectedId
         val sameTaskAfter = rows.getOrNull(i + 1)?.let { it.taskId != null && it.taskId == row.taskId } == true
+        // A unit that starts right after a task gets the gap a header gets, so a lone session
+        // never reads as one of the task's members.
+        val gap = AgentsOverviewBackingViewModel.startsAfterTask(rows.getOrNull(i - 1), row, state.tasks)
         list.appendChild(
             if (row.kind == Kind.TASK) {
                 buildRow(row, state, selected, now, kids = sameTaskAfter, last = false)
             } else {
-                buildRow(row, state, selected, now, kids = false, last = inPanel(row, state) && !sameTaskAfter)
+                buildRow(row, state, selected, now, kids = false, last = inPanel(row, state) && !sameTaskAfter, gap = gap)
             },
         )
         state.confirm?.takeIf { it.rowId == row.id }?.let { list.appendChild(buildConfirm(it)) }
@@ -596,6 +601,8 @@ private fun inPanel(row: Row, state: AgentsOverviewBackingViewModel.State): Bool
  * @param now the current epoch millis.
  * @param kids for a header, whether sessions are drawn under it (so a tree line runs down from it).
  * @param last for a session in a panel, whether it is the last one of its task on screen.
+ * @param gap whether the row starts a unit right after a task (see
+ *   [AgentsOverviewBackingViewModel.startsAfterTask]) and so gets a gap above it.
  * @return the row element, carrying the row's id as `data-id` for click routing.
  */
 private fun buildRow(
@@ -605,6 +612,7 @@ private fun buildRow(
     now: Long,
     kids: Boolean,
     last: Boolean,
+    gap: Boolean = false,
 ): HTMLElement {
     val isHead = row.kind == Kind.TASK
     val task = state.tasks[row.taskId].takeIf { isHead }
@@ -614,6 +622,7 @@ private fun buildRow(
     if (isHead && kids) classes += "ao-kids"
     if (member) classes += "ao-mem"
     if (last) classes += "ao-last"
+    if (gap) classes += "ao-gap"
     if (selected) classes += "ao-sel"
     if (!isHead && row.glyph == Glyph.NEEDS_YOU) classes += "ao-need"
     if (!isHead && row.glyph == Glyph.WORKING) classes += "ao-working"

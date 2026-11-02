@@ -49,6 +49,8 @@ class AgentsOverviewBackingViewModelTest {
     ) = AgentSessionSummary(
         id = id, agent = agent, state = state, stateSince = since, title = title, links = emptyList(),
         repo = "proj", branch = branch, cwd = cwd, nowLine = nowLine, question = question, leafId = leaf, endedAt = endedAt,
+        // A working session is moving (not quiet) unless a test says otherwise, as the chip counts only those.
+        lastActivityAt = if (state == "working") now - 1_000 else null,
     )
 
     private fun leaf(id: String, custom: String? = null) =
