@@ -1237,8 +1237,10 @@ class AgentsOverviewBackingViewModel(
                 Bucket(b.order, word)
             }
         }
-        val counted = buckets.filter { it.order > 0 }.groupBy { it.name }
-            .entries.sortedWith(compareBy({ (_, list) -> list.first().order }, { (name, _) -> if (name == "working") 0 else 1 }))
+        // Grouped by order and word, so a file label that happens to be called "quiet" never merges into the working group
+        // of that word; within the working order, "working" comes first, then "quiet", then "stale".
+        val counted = buckets.filter { it.order > 0 }.groupBy { it.order to it.name }
+            .entries.sortedWith(compareBy({ (key, _) -> key.first }, { (key, _) -> if (key.second == "working") 0 else 1 }, { (key, _) -> key.second }))
         // In EARLIER a header says how many sessions it holds and how long ago it was last active.
         val inEarlier = u.ended || u.settled
         return Task(
@@ -1252,7 +1254,7 @@ class AgentsOverviewBackingViewModel(
                     else -> "${u.runs.size} sessions"
                 }
             } else {
-                counted.joinToString(" · ") { (name, list) -> "${list.size} $name" }
+                counted.joinToString(" · ") { (key, list) -> "${list.size} ${key.second}" }
                     .ifEmpty { if (u.runs.isEmpty()) "no sessions" else "" }
             },
             expanded = t.id in ui.expandedTasks,

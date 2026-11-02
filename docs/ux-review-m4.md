@@ -82,7 +82,7 @@ own session count the .kt files under server/src/main. In a second pane in this 
 Claude Code session and give it the job: count the .kt files under web/src/jsMain and tell me the number. Use
 the Lunamux tools. Then report both numbers."* It names the Lunamux tools but never says "task", so the
 grouping was the agent's own. The owner should judge whether "Use the Lunamux tools" is too strong a nudge
-for the test he runs.
+for the test the owner runs.
 
 | Case | Result |
 |---|---|
@@ -126,9 +126,10 @@ the overlay closed. Tests (`AgentsOverviewTasksViewModelTest`):
 
 Seen on the seeded server: after five minutes without activity the chip fell from "1 needs you · 1
 working" to "1 needs you", and "Access control" went from "1 working" to "1 needs you · 1 quiet · 1 in
-review". One consequence the owner should know about: with only a quiet session left, the chip shows
-neither "working" nor "agents idle". That is the rule applied literally; a "quiet" word on the chip
-would be a one-line change if he wants it.
+review". One consequence the owner should know about: a quiet or stale session no longer keeps the chip at
+"working", so with only such sessions left and nothing needing you the chip reads "agents idle", the
+same as with nothing running. That is the rule applied literally; a "quiet" word on the chip would be a
+one-line change if the owner wants it.
 
 ### F6 · broken · A lone session after a collapsed task reads as one of its members
 
@@ -167,7 +168,7 @@ T1 and T7 of the first pass are no longer here: the owner called them broken, se
 - **T6 · A permission prompt for an MCP tool will read `Allow mcp__server__tool …?`** (inferred from
   the code, not seen: no MCP tool prompt was raised in the live cases, so there is no screenshot).
   That is the tool's internal id; a plain name would read better. It is still more telling than the
-  generic text it replaced, so it is left for the owner to say whether it bothers him. Only a
+  generic text it replaced, so it is left for the owner to say whether it bothers them. Only a
   permission prompt gets the `Allow …?` phrasing; other notifications keep the hook's own text.
 - **Limit, not a finding · Claude Code's own menus.** A "Teach auto mode about your environment?"
   menu blocked a pane while its session read idle: no hook fires for it, so Lunamux cannot know it
