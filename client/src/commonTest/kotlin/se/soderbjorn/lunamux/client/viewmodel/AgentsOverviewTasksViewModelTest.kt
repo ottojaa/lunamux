@@ -1,6 +1,6 @@
 /**
  * Tests for the task part of [AgentsOverviewBackingViewModel]: where a task sits among the single
- * sessions (it stays in NOW until all its sessions have ended), when a task is an expansion panel
+ * sessions (it stays in NOW while it has open work, and goes to EARLIER once every session reads done or ended), when a task is an expansion panel
  * and when it is one plain row, what a collapsed and an expanded panel show and in which order,
  * the glyph, status and counts of each session, which session the header's ↵ goes to (and the
  * task's `open` action, and expanding when there is neither), a session Lunamux does not host and
@@ -120,6 +120,40 @@ class AgentsOverviewTasksViewModelTest {
         )
         assertEquals(listOf("busy", "task:g1"), vm.state.now.map { it.id })
         assertTrue(vm.state.earlier.isEmpty())
+    }
+
+    @Test
+    fun aFileTaskWhoseSessionsAllReadDoneMovesToEarlierEvenThoughNoneEnded() {
+        show(
+            listOf(
+                task(id = "g1", members = listOf(member("a", "idle", label = "done"), member("b", "idle", label = "ready"))),
+                task(id = "g2", members = listOf(member("c", "idle", label = "done"), member("d", "ended"))),
+            ),
+            session("busy", "working", since = 1),
+        )
+        assertEquals(listOf("busy"), vm.state.now.map { it.id })
+        assertEquals(setOf("task:g1", "task:g2"), vm.state.earlier.map { it.id }.toSet())
+    }
+
+    @Test
+    fun aFileTaskWithADoneSessionStaysInNowWhileAnotherNeedsYouWorksOrIsStillOpenWork() {
+        show(
+            listOf(
+                task(id = "g1", members = listOf(member("a", "idle", label = "done"), member("b", "needs_you"))),
+                task(id = "g2", members = listOf(member("c", "idle", label = "done"), member("d", "working"))),
+                task(id = "g3", members = listOf(member("e", "idle", label = "done"), member("f", "idle", label = "in review"))),
+                task(id = "g4", members = listOf(member("g", "idle", label = "done"), member("h", "idle"))),
+            ),
+        )
+        assertEquals(setOf("task:g1", "task:g2", "task:g3", "task:g4"), vm.state.now.map { it.id }.filter { it.startsWith("task:") }.toSet())
+        assertTrue(vm.state.earlier.isEmpty())
+    }
+
+    @Test
+    fun aDoneOnlyFileTaskGoesToEarlierAtOnceWithoutTheGraceAHostedTaskGets() {
+        show(listOf(task(members = listOf(member("a", "idle", label = "done", since = now - 1_000), member("b", "idle", label = "done", since = now - 2_000)))))
+        assertTrue(vm.state.now.isEmpty())
+        assertEquals(listOf("task:g1"), vm.state.earlier.map { it.id })
     }
 
     @Test

@@ -927,9 +927,10 @@ class AgentsOverviewBackingViewModel(
      *   hosted sessions that went quiet less than [IDLE_GRACE_MS] ago, else [OPEN_WORK_RANK].
      * @property since the time that decides its place among tasks of the same rank.
      * @property ended whether every session has ended.
-     * @property settled whether no session needs the person or works, no task file speaks for the
-     *   task, and the last activity of its sessions is older than [IDLE_GRACE_MS]: it belongs in
-     *   EARLIER like an idle single session, though none of its sessions has ended.
+     * @property settled whether no session needs the person or works and either every session reads
+     *   done (a task file's word, or sessions that ended), or no task file speaks for the task and the
+     *   last activity of its sessions is older than [IDLE_GRACE_MS]: it belongs in EARLIER like an
+     *   idle single session, though none of its sessions has ended.
      * @property recency epoch millis of the newest activity of any session of the task: when an ended
      *   one ended, the last activity of an open one, and the time a task file gives a member. Decides
      *   the EARLIER band and the order inside it.
@@ -1140,13 +1141,16 @@ class AgentsOverviewBackingViewModel(
             runs.any { it.member.state == WORKING } -> 1
             else -> OPEN_WORK_RANK
         }
-        // A task file speaks for its task, so the task stays in NOW while it has work to do. A task
-        // of hosted sessions only has no such word: like one idle session, it stays for the grace
-        // after the last activity and then moves to EARLIER.
+        // A task file speaks for its task, so the task stays in NOW while it has work to do, even
+        // while nothing moves: a member in review or queued is still open work. Once every member
+        // reads done, nothing is moving or waiting and the file has said so itself, so the task goes
+        // to EARLIER at once, as a finished task does. A task of hosted sessions only has no such
+        // word: like one idle session, it stays for the grace after the last activity and then moves.
         val lastActivity = runs.mapNotNull { r -> r.session?.let { it.lastActivityAt ?: it.stateSince } }.maxOrNull()
         val hostedOnly = t.source != "file"
         val quiet = hostedOnly && urgentRank == OPEN_WORK_RANK && !runs.all { it.member.state == ENDED }
-        val settled = quiet && (lastActivity == null || !inGrace(lastActivity, nowMillis))
+        val allDone = urgentRank == OPEN_WORK_RANK && runs.isNotEmpty() && runs.all { bucketOf(it.member).order == DONE_ORDER }
+        val settled = allDone || (quiet && (lastActivity == null || !inGrace(lastActivity, nowMillis)))
         val rank = if (quiet && !settled) GRACE_RANK else urgentRank
         val since = when {
             runs.isEmpty() -> t.refreshedAtMillis ?: 0L
@@ -1180,14 +1184,14 @@ class AgentsOverviewBackingViewModel(
     private fun bucketOf(m: AgentTaskMember): Bucket {
         if (m.state == NEEDS_YOU) return Bucket(0, "needs you")
         if (m.state == WORKING) return Bucket(1, "working")
-        if (m.state == ENDED) return Bucket(6, "done")
+        if (m.state == ENDED) return Bucket(DONE_ORDER, "done")
         val label = m.label?.trim().orEmpty()
         val lower = label.lowercase()
         return when {
             lower.startsWith("in review") -> Bucket(2, "in review")
             lower == "queued" || lower == "waiting" -> Bucket(3, "queued")
             lower.startsWith("paused") -> Bucket(5, "paused")
-            lower == "done" || lower == "ready" -> Bucket(6, "done")
+            lower == "done" || lower == "ready" -> Bucket(DONE_ORDER, "done")
             label.isEmpty() -> Bucket(4, "idle")
             else -> Bucket(4, label)
         }
@@ -1356,7 +1360,7 @@ class AgentsOverviewBackingViewModel(
             WORKING -> line ?: hostedLine ?: firstPrompt ?: if (s == null && m.label != null) "" else "—"
             // A finished member's line that only repeats its pull request is dropped: the PR has its own column.
             else -> (line?.takeIf { it != pr } ?: said ?: firstPrompt)
-                ?: if (bucket.order == 6 || m.label != null) "" else "—"
+                ?: if (bucket.order == DONE_ORDER || m.label != null) "" else "—"
         }
         return base.copy(
             title = m.title,
@@ -1637,6 +1641,9 @@ class AgentsOverviewBackingViewModel(
         private const val TASK_PREFIX = "task:"
         private const val MEMBER_PREFIX = "member:"
         private const val OPEN_WORK_RANK = 2
+
+        /** The [Bucket] order of a session that is done: counted last and the sign that a task has nothing left to move. */
+        private const val DONE_ORDER = 6
         private const val GRACE_RANK = 3
         private const val IDLE = "idle"
         private val PR_LINK = Regex("#\\d+")
