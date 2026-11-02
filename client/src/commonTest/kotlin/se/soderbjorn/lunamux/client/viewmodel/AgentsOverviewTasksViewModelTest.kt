@@ -738,7 +738,7 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aSessionIsJumpWhenItsPaneIsOpenResumeWhenItEndedAndOpenOnlyWithASessionId() {
+    fun aSessionIsJumpWhenItsPaneIsOpenAndResumeWhenItEndedOrOnlyAClaudeAttachCanReachIt() {
         layout("leaf-live")
         show(
             listOf(task(members = listOf(

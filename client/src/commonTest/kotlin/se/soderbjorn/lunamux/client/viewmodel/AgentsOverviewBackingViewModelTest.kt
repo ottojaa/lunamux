@@ -248,6 +248,8 @@ class AgentsOverviewBackingViewModelTest {
         assertEquals(listOf("← collapse", "↑↓ move", "esc close"), AgentsOverviewBackingViewModel.footerHints(AgentsOverviewBackingViewModel.Footer.TASK_EXPANDED, false).map { "${it.key} ${it.word}" })
         assertTrue(all.none { it.second.word == "space" || it.second.key == "space" })
         assertEquals(listOf("←", "↑↓", "esc"), AgentsOverviewBackingViewModel.footerHints(AgentsOverviewBackingViewModel.Footer.RUN_ATTACH, true).map { it.key })
+        // "open" is only a task header's own action, so a row with no pane says there is nothing to jump to.
+        assertTrue(all.none { it.second.word.contains("to open") })
     }
 
     @Test

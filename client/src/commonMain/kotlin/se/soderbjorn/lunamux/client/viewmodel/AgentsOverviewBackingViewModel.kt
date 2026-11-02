@@ -1530,8 +1530,8 @@ class AgentsOverviewBackingViewModel(
      *
      * A manager episode is named [AgentSessionText.MANAGER_TITLE]. Otherwise the session's own
      * title when it names the work, else the first words of its first prompt, else the agent's
-     * name. The branch, the folder, `~`, `HEAD` and run ids are not titles, so the old fallbacks
-     * to them are gone.
+     * name. The branch, the folder, `~`, `HEAD` and run ids say where a session ran, not what it
+     * is for, so they are never used as a title.
      *
      * Called by [toRow] and [memberOf] for every session row, in the list, in a task and in a search.
      *
@@ -1614,7 +1614,7 @@ class AgentsOverviewBackingViewModel(
                 Footer.TASK_COLLAPSED -> listOf(Hint("→", "expand"), move, esc)
                 Footer.TASK_EXPANDED -> listOf(Hint("←", "collapse"), move, esc)
                 Footer.RUN_ATTACH -> listOfNotNull(back, move, esc)
-                Footer.NO_SESSION -> listOfNotNull(Hint("", "nothing to open: this session is not in a Lunamux pane"), back, move, esc)
+                Footer.NO_SESSION -> listOfNotNull(Hint("", "nothing to jump to: this session is not in a Lunamux pane"), back, move, esc)
                 Footer.NONE -> listOf(move, esc)
             }
         }

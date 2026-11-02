@@ -193,7 +193,7 @@ One object per file.
 | `members[].state` | yes | `needs_you`, `working`, `idle` or `ended`. |
 | `members[].label` | no | A short status word shown in front of the line and used in the counts ("1 in review"). `in review`, `queued`, `waiting`, `paused` and `done` (or `ready`) have a glyph and a place in the order; any other label, `held` included, counts as given. Use plain statuses, not ticket keys. |
 | `members[].line` | no | One line of detail: the question for `needs_you`, otherwise what it is doing. Blank means none. |
-| `members[].sessionId` | no | The id `claude attach` takes for the member's background session. Gives the member an **open** action when Lunamux hosts no session for it. Only letters, digits, `-` and `_` are accepted; anything else is never typed into a shell. |
+| `members[].sessionId` | no | The id `claude attach` takes for the member's background session. Gives the member a **resume** action when Lunamux hosts no session for it. Only letters, digits, `-` and `_` are accepted; anything else is never typed into a shell. |
 | `members[].since` | no (recommended) | ISO-8601 time the member entered its state; drives the age and the ordering. When missing or unreadable, the file's modified time is used. |
 | `members[].links` | no | Ticket ids and pull requests such as `ACC-12` or `#212`. A `#`-number is the member's pull request, shown after `done`; Lunamux adds none of its own. |
 | `members[].match` | no | How to find the member's real session; see below. |
