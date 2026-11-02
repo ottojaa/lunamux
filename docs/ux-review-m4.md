@@ -151,7 +151,8 @@ expanded panel) and is not that task's own member gets the same top margin a hea
 
 ## Taste (left unchanged; for the owner)
 
-T1 and T7 of the first pass are no longer here: the owner called them broken, see F5 and F6.
+T1 and T7 of the first pass are no longer here: the owner called them broken, see F5 and F6. T4 (the
+footer saying "collapse" twice) was fixed afterwards, see [the data fixes](ux-fixes-2026-11-02.md).
 
 - **T2 · The first selected row cannot be jumped to on the seed.** The overview opens on the first
   ◆ (a seeded member with no pane), so the footer says *nothing to open: this session is not in a
@@ -160,8 +161,6 @@ T1 and T7 of the first pass are no longer here: the owner called them broken, se
 - **T3 · An idle session with nothing to say shows "—"** (the freshly started "split" row,
   [screenshot](ux-review-m4/06-jump-and-peek-hint.png)). Fine for a few seconds; an empty line would
   read calmer.
-- **T4 · An expanded task's footer says "← collapse" and "space collapse"** side by side
-  ([screenshot](ux-review-m4/03-before-release-train.png)). One is enough.
 - **T5 · Ended rows with no summary show the raw first prompt**, prefixed with `❯` and cut at the
   column ([screenshot](ux-review-m4/07-after-fix.png), the "question" and "perm" rows). Readable, a
   little noisy.

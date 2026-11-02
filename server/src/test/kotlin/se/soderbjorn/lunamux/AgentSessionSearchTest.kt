@@ -235,4 +235,14 @@ class AgentSessionSearchTest {
         assertNotNull(i.resumeNote)
         assertNull(inspect("nope"))
     }
+
+    @Test
+    fun `a stored title that only says where the session ran is not a title match`() {
+        save("home", title = "~", prompt = "tidy my notes")
+        save("detached", title = "HEAD", prompt = "check out the release")
+        val head = search("HEAD")
+        assertTrue(head.none { it.field == "title" }, "HEAD is the checkout's name, not the work's")
+        assertEquals(listOf("tidy my notes"), search("tidy").map { it.summary.firstPrompt })
+        assertEquals("prompt", search("tidy").single().field)
+    }
 }

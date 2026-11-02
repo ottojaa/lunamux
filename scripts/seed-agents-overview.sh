@@ -5,10 +5,11 @@
 #   scripts/seed-agents-overview.sh <db file> <tasks folder>
 #
 # Writes 21 ended agent sessions last active today, 1, 2, 6, 12 and 30 days ago, five
-# agent-made tasks, and five task files. Run it again to refresh the ages (it replaces its own
-# records and touches nothing else). The ages are counted from the moment it runs, so seed again
-# on the day you look. Seed while the scratch server is STOPPED: the server reads its sessions
-# and tasks once when it starts, and it ends any session still open.
+# agent-made tasks, six task files, and 8 sessions that are awkward to name or to read (listed
+# below). Run it again to refresh the ages (it replaces its own records and touches nothing else).
+# The ages are counted from the moment it runs, so seed again on the day you look. Seed while the
+# scratch server is STOPPED: the server reads its sessions and tasks once when it starts, and it
+# ends any session still open. Two seeded sessions are left open on purpose, to show that.
 #
 # It refuses ~/Library/Application Support/Termtastic, a database named termtastic.db or
 # lunamux-dev.db, and the real task folders (~/.lunamux/tasks, ~/.lunamux/agent-groups).
@@ -37,6 +38,14 @@
 #                    12-day sessions, "Onboarding emails", "Docs sweep"). Click the more line to see all.
 #   An EARLIER task  a collapsed panel (title, repo, "3 sessions", age). → expands it; ↵ on a
 #                    session resumes it.
+#   Awkward rows     "seed-home" (run from the home folder), "seed-branch-only" (only a run-named
+#                    branch), "seed-run-id-title" and "seed-folder-title" (a stored title that is a
+#                    run id or a folder name): each is named by its first prompt, never "~", the
+#                    branch or the folder. "Owner test follow-up" has a bold preview and "Show the
+#                    migration" a preview that is only a code fence: both read as plain text.
+#   A restart        "Trace the slow login" (open, idle for 2 days) and "Rebuild the search index"
+#                    (open, working for 5 hours) are ended by the server when it starts. They are
+#                    aged from when they last did anything (2d and 5h), not from the restart.
 #   Search           type "invoice": three sessions of "Invoice export migration", 30 days old,
 #                    found only through their task's title ("in task Invoice export migration").
 #                    "token" also matches by task; "limiter" matches by title first.

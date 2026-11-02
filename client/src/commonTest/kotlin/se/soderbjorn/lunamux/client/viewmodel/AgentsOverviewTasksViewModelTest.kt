@@ -126,8 +126,9 @@ class AgentsOverviewTasksViewModelTest {
     fun aFileTaskWhoseSessionsAllReadDoneMovesToEarlierEvenThoughNoneEnded() {
         show(
             listOf(
-                task(id = "g1", members = listOf(member("a", "idle", label = "done"), member("b", "idle", label = "ready"))),
-                task(id = "g2", members = listOf(member("c", "idle", label = "done"), member("d", "ended"))),
+                // clocked an hour back, past the ten minutes a task that just finished stays in NOW
+                task(id = "g1", members = listOf(member("a", "idle", label = "done", since = now - HOUR), member("b", "idle", label = "ready", since = now - HOUR))),
+                task(id = "g2", members = listOf(member("c", "idle", label = "done", since = now - HOUR), member("d", "ended", since = now - HOUR))),
             ),
             session("busy", "working", since = 1),
         )
@@ -150,10 +151,54 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aDoneOnlyFileTaskGoesToEarlierAtOnceWithoutTheGraceAHostedTaskGets() {
-        show(listOf(task(members = listOf(member("a", "idle", label = "done", since = now - 1_000), member("b", "idle", label = "done", since = now - 2_000)))))
+    fun aDoneOnlyFileTaskGoesToEarlierOnceItsNewestMemberIsPastTheGrace() {
+        show(listOf(task(members = listOf(member("a", "idle", label = "done", since = now - 11 * MINUTE), member("b", "idle", label = "done", since = now - 12 * MINUTE)))))
         assertTrue(vm.state.now.isEmpty())
         assertEquals(listOf("task:g1"), vm.state.earlier.map { it.id })
+        assertEquals(now - 11 * MINUTE, vm.state.tasks.getValue("g1").ageMillis)
+    }
+
+    @Test
+    fun aTaskThatJustFinishedStaysInNowForTheGraceSoItsHeaderNeverReadsMinutesUnderDays() {
+        val ended = now - MINUTE
+        show(
+            listOf(
+                // a file task whose members all just read done, and one whose members just ended
+                task(id = "file", members = listOf(member("a", "idle", label = "done", since = ended), member("b", "idle", label = "ready", since = ended - 5_000))),
+                task(id = "closed", members = listOf(member("c", "ended", since = ended), member("d", "ended", since = ended - 5_000))),
+                // the same shapes, finished an hour ago
+                task(id = "oldFile", members = listOf(member("e", "idle", label = "done", since = now - HOUR), member("f", "idle", label = "done", since = now - HOUR))),
+                task(id = "hosted", source = "agents", members = emptyList()),
+            ),
+            // a task of hosted sessions that all ended a minute ago
+            session("h1", "ended", since = ended, endedAt = ended, taskId = "hosted"),
+            session("h2", "ended", since = ended - 5_000, endedAt = ended - 5_000, taskId = "hosted"),
+        )
+        assertEquals(setOf("task:file", "task:closed", "task:hosted"), vm.state.now.map { it.id }.filter { it.startsWith("task:") }.toSet())
+        assertEquals(listOf("task:oldFile"), vm.state.earlier.map { it.id }.filter { it.startsWith("task:") })
+        assertTrue(vm.state.earlier.all { it.sinceMillis <= now - 10 * MINUTE }, "nothing under an earlier heading reads younger than the grace")
+        assertTrue(vm.state.tasks.getValue("file").ageMillis == null, "a header in NOW shows no age")
+
+        now += 10 * MINUTE
+        show(
+            listOf(task(id = "file", members = listOf(member("a", "idle", label = "done", since = ended), member("b", "idle", label = "ready", since = ended - 5_000)))),
+        )
+        assertTrue(vm.state.now.isEmpty())
+        assertEquals(listOf("task:file"), vm.state.earlier.map { it.id })
+        assertEquals(ended, vm.state.tasks.getValue("file").ageMillis)
+    }
+
+    @Test
+    fun anIdleSessionInATaskIsAsOldAsItsLastActivityLikeALoneOne() {
+        layout("leaf-a", "leaf-b")
+        val quietSince = now - 3 * HOUR
+        show(
+            listOf(task(source = "agents", members = emptyList())),
+            session("a", "idle", taskId = "g1", since = now - MINUTE, lastActivityAt = quietSince),
+            session("b", "working", taskId = "g1", lastActivityAt = now - 1_000),
+        )
+        vm.toggleTask("g1")
+        assertEquals(quietSince, vm.state.rows.first { it.id == "a" }.sinceMillis, "an idle session in a task is as old as its last activity")
     }
 
     @Test
@@ -195,7 +240,7 @@ class AgentsOverviewTasksViewModelTest {
             session("over-three", "ended", endedAt = now - 3 * DAY - 1),
             session("fourteen", "ended", endedAt = now - 14 * DAY),
             session("over-fourteen", "ended", endedAt = now - 14 * DAY - 1),
-            session("fresh", "ended", endedAt = now - 1_000),
+            session("fresh", "ended", endedAt = now - HOUR), // past the ten minutes a just-ended session stays under NOW
         )
         assertEquals(listOf("fresh", "three"), vm.state.recent.map { it.id })
         assertEquals(listOf("over-three", "fourteen"), vm.state.fortnight.map { it.id })
@@ -222,7 +267,7 @@ class AgentsOverviewTasksViewModelTest {
     @Test
     fun moreAppearsOnlyForTheSecondBand() {
         now = 30 * DAY // the bands are days wide; the usual clock is only hours in
-        val recent = (1..8).map { session("r$it", "ended", endedAt = now - it * 1_000L) }
+        val recent = (1..8).map { session("r$it", "ended", endedAt = now - HOUR - it * 1_000L) }
         val older = (1..7).map { session("o$it", "ended", endedAt = now - 5 * DAY - it) }
         show(emptyList(), *(recent + older).toTypedArray())
         assertEquals(8, vm.state.recent.size, "the first band is never cut")
@@ -395,7 +440,7 @@ class AgentsOverviewTasksViewModelTest {
 
     @Test
     fun aLoneSessionRightAfterATaskGetsTheGapAHeaderGetsAndASessionOfTheTaskDoesNot() {
-        val ended = now - 1_000
+        val ended = now - HOUR // past the ten minutes a just-ended session stays under NOW
         show(
             listOf(
                 task(id = "g1", members = listOf(member("a", "idle", label = "done", since = ended), member("b", "idle", label = "done", since = ended))),
@@ -487,7 +532,7 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aSessionInAPanelKeepsItsRepoOrFolderAndAPullRequestTakesTheColumnWhenTheFileGivesOne() {
+    fun aSessionInAPanelKeepsItsRepoOrFolderAndAPullRequestIsDetailTextNeverTheColumn() {
         layout("leaf-a", "leaf-b", "leaf-c")
         show(
             listOf(task(source = "agents", repo = null, members = emptyList())),
@@ -502,7 +547,9 @@ class AgentsOverviewTasksViewModelTest {
             listOf(task(members = listOf(member("a", "working", recordId = "a", links = listOf("#22")), member("x", "idle")))),
             session("a", "working", repo = "lunamux"),
         )
-        assertEquals("#22", vm.state.rows.first { it.id == "a" }.where)
+        val child = vm.state.rows.first { it.id == "a" }
+        assertEquals("lunamux", child.where, "the second column names a place on every row")
+        assertEquals("#22", child.pullRequest)
     }
 
     @Test
@@ -736,7 +783,7 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aSessionIsJumpWhenItsPaneIsOpenResumeWhenItEndedAndOpenOnlyWithASessionId() {
+    fun aSessionIsJumpWhenItsPaneIsOpenAndResumeWhenItEndedOrOnlyAClaudeAttachCanReachIt() {
         layout("leaf-live")
         show(
             listOf(task(members = listOf(
@@ -750,7 +797,7 @@ class AgentsOverviewTasksViewModelTest {
         )
         vm.toggleTask("g1")
         val labels = vm.state.rows.filter { it.taskId == "g1" && it.kind == RowKind.SESSION }.associate { it.title to it.actionLabel }
-        assertEquals(mapOf("live one" to "jump", "done one" to "resume", "nobody's" to "", "attachable" to "open"), labels)
+        assertEquals(mapOf("live one" to "jump", "done one" to "resume", "nobody's" to "", "attachable" to "resume"), labels)
     }
 
     @Test
@@ -823,7 +870,7 @@ class AgentsOverviewTasksViewModelTest {
         assertEquals("", byTitle.getValue("review").status, "the label is the whole status")
         assertEquals("in review · round 2", byTitle.getValue("review").label)
         assertEquals("", byTitle.getValue("finished").status, "a line that only repeats the PR is dropped")
-        assertEquals("#22", byTitle.getValue("finished").where)
+        assertEquals("#22", byTitle.getValue("finished").pullRequest)
         assertEquals("done", byTitle.getValue("finished").label)
         assertEquals("Merged and deployed", byTitle.getValue("finished too").status)
     }
@@ -864,6 +911,21 @@ class AgentsOverviewTasksViewModelTest {
         vm.toggleTask("g1")
         assertNull(vm.state.rows.single { it.id == "member:g1:#1" }.activityMillis)
         assertNull(vm.state.tasks.getValue("g1").activityMillis)
+    }
+
+    @Test
+    fun aFileMemberMatchedToAnIdleSessionIsAsOldAsThatSessionsLastActivityNotItsFilesTime() {
+        layout("leaf-w1")
+        val quietSince = now - 3 * HOUR
+        show(
+            listOf(task(members = listOf(
+                member("one", "idle", recordId = "w1", since = now - MINUTE),
+                member("two", "working", since = now - 1_000),
+            ))),
+            session("w1", "idle", since = now - MINUTE, lastActivityAt = quietSince),
+        )
+        vm.toggleTask("g1")
+        assertEquals(quietSince, vm.state.rows.first { it.id == "w1" }.sinceMillis)
     }
 
     @Test
@@ -1112,16 +1174,18 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aGracedIdleSessionRanksBehindEverythingThatNeedsYouOrWorksAndAClosedOneNeverGetsGrace() {
+    fun aGracedIdleSessionRanksBehindEverythingThatNeedsYouOrWorksAndAJustClosedOneIsGracedLikeIt() {
         show(
             listOf(task(members = listOf(member("run", "idle", label = "queued"), member("run2", "idle", label = "queued")))),
             session("graced", "idle", since = now - 1_000),
             session("work", "working", since = now - 5_000),
             session("need", "needs_you", since = now - 9_000),
             session("closed", "ended", since = now - 2_000, endedAt = now - 1_000),
+            session("longClosed", "ended", since = now - 3_600_000, endedAt = now - 3_600_000),
         )
-        assertEquals(listOf("need", "work", "task:g1", "graced"), vm.state.now.map { it.id })
-        assertEquals(listOf("closed"), vm.state.earlier.map { it.id })
+        assertEquals(setOf("graced", "closed"), vm.state.now.map { it.id }.filter { it == "graced" || it == "closed" }.toSet())
+        assertEquals(listOf("need", "work", "task:g1"), vm.state.now.map { it.id }.take(3))
+        assertEquals(listOf("longClosed"), vm.state.earlier.map { it.id })
         assertEquals(1, vm.state.needYouCount)
     }
 
@@ -1182,6 +1246,8 @@ class AgentsOverviewTasksViewModelTest {
 
     private companion object {
         const val EARLIER_LIMIT = AgentsOverviewBackingViewModel.EARLIER_LIMIT
+        const val MINUTE = 60_000L
+        const val HOUR = 60L * 60_000L
         const val DAY = 24L * 60 * 60_000L
     }
 }

@@ -47,9 +47,12 @@ idle, **‖** paused, **✓** done.
   that a task file declares also stays there while it has open work, such as a session in review
   or queued, even when nothing is running at the moment, so it does not change section as
   sessions start and stop. Once every session of such a task reads done, nothing is moving or
-  waiting and the task goes to EARLIER, even if none of its sessions has ended. A task made only
-  of Lunamux's own sessions behaves like one idle session: it stays in NOW for ten minutes after
-  the last activity and then moves to EARLIER. A task whose sessions have all ended is in EARLIER.
+  waiting and the task goes to EARLIER, even if none of its sessions has ended, once ten minutes
+  have passed since its newest activity: a task that has just finished stays in NOW for those ten
+  minutes, like a session that has just ended, so its header never reads "now" under a heading
+  that says days. A task made only of Lunamux's own sessions behaves like one idle session: it
+  stays in NOW for ten minutes after the last activity and then moves to EARLIER. A task whose
+  sessions have all ended is in EARLIER after the same ten minutes.
 - **EARLIER is two bands of tasks, newest first.** **LAST FEW DAYS** holds the tasks last active
   within three days, all of them. **LAST TWO WEEKS** holds those between three and fourteen days
   old; it shows the first five and a **+ N more** line (a click on it shows the rest). A band
@@ -193,7 +196,7 @@ One object per file.
 | `members[].state` | yes | `needs_you`, `working`, `idle` or `ended`. |
 | `members[].label` | no | A short status word shown in front of the line and used in the counts ("1 in review"). `in review`, `queued`, `waiting`, `paused` and `done` (or `ready`) have a glyph and a place in the order; any other label, `held` included, counts as given. Use plain statuses, not ticket keys. |
 | `members[].line` | no | One line of detail: the question for `needs_you`, otherwise what it is doing. Blank means none. |
-| `members[].sessionId` | no | The id `claude attach` takes for the member's background session. Gives the member an **open** action when Lunamux hosts no session for it. Only letters, digits, `-` and `_` are accepted; anything else is never typed into a shell. |
+| `members[].sessionId` | no | The id `claude attach` takes for the member's background session. Gives the member a **resume** action when Lunamux hosts no session for it. Only letters, digits, `-` and `_` are accepted; anything else is never typed into a shell. |
 | `members[].since` | no (recommended) | ISO-8601 time the member entered its state; drives the age and the ordering. When missing or unreadable, the file's modified time is used. |
 | `members[].links` | no | Ticket ids and pull requests such as `ACC-12` or `#212`. A `#`-number is the member's pull request, shown after `done`; Lunamux adds none of its own. |
 | `members[].match` | no | How to find the member's real session; see below. |

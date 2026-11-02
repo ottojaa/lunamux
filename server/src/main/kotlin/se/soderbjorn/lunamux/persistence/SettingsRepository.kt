@@ -545,15 +545,23 @@ class SettingsRepository(
         database.settingsQueries.selectAgentSessionById(id, ::toAgentSessionRecord).executeAsOneOrNull()
 
     /**
-     * Mark every still-open record as ended.
+     * Mark every still-open record as ended, each at the last time it was known to be alive.
      *
-     * Called by the tracker at startup: terminal sessions do not survive a
-     * restart, so a record still open then belongs to a process that is gone.
+     * Called by the tracker at startup: terminal sessions do not survive a restart, so a record
+     * still open then belongs to a process that is gone. A record is ended at [lastSeen] when that
+     * is later than the time it entered its state, else at that time, and never later than [now];
+     * stamping them all with the time of the restart would make a session last used days ago read
+     * as if it had just ended, and place it in the wrong band of the agents overview.
      *
-     * @param now epoch millis used for both `ended_at` and `state_since`.
+     * @param now the time of the restart: the latest a record can have ended.
+     * @param lastSeen the newest sign of life known for a record outside the database (for
+     *   example its transcript file's modification time), or null when there is none.
      */
-    fun endOpenAgentSessions(now: Long) {
-        database.settingsQueries.endOpenAgentSessions(now, now)
+    fun endOpenAgentSessions(now: Long, lastSeen: (AgentSessionRecord) -> Long? = { null }) {
+        database.settingsQueries.selectOpenAgentSessions(::toAgentSessionRecord).executeAsList().forEach { rec ->
+            val at = minOf(now, maxOf(rec.stateSince, lastSeen(rec) ?: 0L))
+            database.settingsQueries.endAgentSessionAt(at, rec.id)
+        }
     }
 
     private fun toAgentSessionRecord(

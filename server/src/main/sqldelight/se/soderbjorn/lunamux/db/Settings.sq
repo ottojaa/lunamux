@@ -98,8 +98,15 @@ SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, r
     question, last_screen, created_at, ended_at, repo_root, last_said, task_id
 FROM agent_sessions WHERE id = ?;
 
-endOpenAgentSessions:
-UPDATE agent_sessions SET state = 'ended', ended_at = ?, state_since = ? WHERE state != 'ended';
+selectOpenAgentSessions:
+SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
+    worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
+    question, last_screen, created_at, ended_at, repo_root, last_said, task_id
+FROM agent_sessions WHERE state != 'ended';
+
+-- Close one record at the time it was last known to be alive, not at the time it was found closed.
+endAgentSessionAt:
+UPDATE agent_sessions SET state = 'ended', ended_at = :endedAt, state_since = :endedAt WHERE id = :id;
 
 setAgentSessionSearchText:
 UPDATE agent_sessions SET search_text = ? WHERE id = ?;

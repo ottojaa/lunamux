@@ -45,12 +45,14 @@ class AgentsOverviewBackingViewModelTest {
     private fun session(
         id: String, state: String, since: Long = 1_000, title: String? = null, agent: String = "claude",
         leaf: String? = "leaf-$id", endedAt: Long? = null, branch: String? = null, cwd: String? = "/work/proj",
-        nowLine: String? = null, question: String? = null,
+        nowLine: String? = null, question: String? = null, firstPrompt: String? = null, lastSaid: String? = null,
+        cwdHome: Boolean = false, repo: String? = "proj", lastActivityAt: Long? = null,
     ) = AgentSessionSummary(
         id = id, agent = agent, state = state, stateSince = since, title = title, links = emptyList(),
-        repo = "proj", branch = branch, cwd = cwd, nowLine = nowLine, question = question, leafId = leaf, endedAt = endedAt,
+        repo = repo, branch = branch, cwd = cwd, nowLine = nowLine, question = question, leafId = leaf, endedAt = endedAt,
+        firstPrompt = firstPrompt, lastSaid = lastSaid, cwdHome = cwdHome,
         // A working session is moving (not quiet) unless a test says otherwise, as the chip counts only those.
-        lastActivityAt = if (state == "working") now - 1_000 else null,
+        lastActivityAt = lastActivityAt ?: if (state == "working") now - 1_000 else null,
     )
 
     private fun leaf(id: String, custom: String? = null) =
@@ -128,20 +130,133 @@ class AgentsOverviewBackingViewModelTest {
     }
 
     @Test
-    fun titleIsTheSessionTitleThenBranchThenFolder() {
+    fun titleIsTheSessionTitleElseTheFirstWordsOfItsPromptNeverWhereItRan() {
         layout(leaf("leaf-a", custom = "Pane name"), leaf("leaf-c"), leaf("leaf-d"))
         windowState.updateAgentSessions(
             listOf(
                 session("a", "working", title = "Server title"),
-                session("c", "working", branch = "feature/ABC-12-x"),
+                session("c", "working", branch = "feature/ABC-12-x", firstPrompt = "Why does the nightly backup email never arrive?"),
                 session("d", "working"),
             ),
             true,
         )
         val titles = vm.state.now.associate { it.id to it.title }
         assertEquals("Server title", titles["a"], "the server already folds the pane's name into the title")
-        assertEquals("feature/ABC-12-x", titles["c"])
-        assertEquals("proj", titles["d"])
+        assertEquals("Why does the nightly backup email never arrive?", titles["c"])
+        assertEquals("Claude session", titles["d"], "no branch, folder or repository name stands in for a title")
+    }
+
+    @Test
+    fun aTitleThatOnlySaysWhereTheSessionRanIsReplacedByItsPrompt() {
+        fun title(title: String?, branch: String? = null, home: Boolean = false, repo: String? = "proj", cwd: String = "/work/proj"): String {
+            windowState.updateAgentSessions(
+                listOf(session("x", "working", title = title, branch = branch, cwdHome = home, repo = repo, cwd = cwd, firstPrompt = "**Fix** the `login` bug")),
+                true,
+            )
+            return vm.state.now.single().title
+        }
+        assertEquals("Fix the login bug", title("~", home = true, repo = null, cwd = "/Users/me"))
+        assertEquals("Fix the login bug", title("HEAD"))
+        assertEquals("Fix the login bug", title("aov-21-impl", branch = "aov-21-impl"))
+        assertEquals("Fix the login bug", title("proj"))
+        assertEquals("Fix the login bug", title(null, branch = "feature/x"))
+        assertEquals("Login rewrite", title("Login rewrite"))
+    }
+
+    @Test
+    fun theSameTitleRuleHoldsInASearchResult() = runNow {
+        val ended = session("a", "ended", title = "HEAD", endedAt = 10, firstPrompt = "Plan the release")
+        windowState.updateAgentSessions(listOf(ended), false)
+        vm.open()
+        vm.setQuery("release")
+        answer("release", AgentSessionMatch(ended, "prompt", "Plan the release", 9, 7))
+        assertEquals("Plan the release", vm.state.rows.single().title)
+    }
+
+    @Test
+    fun aPreviewIsPlainTextAndNeverAFence() {
+        windowState.updateAgentSessions(
+            listOf(
+                session("md", "ended", endedAt = 10, lastSaid = "**4. Tell me how it went,** then decide"),
+                session("fence", "ended", endedAt = 20, lastSaid = "```", firstPrompt = "## Fix `the` login"),
+                session("head", "ended", endedAt = 30, lastSaid = "- run `gradle test` now"),
+            ),
+            false,
+        )
+        val status = vm.state.rows.associate { it.id to it.status }
+        assertEquals("4. Tell me how it went, then decide", status["md"])
+        assertEquals("❯ Fix the login", status["fence"], "a bare fence says nothing, so the first prompt shows")
+        assertEquals("run gradle test now", status["head"])
+    }
+
+    @Test
+    fun aRowNeverReadsNowUnderAHeadingThatSaysDays() {
+        val hour = 60L * 60 * 1000
+        val day = 24 * hour
+        val clockNow = 100 * day
+        val vmAtDay100 = AgentsOverviewBackingViewModel(windowState, clock = { clockNow }) { sent += it }
+        // "stale" entered its state a minute ago but its last sign of life was two days ago (the
+        // state time was refreshed without the session doing anything); "fresh" is inside the idle
+        // grace; "justDone" ended a minute ago and gets the same grace; "done" ended three hours
+        // ago. The heading a row sits under and the age it shows are read from the same moment.
+        windowState.updateAgentSessions(
+            listOf(
+                session("stale", "idle", since = clockNow - 60_000, lastActivityAt = clockNow - 2 * day),
+                session("fresh", "idle", since = clockNow - 60_000, lastActivityAt = clockNow - 30_000),
+                session("done", "ended", endedAt = clockNow - 3 * hour, since = clockNow - 3 * hour),
+                session("justDone", "ended", endedAt = clockNow - 60_000, since = clockNow - 60_000),
+            ),
+            true,
+        )
+        val s = vmAtDay100.state
+        assertEquals(setOf("fresh", "justDone"), s.now.map { it.id }.toSet(), "a session that ended a minute ago is not under a days heading")
+        assertEquals(listOf("done", "stale"), s.recent.map { it.id })
+        assertEquals(clockNow - 3 * hour, s.recent.first { it.id == "done" }.sinceMillis)
+        assertEquals(clockNow - 2 * day, s.recent.first { it.id == "stale" }.sinceMillis, "its age is when it was last active, not a minute")
+        s.recent.forEach { assertTrue(clockNow - it.sinceMillis >= hour, "${it.id} is under a days heading but reads as a few minutes old") }
+    }
+
+    @Test
+    fun aSessionHasTheSameAgeWhetherBrowsedOrFoundBySearch() {
+        val day = 24L * 60 * 60 * 1000
+        val clockNow = 100 * day
+        val vmAtDay100 = AgentsOverviewBackingViewModel(windowState, clock = { clockNow }) { sent += it }
+        val stale = session("stale", "idle", since = clockNow - 60_000, lastActivityAt = clockNow - 2 * day)
+        windowState.updateAgentSessions(listOf(stale), true)
+        val browsed = vmAtDay100.state.recent.single().sinceMillis
+        vmAtDay100.setQuery("needle")
+        answer("needle", AgentSessionMatch(stale, "prompt", "x needle", 2, 6, null))
+        assertEquals(clockNow - 2 * day, browsed)
+        assertEquals(browsed, vmAtDay100.state.rows.single().sinceMillis, "search shows the age the list shows")
+    }
+
+    @Test
+    fun theFooterNamesEachKeyOnceAndEachActionWithOneWord() {
+        val all = AgentsOverviewBackingViewModel.Footer.entries.flatMap { f ->
+            listOf(true, false).flatMap { AgentsOverviewBackingViewModel.footerHints(f, it).map { h -> f to h } }
+        }
+        AgentsOverviewBackingViewModel.Footer.entries.forEach { f ->
+            val hints = AgentsOverviewBackingViewModel.footerHints(f, backToTask = true)
+            assertEquals(hints.map { it.word }.distinct(), hints.map { it.word }, "$f says one thing twice")
+        }
+        assertEquals(listOf("→ expand", "↑↓ move", "esc close"), AgentsOverviewBackingViewModel.footerHints(AgentsOverviewBackingViewModel.Footer.TASK_COLLAPSED, false).map { "${it.key} ${it.word}" })
+        assertEquals(listOf("← collapse", "↑↓ move", "esc close"), AgentsOverviewBackingViewModel.footerHints(AgentsOverviewBackingViewModel.Footer.TASK_EXPANDED, false).map { "${it.key} ${it.word}" })
+        assertTrue(all.none { it.second.word == "space" || it.second.key == "space" })
+        assertEquals(listOf("←", "↑↓", "esc"), AgentsOverviewBackingViewModel.footerHints(AgentsOverviewBackingViewModel.Footer.RUN_ATTACH, true).map { it.key })
+        // "open" is only a task header's own action, so a row with no pane says there is nothing to jump to.
+        assertTrue(all.none { it.second.word.contains("to open") })
+    }
+
+    @Test
+    fun theSameSessionGetsTheSameWordWhetherBrowsedOrFoundBySearch() = runNow {
+        val closed = session("a", "ended", title = "Plan", endedAt = 10)
+        windowState.updateAgentSessions(listOf(closed), false)
+        val browsed = vm.state.rows.single().actionLabel
+        vm.open()
+        vm.setQuery("plan")
+        answer("plan", AgentSessionMatch(closed, "title", null, 0, 4))
+        assertEquals(browsed, vm.state.rows.single().actionLabel)
+        assertEquals("resume", browsed)
     }
 
     @Test

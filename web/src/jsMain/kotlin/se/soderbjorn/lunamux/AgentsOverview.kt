@@ -441,25 +441,24 @@ private fun renderFooter(state: AgentsOverviewBackingViewModel.State) {
 }
 
 /**
- * Choose the footer's entries from the selection: only keys that do something on that row, with
- * "← back to the task" added for a session inside a task panel, and "↑↓ move" and "esc close" always last.
+ * Choose the footer's entries from the selection: the view model's key hints for it, drawn with
+ * the classes that let "move" and "back" give way when the panel narrows.
  *
  * @param state the view model's current state.
  * @return the entries, in the order they are drawn.
  */
 private fun footerSegments(state: AgentsOverviewBackingViewModel.State): List<FooterSegment> {
     val row = state.selectedRow
-    val move = FooterSegment("↑↓", "move", "ao-seg-move")
-    val esc = FooterSegment("esc", "close")
-    val back = FooterSegment("←", "back to the task", "ao-seg-back").takeIf { row?.kind == Kind.SESSION && inPanel(row, state) }
-    return when (state.footer) {
-        Footer.LIVE -> listOfNotNull(FooterSegment("→", "peek"), FooterSegment("⌘⌫", "close session"), back, move, esc)
-        Footer.CLOSED -> listOfNotNull(FooterSegment("→", "peek at its saved screen"), back, move, esc)
-        Footer.TASK_COLLAPSED -> listOf(FooterSegment("→", "expand"), FooterSegment("space", "expand"), move, esc)
-        Footer.TASK_EXPANDED -> listOf(FooterSegment("←", "collapse"), FooterSegment("space", "collapse"), move, esc)
-        Footer.RUN_ATTACH -> listOfNotNull(back, move, esc)
-        Footer.NO_SESSION -> listOfNotNull(FooterSegment("", "nothing to open: this session is not in a Lunamux pane"), back, move, esc)
-        Footer.NONE -> listOf(move, esc)
+    val backToTask = row?.kind == Kind.SESSION && inPanel(row, state)
+    return AgentsOverviewBackingViewModel.footerHints(state.footer, backToTask).map {
+        FooterSegment(
+            it.key, it.word,
+            when (it.role) {
+                AgentsOverviewBackingViewModel.HintRole.MOVE -> "ao-seg-move"
+                AgentsOverviewBackingViewModel.HintRole.BACK -> "ao-seg-back"
+                AgentsOverviewBackingViewModel.HintRole.OTHER -> ""
+            },
+        )
     }
 }
 
@@ -526,7 +525,7 @@ private fun stateGlyph(row: Row, task: AgentsOverviewBackingViewModel.Task?, now
 /**
  * The status cell of a session: a prefix when the work has gone quiet or its file stale,
  * the file's label, then the line; an error replaces all of it and is never dimmed. A finished
- * session also carries its pull request inline, which only shows once the "where" column is dropped.
+ * task member also carries its pull request after the status, so the "where" column keeps one meaning.
  *
  * @param row the row.
  * @param now the current epoch millis.
@@ -548,8 +547,8 @@ private fun statusCell(row: Row, now: Long): HTMLElement {
         if (row.status.isNotEmpty()) cell.appendChild(span("ao-n-faint", " · "))
     }
     cell.appendChild(document.createTextNode(row.status))
-    val pr = row.where?.takeIf { row.glyph == Glyph.DONE && it.startsWith("#") }
-    if (pr != null) cell.appendChild(span("ao-pr-inline", " · $pr"))
+    // The pull request is detail text after the status; the "where" column always names a place.
+    row.pullRequest?.let { cell.appendChild(span("ao-pr-inline", " · $it")) }
     return cell
 }
 
@@ -741,7 +740,8 @@ private fun buildConfirm(confirm: AgentsOverviewBackingViewModel.Confirm): HTMLE
 /**
  * Compact age for a row: `now`, `5m`, `3h` or `2d`.
  *
- * @param sinceMillis epoch millis the row entered its state.
+ * @param sinceMillis epoch millis the age counts from: when the row entered its state, an idle or
+ *   ended row's last sign of life, or the newest activity a task header summarises.
  * @return the age text shown at the row's right.
  */
 private fun formatAge(sinceMillis: Long): String {
