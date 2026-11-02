@@ -137,7 +137,7 @@ class AgentSessionTrackerTest {
         t.onHook(p, event("Notification", "a-1", "message" to "Claude needs your permission to use Bash"))
         row = t.summaries.value.single()
         assertEquals("needs_you", row.state)
-        assertEquals("Claude needs your permission to use Bash", row.question)
+        assertEquals("Allow Bash ./gradlew test?", row.question, "a permission prompt names the command, not the hook's generic text")
         assertNull(row.nowLine)
 
         t.onHook(p, event("PostToolUse", "a-1"))
@@ -207,6 +207,54 @@ class AgentSessionTrackerTest {
         val row = t.summaries.value.single()
         assertEquals("needs_you", row.state)
         assertEquals("Claude needs your permission to use Bash", row.question)
+    }
+
+    @Test
+    fun `a question put through AskUserQuestion shows the question itself, not the hook's generic text`() {
+        val t = tracker()
+        val p = pane()
+        t.onHook(p, toolEvent("AskUserQuestion", """{"questions":[{"question":"Aurora or Borealis?","header":"Name","options":[]}]}"""))
+        t.onHook(p, event("Notification", "a-1", "message" to "Claude needs your permission"))
+        val row = t.summaries.value.single()
+        assertEquals("needs_you", row.state)
+        assertEquals("Aurora or Borealis?", row.question)
+    }
+
+    @Test
+    fun `a prompt after the last tool call finished does not name that tool call`() {
+        val t = tracker()
+        val p = pane()
+        t.onHook(p, toolEvent("Bash", """{"command":"ls"}"""))
+        t.onHook(p, event("PostToolUse", "a-1"))
+        t.onHook(p, event("Notification", "a-1", "message" to "Claude needs your permission"))
+        assertEquals("Claude needs your permission", t.summaries.value.single().question)
+    }
+
+    @Test
+    fun `a notification of another type than a permission prompt keeps the hook's text while a tool runs`() {
+        val t = tracker()
+        val p = pane()
+        t.onHook(p, toolEvent("mcp__srv__tool", """{"query":"x"}"""))
+        t.onHook(p, event("Notification", "a-1", "message" to "srv needs some input", "notification_type" to "elicitation_dialog"))
+        assertEquals("srv needs some input", t.summaries.value.single().question)
+    }
+
+    @Test
+    fun `a permission prompt typed as such names the tool call`() {
+        val t = tracker()
+        val p = pane()
+        t.onHook(p, toolEvent("Bash", """{"command":"ls"}"""))
+        t.onHook(p, event("Notification", "a-1", "message" to "Claude needs your permission", "notification_type" to "permission_prompt"))
+        assertEquals("Allow Bash ls?", t.summaries.value.single().question)
+    }
+
+    @Test
+    fun `a prompt with no tool call pending keeps the hook's own text`() {
+        val t = tracker()
+        val p = pane()
+        t.onHook(p, event("Stop", "a-1", "last_assistant_message" to "Done."))
+        t.onHook(p, event("Notification", "a-1", "message" to "Claude needs your permission"))
+        assertEquals("Claude needs your permission", t.summaries.value.single().question)
     }
 
     @Test

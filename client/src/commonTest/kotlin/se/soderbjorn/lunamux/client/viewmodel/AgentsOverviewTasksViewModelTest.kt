@@ -1,6 +1,6 @@
 /**
  * Tests for the task part of [AgentsOverviewBackingViewModel]: where a task sits among the single
- * sessions (it stays in NOW until all its sessions have ended), when a task is an expansion panel
+ * sessions (it stays in NOW while it has open work, and goes to EARLIER once every session reads done or ended), when a task is an expansion panel
  * and when it is one plain row, what a collapsed and an expanded panel show and in which order,
  * the glyph, status and counts of each session, which session the header's ↵ goes to (and the
  * task's `open` action, and expanding when there is neither), a session Lunamux does not host and
@@ -113,13 +113,47 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aTaskStaysInNowWhileAnySessionHasNotEndedEvenWhenNothingIsRunning() {
+    fun aTaskStaysInNowWhileASessionHasOpenWorkEvenWhenNothingIsRunning() {
         show(
             listOf(task(members = listOf(member("a", "idle", label = "in review"), member("b", "ended")))),
             session("busy", "working", since = 1),
         )
         assertEquals(listOf("busy", "task:g1"), vm.state.now.map { it.id })
         assertTrue(vm.state.earlier.isEmpty())
+    }
+
+    @Test
+    fun aFileTaskWhoseSessionsAllReadDoneMovesToEarlierEvenThoughNoneEnded() {
+        show(
+            listOf(
+                task(id = "g1", members = listOf(member("a", "idle", label = "done"), member("b", "idle", label = "ready"))),
+                task(id = "g2", members = listOf(member("c", "idle", label = "done"), member("d", "ended"))),
+            ),
+            session("busy", "working", since = 1),
+        )
+        assertEquals(listOf("busy"), vm.state.now.map { it.id })
+        assertEquals(setOf("task:g1", "task:g2"), vm.state.earlier.map { it.id }.toSet())
+    }
+
+    @Test
+    fun aFileTaskWithADoneSessionStaysInNowWhileAnotherNeedsYouWorksOrIsStillOpenWork() {
+        show(
+            listOf(
+                task(id = "g1", members = listOf(member("a", "idle", label = "done"), member("b", "needs_you"))),
+                task(id = "g2", members = listOf(member("c", "idle", label = "done"), member("d", "working"))),
+                task(id = "g3", members = listOf(member("e", "idle", label = "done"), member("f", "idle", label = "in review"))),
+                task(id = "g4", members = listOf(member("g", "idle", label = "done"), member("h", "idle"))),
+            ),
+        )
+        assertEquals(setOf("task:g1", "task:g2", "task:g3", "task:g4"), vm.state.now.map { it.id }.filter { it.startsWith("task:") }.toSet())
+        assertTrue(vm.state.earlier.isEmpty())
+    }
+
+    @Test
+    fun aDoneOnlyFileTaskGoesToEarlierAtOnceWithoutTheGraceAHostedTaskGets() {
+        show(listOf(task(members = listOf(member("a", "idle", label = "done", since = now - 1_000), member("b", "idle", label = "done", since = now - 2_000)))))
+        assertTrue(vm.state.now.isEmpty())
+        assertEquals(listOf("task:g1"), vm.state.earlier.map { it.id })
     }
 
     @Test
@@ -321,6 +355,72 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
+    fun theChipCountsAsWorkingOnlyTheSessionsThatAreMovingAndTheClockAloneEndsThat() {
+        val min = 60_000L
+        // Window-wide stamps: hosted singles by their last activity, an unhosted member by its file's refresh time.
+        show(
+            listOf(task(id = "f", refreshedAtMillis = now - 25 * min, members = listOf(member("file-run", "working"), member("other", "idle")))),
+            session("live", "working", lastActivityAt = now - min),
+            session("quiet", "working", lastActivityAt = now - 6 * min),
+        )
+        // One moving; the quiet single and the stale file member are not counted.
+        assertEquals(1, vm.state.workingCount)
+        assertEquals("1 working", vm.state.chipRest)
+        now += 5 * min
+        vm.tick()
+        assertEquals(0, vm.state.workingCount)
+        assertEquals("agents idle", vm.state.chipRest)
+    }
+
+    @Test
+    fun aTaskLineCountsAQuietOrStaleSessionUnderThatWordAndNeverAsWorking() {
+        val min = 60_000L
+        layout("leaf-w1", "leaf-w2")
+        show(
+            listOf(task(refreshedAtMillis = now - 25 * min, members = listOf(
+                member("one", "working", recordId = "w1"),
+                member("two", "working", recordId = "w2"),
+                member("three", "working"),
+                member("four", "idle", label = "in review"),
+            ))),
+            session("w1", "working", lastActivityAt = now - min),
+            session("w2", "working", lastActivityAt = now - 6 * min),
+        )
+        val header = vm.state.tasks.getValue("g1")
+        assertEquals("1 working · 1 quiet · 1 stale · 1 in review", header.summary)
+        // The header's moving glyph still needs to know sessions are at work.
+        assertEquals(3, header.workingCount)
+        assertEquals(1, vm.state.workingCount)
+    }
+
+    @Test
+    fun aLoneSessionRightAfterATaskGetsTheGapAHeaderGetsAndASessionOfTheTaskDoesNot() {
+        val ended = now - 1_000
+        show(
+            listOf(
+                task(id = "g1", members = listOf(member("a", "idle", label = "done", since = ended), member("b", "idle", label = "done", since = ended))),
+                task(id = "g2", members = listOf(member("c", "idle", label = "done", since = ended - 10), member("d", "idle", label = "done", since = ended - 10))),
+            ),
+            session("lone1", "ended", since = ended - 20, endedAt = ended - 20),
+            session("lone2", "ended", since = ended - 30, endedAt = ended - 30),
+        )
+        val tasks = vm.state.tasks
+        fun gap(rows: List<AgentsOverviewBackingViewModel.Row>, i: Int) =
+            AgentsOverviewBackingViewModel.startsAfterTask(rows.getOrNull(i - 1), rows[i], tasks)
+        val collapsed = vm.state.recent
+        assertEquals(listOf("task:g1", "task:g2", "lone1", "lone2"), collapsed.map { it.id })
+        assertFalse(gap(collapsed, 0), "the first row of a band has no gap")
+        assertFalse(gap(collapsed, 1), "a header brings its own gap")
+        assertTrue(gap(collapsed, 2), "a lone session after a collapsed task is its own unit")
+        assertFalse(gap(collapsed, 3), "one lone session after another is not a task")
+        vm.toggleTask("g2")
+        val expanded = vm.state.recent
+        assertEquals(listOf("task:g1", "task:g2", "member:g2:#1", "member:g2:#2", "lone1", "lone2"), expanded.map { it.id })
+        assertFalse(gap(expanded, 3), "a session of the task directly under it has no gap")
+        assertTrue(gap(expanded, 4), "a lone session after an expanded task's last session")
+    }
+
+    @Test
     fun aTaskWithOneSessionIsThatSessionsPlainRowAndNotAPanel() {
         layout("leaf-r1")
         show(
@@ -374,7 +474,7 @@ class AgentsOverviewTasksViewModelTest {
         layout("leaf-a", "leaf-b")
         show(
             listOf(task(source = "agents", members = emptyList())),
-            session("a", "working", taskId = "g1", nowLine = "Edit a.kt"),
+            session("a", "working", taskId = "g1", nowLine = "Edit a.kt", lastActivityAt = now - 1_000),
             session("b", "needs_you", taskId = "g1", question = "Which branch?"),
             session("loner", "working", since = 99_999),
         )
@@ -472,7 +572,7 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aTaskFileKeepsItsTaskInNowWhileNothingIsRunningUntilEverySessionEnded() {
+    fun aTaskFileKeepsItsTaskInNowWhileNothingIsRunningAndWorkIsQueued() {
         show(listOf(task(members = listOf(member("a", "idle", label = "queued"), member("b", "idle", label = "queued")))))
         now += 10 * AgentsOverviewBackingViewModel.IDLE_GRACE_MS
         vm.tick()
@@ -1052,7 +1152,7 @@ class AgentsOverviewTasksViewModelTest {
         layout("leaf-w")
         show(
             listOf(task(members = listOf(member("hosted", "working", recordId = "w", line = "  "), member("finished", "ended")))),
-            session("w", "working", nowLine = "   ", firstPrompt = "Fix the thing"),
+            session("w", "working", nowLine = "   ", firstPrompt = "Fix the thing", lastActivityAt = now - 1_000),
             session("single", "working", nowLine = "  ", question = " "),
         )
         vm.toggleTask("g1")

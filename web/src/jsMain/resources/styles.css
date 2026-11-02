@@ -3676,8 +3676,8 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-stale > .ao-n:not(.ao-n-error) { opacity: 0.55; }
 
 /* A task with several sessions is an expansion panel: the whole header toggles, its action (jump, open) is the ↵. */
-.ao-head { margin-top: 8px; }
-.ao-sec + .ao-head { margin-top: 0; }
+.ao-head, .ao-gap { margin-top: 8px; }
+.ao-sec + .ao-head, .ao-sec + .ao-gap { margin-top: 0; }
 .ao-head .ao-t { font-weight: 700; }
 .ao-head .ao-x { color: var(--ao-muted); }
 .ao-head .ao-x:hover { color: var(--ao-text); text-decoration: underline; text-underline-offset: 3px; }

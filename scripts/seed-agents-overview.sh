@@ -26,9 +26,10 @@
 #
 #   NOW              "Access control" (◆ needs you, one working, one in review) and
 #                    "Nightly sync", whose file is 25 minutes old, so its worker reads "stale 25m",
-#                    and "Release train", a file task whose three sessions are all done but none
-#                    has ended: it stays in NOW, with nothing moving or waiting in it.
-#   LAST FEW DAYS    everything ended within 3 days, all listed, newest first: today's two
+#                    and "Billing cleanup", a file task whose two sessions are in review and queued:
+#                    nothing moves or waits on you, but work is left, so it stays in NOW.
+#   LAST FEW DAYS    everything finished within 3 days, all listed, newest first: "Release train",
+#                    a file task whose three sessions are all done but none has ended; today's two
 #                    sessions, "Rate limiter rewrite" and "Auth token refresh" (a session from
 #                    yesterday and one from 10 days ago: the task is as recent as its newest),
 #                    "Release 4.2" and the 2-day-old session.

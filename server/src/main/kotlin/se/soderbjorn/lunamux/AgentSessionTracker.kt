@@ -25,6 +25,7 @@ package se.soderbjorn.lunamux
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -116,6 +117,13 @@ class AgentSessionTracker(
 
     /** Panes whose screen still shows an agent we already ended; do not reopen until it clears. */
     private val awaitScreenClear = HashSet<String>()
+
+    /**
+     * Ids of open records whose last `PreToolUse` has not been followed by its `PostToolUse` yet.
+     * A prompt that arrives while one is in flight is about that tool call; one that arrives with
+     * none in flight is about something else, so the row must not name the stale last tool line.
+     */
+    private val toolInFlight = HashSet<String>()
 
     /** Ids of hook-fed `needs_you` records whose pane screen has been seen showing the prompt. */
     private val promptSeen = HashSet<String>()
@@ -276,12 +284,19 @@ class AgentSessionTracker(
         when (name) {
             "SessionStart" -> {}
             "UserPromptSubmit" -> {
+                toolInFlight.remove(rec.id)
                 set(WORKING, nowLine = null)
                 if (rec.firstPrompt == null) rec = rec.copy(firstPrompt = event.str("prompt")?.take(PROMPT_MAX))
                 if (rec.title == null) rec = rec.copy(title = cleanTitle(pane.programTitle))
             }
-            "PreToolUse" -> set(WORKING, nowLine = toolLine(event))
-            "PostToolUse" -> set(WORKING)
+            "PreToolUse" -> {
+                toolInFlight.add(rec.id)
+                set(WORKING, nowLine = toolLine(event))
+            }
+            "PostToolUse" -> {
+                toolInFlight.remove(rec.id)
+                set(WORKING)
+            }
             "Notification" -> {
                 // The idle reminder fires a minute after a turn ends and is not a request.
                 // It is recognised by its type, or by its text in case a version omits the type.
@@ -290,9 +305,12 @@ class AgentSessionTracker(
                 if (type == "idle_prompt" || type == "auth_success" ||
                     message?.contains("waiting for your input", ignoreCase = true) == true
                 ) return@synchronized
-                set(NEEDS_YOU, nowLine = null, question = message?.take(QUESTION_MAX))
+                // The hook text is generic ("Claude needs your permission"). The tool call the prompt
+                // is about arrived with the PreToolUse just before, so say what is being asked instead.
+                set(NEEDS_YOU, nowLine = null, question = pendingQuestionOf(rec.nowLine.takeIf { rec.id in toolInFlight }, message, type)?.take(QUESTION_MAX))
             }
             "Stop" -> {
+                toolInFlight.remove(rec.id)
                 val last = event.str("last_assistant_message")?.trim().orEmpty()
                 if (last.isNotEmpty()) rec = rec.copy(lastSaid = lastSaidOf(last))
                 val asked = bareQuestionOf(last)
@@ -518,6 +536,7 @@ class AgentSessionTracker(
 
     private fun end(rec: AgentSessionRecord, screen: String?) {
         lastActivity.remove(rec.id)
+        toolInFlight.remove(rec.id)
         val now = clock()
         val ended = rec.copy(
             state = ENDED,
@@ -709,7 +728,10 @@ internal fun cleanTitle(raw: String?): String? {
  * One line describing a tool call: the tool name and its main argument.
  *
  * Only the command, file path or pattern is read; the rest of `tool_input`
- * (which can hold a whole file) is never kept.
+ * (which can hold a whole file) is never kept. A question put to the person
+ * through `AskUserQuestion` is kept as `Asks: <question>` instead, so the row
+ * shows what is asked; like any line it is cut at [TOOL_LINE_MAX], which is
+ * ample for a row.
  *
  * @param event a PreToolUse hook payload.
  * @return for example `Bash ./gradlew test`, or null without a tool name.
@@ -717,10 +739,45 @@ internal fun cleanTitle(raw: String?): String? {
 internal fun toolLine(event: JsonObject): String? {
     val tool = event.str("tool_name") ?: return null
     val input = event["tool_input"] as? JsonObject
+    if (tool == ASK_TOOL) {
+        val asked = ((input?.get("questions") as? JsonArray)?.firstOrNull() as? JsonObject)?.str("question")
+        if (!asked.isNullOrBlank()) return (ASK_PREFIX + asked.trim()).take(TOOL_LINE_MAX)
+    }
     val arg = listOf("command", "file_path", "pattern", "path", "url", "query")
         .firstNotNullOfOrNull { input?.str(it) }
         ?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim()
     return (if (arg == null) tool else "$tool $arg").take(TOOL_LINE_MAX)
+}
+
+/** The tool Claude Code uses to put a question to the person, whose text [toolLine] keeps. */
+private const val ASK_TOOL = "AskUserQuestion"
+
+/** Marks a [toolLine] that holds a question put to the person rather than a command. */
+private const val ASK_PREFIX = "Asks: "
+
+/**
+ * What a `needs_you` row should say for a prompt Claude Code raised through a Notification hook.
+ *
+ * A question put to the person is shown as the question itself; a permission prompt as
+ * `Allow <tool line>?`, so the row names the command instead of the hook's generic text. Any other
+ * kind of notification (a tool asking for input, for example) keeps the hook's own message, since
+ * it is not a request to allow the tool.
+ *
+ * Called from the tracker's `Notification` hook handling.
+ *
+ * @param pending the tool line of the PreToolUse that preceded the prompt, or null.
+ * @param message the hook's own text, used when no tool call is pending or the prompt is not a
+ *   permission prompt.
+ * @param type the hook's `notification_type`, or null from a version that omits it (taken as a
+ *   permission prompt).
+ * @return the line to show, or null when there is neither.
+ * @see toolLine
+ */
+internal fun pendingQuestionOf(pending: String?, message: String?, type: String? = null): String? = when {
+    pending == null -> message
+    pending.startsWith(ASK_PREFIX) -> pending.removePrefix(ASK_PREFIX)
+    type == null || type == "permission_prompt" -> "Allow $pending?"
+    else -> message
 }
 
 private fun JsonObject.str(key: String): String? =

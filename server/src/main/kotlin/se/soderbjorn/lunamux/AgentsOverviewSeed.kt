@@ -164,7 +164,7 @@ object AgentsOverviewSeed {
 
     /**
      * Write the task files: one live task that needs the person and works, one whose members are all
-     * done but have not ended, one whose file has gone stale, and two whose members have all ended.
+     * done but have not ended, one with work still in review or queued, one whose file has gone stale, and two whose members have all ended.
      *
      * Called by [seed]. Each file is written under a dot-name and renamed into place, as a real
      * writer would.
@@ -214,14 +214,24 @@ object AgentsOverviewSeed {
             mtimeAgo = 0,
         )
         // Every member is done but none has ended, the way a programme holds finished pull
-        // requests for its merge rule. A file-declared task stays in NOW while a session has not
-        // ended, so this shows how that reads when nothing is moving or waiting.
+        // requests for its merge rule. Nothing in it moves or waits, so it belongs with the
+        // finished work in EARLIER, not in NOW.
         task(
             "seed-release-train", "Release train", "lunamux",
             listOf(
                 member("Tasks panel", "idle", HOUR, label = "done", links = listOf("#231")),
                 member("Search by task", "idle", 3 * HOUR, label = "done", links = listOf("#232")),
                 member("Seed script", "idle", 5 * HOUR, label = "done", links = listOf("#233")),
+            ),
+            mtimeAgo = 0,
+        )
+        // Open work that is neither waiting on the person nor running: one pull request in review,
+        // one queued. It stays in NOW, because it still has something left to do.
+        task(
+            "seed-billing-cleanup", "Billing cleanup", "billing",
+            listOf(
+                member("Refund flow", "idle", 2 * HOUR, label = "in review", links = listOf("#240")),
+                member("Receipt emails", "idle", 6 * HOUR, label = "queued"),
             ),
             mtimeAgo = 0,
         )
@@ -246,7 +256,7 @@ object AgentsOverviewSeed {
             ),
             mtimeAgo = 9 * DAY,
         )
-        return 5
+        return 6
     }
 
     /**
