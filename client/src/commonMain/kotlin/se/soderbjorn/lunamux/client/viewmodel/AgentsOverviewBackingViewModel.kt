@@ -1238,9 +1238,10 @@ class AgentsOverviewBackingViewModel(
             }
         }
         // Grouped by order and word, so a file label that happens to be called "quiet" never merges into the working group
-        // of that word; within the working order, "working" comes first, then "quiet", then "stale".
+        // of that word; within the working order, "working" comes first, then "quiet", then "stale", while other labels
+        // keep the order their members come in.
         val counted = buckets.filter { it.order > 0 }.groupBy { it.order to it.name }
-            .entries.sortedWith(compareBy({ (key, _) -> key.first }, { (key, _) -> if (key.second == "working") 0 else 1 }, { (key, _) -> key.second }))
+            .entries.sortedWith(compareBy({ (key, _) -> key.first }, { (key, _) -> if (key.second == "working") 0 else 1 }, { (key, _) -> if (key.first == 1) key.second else "" }))
         // In EARLIER a header says how many sessions it holds and how long ago it was last active.
         val inEarlier = u.ended || u.settled
         return Task(
