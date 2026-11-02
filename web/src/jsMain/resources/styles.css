@@ -3829,7 +3829,8 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-fold .ao-t, .ao-fold .ao-s-fold { color: var(--ao-dim); }
 .ao-fold .ao-n { color: var(--ao-recede); }
 .ao-dir { flex: none; margin-left: auto; color: var(--ao-recede); }
-.ao-foot > .ao-seg { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* The tag takes room from the footer, so the one segment with no key (the status line) is the one that gives way; key hints keep their words. */
+.ao-panel:is([data-dir="a"], [data-dir="b"], [data-dir="c"]) .ao-foot > .ao-seg[data-key=""] { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ao-card-item {
     display: grid;
     grid-template-columns: 3ch minmax(0, 1fr) auto;
