@@ -4,7 +4,9 @@
  *
  * It holds [AgentsOverviewSeed]: about twenty ended agent sessions that were last active today,
  * two, six, twelve and thirty days ago, some of them grouped into agent-made tasks, plus a few
- * task files whose members are live. It is run by the Gradle task `seedAgentsOverview` (through
+ * task files whose members are live. It also turns the scratch server's MCP endpoint on and adds a
+ * read+write MCP token ([MCP_TOKEN]), so `scripts/seed-agents-overview-live.sh` can open tabs and
+ * windows and a script can post hook events from panes. It is run by the Gradle task `seedAgentsOverview` (through
  * `scripts/seed-agents-overview.sh`) while the scratch server is stopped, and by a test.
  *
  * The seeder only ever writes to the paths it is given and refuses the folders a real
@@ -18,6 +20,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import se.soderbjorn.lunamux.auth.DeviceAuth
 import se.soderbjorn.lunamux.persistence.AgentSessionRecord
 import se.soderbjorn.lunamux.persistence.SettingsRepository
 import java.io.File
@@ -43,6 +46,15 @@ object AgentsOverviewSeed {
     private const val MINUTE = 60_000L
     private const val HOUR = 60 * MINUTE
     private const val DAY = 24 * HOUR
+
+    /**
+     * The read+write MCP token the seed adds to the scratch database. It is a fixed, well-known
+     * string, which is fine because the seed refuses every real installation's database; a server
+     * that reads it is a scratch server on the loopback.
+     *
+     * Used by `scripts/seed-agents-overview-live.sh` as the `X-Termtastic-Auth` header.
+     */
+    const val MCP_TOKEN = "aov-seed-mcp-token"
 
     /**
      * What a run wrote, for the caller to print and for the test to check.
@@ -132,6 +144,8 @@ object AgentsOverviewSeed {
             appSettingsPath = File(dbFile.absoluteFile.parentFile, "seed-ui-settings.json").path,
         )
         val workdir = dbFile.absoluteFile.parentFile.absolutePath
+        repo.setMcpEnabled(true)
+        DeviceAuth.addTrustedToken(repo, MCP_TOKEN, DeviceAuth.MCP_LABEL, DeviceAuth.MCP_SCOPE_READ_WRITE)
         for (t in tasks) {
             repo.saveAgentTask(SettingsRepository.AgentTaskRow(t.id, t.title, now - t.createdAgo, now - t.createdAgo))
         }
@@ -300,6 +314,7 @@ object AgentsOverviewSeed {
         try {
             val s = seed(File(args[0]), File(args[1]))
             println("Seeded ${s.sessions} sessions, ${s.tasks} tasks and ${s.files} task files into ${args[0]} and ${args[1]}")
+            println("MCP is on for the scratch server; token for the live script: $MCP_TOKEN")
         } catch (e: IllegalArgumentException) {
             System.err.println(e.message)
             exitProcess(1)

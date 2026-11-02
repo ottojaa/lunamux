@@ -8,6 +8,7 @@
 package se.soderbjorn.lunamux
 
 import kotlinx.coroutines.flow.MutableStateFlow
+import se.soderbjorn.lunamux.auth.DeviceAuth
 import se.soderbjorn.lunamux.persistence.SettingsRepository
 import java.io.File
 import kotlin.test.Test
@@ -51,6 +52,17 @@ class AgentsOverviewSeedTest {
         val hits = AgentSessionSearch.search(repo, null, "invoice", tasks)
         assertEquals(3, hits.size)
         assertTrue(hits.all { it.field == "task" && it.taskTitle == "Invoice export migration" })
+    }
+
+    @Test
+    fun `the seed turns mcp on with a read-write token so the live script can drive the scratch server`() {
+        AgentsOverviewSeed.seed(db, tasksDir, now)
+        val repo = repo()
+        assertTrue(repo.isMcpEnabled())
+        val client = DeviceAuth.ClientInfo(type = "Test", hostname = null, selfReportedIp = null, remoteAddress = "127.0.0.1")
+        assertEquals(DeviceAuth.MCP_SCOPE_READ_WRITE, DeviceAuth.authorizeMcp(AgentsOverviewSeed.MCP_TOKEN, client, repo))
+        AgentsOverviewSeed.seed(db, tasksDir, now + day)
+        assertEquals(1, DeviceAuth.listMcpTokens(repo).size, "seeding again does not add a second token")
     }
 
     @Test
