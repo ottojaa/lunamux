@@ -1345,8 +1345,8 @@ class AgentsOverviewBackingViewModel(
      * that work (most recent first), or, once expanded, every session in the order needs you,
      * working, in review, queued, other labels, paused, done; the file's order within a bucket.
      * A panel that is not in NOW (it is in EARLIER) is only its header while collapsed, even when
-     * some of its sessions work outside every open tab, and its header reads as idle: nothing in
-     * EARLIER is shown as moving.
+     * some of its sessions work outside every open tab, and that header reads as idle. Expanded,
+     * it lists every session with its own state; a lone session in a band keeps its own state too.
      */
     private fun taskRows(
         u: TaskUnit,

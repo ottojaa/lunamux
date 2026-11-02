@@ -512,6 +512,7 @@ class AgentsOverviewBackingViewModelTest {
         windowState.updateAgentSessions(listOf(session("in", "working"), session("out", "working", leaf = "gone")), true)
         assertEquals(listOf("in"), vm.state.now.map { it.id })
         assertEquals(listOf("out"), vm.state.recent.map { it.id })
+        assertEquals("working", vm.state.recent.single().state, "a lone session in a band keeps its real state")
         assertEquals(1, vm.state.workingCount)
     }
 
