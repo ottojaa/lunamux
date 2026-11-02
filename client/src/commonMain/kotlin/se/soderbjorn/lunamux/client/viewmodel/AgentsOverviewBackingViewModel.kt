@@ -24,8 +24,9 @@
  * "more" cut or the two-week window could hide it. Inside that, a task stays in NOW while it has
  * open work (a session needs the person or works, or a task file still has a session in review
  * or queued), ranked beside single sessions by its most urgent session. A task is one unit: all
- * its sessions stay with it while any one of them is in an open tab. What has finished, gone
- * quiet or is not in an open tab moves to EARLIER, by task: a task's
+ * its sessions stay with it while any one of them is in an open tab, and a session that needs the
+ * person keeps its whole task in NOW, even the sessions of it that run outside every open tab.
+ * What has finished, gone quiet or is not in an open tab moves to EARLIER, by task: a task's
  * recency is its newest session's activity, so one recent session keeps the whole task in the
  * first band. A task there is a collapsed panel that says how many sessions it holds and how
  * long ago it was last active. The header's ↵ goes to the session that most needs the person (a ◆ that
@@ -969,8 +970,9 @@ class AgentsOverviewBackingViewModel(
      *   the EARLIER band and the order inside it.
      * @property jumpRecordId the open session that most needs the person, or null.
      * @property inNow whether the task belongs in NOW: it is neither ended nor settled, and either
-     *   a session needs the person or one of its sessions is in an open tab. Every other task is in
-     *   EARLIER, even one a task file still lists work for.
+     *   a session needs the person (the whole task stays, wherever its other sessions run) or one of
+     *   its sessions is in an open tab. Every other task is in EARLIER, even one a task file still
+     *   lists work for.
      */
     private class TaskUnit(
         val task: AgentTask,
@@ -1108,7 +1110,8 @@ class AgentsOverviewBackingViewModel(
         // settleResume then resets the inputs so it stays closed.
         val resumed = ui.resumingId != null && config?.effectiveActiveTabId != ui.resumeFromTab
         val taskNeeds = units.sumOf { u -> u.runs.count { it.member.state == NEEDS_YOU } }
-        // The chip counts what NOW shows: a working session outside every open tab is not counted.
+        // The chip counts what NOW shows: a task that is not in NOW adds nothing, so a working session
+        // outside every open tab is counted only as a member of a task that a question keeps in NOW.
         val taskWorking = units.filter { it.inNow }.sumOf { u -> u.runs.count { runMoving(it, u.task.refreshedAtMillis, nowMillis) } }
         return State(
             open = ui.open && !resumed,

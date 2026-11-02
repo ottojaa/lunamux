@@ -48,9 +48,10 @@ idle, **‖** paused, **✓** done.
   open tab, is in EARLIER with the rest of what is not happening on screen, however busy it is.
   The one exception is a session that needs the person (a ◆): it stays in NOW wherever it runs,
   because a question must not wait where the **+ N more** cut or the fourteen-day window can hide
-  it. The chip counts what NOW shows, so a working session outside every open tab is not counted
-  as working. A task is one unit: while one of its sessions is in an open tab, all its sessions
-  stay with it in NOW, and when none is, the task goes to EARLIER.
+  it. A task is one unit: while one of its sessions is in an open tab, all its sessions stay with
+  it in NOW, and a session that needs the person keeps its whole task there, the task's other
+  sessions too, wherever they run. When neither holds, the task goes to EARLIER. The chip counts
+  what NOW shows, so a working session of a task that is in EARLIER is not counted as working.
 - **Inside NOW, a task stays while it has work.** A task stays in NOW while a session needs the
   person or works. A task that a task file declares also stays there while it has open work, such
   as a session in review or queued, even when nothing is running at the moment, so it does not
