@@ -4,7 +4,10 @@
  *
  * It holds [AgentsOverviewSeed]: about twenty ended agent sessions that were last active today,
  * two, six, twelve and thirty days ago, some of them grouped into agent-made tasks, plus a few
- * task files whose members are live. It is run by the Gradle task `seedAgentsOverview` (through
+ * task files whose members are live. It also seeds the awkward rows a real installation produces:
+ * sessions that say nothing about what the work is (a home folder, a branch named after a run, a
+ * detached HEAD), programme manager episodes, previews written in markdown, a bare code fence,
+ * and sessions a server restart ends. It is run by the Gradle task `seedAgentsOverview` (through
  * `scripts/seed-agents-overview.sh`) while the scratch server is stopped, and by a test.
  *
  * The seeder only ever writes to the paths it is given and refuses the folders a real
@@ -31,10 +34,10 @@ import kotlin.system.exitProcess
  * tasks, `seed-*.json` for files), so running it again replaces its own records instead of
  * adding to them, and it leaves whatever else is in the database alone.
  *
- * Every session is stored as `ended` with an explicit end time. A server ends sessions that
- * are still open when it starts, which would otherwise give them all the start time, and the
- * live cases come from the task files instead. Sessions are written with source `hooks`, the
- * one the overview lists under EARLIER.
+ * Every session but two is stored as `ended` with an explicit end time, and the live cases come
+ * from the task files. The two exceptions are left open on purpose, with a state that is days
+ * old: a server ends the sessions still open when it starts, and that restart is the case they
+ * reproduce. Sessions are written with source `hooks`, the one the overview lists under EARLIER.
  *
  * @see SettingsRepository.saveAgentSession
  * @see SettingsRepository.saveAgentTask
@@ -62,6 +65,33 @@ object AgentsOverviewSeed {
         val repo: String,
         val branch: String,
         val endedAgo: Long,
+    )
+
+    /**
+     * One seeded session with the awkward fields spelled out, for the cases the overview has to
+     * read correctly whatever the record holds.
+     *
+     * @property id the record id.
+     * @property title the stored title, null when nothing named the work.
+     * @property repo the repository folder name, null outside a repository.
+     * @property branch the branch, null when none was recorded or HEAD was detached.
+     * @property inHome true to give the session the user's home folder as its working folder.
+     * @property prompt what was first asked, possibly several lines; null for none.
+     * @property lastSaid the stored preview of the last reply, null for none.
+     * @property ago how long before the seed time it ended, or for an open record how long it has
+     *   been in [state].
+     * @property state `ended`, or the open state a restart will end.
+     */
+    private class Case(
+        val id: String,
+        val title: String?,
+        val repo: String?,
+        val branch: String?,
+        val inHome: Boolean = false,
+        val prompt: String?,
+        val lastSaid: String?,
+        val ago: Long,
+        val state: String = "ended",
     )
 
     /** An agent-made task: its id, its title, and the age of its oldest session. */
@@ -107,6 +137,41 @@ object AgentsOverviewSeed {
         Seeded(20, "seed-task-token", "Refresh endpoint", "Add the refresh endpoint", "gateway", "feat/refresh", 1 * DAY + 3 * HOUR),
         Seeded(21, "seed-task-token", "Refresh docs", "Describe the refresh flow for the docs", "gateway", "docs/refresh", 10 * DAY),
     )
+
+    /** The first line a programme's manager episode starts with. */
+    private const val EPISODE_FIRST_LINE =
+        "First claim the programme again (another session may hold it): ~/.claude/skills/feature/fl " +
+            "~/.claude/orchestrate/example-programme claim --reason \"manager episode\""
+
+    /** The rest of a manager episode's first prompt. */
+    private const val EPISODE_REST = "\n\nNeeds your judgement: two pull requests wait for the merge rule."
+
+    /**
+     * The sessions that name their work badly, belong to the programme's machinery, or carry
+     * markdown in a preview.
+     *
+     * Each one is a case the overview must handle: the home folder, a branch named after a run,
+     * a stored title that is a run id or a folder name, a detached HEAD, ten manager episodes (one
+     * started by a slash command), a preview in bold, a preview that is a bare code fence, and
+     * two sessions still open whose state is days old.
+     */
+    private val cases = listOf(
+        Case("seed-home", null, null, null, inHome = true, prompt = "Why did the nightly backup email never arrive?", lastSaid = "The mail relay rejected it; I resent it.", ago = 3 * HOUR),
+        Case("seed-branch-only", null, "lunamux-agent-overview", "aov-21-impl", prompt = "Add the task rows to the overview and keep their order stable", lastSaid = "Done; the rows keep their order.", ago = 5 * HOUR),
+        Case("seed-run-id-title", "aov-11-impl", "lunamux", "aov-11-impl", prompt = "Fix the chip count when two sessions share a pane", lastSaid = "The count now ignores a session that has ended.", ago = 20 * HOUR),
+        Case("seed-folder-title", "lunamux-agent-overview", "lunamux-agent-overview", "feat/layouts", prompt = "Compare the two layout directions and list what each trades off", lastSaid = "Direction B trades width for a clearer first column.", ago = 1 * DAY),
+        Case("seed-markdown", "Owner test follow-up", "lunamux", "main", prompt = "**Plan:** read the owner's notes and `fix` the data first", lastSaid = "**4. Tell me how it went,** then decide whether the panel stays", ago = 4 * HOUR),
+        Case("seed-bare-fence", "Show the migration", "billing", "feat/add-column", prompt = "Show me the migration that adds the column", lastSaid = "```", ago = 6 * HOUR),
+        Case("seed-open-idle", "Trace the slow login", "gateway", "fix/slow-login", prompt = "Why is the login call slow on Mondays?", lastSaid = "A missing index on sessions.user_id; I added it.", ago = 2 * DAY, state = "idle"),
+        Case("seed-open-working", "Rebuild the search index", "billing", "chore/search-index", prompt = "Rebuild the search index with the new analyser", lastSaid = null, ago = 5 * HOUR, state = "working"),
+    ) + (1..10).map { n ->
+        val ago = listOf(4 * MINUTE, 40 * MINUTE, 2 * HOUR, 5 * HOUR, 9 * HOUR, 1 * DAY, 2 * DAY, 3 * DAY + 2 * HOUR, 5 * DAY, 8 * DAY)[n - 1]
+        Case(
+            "seed-episode-%02d".format(n), null, "orchestrate", "HEAD",
+            prompt = if (n == 7) "/orchestrate episode ~/.claude/orchestrate/example-programme\n\nNeeds your judgement: one ticket is blocked." else EPISODE_FIRST_LINE + EPISODE_REST,
+            lastSaid = "Recorded the decision and went back to waiting.", ago = ago,
+        )
+    }
 
     /**
      * Write the seed into [dbFile] and [tasksDir].
@@ -158,8 +223,32 @@ object AgentsOverviewSeed {
                 ),
             )
         }
+        val home = System.getProperty("user.home")
+        for (c in cases) {
+            val at = now - c.ago
+            val open = c.state != "ended"
+            repo.saveAgentSession(
+                AgentSessionRecord(
+                    id = c.id,
+                    agent = "claude",
+                    agentSessionId = "5eed0001-0000-4000-8000-%012d".format(c.id.hashCode().toLong() and 0xffffffffL),
+                    source = "hooks",
+                    cwd = if (c.inHome) home else workdir,
+                    repo = c.repo,
+                    branch = c.branch,
+                    title = c.title,
+                    firstPrompt = c.prompt,
+                    state = c.state,
+                    stateSince = at,
+                    createdAt = at - 40 * MINUTE,
+                    endedAt = if (open) null else at,
+                    repoRoot = workdir,
+                    lastSaid = c.lastSaid,
+                ),
+            )
+        }
         val files = writeTaskFiles(tasksDir, workdir, now)
-        return Summary(sessions.size, tasks.size, files)
+        return Summary(sessions.size + cases.size, tasks.size, files)
     }
 
     /**
