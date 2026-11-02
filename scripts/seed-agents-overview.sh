@@ -4,8 +4,8 @@
 #
 #   scripts/seed-agents-overview.sh <db file> <tasks folder>
 #
-# Writes 21 ended agent sessions last active today, 1, 2, 6, 12 and 30 days ago, five
-# agent-made tasks, six task files, and 8 sessions that are awkward to name or to read (listed
+# Writes 44 ended agent sessions last active today, 1, 2, 6, 12 and 30 days ago, six
+# agent-made tasks, seven task files, and 10 sessions that are awkward to name or to read (listed
 # below). Run it again to refresh the ages (it replaces its own records and touches nothing else).
 # The ages are counted from the moment it runs, so seed again on the day you look. Seed while the
 # scratch server is STOPPED: the server reads its sessions and tasks once when it starts, and it
@@ -46,7 +46,12 @@
 #   A restart        "Trace the slow login" (open, idle for 2 days) and "Rebuild the search index"
 #                    (open, working for 5 hours) are ended by the server when it starts. They are
 #                    aged from when they last did anything (2d and 5h), not from the restart.
-#   Search           type "invoice": three sessions of "Invoice export migration", 30 days old,
+#   The overview     "Lunamux: agents overview": one pull request in review and eight done ones, one with a
+#   task             title longer than its column. Expand it (→) to see the eight children.
+#   Just ended       "Check the certificate expiry" ended 4 minutes ago and is still under NOW.
+#   Long title       "Why does the nightly export job stall after the second retry when the queue is empty ..."
+#   Search           type "overview": 20+ hits found by title, first prompt, branch and task title, most
+#                    of them older than two weeks. Type "invoice": three sessions of "Invoice export migration", 30 days old,
 #                    found only through their task's title ("in task Invoice export migration").
 #                    "token" also matches by task; "limiter" matches by title first.
 #

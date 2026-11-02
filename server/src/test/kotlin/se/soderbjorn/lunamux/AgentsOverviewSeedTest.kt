@@ -31,15 +31,15 @@ class AgentsOverviewSeedTest {
     @Test
     fun `the seed holds about twenty ended sessions spread over the ages the overview is read at`() {
         val summary = AgentsOverviewSeed.seed(db, tasksDir, now)
-        assertEquals(29, summary.sessions)
-        assertEquals(6, tasksDir.listFiles { f -> f.name.endsWith(".json") }!!.size)
+        assertEquals(54, summary.sessions)
+        assertEquals(7, tasksDir.listFiles { f -> f.name.endsWith(".json") }!!.size)
 
         val repo = repo()
         val kept = repo.loadRecentEndedAgentSessions(now - 14 * day, 300)
         assertTrue(kept.all { it.state == "ended" && it.endedAt != null && it.source == "hooks" })
         val ages = kept.map { (now - it.endedAt!!) / day }.toSet()
         assertTrue(0L in ages && 2L in ages && 6L in ages && 12L in ages, "ages today, 2, 6 and 12 days: $ages")
-        assertEquals(23, kept.size, "the sessions of 30 days or more are older than the window")
+        assertEquals(29, kept.size, "the sessions of 30 days or more are older than the window")
         assertTrue(repo.loadRecentEndedAgentSessions(0, 300).any { (now - it.endedAt!!) >= 30 * day })
     }
 
@@ -80,11 +80,33 @@ class AgentsOverviewSeedTest {
     }
 
     @Test
+    fun `a search for overview finds more than twenty sessions by title, prompt, branch and task`() {
+        AgentsOverviewSeed.seed(db, tasksDir, now)
+        val repo = repo()
+        val tasks = TaskIndex(repo, AgentSessionTracker(repo), MutableStateFlow(emptyList()), { null }, { now })
+        val hits = AgentSessionSearch.search(repo, null, "overview", tasks)
+        assertTrue(hits.size >= 20, "hits: ${hits.size}")
+        val fields = hits.map { it.field }.toSet()
+        assertTrue(fields.containsAll(listOf("title", "prompt", "branch", "task")), "fields: $fields")
+    }
+
+    @Test
+    fun `the seed holds a task with eight finished children, a title longer than its column and a just-ended session`() {
+        AgentsOverviewSeed.seed(db, tasksDir, now)
+        val rebuild = File(tasksDir, "seed-overview-rebuild.json").readText()
+        assertEquals(8, Regex("\"label\":\"done\"").findAll(rebuild).count())
+        assertTrue(Regex("\"label\":\"in review\"").containsMatchIn(rebuild))
+        val repo = repo()
+        assertTrue(repo.findAgentSessionById("seed-long-title")!!.title!!.length > 60)
+        assertEquals(4 * 60_000L, now - repo.findAgentSessionById("seed-just-ended")!!.endedAt!!)
+    }
+
+    @Test
     fun `seeding again replaces the records instead of adding to them`() {
         AgentsOverviewSeed.seed(db, tasksDir, now)
         AgentsOverviewSeed.seed(db, tasksDir, now + day)
-        assertEquals(27, repo().loadRecentEndedAgentSessions(0, 300).size)
-        assertEquals(5, repo().loadAgentTasks().size)
+        assertEquals(52, repo().loadRecentEndedAgentSessions(0, 300).size)
+        assertEquals(6, repo().loadAgentTasks().size)
     }
 
     @Test
