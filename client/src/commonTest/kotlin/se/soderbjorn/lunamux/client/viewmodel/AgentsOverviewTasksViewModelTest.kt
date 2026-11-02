@@ -487,6 +487,20 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
+    fun aManagerEpisodeATaskAlreadyHoldsStaysUnderThatTaskWhileAnUntiedOneIsHidden() {
+        layout("leaf-a", "leaf-b", "leaf-c")
+        val episode = "First claim the programme again (another session may hold it): fl p claim"
+        show(
+            listOf(task(source = "agents", members = emptyList())),
+            session("work", "working", taskId = "g1", lastActivityAt = now - 1_000),
+            session("held", "working", taskId = "g1", firstPrompt = episode, lastActivityAt = now - 1_000),
+            session("untied", "working", firstPrompt = episode, lastActivityAt = now - 1_000),
+        )
+        assertEquals(setOf("task:g1", "work", "held"), vm.state.rows.filter { it.taskId == "g1" || it.id == "task:g1" }.map { it.id }.toSet(), "an episode a task already holds stays in that task")
+        assertNull(vm.state.rows.firstOrNull { it.id == "untied" }, "an episode no task holds is not the owner's session")
+    }
+
+    @Test
     fun aSessionInAPanelKeepsItsRepoOrFolderAndAPullRequestIsDetailTextNeverTheColumn() {
         layout("leaf-a", "leaf-b", "leaf-c")
         show(
