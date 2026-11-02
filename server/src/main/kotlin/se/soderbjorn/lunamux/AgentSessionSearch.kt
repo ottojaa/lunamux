@@ -52,10 +52,9 @@ object AgentSessionSearch {
      * prompt, then branch or links, then transcript or screen; within a tier open sessions come
      * first, then the newest.
      *
-     * A programme's manager episodes (see [AgentSessionText.isProgrammeMachinery]) are never
-     * matches, and a stored title that only says where the session ran (`~`, `HEAD`, a folder,
-     * the branch or a run id) is not searched, because the row shows a title made from the
-     * prompt instead and a hit on a word the row never shows would look like a mistake.
+     * A stored title that only says where the session ran (`~`, `HEAD`, a folder, the branch or
+     * a run id) is not searched, because the row shows a title made from the prompt instead and
+     * a hit on a word the row never shows would look like a mistake.
      *
      * A task's title is not a column of the session, so the sessions of every task whose title
      * matches are read by task id as well, however old they are, and merged with the rows the
@@ -76,15 +75,13 @@ object AgentSessionSearch {
     ): List<AgentSessionMatch> {
         val q = query.trim()
         if (q.length < MIN_QUERY) return emptyList()
-        val hits = repo.searchAgentSessions(q).filterNot { AgentSessionText.isProgrammeMachinery(it.record.firstPrompt) }
+        val hits = repo.searchAgentSessions(q)
         val matchingTasks = tasks?.taskIdsTitled(q).orEmpty()
         val seen = hits.mapTo(HashSet()) { it.record.id }
         val viaTask = if (tasks == null || matchingTasks.isEmpty()) emptyList() else {
             val stored = repo.loadAgentSessionsOfTasks(matchingTasks)
             val live = tracker?.snapshot().orEmpty().filter { tasks.taskIdOf(it) in matchingTasks }
-            (stored + live).distinctBy { it.id }
-                .filterNot { AgentSessionText.isProgrammeMachinery(it.firstPrompt) }
-                .filter { seen.add(it.id) }.map { AgentSessionHit(it, null, null) }
+            (stored + live).distinctBy { it.id }.filter { seen.add(it.id) }.map { AgentSessionHit(it, null, null) }
         }
         return (hits + viaTask)
             .mapNotNull { hit ->

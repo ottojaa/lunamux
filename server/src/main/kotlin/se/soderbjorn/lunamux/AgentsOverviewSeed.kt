@@ -6,8 +6,8 @@
  * two, six, twelve and thirty days ago, some of them grouped into agent-made tasks, plus a few
  * task files whose members are live. It also seeds the awkward rows a real installation produces:
  * sessions that say nothing about what the work is (a home folder, a branch named after a run, a
- * detached HEAD), programme manager episodes, previews written in markdown, a bare code fence,
- * and sessions a server restart ends. It is run by the Gradle task `seedAgentsOverview` (through
+ * detached HEAD), previews written in markdown, a bare code fence, and sessions a server restart
+ * ends. It is run by the Gradle task `seedAgentsOverview` (through
  * `scripts/seed-agents-overview.sh`) while the scratch server is stopped, and by a test.
  *
  * The seeder only ever writes to the paths it is given and refuses the folders a real
@@ -138,22 +138,12 @@ object AgentsOverviewSeed {
         Seeded(21, "seed-task-token", "Refresh docs", "Describe the refresh flow for the docs", "gateway", "docs/refresh", 10 * DAY),
     )
 
-    /** The first line a programme's manager episode starts with. */
-    private const val EPISODE_FIRST_LINE =
-        "First claim the programme again (another session may hold it): ~/.claude/skills/feature/fl " +
-            "~/.claude/orchestrate/example-programme claim --reason \"manager episode\""
-
-    /** The rest of a manager episode's first prompt. */
-    private const val EPISODE_REST = "\n\nNeeds your judgement: two pull requests wait for the merge rule."
-
     /**
-     * The sessions that name their work badly, belong to the programme's machinery, or carry
-     * markdown in a preview.
+     * The sessions that name their work badly or carry markdown in a preview.
      *
      * Each one is a case the overview must handle: the home folder, a branch named after a run,
-     * a stored title that is a run id or a folder name, a detached HEAD, ten manager episodes (one
-     * started by a slash command), a preview in bold, a preview that is a bare code fence, and
-     * two sessions still open whose state is days old.
+     * a stored title that is a run id or a folder name, a preview in bold, a preview that is a
+     * bare code fence, and two sessions still open whose state is days old.
      */
     private val cases = listOf(
         Case("seed-home", null, null, null, inHome = true, prompt = "Why did the nightly backup email never arrive?", lastSaid = "The mail relay rejected it; I resent it.", ago = 3 * HOUR),
@@ -164,14 +154,7 @@ object AgentsOverviewSeed {
         Case("seed-bare-fence", "Show the migration", "billing", "feat/add-column", prompt = "Show me the migration that adds the column", lastSaid = "```", ago = 6 * HOUR),
         Case("seed-open-idle", "Trace the slow login", "gateway", "fix/slow-login", prompt = "Why is the login call slow on Mondays?", lastSaid = "A missing index on sessions.user_id; I added it.", ago = 2 * DAY, state = "idle"),
         Case("seed-open-working", "Rebuild the search index", "billing", "chore/search-index", prompt = "Rebuild the search index with the new analyser", lastSaid = null, ago = 5 * HOUR, state = "working"),
-    ) + (1..10).map { n ->
-        val ago = listOf(4 * MINUTE, 40 * MINUTE, 2 * HOUR, 5 * HOUR, 9 * HOUR, 1 * DAY, 2 * DAY, 3 * DAY + 2 * HOUR, 5 * DAY, 8 * DAY)[n - 1]
-        Case(
-            "seed-episode-%02d".format(n), null, "orchestrate", "HEAD",
-            prompt = if (n == 7) "/orchestrate episode ~/.claude/orchestrate/example-programme\n\nNeeds your judgement: one ticket is blocked." else EPISODE_FIRST_LINE + EPISODE_REST,
-            lastSaid = "Recorded the decision and went back to waiting.", ago = ago,
-        )
-    }
+    )
 
     /**
      * Write the seed into [dbFile] and [tasksDir].

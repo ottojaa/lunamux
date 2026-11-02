@@ -174,26 +174,6 @@ class AgentsOverviewBackingViewModelTest {
     }
 
     @Test
-    fun aManagerEpisodeIsNotTheOwnersSessionUnlessItNeedsThem() {
-        val episode = "First claim the programme again (another session may hold it): ~/.claude/skills/feature/fl p claim"
-        windowState.updateAgentSessions(
-            listOf(
-                session("e1", "working", firstPrompt = episode, title = "HEAD"),
-                session("e2", "idle", firstPrompt = "/orchestrate episode ~/.claude/orchestrate/p"),
-                session("e3", "ended", firstPrompt = episode, endedAt = 500_000),
-                session("e4", "needs_you", firstPrompt = episode),
-                session("mine", "idle", firstPrompt = "/orchestrate episodes are confusing, explain", lastActivityAt = now - 1_000),
-            ),
-            true,
-        )
-        val s = vm.state
-        assertEquals(listOf("e4", "mine"), s.rows.map { it.id }, "only the episode that needs the owner stays")
-        assertEquals("Programme manager", s.rows.first { it.id == "e4" }.title)
-        assertEquals(1, s.needYouCount)
-        assertEquals(0, s.workingCount, "a working episode is not counted as the owner's work")
-    }
-
-    @Test
     fun aPreviewIsPlainTextAndNeverAFence() {
         windowState.updateAgentSessions(
             listOf(

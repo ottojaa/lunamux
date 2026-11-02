@@ -2,14 +2,11 @@
  * Plain-text rules the agents overview applies to what a session says about itself, shared by the
  * server and every client so they agree.
  *
- * This file contains [AgentSessionText]: it decides whether a session belongs to a programme's
- * own machinery rather than to the person, turns a line of markdown into the text a reader sees,
+ * This file contains [AgentSessionText]: it turns a line of markdown into the text a reader sees,
  * skips lines that are only a code fence, derives a title from the first words of a prompt, and
  * says whether a stored title actually names the work. The overview's view model uses it to title
  * rows and clean previews, and the server's session search and last-reply capture use it so a
- * session the person never started is not found and a fence is not stored as a reply.
- *
- * @see se.soderbjorn.lunamux.AgentSessionSummary
+ * title that only says where a session ran is not searched and a fence is not stored as a reply.
  */
 package se.soderbjorn.lunamux
 
@@ -20,18 +17,6 @@ package se.soderbjorn.lunamux
  * what the overview should show, so the same input gives the same row on every platform.
  */
 object AgentSessionText {
-    /**
-     * The opening words of the first prompt a programme's controller gives a manager episode,
-     * which is a session the controller started, not one the person did.
-     */
-    const val EPISODE_PROMPT_PREFIX = "First claim the programme again"
-
-    /** The slash command a controller uses to wake a manager episode that is already running. */
-    const val EPISODE_COMMAND = "/orchestrate episode"
-
-    /** The title shown for a manager episode that has to be listed because it needs the person. */
-    const val MANAGER_TITLE = "Programme manager"
-
     /** The most words a title taken from a prompt keeps. */
     private const val TITLE_WORDS = 8
 
@@ -54,25 +39,6 @@ object AgentSessionText {
     private val SPACES = Regex("""\s+""")
     /** A feature-run folder name: `<ticket>-<number>-impl` or `-plan`, optionally with a `-r<round>` suffix. */
     private val RUN_ID = Regex("""^[a-z][a-z0-9]*-\d+-(impl|plan)(-r\d+)?$""")
-
-    /**
-     * Whether a session's first prompt marks it as a programme's machinery: a manager episode the
-     * controller started or woke, not a conversation the person had.
-     *
-     * Called by the overview's view model to keep such sessions out of the list, and by the
-     * server's session search to keep them out of the matches. Only the exact controller prompts
-     * count: a session the person starts with a different `/orchestrate` command is theirs.
-     *
-     * @param firstPrompt the session's first prompt or its first line; null when unknown.
-     * @return true when the first non-blank line opens with [EPISODE_PROMPT_PREFIX] or is the
-     *   [EPISODE_COMMAND] slash command.
-     * @see MANAGER_TITLE
-     */
-    fun isProgrammeMachinery(firstPrompt: String?): Boolean {
-        val line = firstPrompt?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim() ?: return false
-        if (line.startsWith(EPISODE_PROMPT_PREFIX)) return true
-        return line.startsWith(EPISODE_COMMAND) && (line.length == EPISODE_COMMAND.length || line[EPISODE_COMMAND.length].isWhitespace())
-    }
 
     /**
      * Whether [line] is only a code fence (``` or ~~~, with or without a language), which says

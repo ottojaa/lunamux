@@ -1,6 +1,6 @@
 /**
  * Tests for [AgentSessionText]: the rules that turn a session's stored words into what the agents
- * overview shows (plain previews, titles that name the work, programme machinery detection).
+ * overview shows (plain previews, titles that name the work).
  *
  * @see AgentSessionText
  */
@@ -13,26 +13,6 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class AgentSessionTextTest {
-    private val episode = "First claim the programme again (another session may hold it): ~/.claude/skills/feature/fl " +
-        "~/.claude/orchestrate/p claim --reason \"manager episode\"\n\nNeeds your judgement: x"
-
-    @Test
-    fun `a controller's manager episode is machinery, whichever way it was started`() {
-        assertTrue(AgentSessionText.isProgrammeMachinery(episode))
-        assertTrue(AgentSessionText.isProgrammeMachinery("\n  First claim the programme again (x)"))
-        assertTrue(AgentSessionText.isProgrammeMachinery("/orchestrate episode ~/.claude/orchestrate/p\n\ndigest"))
-        assertTrue(AgentSessionText.isProgrammeMachinery("/orchestrate episode"))
-    }
-
-    @Test
-    fun `a session the owner starts is not machinery, even about orchestrating`() {
-        assertFalse(AgentSessionText.isProgrammeMachinery(null))
-        assertFalse(AgentSessionText.isProgrammeMachinery(""))
-        assertFalse(AgentSessionText.isProgrammeMachinery("/orchestrate"))
-        assertFalse(AgentSessionText.isProgrammeMachinery("/orchestrate episodes are confusing, explain"))
-        assertFalse(AgentSessionText.isProgrammeMachinery("Why did the first claim the programme again fail?"))
-    }
-
     @Test
     fun `markdown reads as the text it marks up`() {
         assertEquals("4. Tell me how it went, then decide", AgentSessionText.plain("**4. Tell me how it went,** then decide"))

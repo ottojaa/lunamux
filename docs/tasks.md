@@ -47,9 +47,12 @@ idle, **‖** paused, **✓** done.
   that a task file declares also stays there while it has open work, such as a session in review
   or queued, even when nothing is running at the moment, so it does not change section as
   sessions start and stop. Once every session of such a task reads done, nothing is moving or
-  waiting and the task goes to EARLIER, even if none of its sessions has ended. A task made only
-  of Lunamux's own sessions behaves like one idle session: it stays in NOW for ten minutes after
-  the last activity and then moves to EARLIER. A task whose sessions have all ended is in EARLIER.
+  waiting and the task goes to EARLIER, even if none of its sessions has ended, once ten minutes
+  have passed since its newest activity: a task that has just finished stays in NOW for those ten
+  minutes, like a session that has just ended, so its header never reads "now" under a heading
+  that says days. A task made only of Lunamux's own sessions behaves like one idle session: it
+  stays in NOW for ten minutes after the last activity and then moves to EARLIER. A task whose
+  sessions have all ended is in EARLIER after the same ten minutes.
 - **EARLIER is two bands of tasks, newest first.** **LAST FEW DAYS** holds the tasks last active
   within three days, all of them. **LAST TWO WEEKS** holds those between three and fourteen days
   old; it shows the first five and a **+ N more** line (a click on it shows the rest). A band

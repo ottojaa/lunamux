@@ -127,19 +127,12 @@ SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, r
     CASE WHEN last_screen LIKE :pattern ESCAPE '\'
         THEN substr(last_screen, max(1, instr(lower(last_screen), lower(:raw)) - 80), 240) END AS screen_window
 FROM agent_sessions
-WHERE (title LIKE :pattern ESCAPE '\'
+WHERE title LIKE :pattern ESCAPE '\'
     OR first_prompt LIKE :pattern ESCAPE '\'
     OR branch LIKE :pattern ESCAPE '\'
     OR links LIKE :pattern ESCAPE '\'
     OR search_text LIKE :pattern ESCAPE '\'
-    OR last_screen LIKE :pattern ESCAPE '\')
-    -- A programme's manager episodes are not the person's sessions; keeping them out here stops
-    -- them from filling the 200 rows. GLOB is case-sensitive like the Kotlin rule, so a prompt the
-    -- person wrote in another case is kept; the caller applies the exact rule to what is left.
-    AND (first_prompt IS NULL
-        OR (first_prompt NOT GLOB 'First claim the programme again*'
-            AND first_prompt NOT GLOB '/orchestrate episode *'
-            AND first_prompt != '/orchestrate episode'))
+    OR last_screen LIKE :pattern ESCAPE '\'
 ORDER BY COALESCE(ended_at, state_since) DESC
 LIMIT 200;
 

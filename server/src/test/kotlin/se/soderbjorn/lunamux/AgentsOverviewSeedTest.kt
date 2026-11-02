@@ -31,7 +31,7 @@ class AgentsOverviewSeedTest {
     @Test
     fun `the seed holds about twenty ended sessions spread over the ages the overview is read at`() {
         val summary = AgentsOverviewSeed.seed(db, tasksDir, now)
-        assertEquals(39, summary.sessions)
+        assertEquals(29, summary.sessions)
         assertEquals(6, tasksDir.listFiles { f -> f.name.endsWith(".json") }!!.size)
 
         val repo = repo()
@@ -39,7 +39,7 @@ class AgentsOverviewSeedTest {
         assertTrue(kept.all { it.state == "ended" && it.endedAt != null && it.source == "hooks" })
         val ages = kept.map { (now - it.endedAt!!) / day }.toSet()
         assertTrue(0L in ages && 2L in ages && 6L in ages && 12L in ages, "ages today, 2, 6 and 12 days: $ages")
-        assertEquals(33, kept.size, "the sessions of 30 days or more are older than the window")
+        assertEquals(23, kept.size, "the sessions of 30 days or more are older than the window")
         assertTrue(repo.loadRecentEndedAgentSessions(0, 300).any { (now - it.endedAt!!) >= 30 * day })
     }
 
@@ -56,11 +56,6 @@ class AgentsOverviewSeedTest {
         assertEquals(null, byId.getValue("seed-branch-only").title)
         assertEquals("aov-21-impl", byId.getValue("seed-branch-only").branch)
         assertEquals("aov-11-impl", byId.getValue("seed-run-id-title").title)
-
-        val episodes = byId.values.filter { it.id.startsWith("seed-episode-") }
-        assertEquals(10, episodes.size)
-        assertTrue(episodes.all { it.firstPrompt!!.startsWith("First claim the programme again") || it.firstPrompt!!.startsWith("/orchestrate episode ") })
-        assertTrue(episodes.all { it.branch == "HEAD" && it.repo == "orchestrate" })
 
         assertTrue(byId.getValue("seed-markdown").lastSaid!!.startsWith("**"))
         assertEquals("```", byId.getValue("seed-bare-fence").lastSaid)
@@ -88,7 +83,7 @@ class AgentsOverviewSeedTest {
     fun `seeding again replaces the records instead of adding to them`() {
         AgentsOverviewSeed.seed(db, tasksDir, now)
         AgentsOverviewSeed.seed(db, tasksDir, now + day)
-        assertEquals(37, repo().loadRecentEndedAgentSessions(0, 300).size)
+        assertEquals(27, repo().loadRecentEndedAgentSessions(0, 300).size)
         assertEquals(5, repo().loadAgentTasks().size)
     }
 

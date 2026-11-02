@@ -237,27 +237,6 @@ class AgentSessionSearchTest {
     }
 
     @Test
-    fun `a programme's manager episodes are never found, however they were started`() {
-        save("ep1", title = "HEAD", prompt = "First claim the programme again (another session may hold it): ~/.claude/skills/feature/fl")
-        save("ep2", prompt = "/orchestrate episode ~/.claude/orchestrate/p", text = "claim the programme head")
-        save("ep3", prompt = "/orchestrate episode", branch = "HEAD")
-        save("mine", prompt = "/orchestrate episodes are confusing, explain the head of the queue")
-        assertEquals(listOf("mine"), search("head").map { it.summary.id })
-        assertEquals(listOf("mine"), search("episode").map { it.summary.id })
-        assertTrue(search("first claim").isEmpty())
-        assertTrue(search("~/").isEmpty(), "both episode prompts hold ~/ and neither is listed")
-    }
-
-    @Test
-    fun `a prompt that only resembles an episode prompt in another case is still found`() {
-        save("ep", prompt = "First claim the programme again (another session may hold it): ~/.claude/skills/feature/fl")
-        save("lower", prompt = "first claim the programme again, i forgot what it said about ~/ paths")
-        save("cmd", prompt = "/Orchestrate Episode notes for the retro, in ~/docs")
-        assertEquals(setOf("lower", "cmd"), search("~/").map { it.summary.id }.toSet())
-        assertEquals(listOf("lower"), search("first claim").map { it.summary.id })
-    }
-
-    @Test
     fun `a stored title that only says where the session ran is not a title match`() {
         save("home", title = "~", prompt = "tidy my notes")
         save("detached", title = "HEAD", prompt = "check out the release")

@@ -106,8 +106,9 @@ class AgentsOverviewBackingViewModel(
      * @property repo repository folder name, or null.
      * @property nowLine the last tool line, or null.
      * @property question what a `needs_you` row is asking, or null.
-     * @property sinceMillis epoch millis the row entered its state (when it ended, for ended rows);
-     *   the view turns it into an age.
+     * @property sinceMillis epoch millis the row's age counts from: the time it entered its state
+     *   for a session that needs the person or works, and the time of its last sign of life (when
+     *   it ended, for an ended row) for an idle or ended one; the view turns it into an age.
      * @property isLive whether the agent's pane is still open, so ↵ jumps to it.
      * @property canResume whether ↵ opens a new tab for it (an ended row).
      * @property actionLabel the word of the ↵ action, one word per action on every row: `jump`
@@ -989,6 +990,9 @@ class AgentsOverviewBackingViewModel(
      * @property recency epoch millis of the newest activity of any session of the task: when an ended
      *   one ended, the last activity of an open one, and the time a task file gives a member. Decides
      *   the EARLIER band and the order inside it.
+     * @property graced whether the task has just finished (it is [ended] or [settled]) and its
+     *   [recency] is still inside [IDLE_GRACE_MS]: like a session that has just ended, it stays in
+     *   NOW for the grace instead of going to EARLIER with an age of a few minutes.
      * @property jumpRecordId the open session that most needs the person, or null.
      */
     private class TaskUnit(
@@ -1000,6 +1004,7 @@ class AgentsOverviewBackingViewModel(
         val ended: Boolean,
         val settled: Boolean,
         val recency: Long,
+        val graced: Boolean,
         val jumpRecordId: String?,
     )
 
@@ -1037,9 +1042,7 @@ class AgentsOverviewBackingViewModel(
         val taskStates = units.filter { it.panel }.associate { it.task.id to taskOf(it, ui, nowMillis) }
         // A session a task unit holds is drawn inside it, not again as a single.
         val claimed = units.flatMap { u -> u.runs.mapNotNull { it.session?.id } }.toSet()
-        // A programme's manager episode is the programme's machinery, not the person's session: it
-        // is listed (and counted) only while it needs the person, so the list shows their work.
-        val singles = sessions.filter { it.id !in claimed && (it.state == NEEDS_YOU || !AgentSessionText.isProgrammeMachinery(it.firstPrompt)) }
+        val singles = sessions.filter { it.id !in claimed }
             .map { s -> toRow(s, panes[s.leafId], resumeError(s.id)) }
 
         // A task stays in NOW while it has open work and leaves once it is settled (see TaskUnit);
@@ -1061,6 +1064,9 @@ class AgentsOverviewBackingViewModel(
             }
             units.filter { !it.ended && !it.settled }
                 .forEach { add(Placed(it.rank, it.since, taskRows(it, taskStates, panes, ui, resumeError))) }
+            // A task that has just finished is graced like a session that has just ended.
+            units.filter { it.graced }
+                .forEach { add(Placed(GRACE_RANK, it.recency, taskRows(it, taskStates, panes, ui, resumeError))) }
         }.sortedWith(
             compareBy<Placed> { it.rank }.thenBy { if (it.rank >= OPEN_WORK_RANK) -it.since else it.since },
         )
@@ -1075,7 +1081,7 @@ class AgentsOverviewBackingViewModel(
                 // A single's row age is the very time its band is chosen by (see [toRow]), so a row
                 // never reads "now" under a heading that says days.
                 .map { row -> Earlier(row.sinceMillis, listOf(row)) } +
-                units.filter { it.ended || it.settled }
+                units.filter { (it.ended || it.settled) && !it.graced }
                     .map { Earlier(it.recency, taskRows(it, taskStates, panes, ui, resumeError)) }
             ).filter { inWindow(it.recency, nowMillis) }
             .sortedByDescending { it.recency }
@@ -1225,7 +1231,8 @@ class AgentsOverviewBackingViewModel(
             ?: open.filter { it.member.state == WORKING }.maxByOrNull { it.session!!.lastActivityAt ?: it.session.stateSince }
         val recency = runs.maxOfOrNull { r -> maxOf(r.member.sinceMillis, r.session?.let(::activityOf) ?: 0L) }
             ?: t.refreshedAtMillis ?: 0L
-        return TaskUnit(t, runs, panel, rank, since, ended, settled, recency, jump?.session?.id)
+        val graced = (ended || settled) && inGrace(recency, nowMillis)
+        return TaskUnit(t, runs, panel, rank, since, ended, settled, recency, graced, jump?.session?.id)
     }
 
     /** The record behind [row] that peek and inspection ask the server about, or null when there is none. */
@@ -1277,7 +1284,7 @@ class AgentsOverviewBackingViewModel(
         val counted = buckets.filter { it.order > 0 }.groupBy { it.order to it.name }
             .entries.sortedWith(compareBy({ (key, _) -> key.first }, { (key, _) -> if (key.second == "working") 0 else 1 }, { (key, _) -> if (key.first == 1) key.second else "" }))
         // In EARLIER a header says how many sessions it holds and how long ago it was last active.
-        val inEarlier = u.ended || u.settled
+        val inEarlier = (u.ended || u.settled) && !u.graced
         return Task(
             id = t.id, title = t.title, repo = repo,
             needYouCount = u.runs.count { it.member.state == NEEDS_YOU },
@@ -1303,7 +1310,11 @@ class AgentsOverviewBackingViewModel(
 
     /**
      * The newest sign of life of a hosted session: when it ended, else its last activity, else the
-     * time it entered its state. This is what places a lone session in an EARLIER band.
+     * time it entered its state.
+     *
+     * Called wherever a session's recency matters: whether an idle or just-ended session is still
+     * inside the NOW grace, where it ranks there, which EARLIER band it falls in, and (through
+     * [toRow]) the age of an idle or ended row, so the heading and the age are read from one moment.
      *
      * @param s the session.
      * @return epoch millis.
@@ -1446,7 +1457,9 @@ class AgentsOverviewBackingViewModel(
                 m.sessionId != null -> "resume"
                 else -> ""
             },
-            sinceMillis = m.sinceMillis,
+            // A hosted session in the state the member names is as old as every other row of it
+            // (see [toRow]), so browsing a task and searching agree; otherwise the file's time.
+            sinceMillis = if (s != null && m.state == s.state) base.sinceMillis else m.sinceMillis,
             nowLine = if (m.state == NEEDS_YOU) null else line,
             question = if (m.state == NEEDS_YOU) line else null,
             taskId = t.id,
@@ -1529,9 +1542,8 @@ class AgentsOverviewBackingViewModel(
     /**
      * A session's display title: what the work is, never where it ran.
      *
-     * A manager episode is named [AgentSessionText.MANAGER_TITLE]. Otherwise the session's own
-     * title when it names the work, else the first words of its first prompt, else the agent's
-     * name. The branch, the folder, `~`, `HEAD` and run ids say where a session ran, not what it
+     * The session's own title when it names the work, else the first words of its first prompt,
+     * else the agent's name. The branch, the folder, `~`, `HEAD` and run ids say where a session ran, not what it
      * is for, so they are never used as a title.
      *
      * Called by [toRow] and [memberOf] for every session row, in the list, in a task and in a search.
@@ -1542,7 +1554,6 @@ class AgentsOverviewBackingViewModel(
      * @see AgentSessionText.titleFromPrompt
      */
     private fun titleOf(s: AgentSessionSummary): String {
-        if (AgentSessionText.isProgrammeMachinery(s.firstPrompt)) return AgentSessionText.MANAGER_TITLE
         s.title?.trim()?.takeIf { AgentSessionText.isMeaningfulTitle(it, s.branch, s.repo, folderOf(s)) }?.let { return it }
         return AgentSessionText.titleFromPrompt(s.firstPrompt)
             ?: "${s.agent.replaceFirstChar { it.uppercase() }} session"

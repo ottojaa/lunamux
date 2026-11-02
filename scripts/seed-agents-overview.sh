@@ -5,7 +5,7 @@
 #   scripts/seed-agents-overview.sh <db file> <tasks folder>
 #
 # Writes 21 ended agent sessions last active today, 1, 2, 6, 12 and 30 days ago, five
-# agent-made tasks, six task files, and 18 sessions that are awkward to name or to read (listed
+# agent-made tasks, six task files, and 8 sessions that are awkward to name or to read (listed
 # below). Run it again to refresh the ages (it replaces its own records and touches nothing else).
 # The ages are counted from the moment it runs, so seed again on the day you look. Seed while the
 # scratch server is STOPPED: the server reads its sessions and tasks once when it starts, and it
@@ -43,10 +43,6 @@
 #                    run id or a folder name): each is named by its first prompt, never "~", the
 #                    branch or the folder. "Owner test follow-up" has a bold preview and "Show the
 #                    migration" a preview that is only a code fence: both read as plain text.
-#   Manager episodes ten sessions in "orchestrate" on a detached HEAD whose first prompt is a
-#                    programme's "First claim the programme again…" (one starts "/orchestrate
-#                    episode"). They are the programme's machinery: not listed and not found by
-#                    searching "HEAD", "~" or "first claim".
 #   A restart        "Trace the slow login" (open, idle for 2 days) and "Rebuild the search index"
 #                    (open, working for 5 hours) are ended by the server when it starts. They are
 #                    aged from when they last did anything (2d and 5h), not from the restart.
