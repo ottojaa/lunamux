@@ -11,7 +11,9 @@ The reviewer did not build any of it. Everything below was seen on a running dev
 client at 1280 and 1024 px wide, on a scratch database and tasks directory (never the owner's
 Lunamux), seeded with `scripts/seed-agents-overview.sh`. Findings are classed **broken** (it
 contradicts the north star or is a defect: fixed in this PR with a test) or **taste** (left for the
-owner, listed with a suggestion).
+owner, listed with a suggestion). The first pass classed two of the findings (the chip counting a quiet
+session as working, and a lone session reading as a member of the collapsed task above it) as taste; the
+owner called both broken, so they are now F5 and F6 and are fixed with tests.
 
 ## Verdict in one paragraph
 
@@ -19,9 +21,10 @@ The overview does what it is for. Opened cold on the seed it answers the three q
 screen: one ◆ on top, tasks grouped with their sessions, the last days in order, a quiet band for
 older work, and search finds a closed session by the task it belonged to. Both live ◆ cases
 worked, a chat that only finished its turn never showed ◆, and an agent told to split a job across
-two panes created a task through the MCP tools without being asked to. Two things were broken and
-are fixed: a finished-but-not-ended file task sat in NOW forever, and every ◆ row read "Claude
-needs your permission", whatever it was really asking.
+two panes created a task through the MCP tools without being asked to. Four things were broken and
+are fixed: a finished-but-not-ended file task sat in NOW forever, every ◆ row read "Claude
+needs your permission", whatever it was really asking, the toolbar chip and a task's count line called
+a quiet or stale session "working", and a lone session after a collapsed task read as one of its members.
 
 ## Findings
 
@@ -99,14 +102,56 @@ Searching a word that only the task's title holds finds its closed sessions, eac
 `in task …` line and **↵ resume**. Width 1024 still reads cleanly
 ([screenshot](ux-review-m4/05-width-1024.png)): the repo column shrinks, the right edge holds.
 
+### F5 · broken · The chip and the task line count a session that is not moving as working
+
+![Before: the chip says "2 working" while two of the sessions read quiet and stale](ux-review-m4/06-jump-and-peek-hint.png)
+
+The toolbar said "2 working" and the seeded "Login audit trail" (*quiet 14m*) and "Sync worker"
+(*stale 39m*) were the two. The rows themselves were honest (dimmed, with the age), but the chip and
+the task line "1 working" counted a session whose file had stopped speaking. First classed taste; the
+owner called it broken, rightly: the north star says *what is moving*, and a quiet session is not.
+
+Verdict: **broken**. Fix: one rule decides it for the row prefix, the chip and the task line
+(`agePrefixOf` / `isMoving` in `AgentsOverviewBackingViewModel`): a session counts as working only
+while it is working and neither quiet (5 min without activity) nor stale (20 min). The chip counts
+those only, and the task line names the others by their own word: *1 working · 1 quiet · 1 stale ·
+1 in review*, never "working". The task header's moving glyph still follows any working member, so
+a task is not shown as stopped while a session is still live. Because the chip can now fall to idle on
+the clock alone, the web client keeps its 30 s clock running while any session is working even with
+the overlay closed. Tests (`AgentsOverviewTasksViewModelTest`):
+`theChipCountsAsWorkingOnlyTheSessionsThatAreMovingAndTheClockAloneEndsThat`,
+`aTaskLineCountsAQuietOrStaleSessionUnderThatWordAndNeverAsWorking`.
+
+![After: the chip no longer counts the quiet session; the task line says "1 quiet"](ux-review-m4/10-after-t1-quiet.png)
+
+Seen on the seeded server: after five minutes without activity the chip fell from "1 needs you · 1
+working" to "1 needs you", and "Access control" went from "1 working" to "1 needs you · 1 quiet · 1 in
+review". One consequence the owner should know about: with only a quiet session left, the chip shows
+neither "working" nor "agents idle". That is the rule applied literally; a "quiet" word on the chip
+would be a one-line change if he wants it.
+
+### F6 · broken · A lone session after a collapsed task reads as one of its members
+
+![Before: "Auth token refresh" runs straight on into "Tidy the release notes script"](ux-review-m4/01-before-overview.png)
+
+In EARLIER the gap came before the next header, not after the task's last row, so a single session
+after a task read as one of its members: in the first screenshot "Auth token refresh" is followed by
+"Tidy the release notes script", and in [the after-fix one](ux-review-m4/07-after-fix.png) "Count .kt
+files" by question, perm, chat, split and "Bump kotlinx-serialization". This works against "the unit
+is a task". First classed taste; the owner called it broken.
+
+Verdict: **broken**. Fix: a row that starts after a task (a collapsed header, or the last member of an
+expanded panel) and is not that task's own member gets the same top margin a header gets
+(`startsAfterTask`, a pure function the web list uses to add an `ao-gap` class; one rule in
+`styles.css`, which is zeroed under a section label). Collapsed and expanded now space alike. Test:
+`aLoneSessionRightAfterATaskGetsTheGapAHeaderGetsAndASessionOfTheTaskDoesNot`.
+
+![After: a gap sets "Sidebar flicker on resize" apart from the collapsed "Release train"](ux-review-m4/09-after-t7-gap-stale.png)
+
 ## Taste (left unchanged; for the owner)
 
-- **T1 · The chip counts a session that is not moving as working.** The toolbar says "2 working",
-  and the seeded "Login audit trail" (*quiet 14m*) and "Sync worker" (*stale 39m*) are the two
-  ([screenshot](ux-review-m4/06-jump-and-peek-hint.png)). The
-  rows themselves are honest (dimmed, with the age), but the chip and the task line "1 working"
-  count a session whose file stopped speaking. Suggestion: count only sessions that are not quiet or
-  stale as working.
+T1 and T7 of the first pass are no longer here: the owner called them broken, see F5 and F6.
+
 - **T2 · The first selected row cannot be jumped to on the seed.** The overview opens on the first
   ◆ (a seeded member with no pane), so the footer says *nothing to open: this session is not in a
   Lunamux pane* ([screenshot](ux-review-m4/06-jump-and-peek-hint.png) shows a hosted ◆ with
@@ -124,13 +169,6 @@ Searching a word that only the task's title holds finds its closed sessions, eac
   That is the tool's internal id; a plain name would read better. It is still more telling than the
   generic text it replaced, so it is left for the owner to say whether it bothers him. Only a
   permission prompt gets the `Allow …?` phrasing; other notifications keep the hook's own text.
-- **T7 · In EARLIER, single sessions run straight on under a collapsed task header.** The gap comes
-  before the next header, not after the task's last row, so a lone session after a task reads as one
-  of its members: in the [after-fix screenshot](ux-review-m4/07-after-fix.png) "Count .kt files" is
-  followed by question, perm, chat, split and "Bump kotlinx-serialization", and in
-  [the first one](ux-review-m4/01-before-overview.png) "Auth token refresh" by "Tidy the release
-  notes script". This works against "the unit is a task". Suggestion: a gap (or the same spacing) after
-  a collapsed task, as after an expanded one.
 - **Limit, not a finding · Claude Code's own menus.** A "Teach auto mode about your environment?"
   menu blocked a pane while its session read idle: no hook fires for it, so Lunamux cannot know it
   is waiting. Nothing the overview can fix.
@@ -151,6 +189,11 @@ four test panes' sessions (the old "perm", "question", "chat" and "split" rows b
 restart); the grace rule for a task of hosted sessions was not exercised on the live sessions and is
 covered by its existing tests. Nothing new was found.
 
+A second look after F5 and F6 ([T1](ux-review-m4/10-after-t1-quiet.png),
+[T7](ux-review-m4/09-after-t7-gap-stale.png)), on a freshly seeded server with the clock left to run:
+the chip and the task lines dropped the quiet and stale sessions by themselves at the 30 s tick, and
+the lone session after the collapsed "Release train" stands apart. Nothing new was found.
+
 ## First things to try tomorrow
 
 1. Open ⌘⇧A with nothing running: it should be calm, no ◆, the last days on top.
@@ -163,4 +206,6 @@ covered by its existing tests. Nothing new was found.
 6. With a programme that holds finished PRs for the merge rule, check that it is in LAST FEW DAYS
    and that a task with a PR still in review stays in NOW.
 7. Search a word from an old task's title and press ↵ to resume one of its closed sessions.
-8. Try T1 (the chip counting quiet sessions as working) and tell me whether it matters in your day.
+8. Leave a session alone for five minutes: the chip and the task line should stop calling it working
+   and the row should say *quiet 5m*. In EARLIER, check that a lone session after a collapsed task is
+   set apart from it.
