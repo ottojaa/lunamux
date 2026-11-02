@@ -307,7 +307,7 @@ class AgentSessionTracker(
                 ) return@synchronized
                 // The hook text is generic ("Claude needs your permission"). The tool call the prompt
                 // is about arrived with the PreToolUse just before, so say what is being asked instead.
-                set(NEEDS_YOU, nowLine = null, question = pendingQuestionOf(rec.nowLine.takeIf { rec.id in toolInFlight }, message)?.take(QUESTION_MAX))
+                set(NEEDS_YOU, nowLine = null, question = pendingQuestionOf(rec.nowLine.takeIf { rec.id in toolInFlight }, message, type)?.take(QUESTION_MAX))
             }
             "Stop" -> {
                 toolInFlight.remove(rec.id)
@@ -728,7 +728,10 @@ internal fun cleanTitle(raw: String?): String? {
  * One line describing a tool call: the tool name and its main argument.
  *
  * Only the command, file path or pattern is read; the rest of `tool_input`
- * (which can hold a whole file) is never kept.
+ * (which can hold a whole file) is never kept. A question put to the person
+ * through `AskUserQuestion` is kept as `Asks: <question>` instead, so the row
+ * shows what is asked; like any line it is cut at [TOOL_LINE_MAX], which is
+ * ample for a row.
  *
  * @param event a PreToolUse hook payload.
  * @return for example `Bash ./gradlew test`, or null without a tool name.
@@ -756,19 +759,25 @@ private const val ASK_PREFIX = "Asks: "
  * What a `needs_you` row should say for a prompt Claude Code raised through a Notification hook.
  *
  * A question put to the person is shown as the question itself; a permission prompt as
- * `Allow <tool line>?`, so the row names the command instead of the hook's generic text.
+ * `Allow <tool line>?`, so the row names the command instead of the hook's generic text. Any other
+ * kind of notification (a tool asking for input, for example) keeps the hook's own message, since
+ * it is not a request to allow the tool.
  *
  * Called from the tracker's `Notification` hook handling.
  *
  * @param pending the tool line of the PreToolUse that preceded the prompt, or null.
- * @param message the hook's own text, used when no tool call is pending.
+ * @param message the hook's own text, used when no tool call is pending or the prompt is not a
+ *   permission prompt.
+ * @param type the hook's `notification_type`, or null from a version that omits it (taken as a
+ *   permission prompt).
  * @return the line to show, or null when there is neither.
  * @see toolLine
  */
-internal fun pendingQuestionOf(pending: String?, message: String?): String? = when {
+internal fun pendingQuestionOf(pending: String?, message: String?, type: String? = null): String? = when {
     pending == null -> message
     pending.startsWith(ASK_PREFIX) -> pending.removePrefix(ASK_PREFIX)
-    else -> "Allow $pending?"
+    type == null || type == "permission_prompt" -> "Allow $pending?"
+    else -> message
 }
 
 private fun JsonObject.str(key: String): String? =

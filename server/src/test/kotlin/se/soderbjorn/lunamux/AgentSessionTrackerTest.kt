@@ -231,6 +231,24 @@ class AgentSessionTrackerTest {
     }
 
     @Test
+    fun `a notification of another type than a permission prompt keeps the hook's text while a tool runs`() {
+        val t = tracker()
+        val p = pane()
+        t.onHook(p, toolEvent("mcp__srv__tool", """{"query":"x"}"""))
+        t.onHook(p, event("Notification", "a-1", "message" to "srv needs some input", "notification_type" to "elicitation_dialog"))
+        assertEquals("srv needs some input", t.summaries.value.single().question)
+    }
+
+    @Test
+    fun `a permission prompt typed as such names the tool call`() {
+        val t = tracker()
+        val p = pane()
+        t.onHook(p, toolEvent("Bash", """{"command":"ls"}"""))
+        t.onHook(p, event("Notification", "a-1", "message" to "Claude needs your permission", "notification_type" to "permission_prompt"))
+        assertEquals("Allow Bash ls?", t.summaries.value.single().question)
+    }
+
+    @Test
     fun `a prompt with no tool call pending keeps the hook's own text`() {
         val t = tracker()
         val p = pane()

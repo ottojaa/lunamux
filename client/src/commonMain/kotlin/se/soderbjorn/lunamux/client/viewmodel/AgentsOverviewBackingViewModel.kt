@@ -17,8 +17,9 @@
  * expansion panel: a header row whose counts say what its sessions are doing, followed by the
  * sessions that need the user or work, or by every session, most urgent first, once the panel is
  * expanded. A task with one session and no `open` action is drawn as that session's plain row. A
- * task stays in NOW while any of its sessions has not ended, ranked beside single sessions by its
- * most urgent session. What has finished or gone quiet moves to EARLIER, by task: a task's
+ * task stays in NOW while it has open work (a session needs the person or works, or a task file
+ * still has a session in review or queued), ranked beside single sessions by its most urgent
+ * session. What has finished or gone quiet moves to EARLIER, by task: a task's
  * recency is its newest session's activity, so one recent session keeps the whole task in the
  * first band. A task there is a collapsed panel that says how many sessions it holds and how
  * long ago it was last active. The header's ↵ goes to the session that most needs the person (a ◆ that
@@ -985,8 +986,8 @@ class AgentsOverviewBackingViewModel(
         val singles = sessions.filter { it.id !in claimed }
             .map { s -> toRow(s, panes[s.leafId], resumeError(s.id)) }
 
-        // A task stays in NOW until all its sessions have ended; it is ranked beside the single
-        // sessions that need the user or work, by its most urgent session.
+        // A task stays in NOW while it has open work and leaves once it is settled (see TaskUnit);
+        // it is ranked beside the single sessions that need the user or work, by its most urgent session.
         class Placed(val rank: Int, val since: Long, val rows: List<Row>)
         // An idle session stays in NOW for a while after its last activity, so a chat that finishes
         // a turn does not jump to EARLIER and back as the next turn starts.
@@ -1149,7 +1150,7 @@ class AgentsOverviewBackingViewModel(
         val lastActivity = runs.mapNotNull { r -> r.session?.let { it.lastActivityAt ?: it.stateSince } }.maxOrNull()
         val hostedOnly = t.source != "file"
         val quiet = hostedOnly && urgentRank == OPEN_WORK_RANK && !runs.all { it.member.state == ENDED }
-        val allDone = urgentRank == OPEN_WORK_RANK && runs.isNotEmpty() && runs.all { bucketOf(it.member).order == DONE_ORDER }
+        val allDone = runs.isNotEmpty() && runs.all { bucketOf(it.member).order == DONE_ORDER }
         val settled = allDone || (quiet && (lastActivity == null || !inGrace(lastActivity, nowMillis)))
         val rank = if (quiet && !settled) GRACE_RANK else urgentRank
         val since = when {

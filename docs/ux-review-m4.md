@@ -102,7 +102,8 @@ Searching a word that only the task's title holds finds its closed sessions, eac
 ## Taste (left unchanged; for the owner)
 
 - **T1 · The chip counts a session that is not moving as working.** The toolbar says "2 working",
-  and the seeded "Login audit trail" (*quiet 19m*) and "Sync worker" (*stale 44m*) are the two. The
+  and the seeded "Login audit trail" (*quiet 14m*) and "Sync worker" (*stale 39m*) are the two
+  ([screenshot](ux-review-m4/06-jump-and-peek-hint.png)). The
   rows themselves are honest (dimmed, with the age), but the chip and the task line "1 working"
   count a session whose file stopped speaking. Suggestion: count only sessions that are not quiet or
   stale as working.
@@ -110,15 +111,26 @@ Searching a word that only the task's title holds finds its closed sessions, eac
   ◆ (a seeded member with no pane), so the footer says *nothing to open: this session is not in a
   Lunamux pane* ([screenshot](ux-review-m4/06-jump-and-peek-hint.png) shows a hosted ◆ with
   **↵ jump** instead). A real world has hosted sessions first; a seed artifact.
-- **T3 · An idle session with nothing to say shows "—"** (the freshly started "split" row). Fine for
-  a few seconds; an empty line would read calmer.
+- **T3 · An idle session with nothing to say shows "—"** (the freshly started "split" row,
+  [screenshot](ux-review-m4/06-jump-and-peek-hint.png)). Fine for a few seconds; an empty line would
+  read calmer.
 - **T4 · An expanded task's footer says "← collapse" and "space collapse"** side by side
   ([screenshot](ux-review-m4/03-before-release-train.png)). One is enough.
 - **T5 · Ended rows with no summary show the raw first prompt**, prefixed with `❯` and cut at the
-  column. Readable, a little noisy.
-- **T6 · A permission prompt for an MCP tool reads `Allow mcp__server__tool …?`.** That is the tool's
-  internal id; a plain name would read better. It is still more telling than the generic text it
-  replaced, so it is left for the owner to say whether it bothers him.
+  column ([screenshot](ux-review-m4/07-after-fix.png), the "question" and "perm" rows). Readable, a
+  little noisy.
+- **T6 · A permission prompt for an MCP tool will read `Allow mcp__server__tool …?`** (inferred from
+  the code, not seen: no MCP tool prompt was raised in the live cases, so there is no screenshot).
+  That is the tool's internal id; a plain name would read better. It is still more telling than the
+  generic text it replaced, so it is left for the owner to say whether it bothers him. Only a
+  permission prompt gets the `Allow …?` phrasing; other notifications keep the hook's own text.
+- **T7 · In EARLIER, single sessions run straight on under a collapsed task header.** The gap comes
+  before the next header, not after the task's last row, so a lone session after a task reads as one
+  of its members: in the [after-fix screenshot](ux-review-m4/07-after-fix.png) "Count .kt files" is
+  followed by question, perm, chat, split and "Bump kotlinx-serialization", and in
+  [the first one](ux-review-m4/01-before-overview.png) "Auth token refresh" by "Tidy the release
+  notes script". This works against "the unit is a task". Suggestion: a gap (or the same spacing) after
+  a collapsed task, as after an expanded one.
 - **Limit, not a finding · Claude Code's own menus.** A "Teach auto mode about your environment?"
   menu blocked a pane while its session read idle: no hook fires for it, so Lunamux cannot know it
   is waiting. Nothing the overview can fix.
