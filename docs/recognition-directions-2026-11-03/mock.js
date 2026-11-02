@@ -15,8 +15,10 @@
  * (collapsed|expanded, `surfaces` for marks only) and an optional `filter` (gray|blur) used for the
  * self-checks (recognition without colour, ◆ still the loudest mark).
  *
- * A page may set `window.RD_DATA` (`NOW`, `DAYS`, `WEEKS`, `more`, and `BOARD` for the desk) before this
- * file loads to draw other data in the same shapes, and `window.RD_FONTS` to point at another font folder.
+ * A page may set `window.RD_DATA` (`NOW`, `DAYS`, `WEEKS` and `more`, the count behind the "+ N more" line)
+ * before this file loads to draw other data in the same shapes, and `window.RD_FONTS` to point at another
+ * font folder. Every silhouette is a hand-assigned template, not read from a stored screen (the seeded
+ * sessions have none); see {@link TEMPLATES} and {@link finishedShape}.
  *
  * The theme tokens are the toolkit's own (lunula-core `BuiltinThemes`: Neon Cyan and Lunamux
  * Light) and the `.ao-*` mapping is the one in `web/src/jsMain/resources/styles.css`.
@@ -26,7 +28,7 @@
 
   /**
    * The two themes, as the overview's CSS variables resolve them in today's build.
-   * Dark is Neon Cyan; light is Lunamux Light. `hue` holds the identity-colour lightness and
+   * Dark is Neon Cyan; light is Lunamux Light. `hueL` and `hueS` are the identity-colour lightness and
    * saturation tuned per theme so a mark stays quieter than the ◆.
    * @type {Object<string, Object<string, string>>}
    */
@@ -54,11 +56,7 @@
    */
   const HUES = [85, 125, 155, 225, 255, 285, 315];
 
-  /**
-   * One row of the overview: a lone session, or a task with its member sessions.
-   * `kind` names the shape of the session's last screen (see {@link TEMPLATES}); it stands in for
-   * the lines of `lastScreen` / the pane that a real build would read.
-   */
+  /** Minutes in each age unit the overview prints (m, h, d); read by {@link mins}. */
   const MIN = { m: 1, h: 60, d: 1440 };
   /**
    * Parse an age such as "25m", "5h" or "2d" into minutes.
@@ -68,7 +66,9 @@
   function mins(s) { const n = parseFloat(s); return n * MIN[s.slice(-1)]; }
 
   /**
-   * Build one unit (a task or a lone session).
+   * Build one row of the overview: a lone session, or a task with its member sessions.
+   * `kind` names the shape of the session's last screen (see {@link TEMPLATES}); it stands in for
+   * the lines of `lastScreen` that a real build would read.
    * @param {string} id stable id (a session id or a task id), the input of the mark.
    * @param {string} title the title the overview shows.
    * @param {string|null} repo repository folder name, or null/'~' outside a repository.
@@ -100,9 +100,6 @@
   const MERGED = 'Merged; the checks pass.';
 
   /** The NOW band, in the order of today's build. */
-  /** Whether the optional rhythm column (a strip of the session's activity) is drawn; set by {@link render}. */
-  let RHYTHM = false;
-
   let NOW = [
     U('seed-access-control', 'Access control', 'work-app', '12m', 'needs', '', 'diff', {
       slot: 0, summary: '1 needs you · 1 working · 1 in review', live: [0, 1],
@@ -122,7 +119,7 @@
       ] }),
   ];
 
-  /** LAST FEW DAYS, newest first, as in today's build. */
+  /** The LAST FEW DAYS band, newest first, as in today's build. */
   let DAYS = [
     U('seed-01', 'Bump kotlinx-serialization', 'lunamux', '25m', 'done', MERGED, 'done', { slot: 24 }),
     U('seed-release-train', 'Release train', 'lunamux', '1h', 'done', '', 'done', {
@@ -159,7 +156,7 @@
       ] }),
   ];
 
-  /** LAST TWO WEEKS. */
+  /** The LAST TWO WEEKS band. */
   let WEEKS = [
     U('seed-task-checkout', 'Flaky checkout tests', 'shop', '5d', 'done', '', 'test', {
       slot: 6, summary: '2 sessions', members: [
@@ -220,14 +217,6 @@
     return HUES[hash32(repo) % HUES.length];
   }
   /**
-   * The string a unit's tint is drawn from: its branch/worktree name when it has a meaningful one
-   * (so two runs in the same repository still differ), else its repository.
-   * @param {Object} u a unit.
-   * @returns {string|null} the tint key.
-   */
-  function tintKey(u) { return u.hueKey || u.repo; }
-
-  /**
    * The two-letter monogram of a repository: the first letters of its first two words, else its
    * first two letters. It is the non-colour half of the repository cue.
    * @param {string|null} repo repository folder name.
@@ -253,11 +242,12 @@
 
   /**
    * The mark of a task or lone session: a mirrored 5×5 pattern drawn from its id, on a plate
-   * tinted by its repository's hue. The pattern is the identity (about 32 000 distinct ones); the
-   * hue says "where" and repeats in the repository word; neither depends on list order.
-   * Called by the marks direction for every row, and by its "surfaces" view for the sidebar,
-   * the pane header and the search result: the same id always draws the same mark.
-   * @param {string} id the task id or session id.
+   * tinted by its repository's hue. The pattern is the identity (about 23 000 distinct ones: 15 bits,
+   * at least 7 set); the hue says "where" and repeats in the repository word; neither depends on list
+   * order. Called by the marks direction for every row, and by its "surfaces" view for the sidebar,
+   * the pane header, the chip and the search results. The id is the task's when the session belongs
+   * to one and its own otherwise, so a session wears the same mark on every surface.
+   * @param {string} id the task id, or the session id for a session outside any task.
    * @param {string|null} repo the repository, for the tint.
    * @param {number} px the size in pixels.
    * @param {Object} T the theme.
@@ -306,9 +296,9 @@
   /**
    * An opacity for a mark or silhouette from its freshness, never below legibility.
    * @param {number} min age in minutes.
-   * @returns {number} opacity 0.55..1.
+   * @returns {number} opacity 0.4..1.
    */
-  function fadeOf(min) { return 0.55 + 0.45 * fresh(min); }
+  function fadeOf(min) { return 0.4 + 0.6 * fresh(min); }
 
   /**
    * The glyph for a state. The shape differs per state, so colour is never the only cue.
@@ -357,6 +347,20 @@
   };
 
   /**
+   * The silhouette template of a finished session. A session that has ended leaves a screen that
+   * is mostly its final message above the prompt box, whatever it did before, so every finished
+   * session is drawn as `done` (a short message) or `prose` (a long one) and only a live session keeps
+   * the template of what it is doing. This keeps the Screens direction from looking better than a real
+   * `lastScreen` would make it.
+   * @param {Object} u a unit or member.
+   * @returns {string} a key of {@link TEMPLATES}.
+   */
+  function finishedShape(u) {
+    if (u.state !== 'done') return u.kind;
+    return u.kind === 'done' || (u.line && u.line.length < 40) ? 'done' : 'prose';
+  }
+
+  /**
    * A silhouette: the last screen of a session drawn as bars, no readable text.
    * Used by the screens direction. The structure (line lengths, indents, the dialog box, the diff
    * columns) carries the recognition; the muted colour only helps, and a grayscale render still
@@ -396,17 +400,6 @@
       ? `<rect x="5" y="-3" width="${w}" height="${h}" fill="none" stroke="${T.line}" stroke-width="1" transform="translate(0,3)"/>` : '';
     return `<svg class="sil" width="${w + (o.stack ? 6 : 0)}" height="${h + (o.stack ? 3 : 0)}" viewBox="0 0 ${w + (o.stack ? 6 : 0)} ${h + (o.stack ? 3 : 0)}" shape-rendering="crispEdges" style="opacity:${o.fade == null ? 1 : o.fade}">` +
       stack + `<g transform="translate(0,${o.stack ? 3 : 0})"><rect width="${w}" height="${h}" fill="color-mix(in srgb, ${T.text} 5%, transparent)"/>${bars}</g></svg>`;
-  }
-
-  /**
-   * The rhythm strip of a unit: eight block characters, one per slice of the session's life,
-   * their height the amount of activity in that slice. Taller = busier; a flat low strip = quiet.
-   * Needs per-minute activity (new data for the client; the hook events Lunamux already receives).
-   * @param {number[]} beat eight levels, 0..8.
-   * @returns {string} HTML.
-   */
-  function beatStrip(beat) {
-    return beat.map(v => `<i class="${v ? 'b' : 'z'}">${' ▁▂▃▄▅▆▇█'[v] === ' ' ? '▁' : ' ▁▂▃▄▅▆▇█'[v]}</i>`).join('');
   }
 
   /**
@@ -468,7 +461,6 @@ body{width:1280px;min-height:100vh;position:relative;overflow-x:hidden}
 .mk{display:block}.sil{display:block}
 .tree{color:var(--faint)}
 .more{color:var(--dim);padding:0 1ch 0 11ch}
-.beat{display:inline-flex;letter-spacing:0;white-space:nowrap}.beat i{font-style:normal;width:1ch}.beat .b{color:var(--t)}.beat .z{color:var(--faint);opacity:.6}
 `;
   }
 
@@ -523,7 +515,8 @@ body{width:1280px;min-height:100vh;position:relative;overflow-x:hidden}
    * @param {Object} T the theme.
    * @param {string} mode collapsed | expanded.
    * @param {Object} d the direction: `cols` the grid template, `lead(u, member, parent)` the leading
-   *   cell HTML, `rowH` the row height, `where(u)` the repository cell, `sub(u, m)` a second line.
+   *   cell HTML, `rowH` the row height, `where(u)` the repository name and, optionally,
+   *   `whereCell(u)` the whole repository cell.
    * @returns {string} the list's HTML.
    */
   function list(T, mode, d) {
@@ -532,8 +525,6 @@ body{width:1280px;min-height:100vh;position:relative;overflow-x:hidden}
     const parts = [];
     /** The repository cell of a unit: the direction's own, else the plain name. */
     const wcell = u => d.whereCell ? d.whereCell(u) : `<span class="w">${esc(d.where(u))}</span>`;
-    /** The optional rhythm cell (a direction that has one); empty cell for header and member rows. */
-    const rcell = u => d.rhythm ? `<span class="rh">${u ? d.rhythm(u) : ''}</span>` : '';
     /**
      * Draw one band.
      * @param {string} label the band heading.
@@ -550,7 +541,7 @@ body{width:1280px;min-height:100vh;position:relative;overflow-x:hidden}
             ${d.lead(u, null, null)}
             <span class="t">${esc(u.title)}</span>${wcell(u)}
             <span class="n">${u.summary.replace(/1 needs you/, '<span class="cn">1 needs you</span>')}</span>
-            ${rcell(null)}<span class="a">${u.age}</span><span class="x">${['seed-access-control', 'seed-release-train', 'seed-release-42', 'seed-docs-sweep', 'seed-billing-cleanup', 'seed-nightly-sync'].includes(u.id) ? 'open' : ''}</span></div>`);
+            <span class="a">${u.age}</span><span class="x">${['seed-access-control', 'seed-release-train', 'seed-release-42', 'seed-docs-sweep', 'seed-billing-cleanup', 'seed-nightly-sync'].includes(u.id) ? 'open' : ''}</span></div>`);
           const ms = shownMembers(u, open);
           ms.forEach((m, i) => {
             const sel = m.id === selId;
@@ -559,15 +550,15 @@ body{width:1280px;min-height:100vh;position:relative;overflow-x:hidden}
               <span class="gut tree">${last ? '└' : '├'}</span><span class="s">${glyph(m.state)}</span>
               ${d.lead(m, m, u)}
               <span class="t">${esc(m.title)}</span><span class="w"></span>
-              <span class="n">${esc(m.label ? [m.label].concat(m.links || []).join(' · ') : (m.links && m.links.length && m.state === 'needs' ? '' : ''))}${esc(m.line || '')}${m.links && m.state === 'needs' ? '' : ''}</span>
-              ${rcell(null)}<span class="a">${m.age}</span><span class="x"></span></div>`);
+              <span class="n">${esc(m.label ? [m.label].concat(m.links || []).join(' · ') : '')}${esc(m.line || '')}</span>
+              <span class="a">${m.age}</span><span class="x"></span></div>`);
           });
         } else {
           parts.push(`<div class="row ${u.state === 'needs' ? 'need' : ''} past" style="grid-template-columns:${d.cols};min-height:${d.rowH}px">
             <span class="gut"></span><span class="s">${glyph(u.state)}</span>
             ${d.lead(u, null, null)}
             <span class="t">${esc(u.title)}</span>${wcell(u)}
-            <span class="n">${esc(u.line)}</span>${rcell(u)}<span class="a">${u.age}</span><span class="x"></span></div>`);
+            <span class="n">${esc(u.line)}</span><span class="a">${u.age}</span><span class="x"></span></div>`);
         }
       });
     };
@@ -583,8 +574,8 @@ body{width:1280px;min-height:100vh;position:relative;overflow-x:hidden}
   /**
    * Direction A, "Marks": recognition by look.
    * Today's list with one added column: a stable mark per task or lone session (a mirrored pattern
-   * from its id on a plate tinted by its repository's hue), the repository word tinted the same way,
-   * and freshness as the mark's opacity. Members carry a small copy of their task's mark.
+   * from its id on a plate tinted by its repository's hue, 24 px), the repository word tinted the same
+   * way, and freshness as the mark's opacity. A member session wears a small copy of its task's mark.
    * @param {Object} T the theme.
    * @param {string} mode collapsed | expanded | surfaces.
    * @returns {string} page HTML.
@@ -592,7 +583,7 @@ body{width:1280px;min-height:100vh;position:relative;overflow-x:hidden}
   function renderMarks(T, mode) {
     if (mode === 'surfaces') return surfaces(T);
     const d = {
-      cols: '2ch 2ch 28px 34ch 15ch minmax(0,1fr) 4ch 7ch', rowH: 36,
+      cols: '2ch 2ch 24px 34ch 15ch minmax(0,1fr) 4ch 7ch', rowH: 34,
       /**
        * The leading cell: the unit's mark, or its task's small mark for a member.
        * @param {Object} u the unit or member.
@@ -601,8 +592,8 @@ body{width:1280px;min-height:100vh;position:relative;overflow-x:hidden}
        * @returns {string} HTML.
        */
       lead(u, m, parent) {
-        if (m) return `<span style="display:flex;justify-content:center">${markSvg(parent.id, tintKey(parent), 16, T, { fade: fadeOf(m.min) })}</span>`;
-        return `<span>${markSvg(u.id, tintKey(u), 28, T, { stack: !!u.members, fade: fadeOf(u.min) })}</span>`;
+        if (m) return `<span style="display:flex;justify-content:center">${markSvg(parent.id, parent.repo, 16, T, { fade: fadeOf(m.min) })}</span>`;
+        return `<span>${markSvg(u.id, u.repo, 24, T, { stack: !!u.members, fade: fadeOf(u.min) })}</span>`;
       },
       /**
        * The repository cell: the monogram and the name, tinted with the repository's hue.
@@ -618,50 +609,42 @@ body{width:1280px;min-height:100vh;position:relative;overflow-x:hidden}
       whereCell(u) {
         if (!u.repo) return '<span class="w"></span>';
         if (u.repo === '~') return '<span class="w">~ (home)</span>';
-        return `<span class="w" style="color:${hueCss(hueFor(tintKey(u)), T, 1)}"><b style="font-weight:700;opacity:.85">${monogram(u.repo)}</b> ${esc(u.repo)}</span>`;
+        return `<span class="w" style="color:${hueCss(hueFor(u.repo), T, 1)}"><b style="font-weight:700;opacity:.85">${monogram(u.repo)}</b> ${esc(u.repo)}</span>`;
       },
     };
-    if (RHYTHM) {
-      d.cols = d.cols.replace('4ch 7ch', '9ch 4ch 7ch');
-      d.rhythm = u => u.beat ? `<span class="beat">${beatStrip(u.beat)}</span>` : '';
-    }
     const html = list(T, mode, d);
     return frame(T, html, keys('<b>↵</b> jump to the pane'), { h: mode === 'expanded' ? 1620 : 1260 });
   }
 
   /**
-   * Decode the few HTML entities {@link esc} produces.
-   * @param {string} s escaped text.
-   * @returns {string} plain text.
-   */
-  function decodeEntities(s) { return s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'); }
-
-  /**
    * The "surfaces" view of the marks direction: the same marks on the sidebar, on a pane header,
-   * on the toolbar chip and on a search result, to show the one cue that works outside the overview.
+   * on the toolbar chip and on search results, to show the one cue that works outside the overview.
+   * A session in a task wears its task's mark on every surface; a lone session wears its own.
    * @param {Object} T the theme.
    * @returns {string} page HTML.
    */
   function surfaces(T) {
     const mk = (id, repo, px) => markSvg(id, repo, px, T, {});
+    const ACC = 'seed-access-control';
+    // [mark id, repository, title, state]: a member session carries its task's id, a lone session its own.
     const side = [
-      ['acc-role', 'work-app', 'Role model', 'needs'], ['acc-audit', 'work-app', 'Login audit trail', 'working'],
+      [ACC, 'work-app', 'Role model', 'needs'], [ACC, 'work-app', 'Login audit trail', 'working'],
       ['seed-02', 'lunamux', 'Sidebar flicker on resize', 'done'], ['seed-open-working', 'billing', 'Rebuild the search index', 'done'],
       ['seed-task-rate-limiter', 'gateway', 'Rate limiter rewrite', 'done'],
     ];
-    const rows = side.map(([id, repo, title, st]) => `<div style="display:flex;gap:10px;align-items:center;height:34px;padding:0 10px;${id === 'acc-role' ? 'background:var(--sel);box-shadow:inset 2px 0 0 var(--accent)' : ''}">${mk(id, repo, 20)}<span style="flex:1;color:var(--t);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${title}</span>${st === 'needs' ? '<span class="g-need">◆</span>' : st === 'working' ? '<span class="g-work">⠶</span>' : ''}</div>`).join('');
-    const hits = [['seed-task-invoice', 'billing', 'Duplicate header row', 'in task Invoice export migration', '30d'], ['seed-task-invoice', 'billing', 'Currency rounding', 'in task Invoice export migration', '31d'], ['seed-17', 'billing', 'Invoice totals by month', 'in title', '34d']];
+    const rows = side.map(([id, repo, title, st], i) => `<div style="display:flex;gap:10px;align-items:center;height:34px;padding:0 10px;${i === 0 ? 'background:var(--sel);box-shadow:inset 2px 0 0 var(--accent)' : ''}">${mk(id, repo, 20)}<span style="flex:1;color:var(--t);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${title}</span>${st === 'needs' ? '<span class="g-need">◆</span>' : st === 'working' ? '<span class="g-work">⠶</span>' : ''}</div>`).join('');
+    const hits = [['seed-task-invoice', 'billing', 'Duplicate header row', 'in task Invoice export migration', '30d'], ['seed-task-invoice', 'billing', 'Currency rounding', 'in task Invoice export migration', '31d']];
     const srch = hits.map(([id, repo, title, where, age]) => `<div style="display:flex;gap:10px;align-items:center;height:34px;padding:0 10px">${mk(id, repo, 20)}<span style="color:var(--t);width:260px">${title}</span><span style="color:var(--dim);flex:1">${where}</span><span style="color:var(--dim)">${age}</span></div>`).join('');
     return `<div class="page" style="height:760px">
   <div class="bar"><span class="ico"></span><span class="ico"></span><span class="tabchip">Tab 1</span>
-   <span class="chip"><span style="display:inline-flex;gap:6px;align-items:center">${mk('acc-role', 'work-app', 16)}<span class="n">◆ 1 needs you</span></span><span class="sep">·</span><span>1 working</span></span>
+   <span class="chip"><span style="display:inline-flex;gap:6px;align-items:center">${mk(ACC, 'work-app', 16)}<span class="n">◆ 1 needs you</span></span><span class="sep">·</span><span>1 working</span></span>
    <span class="ico"></span><span class="ico"></span></div>
   <div class="app"><div class="side" style="width:330px;padding:10px 0"><div style="padding:0 14px 8px;font-size:11px;letter-spacing:.12em">SESSIONS</div>${rows}</div>
    <div style="flex:1;margin:14px;display:flex;flex-direction:column;gap:14px">
     <div style="border:1.5px solid color-mix(in srgb,var(--accent) 55%,transparent);border-radius:4px;flex:1">
-     <div style="display:flex;gap:10px;align-items:center;height:36px;padding:0 12px;border-bottom:1px solid var(--line)">${mk('acc-role', 'work-app', 20)}<b style="color:var(--t)">Role model</b><span style="color:var(--dim)">work-app · Access control</span><span style="margin-left:auto" class="g-need">◆ asking</span></div>
-     <div style="padding:14px 16px;color:var(--dim)">The pane's header carries the same mark as its row in the overview, so the pane you jump to is the one you picked.</div></div>
-    <div style="border:1px solid var(--line);border-radius:6px;background:var(--s)"><div style="padding:8px 14px;color:var(--dim);font-size:11px;letter-spacing:.12em">SEARCH "invoice": the same marks on closed sessions</div>${srch}</div>
+     <div style="display:flex;gap:10px;align-items:center;height:36px;padding:0 12px;border-bottom:1px solid var(--line)">${mk(ACC, 'work-app', 20)}<b style="color:var(--t)">Role model</b><span style="color:var(--dim)">work-app · Access control</span><span style="margin-left:auto" class="g-need">◆ asking</span></div>
+     <div style="padding:14px 16px;color:var(--dim)">The pane's header wears the same mark as its row in the overview (the task's, as a member session) and as the sidebar row, so the pane you jump to is the one you picked. Sessions of one task look alike on purpose; their titles and glyphs tell them apart.</div></div>
+    <div style="border:1px solid var(--line);border-radius:6px;background:var(--s)"><div style="padding:8px 14px;color:var(--dim);font-size:11px;letter-spacing:.12em">SEARCH "invoice": closed sessions of one task wear that task's mark</div>${srch}</div>
    </div></div></div>`;
   }
 
@@ -670,14 +653,15 @@ body{width:1280px;min-height:100vh;position:relative;overflow-x:hidden}
    * The overlay becomes a board of fixed slots. A task takes the first free slot when it first
    * appears and keeps it until it leaves the two-week window, so "billing is bottom left" holds
    * every time. Nothing moves when a state changes; urgency is carried by a banner and by the tile's
-   * look, not by position. A task unfolds over its neighbours (they do not shift).
-   * No identity colour and no mark: place is the only added cue, on top of the title.
+   * look, not by position. A task unfolds over its neighbours (they do not shift, they are covered).
+   * It gives up today's bands (NOW, LAST FEW DAYS, LAST TWO WEEKS: age is a bar on the tile) and the
+   * sorted order. No identity colour and no mark: place is the only added cue, on top of the title.
    * @param {Object} T the theme.
    * @param {string} mode collapsed | expanded.
    * @returns {string} page HTML.
    */
   function renderDesk(T, mode) {
-    const all = window.RD_DATA && window.RD_DATA.BOARD ? window.RD_DATA.BOARD : [...NOW, ...DAYS, ...WEEKS];
+    const all = [...NOW, ...DAYS, ...WEEKS];
     const bySlot = {};
     all.forEach(u => { bySlot[u.slot] = u; });
     const COLS = 6, ROWS = 5, W = (1180 - 32 - (COLS - 1) * 10) / COLS, H = 96;
@@ -691,8 +675,8 @@ body{width:1280px;min-height:100vh;position:relative;overflow-x:hidden}
         continue;
       }
       const st = topState(u);
-      const live = NOW.includes(u) || topState(u) === 'working';
-      const dimTile = !live;
+      const live = st === 'working';
+      const dimTile = st === 'done' || st === 'idle';
       const f = fresh(u.min);
       const need = st === 'needs';
       const border = need ? `border:1.5px solid var(--warn);background:color-mix(in srgb,var(--warn) 10%,var(--s))`
@@ -701,7 +685,7 @@ body{width:1280px;min-height:100vh;position:relative;overflow-x:hidden}
       const line = u.members ? (u.summary || '') : (u.line || '');
       const barColor = need ? 'var(--warn)' : live ? 'var(--accent)' : 'var(--dim)';
       tiles.push(`<div style="position:absolute;left:${x}px;top:${y}px;width:${W}px;height:${H}px;${border};border-radius:6px;padding:8px 10px;overflow:hidden;${u.id === sel ? 'outline:2px solid var(--accent);outline-offset:2px' : ''}">
-        <div style="display:flex;gap:6px;align-items:flex-start"><span style="width:14px;text-align:center;padding-top:1px">${glyph(live ? st : 'done')}</span>
+        <div style="display:flex;gap:6px;align-items:flex-start"><span style="width:14px;text-align:center;padding-top:1px">${glyph(st)}</span>
         <span style="flex:1;font-weight:700;line-height:1.25;color:${dimTile ? 'var(--muted)' : 'var(--t)'};display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:33px">${esc(u.title)}</span>
         ${u.members ? `<span style="color:var(--dim);font-size:11px;border:1px solid var(--line);border-radius:3px;padding:0 4px">${u.members.length}</span>` : ''}</div>
         <div style="margin-top:4px;color:var(--dim);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(u.repo || '~')}</div>
@@ -714,32 +698,32 @@ body{width:1280px;min-height:100vh;position:relative;overflow-x:hidden}
       const rows = u.members.map((m, i) => `<div class="row ${m.state === 'needs' ? 'need' : ''} ${i === 0 ? 'sel' : ''}" style="grid-template-columns:2ch 30ch minmax(0,1fr) 5ch;min-height:30px"><span class="s">${glyph(m.state)}</span><span class="t" style="font-weight:700">${esc(m.title)}</span><span class="n">${esc(m.label ? [m.label].concat(m.links || []).join(' · ') : m.line)}</span><span class="a">${m.age}</span></div>`).join('');
       card = `<div style="position:absolute;left:${x - 6}px;top:${y - 6}px;width:${cw + 12}px;background:var(--s);border:1.5px solid var(--warn);border-radius:8px;box-shadow:0 18px 44px ${T.shadow};padding:10px 6px 8px;z-index:5">
         <div style="display:flex;gap:1.5ch;padding:0 1ch 6px;align-items:baseline"><b style="color:var(--t)">Access control</b><span style="color:var(--dim)">work-app</span><span class="n" style="margin-left:auto;color:var(--dim)"><span class="cn">1 needs you</span> · 1 working · 1 in review</span></div>${rows}
-        <div style="padding:6px 1ch 0;color:var(--dim);font-size:11.5px">opened over its neighbours: nothing on the board moved</div></div>`;
+        <div style="padding:6px 1ch 0;color:var(--dim);font-size:11.5px">opened over its neighbours (it hides three tiles and part of the next row while open): nothing on the board moved</div></div>`;
     }
-    const real = !!(window.RD_DATA && window.RD_DATA.BOARD);
-    const banner = real ? '<div style="height:14px"></div>' : `<div style="margin:12px 16px 14px;border:1.5px solid var(--warn);border-radius:6px;background:color-mix(in srgb,var(--warn) 12%,var(--s));display:flex;gap:1.5ch;align-items:center;height:42px;padding:0 14px">
+    const banner = `<div style="margin:12px 16px 14px;border:1.5px solid var(--warn);border-radius:6px;background:color-mix(in srgb,var(--warn) 12%,var(--s));display:flex;gap:1.5ch;align-items:center;height:42px;padding:0 14px">
       <span class="g-need" style="font-size:20px">◆</span><b style="color:var(--t)">Role model</b><span style="color:var(--dim)">Access control · work-app</span>
       <b style="color:var(--warn)">Should admins inherit viewer rights?</b><span class="a" style="margin-left:auto">12m</span><span style="color:var(--t)">↵ answer</span></div>`;
     const boardH = ROWS * (H + 10);
     const body = `${banner}<div style="position:relative;height:${boardH}px">${tiles.join('')}${card}</div>
-      <div style="display:flex;gap:2.5ch;padding:4px 18px 12px;color:var(--dim);font-size:11px;white-space:nowrap"><span>◆ asks you</span><span>amber edge: asks you · cyan edge: live</span><span>bar: freshness, full = just now</span><span>dashed: a free slot, reused by the next new task</span><span style="margin-left:auto">${window.RD_DATA && window.RD_DATA.BOARD ? `+ ${window.RD_DATA.boardMore} more units, no slot on this board` : 'older than two weeks: search'}</span></div>`;
+      <div style="display:flex;gap:2.5ch;padding:4px 18px 12px;color:var(--dim);font-size:11px;white-space:nowrap"><span>◆ asks you</span><span>amber edge: asks you · cyan edge: working</span><span>bar: freshness, full = just now</span><span>dashed: a free slot, reused by the next new task</span><span style="margin-left:auto">older than two weeks: search</span></div>`;
     return frame(T, body, keys('<b>↵</b> jump to the pane') + '<span><b>←↑↓→</b> move across the board</span>', { h: 900 });
   }
 
   /**
    * Direction C, "Screens": recognition by content.
-   * Each row gets a silhouette of the session's last screen (a task shows a stack of its most urgent
-   * member's), so the eye can tell "the long diff" from "the test run" from "the question box"
-   * before it reads a word. Rows are two lines (title over the "now" line), so the list is longer.
+   * Each row gets a 120×32 px silhouette of the session's last screen beside its text (a task shows a
+   * stack of its most urgent member's), so the eye can tell "the long diff" from "the test run" from
+   * "the question box" before it reads a word. Rows are 44 px high (30 px today), so the list is longer.
+   * The silhouettes are synthetic: templates chosen by hand per session, not read from stored screens.
    * @param {Object} T the theme.
    * @param {string} mode collapsed | expanded.
    * @returns {string} page HTML.
    */
   function renderScreens(T, mode) {
     const lead = (u, m, parent) => {
-      if (m) return silhouette(m.id, m.kind, T, { w: 84, fade: fadeOf(m.min) });
+      if (m) return silhouette(m.id, finishedShape(m), T, { w: 84, fade: fadeOf(m.min) });
       const src = u.members ? (u.members.find(x => x.state === 'needs') || u.members.find(x => x.state === 'working') || u.members[0]) : u;
-      return silhouette(src.id, src.kind, T, { w: 120, stack: !!u.members, fade: fadeOf(u.min) });
+      return silhouette(src.id, finishedShape(src), T, { w: 120, stack: !!u.members, fade: fadeOf(u.min) });
     };
     const d = { cols: '2ch 2ch 126px 36ch 15ch minmax(0,1fr) 4ch 7ch', rowH: 44, lead, where: u => u.repo || '' };
     const html = list(T, mode, d);
@@ -755,14 +739,11 @@ body{width:1280px;min-height:100vh;position:relative;overflow-x:hidden}
     const q = new URLSearchParams(location.search);
     const T = THEMES[q.get('theme') === 'light' ? 'light' : 'dark'];
     const mode = q.get('mode') || 'collapsed';
-    RHYTHM = q.get('rhythm') === '1';
     if (window.RD_DATA) { NOW = window.RD_DATA.NOW; DAYS = window.RD_DATA.DAYS; WEEKS = window.RD_DATA.WEEKS; }
     const style = document.createElement('style');
     style.textContent = css(T) + `
-.ao-ink-2{}
 .row.head .s,.row .s{display:flex;justify-content:center}
-.row.mem.sel .t{color:var(--bright)}
-.screens-row{}`;
+.row.mem.sel .t{color:var(--bright)}`;
     document.head.appendChild(style);
     const body = { marks: renderMarks, desk: renderDesk, screens: renderScreens }[dir](T, mode);
     document.body.innerHTML = body;
