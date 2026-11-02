@@ -74,13 +74,19 @@ and *Which release name do you prefer: Aurora or Borealis?*.
 ### F3 · pass · The four live cases
 
 All four were started by hand in panes of the scratch server (real Claude Code sessions, hooks on).
+The split prompt was: *"Split this job across two Lunamux panes with one Claude Code session in each. In your
+own session count the .kt files under server/src/main. In a second pane in this same folder start a second
+Claude Code session and give it the job: count the .kt files under web/src/jsMain and tell me the number. Use
+the Lunamux tools. Then report both numbers."* It names the Lunamux tools but never says "task", so the
+grouping was the agent's own. The owner should judge whether "Use the Lunamux tools" is too strong a nudge
+for the test he runs.
 
 | Case | Result |
 |---|---|
 | A real question (`AskUserQuestion`) | ◆ in NOW, in the chip, on the tab and in the sidebar; text fixed by F2 |
 | A real permission prompt | ◆ the same way; text fixed by F2 |
 | A chat that only finished its turn | idle ○ with its last line "hello", **no ◆** ([screenshot](ux-review-m4/02-before-live-cases.png)) |
-| An agent asked to split a job across two panes (the prompt never says "task") | created the task "Count .kt files (server + web)" through the MCP tools with both panes in it, unprompted; it shows as one task with two sessions and, once idle past the grace, moves to EARLIER (last screenshot) |
+| An agent asked to split a job across two panes (the prompt never says "task") | created the task "Count .kt files (server + web)" through the MCP tools with both panes in it, unprompted; one task with two sessions, "2 idle" in NOW ([screenshot](ux-review-m4/03b-split-task.png)) |
 
 Jumping from the overview lands in the pane with its tab and sidebar entry selected
 ([screenshot](ux-review-m4/08-after-jump.png)).
@@ -110,6 +116,9 @@ Searching a word that only the task's title holds finds its closed sessions, eac
   ([screenshot](ux-review-m4/03-before-release-train.png)). One is enough.
 - **T5 · Ended rows with no summary show the raw first prompt**, prefixed with `❯` and cut at the
   column. Readable, a little noisy.
+- **T6 · A permission prompt for an MCP tool reads `Allow mcp__server__tool …?`.** That is the tool's
+  internal id; a plain name would read better. It is still more telling than the generic text it
+  replaced, so it is left for the owner to say whether it bothers him.
 - **Limit, not a finding · Claude Code's own menus.** A "Teach auto mode about your environment?"
   menu blocked a pane while its session read idle: no hook fires for it, so Lunamux cannot know it
   is waiting. Nothing the overview can fix.
@@ -125,7 +134,10 @@ pane, so ↵ on them is "nothing to open" by construction.
 One re-look on the seeded server after the fixes ([screenshot](ux-review-m4/07-after-fix.png)):
 "Release train" has left NOW and sits in LAST FEW DAYS ("3 sessions"); "Billing cleanup" (in review,
 queued) holds its place in NOW; both ◆ rows say what they are asking; "Count .kt files" sits in
-LAST FEW DAYS with its two sessions. Nothing new was found.
+LAST FEW DAYS with its two sessions, but only because the restart that loaded the fixes ended all
+four test panes' sessions (the old "perm", "question", "chat" and "split" rows beside it are the same
+restart); the grace rule for a task of hosted sessions was not exercised on the live sessions and is
+covered by its existing tests. Nothing new was found.
 
 ## First things to try tomorrow
 

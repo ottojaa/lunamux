@@ -113,7 +113,7 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aTaskStaysInNowWhileAnySessionHasNotEndedEvenWhenNothingIsRunning() {
+    fun aTaskStaysInNowWhileASessionHasOpenWorkEvenWhenNothingIsRunning() {
         show(
             listOf(task(members = listOf(member("a", "idle", label = "in review"), member("b", "ended")))),
             session("busy", "working", since = 1),
@@ -506,7 +506,7 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aTaskFileKeepsItsTaskInNowWhileNothingIsRunningUntilEverySessionEnded() {
+    fun aTaskFileKeepsItsTaskInNowWhileNothingIsRunningAndWorkIsQueued() {
         show(listOf(task(members = listOf(member("a", "idle", label = "queued"), member("b", "idle", label = "queued")))))
         now += 10 * AgentsOverviewBackingViewModel.IDLE_GRACE_MS
         vm.tick()

@@ -118,6 +118,13 @@ class AgentSessionTracker(
     /** Panes whose screen still shows an agent we already ended; do not reopen until it clears. */
     private val awaitScreenClear = HashSet<String>()
 
+    /**
+     * Ids of open records whose last `PreToolUse` has not been followed by its `PostToolUse` yet.
+     * A prompt that arrives while one is in flight is about that tool call; one that arrives with
+     * none in flight is about something else, so the row must not name the stale last tool line.
+     */
+    private val toolInFlight = HashSet<String>()
+
     /** Ids of hook-fed `needs_you` records whose pane screen has been seen showing the prompt. */
     private val promptSeen = HashSet<String>()
 
@@ -277,12 +284,19 @@ class AgentSessionTracker(
         when (name) {
             "SessionStart" -> {}
             "UserPromptSubmit" -> {
+                toolInFlight.remove(rec.id)
                 set(WORKING, nowLine = null)
                 if (rec.firstPrompt == null) rec = rec.copy(firstPrompt = event.str("prompt")?.take(PROMPT_MAX))
                 if (rec.title == null) rec = rec.copy(title = cleanTitle(pane.programTitle))
             }
-            "PreToolUse" -> set(WORKING, nowLine = toolLine(event))
-            "PostToolUse" -> set(WORKING)
+            "PreToolUse" -> {
+                toolInFlight.add(rec.id)
+                set(WORKING, nowLine = toolLine(event))
+            }
+            "PostToolUse" -> {
+                toolInFlight.remove(rec.id)
+                set(WORKING)
+            }
             "Notification" -> {
                 // The idle reminder fires a minute after a turn ends and is not a request.
                 // It is recognised by its type, or by its text in case a version omits the type.
@@ -293,9 +307,10 @@ class AgentSessionTracker(
                 ) return@synchronized
                 // The hook text is generic ("Claude needs your permission"). The tool call the prompt
                 // is about arrived with the PreToolUse just before, so say what is being asked instead.
-                set(NEEDS_YOU, nowLine = null, question = pendingQuestionOf(rec.nowLine, message)?.take(QUESTION_MAX))
+                set(NEEDS_YOU, nowLine = null, question = pendingQuestionOf(rec.nowLine.takeIf { rec.id in toolInFlight }, message)?.take(QUESTION_MAX))
             }
             "Stop" -> {
+                toolInFlight.remove(rec.id)
                 val last = event.str("last_assistant_message")?.trim().orEmpty()
                 if (last.isNotEmpty()) rec = rec.copy(lastSaid = lastSaidOf(last))
                 val asked = bareQuestionOf(last)
@@ -521,6 +536,7 @@ class AgentSessionTracker(
 
     private fun end(rec: AgentSessionRecord, screen: String?) {
         lastActivity.remove(rec.id)
+        toolInFlight.remove(rec.id)
         val now = clock()
         val ended = rec.copy(
             state = ENDED,

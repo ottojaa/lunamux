@@ -221,6 +221,16 @@ class AgentSessionTrackerTest {
     }
 
     @Test
+    fun `a prompt after the last tool call finished does not name that tool call`() {
+        val t = tracker()
+        val p = pane()
+        t.onHook(p, toolEvent("Bash", """{"command":"ls"}"""))
+        t.onHook(p, event("PostToolUse", "a-1"))
+        t.onHook(p, event("Notification", "a-1", "message" to "Claude needs your permission"))
+        assertEquals("Claude needs your permission", t.summaries.value.single().question)
+    }
+
+    @Test
     fun `a prompt with no tool call pending keeps the hook's own text`() {
         val t = tracker()
         val p = pane()
