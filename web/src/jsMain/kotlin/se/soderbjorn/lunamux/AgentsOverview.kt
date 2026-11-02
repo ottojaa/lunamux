@@ -20,7 +20,13 @@
  * pointer cannot move a click onto another row. The chip and the overlay read the same state, so
  * their counts always agree.
  *
+ * Three alternative hierarchies of the same table can be switched on with `?ao=a`, `?ao=b` or
+ * `?ao=c` (and ⌥0 to ⌥3 while the overlay is open); with none requested the drawing is the one
+ * described above. They change only how the rows are drawn, never which rows there are or what a
+ * key does: see [OverviewDirections].
+ *
  * @see AgentsOverviewBackingViewModel
+ * @see OverviewDirections
  * @see registerAgentsOverviewHotkey
  * @see buildAgentsOverviewTopbarAction
  */
@@ -119,6 +125,8 @@ internal fun buildAgentsOverviewTopbarAction(): TopbarAction {
     val chip = document.createElement("button") as HTMLElement
     chip.asDynamic().type = "button"
     chip.className = "ao-chip"
+    OverviewDirections.load()
+    chip.setAttribute("data-dir", OverviewDirections.current.key)
     chip.style.display = "none"
     chip.title = "Agents overview"
     chip.addEventListener("click", { _: Event -> agentsOverview.toggle() })
@@ -205,14 +213,23 @@ private fun searchSoon() {
 
 /**
  * Redraw the topbar chip: "◆ 2 need you" in the warning colour, then the dim rest ("1 working",
- * or "agents idle"), joined by a faint dot.
+ * or "agents idle"), joined by a faint dot. The narrow-feed direction draws only a glyph and a
+ * count for each ("◆ 2  ⠶ 1", or "○ idle"); the other directions differ from this only in the
+ * stylesheet.
  *
  * @param state the view model's current state.
  */
 private fun renderChip(state: AgentsOverviewBackingViewModel.State) {
     val chip = chipElement ?: return
     chip.style.display = if (state.chipVisible) "" else "none"
+    chip.setAttribute("data-dir", OverviewDirections.current.key)
     chip.textContent = ""
+    if (OverviewDirections.current == OverviewDirection.NARROW_FEED) {
+        if (state.needYouCount > 0) chip.appendChild(span("ao-chip-need", "◆ ${state.needYouCount}"))
+        if (state.workingCount > 0) chip.appendChild(span("ao-chip-work", "⠶ ${state.workingCount}"))
+        if (state.needYouCount == 0 && state.workingCount == 0) chip.appendChild(span("ao-chip-rest", "○ idle"))
+        return
+    }
     val needs = state.chipNeeds
     val rest = state.chipRest
     if (needs != null) chip.appendChild(span("ao-chip-need", "◆ $needs"))
@@ -231,6 +248,7 @@ private fun ensureOverlay(query: String) {
     })
 
     val panel = div("ao-panel")
+    panel.setAttribute("data-dir", OverviewDirections.current.key)
     val line = div("ao-search-line")
     line.appendChild(span("ao-prompt", "❯"))
     val input = document.createElement("input") as HTMLInputElement
@@ -275,6 +293,7 @@ private fun ensureOverlay(query: String) {
 private fun closeOverlayElement() {
     searchTimer?.let { kotlinx.browser.window.clearTimeout(it) }
     searchTimer = null
+    OverviewDirections.forgetFolds()
     overlayElement?.remove()
     overlayElement = null
     searchInput = null
@@ -290,13 +309,19 @@ private fun closeOverlayElement() {
  * (jump to the session that most needs the person, else run the task's `open` action, else fold),
  * and its `open` control, which runs the task's `open` action even while a session is live;
  * the "+ N more" line shows the rest of the last two weeks; any other row is selected and done
- * (jumped to, resumed or opened), as ↵ would.
+ * (jumped to, resumed or opened), as ↵ would. In the directions that fold finished task members, a
+ * click on the fold shows them; an item of the answer above the list acts like the row it names.
  *
  * @param target the element that was clicked, or null.
  */
 private fun onListClick(target: HTMLElement?) {
-    val el = target?.closest(".ao-row") as? HTMLElement ?: return
+    val el = target?.closest(".ao-row, .ao-card-item") as? HTMLElement ?: return
     if (el.classList.contains("ao-more")) { agentsOverview.showMoreEarlier(); return }
+    el.getAttribute("data-fold")?.let { taskId ->
+        OverviewDirections.openFold(taskId)
+        lastState?.let { renderList(it) }
+        return
+    }
     val row = el.getAttribute("data-id")?.let { shownRows[it] } ?: return
     agentsOverview.select(row.id)
     when {
@@ -328,7 +353,8 @@ private fun onFooterKey(key: String) {
  * caret is at the end of the text: it unfolds a task, enters it, or peeks at a session. ←
  * steps out while the box is empty or a peek is open, and space folds or unfolds a task
  * while the box is empty. ⌘⌫ asks to close the selected session (only while the box is empty),
- * and esc steps back one level.
+ * and esc steps back one level. While directions are switched on, ⌥0 to ⌥3 draw the overview in
+ * today's way or in direction A, B or C.
  *
  * @param e the key press in the search box.
  */
@@ -336,6 +362,10 @@ private fun onSearchKey(e: KeyboardEvent) {
     val state = agentsOverview.state
     val input = searchInput
     when {
+        OverviewDirections.switching && e.altKey && OverviewDirections.forCode(e.code) != null -> {
+            e.preventDefault()
+            applyDirection(OverviewDirections.forCode(e.code)!!)
+        }
         e.key == "ArrowDown" -> { e.preventDefault(); agentsOverview.moveSelection(1) }
         e.key == "ArrowUp" -> { e.preventDefault(); agentsOverview.moveSelection(-1) }
         e.key == "Enter" -> { e.preventDefault(); launchAgentsOverview { agentsOverview.activateSelected() } }
@@ -369,10 +399,26 @@ private fun launchAgentsOverview(block: suspend () -> Unit) {
 }
 
 /**
+ * Draw the chip and, if it is open, the overlay in [direction] from now on, and remember the choice.
+ *
+ * Called by [onSearchKey] when ⌥0 to ⌥3 is pressed.
+ *
+ * @param direction the direction to switch to.
+ * @see OverviewDirections.select
+ */
+private fun applyDirection(direction: OverviewDirection) {
+    OverviewDirections.select(direction)
+    overlayElement?.querySelector(".ao-panel")?.setAttribute("data-dir", direction.key)
+    lastState?.let { renderChip(it); if (it.open) renderList(it) }
+}
+
+/**
  * Rebuild the list and the footer from [state]: search results under a "N MATCHES" heading while
  * searching, otherwise the "NOW" section and the two EARLIER bands, "LAST FEW DAYS" and
  * "LAST TWO WEEKS". The selected row is highlighted and
- * carries the peek; the close confirmation follows the row it asks about.
+ * carries the peek; the close confirmation follows the row it asks about. A direction other than
+ * today's adds the answer above the sections and may draw a run of finished task members as one
+ * fold line.
  *
  * @param state the view model's current state.
  */
@@ -386,21 +432,30 @@ private fun renderList(state: AgentsOverviewBackingViewModel.State) {
         return
     }
     val now = kotlin.js.Date.now().toLong()
-    fun add(rows: List<Row>) = rows.forEachIndexed { i, row ->
-        val selected = row.id == state.selectedId
-        val sameTaskAfter = rows.getOrNull(i + 1)?.let { it.taskId != null && it.taskId == row.taskId } == true
-        // A unit that starts right after a task gets the gap a header gets, so a lone session
-        // never reads as one of the task's members.
-        val gap = AgentsOverviewBackingViewModel.startsAfterTask(rows.getOrNull(i - 1), row, state.tasks)
-        list.appendChild(
-            if (row.kind == Kind.TASK) {
-                buildRow(row, state, selected, now, kids = sameTaskAfter, last = false)
-            } else {
-                buildRow(row, state, selected, now, kids = false, last = inPanel(row, state) && !sameTaskAfter, gap = gap)
-            },
-        )
-        state.confirm?.takeIf { it.rowId == row.id }?.let { list.appendChild(buildConfirm(it)) }
+    fun add(rows: List<Row>) {
+        val items = OverviewDirections.plan(rows, state)
+        items.forEachIndexed { i, item ->
+            val sameTaskAfter = items.getOrNull(i + 1)?.let { it.taskId != null && it.taskId == item.taskId } == true
+            if (item is ListItem.Fold) {
+                list.appendChild(buildFoldRow(item, last = !sameTaskAfter))
+                return@forEachIndexed
+            }
+            val row = (item as ListItem.One).row
+            val selected = row.id == state.selectedId
+            // A unit that starts right after a task gets the gap a header gets, so a lone session
+            // never reads as one of the task's members.
+            val gap = AgentsOverviewBackingViewModel.startsAfterTask(items.getOrNull(i - 1)?.last, row, state.tasks)
+            list.appendChild(
+                if (row.kind == Kind.TASK) {
+                    buildRow(row, state, selected, now, kids = sameTaskAfter, last = false)
+                } else {
+                    buildRow(row, state, selected, now, kids = false, last = inPanel(row, state) && !sameTaskAfter, gap = gap)
+                },
+            )
+            state.confirm?.takeIf { it.rowId == row.id }?.let { list.appendChild(buildConfirm(it)) }
+        }
     }
+    if (!state.matchMode) buildAnswer(state)?.let { list.appendChild(it) }
     if (state.matchMode) {
         state.matchHeading?.let { list.appendChild(div("ao-sec").also { h -> h.textContent = it }) }
         add(state.matches)
@@ -437,6 +492,9 @@ private fun renderFooter(state: AgentsOverviewBackingViewModel.State) {
         if (seg.key.isNotEmpty()) el.appendChild(span("ao-k", seg.key))
         el.appendChild(document.createTextNode(seg.word))
         foot.appendChild(el)
+    }
+    if (OverviewDirections.switching) {
+        foot.appendChild(span("ao-dir", "${OverviewDirections.current.tag}  ⌥0–3"))
     }
 }
 
@@ -636,14 +694,26 @@ private fun buildRow(
     stateGlyph(row, task, now)?.let { glyphCell.appendChild(it) }
     el.appendChild(glyphCell)
 
+    val direction = OverviewDirections.current
     val title = span("ao-t", "")
     if (row.field == "title") title.appendChild(highlighted(row.title, row.matchStart, row.matchLength))
     else title.textContent = row.title
     if (!isHead && row.agent.isNotEmpty() && row.agent != "claude") title.appendChild(span("ao-agent", " ${row.agent}"))
+    val where = if (isHead) task?.repo ?: "" else row.where ?: ""
+    // In the answer-first direction the folder is not a column: it trails the title, dim.
+    if (direction == OverviewDirection.ANSWER_FIRST && where.isNotEmpty()) title.appendChild(span("ao-where", "  $where"))
     el.appendChild(title)
 
-    el.appendChild(span("ao-w", if (isHead) task?.repo ?: "" else row.where ?: ""))
-    el.appendChild(if (isHead) countsCell(task) else statusCell(row, now))
+    el.appendChild(span("ao-w", where))
+    // Outside today's drawing a search hit is one line: the match context lives in the status cell.
+    val oneLineMatch = direction != OverviewDirection.TODAY && !isHead && state.matchMode
+    el.appendChild(
+        when {
+            isHead -> countsCell(task)
+            oneLineMatch -> matchCell(row, now)
+            else -> statusCell(row, now)
+        },
+    )
     // A header in NOW has no age; one in EARLIER shows how long ago its newest session was active.
     // When ↵ on a header jumps to a live session but its task also has an `open` action, that
     // column holds the `open` control so the action stays reachable.
@@ -666,14 +736,14 @@ private fun buildRow(
         ),
     )
 
-    if (row.field != null && row.field != "title" && row.snippet != null) {
+    if (!oneLineMatch && row.field != null && row.field != "title" && row.snippet != null) {
         val snip = div("ao-snippet")
         snip.appendChild(span("ao-snippet-label", fieldLabel(row.field) + "  "))
         snip.appendChild(highlighted(row.snippet!!, row.matchStart, row.matchLength))
         el.appendChild(snip)
     }
     // Every result that sits in a task says so; a match on the task's own title highlights it there.
-    row.taskTitle?.let { taskTitle ->
+    row.taskTitle?.takeIf { !oneLineMatch }?.let { taskTitle ->
         val line = div("ao-snippet ao-task-line")
         line.appendChild(span("ao-snippet-label", "${fieldLabel("task")} "))
         if (row.field == "task") line.appendChild(highlighted(taskTitle, row.matchStart, row.matchLength))
@@ -699,6 +769,184 @@ private fun buildMoreLine(hidden: Int): HTMLElement {
     el.appendChild(span("ao-t", "+ $hidden more"))
     return el
 }
+
+/**
+ * The status cell of a search hit drawn as one line: where the query matched ("first prompt",
+ * "branch", "in task") and the matching text with the match underlined, then, for a session in a
+ * task, the task's title. A hit with an error, or one that matched the title, keeps its ordinary
+ * status, so an error is never replaced and the title is highlighted where it is.
+ *
+ * Called by [buildRow] for the directions that draw a hit as one line instead of adding
+ * snippet lines under it.
+ *
+ * @param row the search hit.
+ * @param now the current epoch millis, for the ordinary status.
+ * @return the cell.
+ * @see statusCell
+ */
+private fun matchCell(row: Row, now: Long): HTMLElement {
+    val field = row.field
+    val snippet = row.snippet
+    val taskTitle = row.taskTitle
+    if (row.error != null) return statusCell(row, now)
+    if (field == "task" && taskTitle != null) {
+        val cell = span("ao-n", "")
+        cell.appendChild(span("ao-snippet-label", fieldLabel("task") + " "))
+        cell.appendChild(highlighted(taskTitle, row.matchStart, row.matchLength))
+        if (row.status.isNotEmpty()) {
+            cell.appendChild(span("ao-n-faint", " · "))
+            cell.appendChild(document.createTextNode(row.status))
+        }
+        return cell
+    }
+    val cell = if (field != null && field != "title" && snippet != null) {
+        span("ao-n", "").also {
+            it.appendChild(span("ao-snippet-label", fieldLabel(field) + "  "))
+            it.appendChild(highlighted(snippet, row.matchStart, row.matchLength))
+        }
+    } else {
+        statusCell(row, now)
+    }
+    if (taskTitle != null) cell.appendChild(span("ao-n-faint", " · ${fieldLabel("task")} $taskTitle"))
+    return cell
+}
+
+/**
+ * The one line that stands for a run of finished task members: "✓ 8 done" and their pull
+ * requests. It hangs on the task's tree lines like the rows it hides; a click shows them.
+ *
+ * Called by [renderList] for a [ListItem.Fold].
+ *
+ * @param fold the folded run.
+ * @param last whether it is the last unit of its task on screen, which ends the tree line.
+ * @return the row, carrying the task's id as `data-fold` for [onListClick].
+ */
+private fun buildFoldRow(fold: ListItem.Fold, last: Boolean): HTMLElement {
+    val el = div("ao-row ao-fold ao-mem" + if (last) " ao-last" else "")
+    el.setAttribute("data-fold", fold.taskId ?: "")
+    el.appendChild(span("ao-gut", ""))
+    el.appendChild(span("ao-s ao-s-fold", "✓"))
+    el.appendChild(span("ao-t", "${fold.rows.size} done"))
+    el.appendChild(span("ao-n", fold.rows.mapNotNull { it.pullRequest }.joinToString("  ")))
+    return el
+}
+
+/**
+ * What the overview says at a glance, drawn above the list in the directions that have an answer:
+ * a plain count line in the quiet table, a card of the sessions that need the person in the
+ * answer-first direction, one pinned line naming the first of them in the narrow feed. Nothing in
+ * today's drawing. It reads the same counts as the topbar chip, so the two agree.
+ *
+ * Called by [renderList] before the sections, except while searching.
+ *
+ * @param state the view model's current state.
+ * @return the element, or null when the direction has none.
+ * @see OverviewDirections.answer
+ */
+private fun buildAnswer(state: AgentsOverviewBackingViewModel.State): HTMLElement? {
+    val answer = OverviewDirections.answer(state)
+    return when (OverviewDirections.current) {
+        OverviewDirection.TODAY -> null
+        OverviewDirection.QUIET_TABLE -> div("ao-answer").also { it.appendChild(answerCounts(answer, withNeeds = true)) }
+        OverviewDirection.ANSWER_FIRST -> buildAnswerCard(answer, state)
+        OverviewDirection.NARROW_FEED -> buildAnswerLine(answer, state)
+    }
+}
+
+/**
+ * The counts of [answer] as one line: "1 needs you · 2 working", or "Nothing needs you" in place of
+ * the first part.
+ *
+ * @param answer what the overview says.
+ * @param withNeeds whether to start with the needs-you part; a card that already lists those
+ *   sessions leaves it out.
+ * @return the line.
+ */
+private fun answerCounts(answer: Answer, withNeeds: Boolean): HTMLElement {
+    val line = span("ao-answer-counts", "")
+    val parts = mutableListOf<HTMLElement>()
+    if (withNeeds) {
+        parts += if (answer.needCount > 0) span("ao-cn", AgentsOverviewBackingViewModel.needYouText(answer.needCount))
+        else span("ao-answer-calm", "Nothing needs you")
+    }
+    if (answer.workingCount > 0) parts += span("", "${answer.workingCount} working")
+    else if (answer.needCount == 0) parts += span("", "nothing working")
+    parts.forEachIndexed { i, part ->
+        if (i > 0) line.appendChild(span("ao-n-faint", " · "))
+        line.appendChild(part)
+    }
+    return line
+}
+
+/**
+ * One session that needs the person, as an item of the answer: the diamond, its title, its
+ * question, and its task and age. A click acts on the session as a click on its row does.
+ *
+ * @param row the session's row.
+ * @param state the view model's state, for the title of the task it belongs to.
+ * @return the item, carrying the row's id as `data-id`.
+ */
+private fun buildAnswerItem(row: Row, state: AgentsOverviewBackingViewModel.State): HTMLElement {
+    val item = div("ao-card-item")
+    item.setAttribute("data-id", row.id)
+    item.appendChild(span("ao-card-g", "◆"))
+    val body = div("ao-card-body")
+    body.appendChild(div("ao-card-title").also { it.textContent = row.title })
+    if (row.status.isNotEmpty()) body.appendChild(div("ao-card-status").also { it.textContent = row.status })
+    item.appendChild(body)
+    val place = state.tasks[row.taskId]?.title ?: row.where ?: ""
+    val age = if (row.sinceMillis > 0) formatAge(row.sinceMillis) else ""
+    item.appendChild(span("ao-card-meta", listOf(place, age).filter { it.isNotEmpty() }.joinToString(" · ")))
+    return item
+}
+
+/**
+ * The answer-first card: up to three sessions that need the person, large, then the rest of the
+ * counts; "Nothing needs you" in a calm line when there is none.
+ *
+ * @param answer what the overview says.
+ * @param state the view model's current state.
+ * @return the card.
+ */
+private fun buildAnswerCard(answer: Answer, state: AgentsOverviewBackingViewModel.State): HTMLElement {
+    val card = div("ao-card")
+    if (answer.needs.isEmpty()) {
+        card.classList.add("ao-card-calm")
+        card.appendChild(answerCounts(answer, withNeeds = true))
+        return card
+    }
+    answer.needs.take(CARD_ITEMS).forEach { card.appendChild(buildAnswerItem(it, state)) }
+    val hidden = answer.needs.size - CARD_ITEMS
+    val foot = div("ao-card-foot")
+    if (hidden > 0) foot.appendChild(span("ao-n-faint", "+ $hidden more need you, below  ·  "))
+    foot.appendChild(answerCounts(answer, withNeeds = false))
+    card.appendChild(foot)
+    return card
+}
+
+/**
+ * The narrow feed's pinned answer: the first session that needs the person with its question, and
+ * how many more do; "Nothing needs you" with the working count when there is none. It stays at
+ * the top of the list while the list scrolls.
+ *
+ * @param answer what the overview says.
+ * @param state the view model's current state.
+ * @return the line.
+ */
+private fun buildAnswerLine(answer: Answer, state: AgentsOverviewBackingViewModel.State): HTMLElement {
+    val line = div("ao-answer ao-answer-c")
+    val first = answer.needs.firstOrNull()
+    if (first == null) {
+        line.appendChild(answerCounts(answer, withNeeds = true))
+        return line
+    }
+    line.appendChild(buildAnswerItem(first, state))
+    if (answer.needs.size > 1) line.appendChild(span("ao-card-more", "+ ${answer.needs.size - 1} more"))
+    return line
+}
+
+/** How many sessions the answer-first card lists before it points at the table. */
+private const val CARD_ITEMS = 3
 
 /** The popover under the selected row: a heading and the last lines of the session's screen. */
 private fun buildPeek(peek: AgentsOverviewBackingViewModel.Peek): HTMLElement {
