@@ -25,6 +25,7 @@ package se.soderbjorn.lunamux
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -290,7 +291,9 @@ class AgentSessionTracker(
                 if (type == "idle_prompt" || type == "auth_success" ||
                     message?.contains("waiting for your input", ignoreCase = true) == true
                 ) return@synchronized
-                set(NEEDS_YOU, nowLine = null, question = message?.take(QUESTION_MAX))
+                // The hook text is generic ("Claude needs your permission"). The tool call the prompt
+                // is about arrived with the PreToolUse just before, so say what is being asked instead.
+                set(NEEDS_YOU, nowLine = null, question = pendingQuestionOf(rec.nowLine, message)?.take(QUESTION_MAX))
             }
             "Stop" -> {
                 val last = event.str("last_assistant_message")?.trim().orEmpty()
@@ -717,10 +720,39 @@ internal fun cleanTitle(raw: String?): String? {
 internal fun toolLine(event: JsonObject): String? {
     val tool = event.str("tool_name") ?: return null
     val input = event["tool_input"] as? JsonObject
+    if (tool == ASK_TOOL) {
+        val asked = ((input?.get("questions") as? JsonArray)?.firstOrNull() as? JsonObject)?.str("question")
+        if (!asked.isNullOrBlank()) return (ASK_PREFIX + asked.trim()).take(TOOL_LINE_MAX)
+    }
     val arg = listOf("command", "file_path", "pattern", "path", "url", "query")
         .firstNotNullOfOrNull { input?.str(it) }
         ?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim()
     return (if (arg == null) tool else "$tool $arg").take(TOOL_LINE_MAX)
+}
+
+/** The tool Claude Code uses to put a question to the person, whose text [toolLine] keeps. */
+private const val ASK_TOOL = "AskUserQuestion"
+
+/** Marks a [toolLine] that holds a question put to the person rather than a command. */
+private const val ASK_PREFIX = "Asks: "
+
+/**
+ * What a `needs_you` row should say for a prompt Claude Code raised through a Notification hook.
+ *
+ * A question put to the person is shown as the question itself; a permission prompt as
+ * `Allow <tool line>?`, so the row names the command instead of the hook's generic text.
+ *
+ * Called from the tracker's `Notification` hook handling.
+ *
+ * @param pending the tool line of the PreToolUse that preceded the prompt, or null.
+ * @param message the hook's own text, used when no tool call is pending.
+ * @return the line to show, or null when there is neither.
+ * @see toolLine
+ */
+internal fun pendingQuestionOf(pending: String?, message: String?): String? = when {
+    pending == null -> message
+    pending.startsWith(ASK_PREFIX) -> pending.removePrefix(ASK_PREFIX)
+    else -> "Allow $pending?"
 }
 
 private fun JsonObject.str(key: String): String? =
