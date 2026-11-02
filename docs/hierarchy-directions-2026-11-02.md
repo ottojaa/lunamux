@@ -34,7 +34,7 @@ The overview is drawn as before unless you ask. Three ways to ask, strongest fir
 | Toolbar pill | text, one border | text, no border; ◆ amber | a filled amber pill when something needs you | `◆ 1 ⠶ 1`, `○ idle` |
 
 Search matches never fold, in any direction, and a fold opens when you click it, or when ↑↓ moves
-the selection into it. It folds again when the overview closes.
+the selection into it, and it stays open when the selection moves on. It folds again when the overview closes.
 
 ## Side by side: collapsed
 
@@ -55,7 +55,29 @@ all eight; A, B and C draw one "✓ 8 done" line.
 | **B · answer first** | **C · narrow feed** |
 | ![](hierarchy-directions-2026-11-02/b-expanded-1280.png) | ![](hierarchy-directions-2026-11-02/c-expanded-1280.png) |
 
+## Side by side: when nothing needs you
+
+The same overview after the one ◆ question ("Role model") has been answered: nothing waits, three
+sessions work. This is how the overview looks most of the time. A says "Nothing needs you · 3
+working" in one line; B's card shrinks to the same line in a quiet outline, so its height cost is
+paid only while something waits; C pins the same line to the top; today says nothing, and its pill
+only counts "3 working".
+
+| 0 · today | A · quiet table |
+|---|---|
+| ![](hierarchy-directions-2026-11-02/0-calm-collapsed-1280.png) | ![](hierarchy-directions-2026-11-02/a-calm-collapsed-1280.png) |
+| **B · answer first** | **C · narrow feed** |
+| ![](hierarchy-directions-2026-11-02/b-calm-collapsed-1280.png) | ![](hierarchy-directions-2026-11-02/c-calm-collapsed-1280.png) |
+
+To see it yourself on the seeded dev server, change the `state` of "Role model" in
+`seed-access-control.json` in the scratch task folder from `needs_you` to `working`, and with
+every `working` member set to `idle` as well you get the fully idle state (the last column of the
+pill shots below).
+
 ## Side by side: search for "overview" (24 matches)
+
+All four are taken at the same window height (900 px), so the pictures show how many hits fit on one
+screen: A and B all 24, today 16, C 13.
 
 | 0 · today | A · quiet table |
 |---|---|
@@ -65,7 +87,8 @@ all eight; A, B and C draw one "✓ 8 done" line.
 
 ## The toolbar pill
 
-Top to bottom: today, A, B, C, with a ◆ and one working session.
+Top to bottom: today, A, B, C. Left to right: a ◆ waiting with one session working; the ◆ answered
+and three working; nothing waiting and nothing working.
 
 ![](hierarchy-directions-2026-11-02/pills.png)
 
@@ -85,7 +108,7 @@ who needs you, and the plain glyphs are gone, so a finished session says so only
 
 **B · answer first.** The strongest answer to "where does my work stand": the question the agent
 asked is the biggest thing on the screen, so you do not even scan the table. The cost is height
-(three to four rows), and a ◆ row appears twice, once in the card and once, muted, in the list, so
+(three to four rows while something waits, one line when nothing does), and a ◆ row appears twice, once in the card and once, muted, in the list, so
 that the list and the keys stay what they were. A long title can push the folder off the line.
 
 **C · narrow feed.** Reads like a feed, so there is no table to scan and a narrow window is no worse
@@ -95,7 +118,8 @@ lines per row halves the rows per screen.
 ## Recommendation
 
 **B**, with A as the fallback. The owner's test is one glance; B is the only direction where the
-glance ends before the table starts, and below the card it is the same quiet table as A. If the
+glance ends before the table starts, and below the card it is the same quiet table as A. B earns its
+height only while something waits: when nothing does, its card is one line and B reads like A. If the
 card's height turns out to be too much on the owner's laptop, A gives most of the hierarchy for none
 of it, and the answer line can be promoted to B's card later without touching the table. C is the
 right shape for a narrow side panel, not for this overlay. The pick is the owner's.
@@ -104,9 +128,8 @@ right shape for a narrow side panel, not for this overlay. The pick is the owner
 
 - The data is seeded, not the owner's. A real list with several ◆ rows is untested visually; B's
   card shows at most three and says "+ N more".
-- The "idle" state of C's pill and B's calm card need a state with nothing waiting and nothing
-  working. The seed has none, so those two were not photographed; they are drawn by the same code
-  as the others.
+- The calm and idle states are shot from the same seeded server with its task file edited (see
+  "when nothing needs you"), not a second seed.
 - Three things the directions bend on purpose, each a trade-off and not an omission: A and B do not
   draw the plain glyphs (○ ‖ ✓ ·), the status word carries them; finished members fold into one
   line until opened (click, or arrow into them); B shows the ◆ row twice. Search never folds.

@@ -2,7 +2,7 @@
  * A seeder that fills a scratch database and task folder with the cases the agents overview has
  * to show, so the overview can be looked at (or reviewed) without weeks of real use.
  *
- * It holds [AgentsOverviewSeed]: about twenty ended agent sessions that were last active today,
+ * It holds [AgentsOverviewSeed]: some fifty ended agent sessions that were last active today,
  * two, six, twelve and thirty days ago, some of them grouped into agent-made tasks, plus a few
  * task files whose members are live. It also seeds the awkward rows a real installation produces:
  * sessions that say nothing about what the work is (a home folder, a branch named after a run, a
@@ -342,8 +342,8 @@ object AgentsOverviewSeed {
             ),
             mtimeAgo = 0,
         )
-        // The case the owner met: one pull request still in review and eight finished ones, which an
-        // expanded header lists one by one. Some titles are longer than a title column.
+        // A task with one pull request still in review and eight finished ones, which an expanded
+        // header lists one by one. Some titles are longer than a title column.
         task(
             "seed-overview-rebuild", "Lunamux: agents overview", "lunamux-fork",
             listOf(

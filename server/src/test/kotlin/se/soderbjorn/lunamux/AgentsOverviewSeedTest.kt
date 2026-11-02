@@ -29,7 +29,7 @@ class AgentsOverviewSeedTest {
     )
 
     @Test
-    fun `the seed holds about twenty ended sessions spread over the ages the overview is read at`() {
+    fun `the seed holds its sessions spread over the ages the overview is read at`() {
         val summary = AgentsOverviewSeed.seed(db, tasksDir, now)
         assertEquals(54, summary.sessions)
         assertEquals(7, tasksDir.listFiles { f -> f.name.endsWith(".json") }!!.size)

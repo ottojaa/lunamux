@@ -187,12 +187,14 @@ internal object OverviewDirections {
     /**
      * Split [rows] into drawn units. In a direction other than [OverviewDirection.TODAY], at least
      * [FOLD_MIN] consecutive finished members of one task become a single [ListItem.Fold], because
-     * a long run of "done" lines says the same thing once. A run stays unfolded while the person
-     * has opened it and while the selection is inside it, so a row that ↑ and ↓ reach is always
-     * on screen. Search results are never folded.
+     * a long run of "done" lines says the same thing once. A run stays unfolded once the person has
+     * opened it. The selection reaching a run opens it the same way, so a row that ↑ and ↓ reach
+     * is on screen and the list does not close under the cursor when the selection moves on; it
+     * folds again only when the overlay closes ([forgetFolds]). Search results are never folded.
      *
      * @param rows the rows of one section, in order.
      * @param state the view model's state, for the selection, the task panels and search mode.
+     *   When the selection is inside a run, the run's task is added to the opened folds.
      * @return the units to draw, covering every row of [rows] once and in order.
      */
     fun plan(rows: List<Row>, state: AgentsOverviewBackingViewModel.State): List<ListItem> {
@@ -209,7 +211,9 @@ internal object OverviewDirections {
             var j = i
             while (j < rows.size && foldable(rows[j], state) && rows[j].taskId == head.taskId) j++
             val run = rows.subList(i, j)
-            val keep = run.size < FOLD_MIN || head.taskId in openFolds || run.any { it.id == state.selectedId }
+            val taskId = head.taskId!!
+            if (run.any { it.id == state.selectedId }) openFolds += taskId
+            val keep = run.size < FOLD_MIN || taskId in openFolds
             if (keep) run.forEach { out += ListItem.One(it) } else out += ListItem.Fold(run)
             i = j
         }
