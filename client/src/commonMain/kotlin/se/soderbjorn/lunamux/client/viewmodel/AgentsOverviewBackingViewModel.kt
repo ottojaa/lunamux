@@ -49,6 +49,7 @@ import kotlinx.datetime.Clock
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import se.soderbjorn.lunamux.AgentSessionSummary
+import se.soderbjorn.lunamux.AgentSessionText
 import se.soderbjorn.lunamux.AgentTask
 import se.soderbjorn.lunamux.AgentTaskMember
 import se.soderbjorn.lunamux.LeafNode
@@ -97,9 +98,10 @@ class AgentsOverviewBackingViewModel(
      * @property id the server's record id; what a resume names.
      * @property agent `claude`, `codex` or `gemini`.
      * @property state `needs_you`, `working`, `idle` or `ended`.
-     * @property title the display title: the session's own title (the server keeps a
-     *   name the user gave the pane, even after the pane closes), else the branch,
-     *   else the folder name.
+     * @property title the display title: the session's own title when it says what the work is
+     *   (the server keeps a name the user gave the pane, even after the pane closes), else the first
+     *   words of its first prompt, else the agent's name. Never a path, `~`, `HEAD`, the branch, the
+     *   folder or a run id: those say where the session ran, not what it is for.
      * @property links ticket keys found in the branch or title.
      * @property repo repository folder name, or null.
      * @property nowLine the last tool line, or null.
@@ -108,8 +110,10 @@ class AgentsOverviewBackingViewModel(
      *   the view turns it into an age.
      * @property isLive whether the agent's pane is still open, so ↵ jumps to it.
      * @property canResume whether ↵ opens a new tab for it (an ended row).
-     * @property actionLabel the word of the ↵ action: `jump`, `resume` or `open folder` for a
-     *   session; `jump`, `resume` or `open` for a task's session; for a task header what ↵ does: `jump` (a
+     * @property actionLabel the word of the ↵ action, one word per action on every row: `jump`
+     *   goes to a live pane, `resume` opens a session in a new tab (a closed one, or one the task
+     *   file names that `claude attach` opens), `open folder` is a Gemini session's; a task header's
+     *   own `open` action is the only `open`; for a task header what ↵ does: `jump` (a
      *   live session needs the person or works), else `open` (the task has an `open` action), else
      *   empty (↵ then expands or collapses it); empty for a session Lunamux has no record of and the
      *   file gave no session id, which has nothing to open.
@@ -147,8 +151,10 @@ class AgentsOverviewBackingViewModel(
      * @property status the one-line status for column E, without [label]: the question of a ◆ row,
      *   the last tool line of a working row, what an idle or closed row last said, falling back to
      *   "❯ " plus its first prompt. Never blank on a row without a [label].
-     * @property where column D: the repository of a session or header, or the pull request ("#22")
-     *   of a task member; null when there is none.
+     * @property where column D: the repository of a session or header, else the folder it runs in
+     *   (`~` for the home folder); the same meaning on every row. Null when there is none.
+     * @property pullRequest a task member's pull request ("#22"), shown as detail text after the
+     *   status and never in [where]; null for a row that has none.
      * @property sessionId for a task member Lunamux does not host, the id the task file gave for it,
      *   which `claude attach` takes; null otherwise.
      * @property taskTitle in a search result, the title of the task the session belongs to, so the
@@ -185,6 +191,7 @@ class AgentsOverviewBackingViewModel(
         val glyph: Glyph = Glyph.NONE,
         val status: String = "",
         val where: String? = repo,
+        val pullRequest: String? = null,
         val sessionId: String? = null,
         val taskTitle: String? = null,
     )
@@ -244,6 +251,27 @@ class AgentsOverviewBackingViewModel(
 
         /** Nothing is selected. */
         NONE,
+    }
+
+    /**
+     * One key hint of the footer: a key and what it does.
+     *
+     * @property key the key as drawn, such as `→` or `⌘⌫`; empty for a plain remark.
+     * @property word what the key does, or the remark itself.
+     * @property role how the hint gives way when the panel narrows.
+     */
+    data class Hint(val key: String, val word: String, val role: HintRole = HintRole.OTHER)
+
+    /** How a footer [Hint] gives way when the panel gets narrow. */
+    enum class HintRole {
+        /** "↑↓ move": dropped first. */
+        MOVE,
+
+        /** "← back to the task": dropped next. */
+        BACK,
+
+        /** Any other hint. */
+        OTHER,
     }
 
     /**
@@ -1009,7 +1037,9 @@ class AgentsOverviewBackingViewModel(
         val taskStates = units.filter { it.panel }.associate { it.task.id to taskOf(it, ui, nowMillis) }
         // A session a task unit holds is drawn inside it, not again as a single.
         val claimed = units.flatMap { u -> u.runs.mapNotNull { it.session?.id } }.toSet()
-        val singles = sessions.filter { it.id !in claimed }
+        // A programme's manager episode is the programme's machinery, not the person's session: it
+        // is listed (and counted) only while it needs the person, so the list shows their work.
+        val singles = sessions.filter { it.id !in claimed && (it.state == NEEDS_YOU || !AgentSessionText.isProgrammeMachinery(it.firstPrompt)) }
             .map { s -> toRow(s, panes[s.leafId], resumeError(s.id)) }
 
         // A task stays in NOW while it has open work and leaves once it is settled (see TaskUnit);
@@ -1040,7 +1070,12 @@ class AgentsOverviewBackingViewModel(
         val gracedIds = graced.mapTo(HashSet()) { it.id }
         val earlierUnits = (
             singles.filter { it.state != NEEDS_YOU && it.state != WORKING && it.id !in gracedIds }
-                .map { Earlier(byId[it.id]?.let(::activityOf) ?: it.sinceMillis, listOf(it)) } +
+                // The row's age is the very time its band is chosen by, so a row never reads "now"
+                // under a heading that says days.
+                .map { row ->
+                    val at = byId[row.id]?.let(::activityOf) ?: row.sinceMillis
+                    Earlier(at, listOf(row.copy(sinceMillis = at)))
+                } +
                 units.filter { it.ended || it.settled }
                     .map { Earlier(it.recency, taskRows(it, taskStates, panes, ui, resumeError)) }
             ).filter { inWindow(it.recency, nowMillis) }
@@ -1390,8 +1425,8 @@ class AgentsOverviewBackingViewModel(
         val bucket = bucketOf(m)
         val pr = m.links.firstOrNull { PR_LINK.matches(it) }
         val line = m.line?.trim()?.takeIf { it.isNotEmpty() }
-        val firstPrompt = s?.firstPrompt?.takeIf { it.isNotBlank() }?.let { "❯ $it" }
-        val said = s?.lastSaid?.trim()?.takeIf { it.isNotEmpty() }
+        val firstPrompt = AgentSessionText.previewOf(s?.firstPrompt)?.let { "❯ $it" }
+        val said = AgentSessionText.previewOf(s?.lastSaid)
         val hostedLine = s?.nowLine?.trim()?.takeIf { it.isNotEmpty() }
         val status = when (m.state) {
             NEEDS_YOU -> line ?: s?.question ?: "waiting at a prompt"
@@ -1408,7 +1443,8 @@ class AgentsOverviewBackingViewModel(
             actionLabel = when {
                 base.isLive -> "jump"
                 s != null -> "resume"
-                m.sessionId != null -> "open"
+                // Attaching opens the session in a new tab, which is what "resume" says everywhere else.
+                m.sessionId != null -> "resume"
                 else -> ""
             },
             sinceMillis = m.sinceMillis,
@@ -1428,7 +1464,7 @@ class AgentsOverviewBackingViewModel(
                 else -> Glyph.WAITING
             },
             status = status,
-            where = pr ?: base.where,
+            pullRequest = pr,
         )
     }
 
@@ -1466,7 +1502,7 @@ class AgentsOverviewBackingViewModel(
             links = s.links,
             repo = s.repo,
             nowLine = s.nowLine?.takeIf { it.isNotBlank() },
-            question = s.question?.takeIf { it.isNotBlank() },
+            question = AgentSessionText.previewOf(s.question),
             sinceMillis = if (ended) s.endedAt ?: s.stateSince else s.stateSince,
             isLive = live,
             canResume = !live,
@@ -1489,12 +1525,27 @@ class AgentsOverviewBackingViewModel(
         )
     }
 
-    /** A session's display title: its own title, else its branch, else its folder, else the agent's name. */
-    private fun titleOf(s: AgentSessionSummary): String =
-        s.title?.takeIf { it.isNotBlank() }
-            ?: s.branch?.takeIf { it.isNotBlank() }
-            ?: folderOf(s)
-            ?: s.agent
+    /**
+     * A session's display title: what the work is, never where it ran.
+     *
+     * A manager episode is named [AgentSessionText.MANAGER_TITLE]. Otherwise the session's own
+     * title when it names the work, else the first words of its first prompt, else the agent's
+     * name. The branch, the folder, `~`, `HEAD` and run ids are not titles, so the old fallbacks
+     * to them are gone.
+     *
+     * Called by [toRow] and [memberOf] for every session row, in the list, in a task and in a search.
+     *
+     * @param s the session.
+     * @return the title, never blank.
+     * @see AgentSessionText.isMeaningfulTitle
+     * @see AgentSessionText.titleFromPrompt
+     */
+    private fun titleOf(s: AgentSessionSummary): String {
+        if (AgentSessionText.isProgrammeMachinery(s.firstPrompt)) return AgentSessionText.MANAGER_TITLE
+        s.title?.trim()?.takeIf { AgentSessionText.isMeaningfulTitle(it, s.branch, s.repo, folderOf(s)) }?.let { return it }
+        return AgentSessionText.titleFromPrompt(s.firstPrompt)
+            ?: "${s.agent.replaceFirstChar { it.uppercase() }} session"
+    }
 
     /**
      * The folder a session runs in, as the overview's folder column shows it when there is no
@@ -1509,13 +1560,23 @@ class AgentsOverviewBackingViewModel(
         if (s.cwdHome) "~"
         else s.cwd?.trimEnd('/')?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
 
-    /** A session's status line: its question, last tool line or last words, else its first prompt, else a dash. */
+    /**
+     * A session's status line as plain text: its question, last tool line or last words, else its
+     * first prompt, else a dash. Markdown is stripped and a line that is only a code fence is
+     * skipped, so a reply that opened with a fence still reads as its first real line.
+     *
+     * Called by [toRow].
+     *
+     * @param s the session.
+     * @return the line for column E, never blank.
+     * @see AgentSessionText.previewOf
+     */
     private fun statusOf(s: AgentSessionSummary): String {
-        val firstPrompt = s.firstPrompt?.takeIf { it.isNotBlank() }?.let { "❯ $it" }
+        val firstPrompt = AgentSessionText.previewOf(s.firstPrompt)?.let { "❯ $it" }
         return when (s.state) {
-            NEEDS_YOU -> s.question?.takeIf { it.isNotBlank() } ?: s.nowLine?.takeIf { it.isNotBlank() } ?: "waiting at a prompt"
+            NEEDS_YOU -> AgentSessionText.previewOf(s.question) ?: s.nowLine?.takeIf { it.isNotBlank() } ?: "waiting at a prompt"
             WORKING -> s.nowLine?.takeIf { it.isNotBlank() } ?: firstPrompt ?: "—"
-            else -> s.lastSaid?.takeIf { it.isNotBlank() } ?: firstPrompt ?: "—"
+            else -> AgentSessionText.previewOf(s.lastSaid) ?: firstPrompt ?: "—"
         }
     }
 
@@ -1530,6 +1591,34 @@ class AgentsOverviewBackingViewModel(
     private fun locate(config: WindowConfig, leafId: String): PaneLocation? = paneLocations(config)[leafId]
 
     companion object {
+        /**
+         * The key hints the footer shows for [footer]: only keys that do something on the selected
+         * row, with "← back to the task" added for a session inside a task panel, and "↑↓ move" and
+         * "esc close" always last. Each key appears once: a task header folds with → (or ←) and
+         * space, and the arrow alone is named.
+         *
+         * Called by the web view when it draws the footer; kept here so every client says the same
+         * thing and a test can hold the wording.
+         *
+         * @param footer which set of keys applies to the selection.
+         * @param backToTask whether the selected row is a session inside a task panel.
+         * @return the hints, in the order they are drawn.
+         */
+        fun footerHints(footer: Footer, backToTask: Boolean): List<Hint> {
+            val move = Hint("↑↓", "move", HintRole.MOVE)
+            val esc = Hint("esc", "close")
+            val back = Hint("←", "back to the task", HintRole.BACK).takeIf { backToTask }
+            return when (footer) {
+                Footer.LIVE -> listOfNotNull(Hint("→", "peek"), Hint("⌘⌫", "close session"), back, move, esc)
+                Footer.CLOSED -> listOfNotNull(Hint("→", "peek at its saved screen"), back, move, esc)
+                Footer.TASK_COLLAPSED -> listOf(Hint("→", "expand"), move, esc)
+                Footer.TASK_EXPANDED -> listOf(Hint("←", "collapse"), move, esc)
+                Footer.RUN_ATTACH -> listOfNotNull(back, move, esc)
+                Footer.NO_SESSION -> listOfNotNull(Hint("", "nothing to open: this session is not in a Lunamux pane"), back, move, esc)
+                Footer.NONE -> listOf(move, esc)
+            }
+        }
+
         /**
          * How long an idle session stays in NOW after its last activity before it moves to
          * EARLIER. It keeps "going on now" from swapping with "earlier" every time a chat ends

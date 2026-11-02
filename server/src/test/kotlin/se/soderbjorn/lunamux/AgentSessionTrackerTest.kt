@@ -444,8 +444,32 @@ class AgentSessionTrackerTest {
         val restarted = tracker()
         val row = restarted.summaries.value.single()
         assertEquals("ended", row.state)
-        assertEquals(9_000, row.endedAt)
+        assertEquals(1_000, row.endedAt, "it ended when it was last known alive, not when the server came back")
         assertNotEquals(null, restarted.find(row.id))
+    }
+
+    @Test
+    fun `a restart ends a record at its transcript's last write when that is later than its state`() {
+        val transcript = File.createTempFile("transcript", ".jsonl").apply {
+            deleteOnExit()
+            setLastModified(4_000)
+        }
+        val t = tracker()
+        t.onHook(pane(), event("SessionStart", "a-1", "transcript_path" to transcript.path))
+        now = 9_000
+        assertEquals(4_000, tracker().summaries.value.single().endedAt)
+    }
+
+    @Test
+    fun `a restart never ends a record in the future of the restart`() {
+        val transcript = File.createTempFile("transcript", ".jsonl").apply {
+            deleteOnExit()
+            setLastModified(50_000)
+        }
+        val t = tracker()
+        t.onHook(pane(), event("SessionStart", "a-1", "transcript_path" to transcript.path))
+        now = 9_000
+        assertEquals(9_000, tracker().summaries.value.single().endedAt)
     }
 
     @Test
@@ -590,5 +614,13 @@ class AgentSessionTrackerTest {
         assertEquals("fix the bug", firstPromptLine("\n  fix the bug  \nthen more\n"))
         assertNull(firstPromptLine("   \n\t"))
         assertEquals(160, firstPromptLine("x".repeat(500))!!.length)
+    }
+
+    @Test
+    fun `what it last said skips a line that is only a code fence`() {
+        assertEquals("npm test", lastSaidOf("Done.\n\n```\nnpm test\n```"))
+        assertEquals("Done. Tests pass.", lastSaidOf("Intro\n\nDone. Tests pass.\nMore"))
+        assertEquals("Ran it", lastSaidOf("Ran it\n\n```"))
+        assertEquals("", lastSaidOf("   "))
     }
 }

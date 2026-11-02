@@ -487,7 +487,7 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aSessionInAPanelKeepsItsRepoOrFolderAndAPullRequestTakesTheColumnWhenTheFileGivesOne() {
+    fun aSessionInAPanelKeepsItsRepoOrFolderAndAPullRequestIsDetailTextNeverTheColumn() {
         layout("leaf-a", "leaf-b", "leaf-c")
         show(
             listOf(task(source = "agents", repo = null, members = emptyList())),
@@ -502,7 +502,9 @@ class AgentsOverviewTasksViewModelTest {
             listOf(task(members = listOf(member("a", "working", recordId = "a", links = listOf("#22")), member("x", "idle")))),
             session("a", "working", repo = "lunamux"),
         )
-        assertEquals("#22", vm.state.rows.first { it.id == "a" }.where)
+        val child = vm.state.rows.first { it.id == "a" }
+        assertEquals("lunamux", child.where, "the second column names a place on every row")
+        assertEquals("#22", child.pullRequest)
     }
 
     @Test
@@ -750,7 +752,7 @@ class AgentsOverviewTasksViewModelTest {
         )
         vm.toggleTask("g1")
         val labels = vm.state.rows.filter { it.taskId == "g1" && it.kind == RowKind.SESSION }.associate { it.title to it.actionLabel }
-        assertEquals(mapOf("live one" to "jump", "done one" to "resume", "nobody's" to "", "attachable" to "open"), labels)
+        assertEquals(mapOf("live one" to "jump", "done one" to "resume", "nobody's" to "", "attachable" to "resume"), labels)
     }
 
     @Test
@@ -823,7 +825,7 @@ class AgentsOverviewTasksViewModelTest {
         assertEquals("", byTitle.getValue("review").status, "the label is the whole status")
         assertEquals("in review · round 2", byTitle.getValue("review").label)
         assertEquals("", byTitle.getValue("finished").status, "a line that only repeats the PR is dropped")
-        assertEquals("#22", byTitle.getValue("finished").where)
+        assertEquals("#22", byTitle.getValue("finished").pullRequest)
         assertEquals("done", byTitle.getValue("finished").label)
         assertEquals("Merged and deployed", byTitle.getValue("finished too").status)
     }

@@ -98,8 +98,15 @@ SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, r
     question, last_screen, created_at, ended_at, repo_root, last_said, task_id
 FROM agent_sessions WHERE id = ?;
 
-endOpenAgentSessions:
-UPDATE agent_sessions SET state = 'ended', ended_at = ?, state_since = ? WHERE state != 'ended';
+selectOpenAgentSessions:
+SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
+    worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
+    question, last_screen, created_at, ended_at, repo_root, last_said, task_id
+FROM agent_sessions WHERE state != 'ended';
+
+-- Close one record at the time it was last known to be alive, not at the time it was found closed.
+endAgentSessionAt:
+UPDATE agent_sessions SET state = 'ended', ended_at = :endedAt, state_since = :endedAt WHERE id = :id;
 
 setAgentSessionSearchText:
 UPDATE agent_sessions SET search_text = ? WHERE id = ?;
@@ -120,12 +127,18 @@ SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, r
     CASE WHEN last_screen LIKE :pattern ESCAPE '\'
         THEN substr(last_screen, max(1, instr(lower(last_screen), lower(:raw)) - 80), 240) END AS screen_window
 FROM agent_sessions
-WHERE title LIKE :pattern ESCAPE '\'
+WHERE (title LIKE :pattern ESCAPE '\'
     OR first_prompt LIKE :pattern ESCAPE '\'
     OR branch LIKE :pattern ESCAPE '\'
     OR links LIKE :pattern ESCAPE '\'
     OR search_text LIKE :pattern ESCAPE '\'
-    OR last_screen LIKE :pattern ESCAPE '\'
+    OR last_screen LIKE :pattern ESCAPE '\')
+    -- A programme's manager episodes are not the person's sessions; keeping them out here stops
+    -- them from filling the 200 rows. The caller applies the exact rule to what is left.
+    AND (first_prompt IS NULL
+        OR (first_prompt NOT LIKE 'First claim the programme again%'
+            AND first_prompt NOT LIKE '/orchestrate episode %'
+            AND first_prompt != '/orchestrate episode'))
 ORDER BY COALESCE(ended_at, state_since) DESC
 LIMIT 200;
 

@@ -235,4 +235,26 @@ class AgentSessionSearchTest {
         assertNotNull(i.resumeNote)
         assertNull(inspect("nope"))
     }
+
+    @Test
+    fun `a programme's manager episodes are never found, however they were started`() {
+        save("ep1", title = "HEAD", prompt = "First claim the programme again (another session may hold it): ~/.claude/skills/feature/fl")
+        save("ep2", prompt = "/orchestrate episode ~/.claude/orchestrate/p", text = "claim the programme head")
+        save("ep3", prompt = "/orchestrate episode", branch = "HEAD")
+        save("mine", prompt = "/orchestrate episodes are confusing, explain the head of the queue")
+        assertEquals(listOf("mine"), search("head").map { it.summary.id })
+        assertEquals(listOf("mine"), search("episode").map { it.summary.id })
+        assertTrue(search("first claim").isEmpty())
+        assertTrue(search("~").isEmpty() || search("~").none { it.summary.id.startsWith("ep") })
+    }
+
+    @Test
+    fun `a stored title that only says where the session ran is not a title match`() {
+        save("home", title = "~", prompt = "tidy my notes")
+        save("detached", title = "HEAD", prompt = "check out the release")
+        val head = search("HEAD")
+        assertTrue(head.none { it.field == "title" }, "HEAD is the checkout's name, not the work's")
+        assertEquals(listOf("tidy my notes"), search("tidy").map { it.summary.firstPrompt })
+        assertEquals("prompt", search("tidy").single().field)
+    }
 }

@@ -160,10 +160,14 @@ class AgentSessionTracker(
      *
      * Terminal sessions do not survive a restart, so any record still open
      * belongs to a process that is gone. Called once from `main()` before the
-     * server starts taking connections.
+     * server starts taking connections. Each is ended when it was last known alive (its state's
+     * start, or its transcript file's last write if later), not at the restart, so how long ago
+     * a session was used survives the restart.
      */
     fun start() = synchronized(lock) {
-        repo.endOpenAgentSessions(clock())
+        repo.endOpenAgentSessions(clock()) { rec ->
+            rec.transcriptPath?.let { File(it).takeIf(File::isFile)?.lastModified() }
+        }
         records.clear()
         repo.loadRecentEndedAgentSessions(clock() - HISTORY_WINDOW_MS, HISTORY_MAX).forEach { records[it.id] = it }
         publish()
@@ -647,15 +651,22 @@ private const val LAST_SAID_MAX = 160
 
 /**
  * The part of an assistant reply worth showing as "what it last said": the first line of
- * the last paragraph, cut to [LAST_SAID_MAX] characters.
+ * the last paragraph, cut to [LAST_SAID_MAX] characters. A line that is only a code fence says
+ * nothing, so it is passed over; when the last paragraph holds nothing else, the one before it
+ * is used.
  *
  * Called by [AgentSessionTracker] on every Stop hook, for questions and statements alike.
  *
  * @param message the full, trimmed reply text.
  * @return the first line of its last paragraph (possibly empty for blank input).
  */
-internal fun lastSaidOf(message: String): String =
-    message.trim().substringAfterLast("\n\n").trim().lineSequence().first().trim().take(LAST_SAID_MAX)
+internal fun lastSaidOf(message: String): String {
+    val paragraphs = message.trim().split("\n\n").asReversed()
+    val line = paragraphs.firstNotNullOfOrNull { p ->
+        p.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() && !AgentSessionText.isFenceLine(it) }
+    }
+    return (line ?: "").take(LAST_SAID_MAX)
+}
 
 /**
  * The question a finished turn leaves for the owner, or null when the turn is just a reply.
