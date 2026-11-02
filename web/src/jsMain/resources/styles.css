@@ -3540,6 +3540,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     --ao-text: var(--t-text, #cfe3e2);
     --ao-muted: color-mix(in srgb, var(--ao-text) 72%, var(--ao-surface));
     --ao-dim: var(--t-text-dim, #6f8f92);
+    --ao-recede: color-mix(in srgb, var(--ao-dim) 78%, var(--ao-surface));
     --ao-faint: color-mix(in srgb, var(--ao-dim) 52%, var(--ao-surface));
     --ao-line: var(--t-border, #1b3136);
     --ao-sel: color-mix(in srgb, var(--t-accent, #5fd4d0) 14%, var(--ao-surface));
@@ -3816,5 +3817,140 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 }
 .ao-btn-danger { border-color: var(--ao-error); color: var(--ao-error); }
 .ao-btn-focus { border-color: var(--ao-accent); box-shadow: inset 0 0 0 1px var(--ao-accent); }
+
+/* ── Agents overview: hierarchy directions ──
+   Three alternative drawings of the same table, chosen by the data-dir attribute on the chip and
+   the panel ("a" quiet table, "b" answer first, "c" narrow feed). Without the attribute value none
+   of this applies and the rules above are the whole look. */
+
+/* Shared: the answer above the list, the fold of finished members, and the footer's direction tag. */
+.ao-answer { padding: 8px 1ch 0; color: var(--ao-dim); }
+.ao-answer-calm { color: var(--ao-muted); }
+.ao-fold .ao-t, .ao-fold .ao-s-fold { color: var(--ao-dim); }
+.ao-fold .ao-n { color: var(--ao-recede); }
+.ao-dir { flex: none; margin-left: auto; color: var(--ao-recede); }
+/* The tag takes room from the footer, so the one segment with no key (the status line) is the one that gives way; key hints keep their words. */
+.ao-panel:is([data-dir="a"], [data-dir="b"], [data-dir="c"]) .ao-foot > .ao-seg[data-key=""] { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ao-card-item {
+    display: grid;
+    grid-template-columns: 3ch minmax(0, 1fr) auto;
+    column-gap: 1.5ch;
+    align-items: start;
+    cursor: pointer;
+}
+.ao-card-g { color: var(--ao-warn); }
+.ao-card-body { min-width: 0; }
+.ao-card-more { color: var(--ao-dim); }
+
+/* A: the same table, rebalanced. Only ◆ is loud; titles come next; the preview, the age and the
+   folder recede. Only the needs-you and working glyphs are drawn, the others are said in words. */
+.ao-panel[data-dir="a"] .ao-row { grid-template-columns: 2ch 2ch minmax(0, 40ch) minmax(0, 1fr) 4ch 12ch 10ch; }
+.ao-panel[data-dir="a"] .ao-w { order: 1; color: var(--ao-recede); }
+.ao-panel[data-dir="a"] .ao-x { order: 2; }
+.ao-panel[data-dir="a"] .ao-n,
+.ao-panel[data-dir="a"] .ao-a { color: var(--ao-recede); }
+.ao-panel[data-dir="a"] .ao-working .ao-n { color: var(--ao-dim); }
+.ao-panel[data-dir="a"] .ao-need .ao-n { color: var(--ao-text); }
+.ao-panel[data-dir="a"] .ao-need .ao-a { color: var(--ao-text); }
+.ao-panel[data-dir="a"] .ao-n.ao-n-error { color: var(--ao-error); }
+.ao-panel[data-dir="a"] .ao-head .ao-t { font-weight: 600; }
+.ao-panel[data-dir="a"] .ao-need .ao-t { font-weight: 700; }
+.ao-panel[data-dir="a"] .ao-head .ao-n { color: var(--ao-dim); }
+.ao-panel[data-dir="a"] .ao-g-plain,
+.ao-panel[data-dir="b"] .ao-g-plain { display: none; }
+.ao-panel[data-dir="a"] .ao-work:not(.ao-work-rest),
+.ao-panel[data-dir="b"] .ao-work:not(.ao-work-rest) { text-shadow: none; }
+.ao-chip[data-dir="a"] { border-color: transparent; padding: 0 6px; }
+.ao-chip[data-dir="a"] .ao-chip-rest { color: var(--ao-recede); }
+
+/* B: the answer is a card above a calm table. The list's own copy of a needs-you row is quiet so
+   the one loud thing on screen is the card. The folder trails the title instead of owning a column. */
+.ao-panel[data-dir="b"] .ao-row { grid-template-columns: 2ch 2ch minmax(0, 56ch) minmax(0, 1fr) 4ch 10ch; }
+.ao-panel[data-dir="b"] .ao-w { display: none; }
+.ao-panel[data-dir="b"] .ao-where { color: var(--ao-recede); font-weight: 400; }
+.ao-panel[data-dir="b"] .ao-t { color: var(--ao-muted); }
+.ao-panel[data-dir="b"] .ao-head .ao-t { color: var(--ao-text); font-weight: 600; }
+.ao-panel[data-dir="b"] .ao-past .ao-t { color: var(--ao-dim); }
+.ao-panel[data-dir="b"] .ao-n,
+.ao-panel[data-dir="b"] .ao-a { color: var(--ao-recede); }
+.ao-panel[data-dir="b"] .ao-need .ao-n,
+.ao-panel[data-dir="b"] .ao-need .ao-a { color: var(--ao-muted); }
+.ao-panel[data-dir="b"] .ao-n.ao-n-error { color: var(--ao-error); }
+.ao-panel[data-dir="b"] .ao-head .ao-n { color: var(--ao-dim); }
+.ao-card {
+    margin: 8px 1ch 6px;
+    padding: 6px 0 8px;
+    border: 1px solid color-mix(in srgb, var(--ao-warn) 40%, var(--ao-line));
+    border-left: 3px solid var(--ao-warn);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--ao-warn) 7%, var(--ao-surface));
+}
+.ao-card .ao-card-item { padding: 6px 2ch 6px 1.5ch; }
+.ao-card .ao-card-item:hover { background: color-mix(in srgb, var(--ao-warn) 10%, var(--ao-surface)); }
+.ao-card .ao-card-g { font-size: 20px; line-height: 26px; text-align: center; }
+.ao-card .ao-card-title { font-size: 16px; font-weight: 700; line-height: 26px; color: var(--ao-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ao-card .ao-card-status { line-height: 20px; color: var(--ao-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ao-card .ao-card-meta { line-height: 26px; color: var(--ao-recede); white-space: nowrap; }
+.ao-card-foot { padding: 2px 2ch 0 calc(1.5ch + 3ch + 1.5ch); color: var(--ao-dim); }
+.ao-card-calm { padding: 8px 2ch; border-left-color: var(--ao-line); background: none; }
+.ao-chip[data-dir="b"] { border-color: transparent; padding: 0 4px; }
+.ao-chip[data-dir="b"] .ao-chip-sep { display: none; }
+.ao-chip[data-dir="b"] .ao-chip-need { padding: 4px 9px; border-radius: 11px; background: var(--ao-warn); color: #1b1400; font-weight: 700; }
+.ao-chip[data-dir="b"] .ao-chip-rest { color: var(--ao-recede); }
+
+/* C: a narrow feed. Every session is two lines (title and age, then status and folder), the panel
+   is a third narrower, and the first thing that needs the person is pinned above the scroll. */
+.ao-panel[data-dir="c"] { width: min(760px, calc(100vw - 48px)); }
+.ao-panel[data-dir="c"] .ao-row {
+    grid-template-columns: 2ch 2ch minmax(0, 1fr) 4ch 10ch;
+    column-gap: 1.5ch;
+    padding-top: 4px;
+    padding-bottom: 4px;
+    line-height: 22px;
+}
+.ao-panel[data-dir="c"] .ao-gut { grid-column: 1; grid-row: 1 / span 2; }
+.ao-panel[data-dir="c"] .ao-s { grid-column: 2; grid-row: 1; }
+.ao-panel[data-dir="c"] .ao-t { grid-column: 3; grid-row: 1; }
+.ao-panel[data-dir="c"] .ao-a { grid-column: 4; grid-row: 1; font-size: 12px; color: var(--ao-recede); }
+.ao-panel[data-dir="c"] .ao-x { grid-column: 5; grid-row: 1; }
+.ao-panel[data-dir="c"] .ao-n { grid-column: 3; grid-row: 2; font-size: 12px; line-height: 20px; color: var(--ao-dim); }
+.ao-panel[data-dir="c"] .ao-w { grid-column: 4 / span 2; grid-row: 2; display: block; text-align: right; font-size: 12px; line-height: 20px; color: var(--ao-recede); }
+.ao-panel[data-dir="c"] .ao-need .ao-n { color: var(--ao-text); padding: 0; line-height: 20px; }
+.ao-panel[data-dir="c"] .ao-working .ao-n { color: var(--ao-muted); }
+.ao-panel[data-dir="c"] .ao-n.ao-n-error { color: var(--ao-error); }
+.ao-panel[data-dir="c"] .ao-need { box-shadow: inset 2px 0 0 var(--ao-warn); }
+.ao-panel[data-dir="c"] .ao-need.ao-sel { box-shadow: inset 2px 0 0 var(--ao-accent); }
+.ao-panel[data-dir="c"] .ao-need .ao-t,
+.ao-panel[data-dir="c"] .ao-head .ao-t { font-weight: 700; }
+.ao-panel[data-dir="c"] .ao-work { height: 22px; line-height: 22px; }
+.ao-panel[data-dir="c"] .ao-mem .ao-gut::before { top: 0; bottom: 0; }
+.ao-panel[data-dir="c"] .ao-mem.ao-last .ao-gut::before { height: 15px; }
+.ao-panel[data-dir="c"] .ao-mem .ao-gut::after { top: 15px; }
+.ao-panel[data-dir="c"] .ao-head.ao-kids .ao-gut::after { top: 24px; }
+.ao-panel[data-dir="c"] .ao-fold .ao-n { grid-column: 3; }
+.ao-answer-c {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    margin: 0 -1ch 4px;
+    padding: 8px 2ch 8px;
+    background: var(--ao-surface);
+    border-bottom: 1px solid var(--ao-line);
+}
+.ao-answer-c .ao-card-item { grid-template-columns: 2ch minmax(0, 1fr) auto; }
+.ao-answer-c .ao-card-body { display: flex; gap: 1.5ch; align-items: baseline; }
+.ao-answer-c .ao-card-title { flex: none; max-width: 26ch; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ao-answer-c .ao-card-status { flex: 1; min-width: 0; color: var(--ao-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ao-answer-c .ao-card-meta { display: none; }
+.ao-answer-c .ao-card-more { padding-left: 3.5ch; }
+.ao-chip[data-dir="c"] { gap: 1.2ch; padding: 0 9px; }
+.ao-chip[data-dir="c"] .ao-chip-work { color: var(--ao-accent); }
+
+/* The two table directions give up the folder column when the panel is narrow, as the table does. */
+@container ao (max-width: 900px) {
+    .ao-panel[data-dir="a"] .ao-row { grid-template-columns: 2ch 2ch 28ch minmax(0, 1fr) 4ch 10ch; }
+    .ao-panel[data-dir="a"] .ao-w { display: none; }
+    .ao-panel[data-dir="b"] .ao-row { grid-template-columns: 2ch 2ch 34ch minmax(0, 1fr) 4ch 10ch; }
+}
 
 .lunamux-app-settings-claude-error { color: #ff7b72; font-size: 12px; }

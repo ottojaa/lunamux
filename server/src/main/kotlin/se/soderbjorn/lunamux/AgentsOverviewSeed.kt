@@ -2,12 +2,15 @@
  * A seeder that fills a scratch database and task folder with the cases the agents overview has
  * to show, so the overview can be looked at (or reviewed) without weeks of real use.
  *
- * It holds [AgentsOverviewSeed]: about twenty ended agent sessions that were last active today,
+ * It holds [AgentsOverviewSeed]: some fifty ended agent sessions that were last active today,
  * two, six, twelve and thirty days ago, some of them grouped into agent-made tasks, plus a few
  * task files whose members are live. It also seeds the awkward rows a real installation produces:
  * sessions that say nothing about what the work is (a home folder, a branch named after a run, a
  * detached HEAD), previews written in markdown, a bare code fence, and sessions a server restart
- * ends. It is run by the Gradle task `seedAgentsOverview` (through
+ * ends. For judging how the list reads it also holds a task with one pull request in review and
+ * eight finished ones, a session that has just ended, a title longer than any column, and a search
+ * ("overview") with more than twenty hits found through a title, a first prompt, a branch or a
+ * task. It is run by the Gradle task `seedAgentsOverview` (through
  * `scripts/seed-agents-overview.sh`) while the scratch server is stopped, and by a test.
  *
  * The seeder only ever writes to the paths it is given and refuses the folders a real
@@ -106,6 +109,8 @@ object AgentsOverviewSeed {
         SeededTask("seed-task-invoice", "Invoice export migration", 32 * DAY),
         // One session from yesterday and one from ten days ago: the task is as recent as its newest.
         SeededTask("seed-task-token", "Auth token refresh", 11 * DAY),
+        // Its sessions say nothing of "overview", so a search for it finds them through the task alone.
+        SeededTask("seed-task-overview-polish", "Overview polish", 19 * DAY),
     )
 
     private val sessions = listOf(
@@ -136,6 +141,32 @@ object AgentsOverviewSeed {
         // Auth token refresh: one recent, one old, still in the first band.
         Seeded(20, "seed-task-token", "Refresh endpoint", "Add the refresh endpoint", "gateway", "feat/refresh", 1 * DAY + 3 * HOUR),
         Seeded(21, "seed-task-token", "Refresh docs", "Describe the refresh flow for the docs", "gateway", "docs/refresh", 10 * DAY),
+        // A search for "overview" finds twenty-three more sessions, one of every kind of hit: the word
+        // in the title (22-28), only in the first prompt (29-35), only in the branch (36-39) and only
+        // in the task's title (40-44). Most are older than the two weeks the lists show, so only search reaches them.
+        Seeded(22, null, "Overview header spacing", "Tighten the spacing of the header", "lunamux", "fix/ao-header", 16 * DAY),
+        Seeded(23, null, "Overview search shortcut", "Make the search box take focus on the first key", "lunamux", "fix/ao-search-focus", 18 * DAY),
+        Seeded(24, null, "Overview empty state wording", "Reword the text shown when nothing is listed", "lunamux", "docs/ao-empty", 5 * DAY),
+        Seeded(25, null, "Overview on narrow windows", "Make the list readable below 700 pixels", "lunamux", "fix/ao-narrow", 21 * DAY),
+        Seeded(26, null, "Overview peek flicker", "The screen preview flickers when it refreshes", "lunamux", "fix/ao-peek", 24 * DAY),
+        Seeded(27, null, "Overview colours in the light theme", "Check every colour against the light theme", "lunamux", "fix/ao-light", 9 * DAY),
+        Seeded(28, null, "Overview keyboard map", "Write down which key does what", "lunamux", "docs/ao-keys", 27 * DAY),
+        Seeded(29, null, "Chip count off by one", "The overview chip shows 2 working when one has stopped", "lunamux", "fix/chip-count", 17 * DAY),
+        Seeded(30, null, "Sort the NOW list", "Why does the overview list sort a waiting row above a working one?", "lunamux", "fix/now-order", 19 * DAY),
+        Seeded(31, null, "Resume from search", "Resuming a closed session from the overview search opens a blank tab", "lunamux", "fix/resume-blank", 8 * DAY),
+        Seeded(32, null, "Task header counts", "Check the counts on the overview task header against the file", "lunamux", "test/header-counts", 22 * DAY),
+        Seeded(33, null, "Seed the demo data", "Seed demo data so the overview shows every case", "lunamux", "chore/demo-seed", 25 * DAY),
+        Seeded(34, null, "Peek shows stale text", "The peek in the overview shows text from yesterday", "lunamux", "fix/stale-peek", 13 * DAY),
+        Seeded(35, null, "Close confirmation", "Add a confirmation before the overview closes a live session", "lunamux", "feat/close-confirm", 28 * DAY),
+        Seeded(36, null, "Stop the toolbar pill wrapping", "Keep the toolbar pill on one line", "lunamux", "feat/overview-pill", 20 * DAY),
+        Seeded(37, null, "Rename a setting", "Rename the setting that turns the list on", "lunamux", "chore/overview-settings", 23 * DAY),
+        Seeded(38, null, "Trim a dependency", "Drop the dependency nobody imports any more", "lunamux", "fix/overview-deps", 26 * DAY),
+        Seeded(39, null, "Keep the scroll position", "Keep the scroll position when the list redraws", "lunamux", "fix/overview-scroll", 29 * DAY),
+        Seeded(40, "seed-task-overview-polish", "Row heights", "Make every row the same height", "lunamux", "polish/rows", 15 * DAY),
+        Seeded(41, "seed-task-overview-polish", "Tone ladder", "Pick four shades of text and use nothing else", "lunamux", "polish/tone", 16 * DAY),
+        Seeded(42, "seed-task-overview-polish", "Pill wording", "Say it in four words or fewer", "lunamux", "polish/pill", 17 * DAY),
+        Seeded(43, "seed-task-overview-polish", "Footer keys", "List each key once", "lunamux", "polish/footer", 18 * DAY),
+        Seeded(44, "seed-task-overview-polish", "Width cap", "Stop rows being read across the whole screen", "lunamux", "polish/width", 19 * DAY),
     )
 
     /**
@@ -152,6 +183,10 @@ object AgentsOverviewSeed {
         Case("seed-folder-title", "lunamux-agent-overview", "lunamux-agent-overview", "feat/layouts", prompt = "Compare the two layout directions and list what each trades off", lastSaid = "Direction B trades width for a clearer first column.", ago = 1 * DAY),
         Case("seed-markdown", "Owner test follow-up", "lunamux", "main", prompt = "**Plan:** read the owner's notes and `fix` the data first", lastSaid = "**4. Tell me how it went,** then decide whether the panel stays", ago = 4 * HOUR),
         Case("seed-bare-fence", "Show the migration", "billing", "feat/add-column", prompt = "Show me the migration that adds the column", lastSaid = "```", ago = 6 * HOUR),
+        // Ended four minutes ago: inside the ten minutes a finished session stays under NOW.
+        Case("seed-just-ended", "Check the certificate expiry", "ops", "main", prompt = "When does the staging certificate expire?", lastSaid = "In 41 days; renewal is scheduled.", ago = 4 * MINUTE),
+        // A title that is longer than any column the list gives it.
+        Case("seed-long-title", "Why does the nightly export job stall after the second retry when the queue is empty and the lock is stale", "billing", "fix/export-stall", prompt = "Why does the nightly export job stall after the second retry?", lastSaid = "The lock is never released when the queue is empty; I added the release.", ago = 7 * HOUR),
         Case("seed-open-idle", "Trace the slow login", "gateway", "fix/slow-login", prompt = "Why is the login call slow on Mondays?", lastSaid = "A missing index on sessions.user_id; I added it.", ago = 2 * DAY, state = "idle"),
         Case("seed-open-working", "Rebuild the search index", "billing", "chore/search-index", prompt = "Rebuild the search index with the new analyser", lastSaid = null, ago = 5 * HOUR, state = "working"),
     )
@@ -307,6 +342,23 @@ object AgentsOverviewSeed {
             ),
             mtimeAgo = 0,
         )
+        // A task with one pull request still in review and eight finished ones, which an expanded
+        // header lists one by one. Some titles are longer than a title column.
+        task(
+            "seed-overview-rebuild", "Lunamux: agents overview", "lunamux-fork",
+            listOf(
+                member("Hierarchy pass on the overview", "idle", 2 * MINUTE, label = "in review", links = listOf("#34")),
+                member("Peek, close and search with Resume", "idle", 20 * HOUR, label = "done", links = listOf("#21")),
+                member("Programme groups with a lead session", "idle", 21 * HOUR, label = "done", links = listOf("#22")),
+                member("Make the overview's programme group header open its programme session from the keyboard", "idle", 22 * HOUR, label = "done", links = listOf("#23")),
+                member("Stale rows across restarts, and a longer line for the state of the file", "idle", 22 * HOUR, label = "done", links = listOf("#24")),
+                member("Overview redesigned as a terminal table", "idle", 19 * HOUR, label = "done", links = listOf("#25")),
+                member("Tasks replace groups: agents group their sessions", "idle", 18 * HOUR, label = "done", links = listOf("#26")),
+                member("EARLIER by task, in recency bands, and a more line", "idle", 17 * HOUR, label = "done", links = listOf("#27")),
+                member("The programme feed writes a task, and the home session answers", "idle", 16 * HOUR, label = "done"),
+            ),
+            mtimeAgo = 0,
+        )
         task(
             "seed-nightly-sync", "Nightly sync", "ops",
             listOf(member("Sync worker", "working", 2 * HOUR, line = "Copying the ledger")),
@@ -328,7 +380,7 @@ object AgentsOverviewSeed {
             ),
             mtimeAgo = 9 * DAY,
         )
-        return 6
+        return 7
     }
 
     /**
