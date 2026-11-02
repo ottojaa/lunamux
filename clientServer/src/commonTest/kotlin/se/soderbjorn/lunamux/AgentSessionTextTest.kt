@@ -93,6 +93,8 @@ class AgentSessionTextTest {
         assertFalse(ok("~/code/app"))
         assertFalse(ok("/Users/me/code/app"))
         assertFalse(ok("aov-21-impl"))
+        assertFalse(ok("aov-21-plan"))
+        assertFalse(ok("aov-21-impl-r2"))
         assertFalse(ok("feat/login", branch = "feat/login"))
         assertFalse(ok("lunamux-agent-overview", repo = "lunamux-agent-overview"))
         assertFalse(ok("Orchestrate", folder = "orchestrate"))
@@ -105,5 +107,10 @@ class AgentSessionTextTest {
         assertTrue(ok("Fix the login"))
         assertTrue(ok("ABC-12 login"))
         assertTrue(ok("Release 4.2"))
+        assertTrue(ok("fix-404-page"))
+        assertTrue(ok("react-18-upgrade"))
+        assertTrue(ok("node-20"))
+        assertTrue(ok("~/.zshrc loads slowly"))
+        assertTrue(ok("~5 minutes to first byte"))
     }
 }

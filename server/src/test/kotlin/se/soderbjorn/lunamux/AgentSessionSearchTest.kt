@@ -245,7 +245,16 @@ class AgentSessionSearchTest {
         assertEquals(listOf("mine"), search("head").map { it.summary.id })
         assertEquals(listOf("mine"), search("episode").map { it.summary.id })
         assertTrue(search("first claim").isEmpty())
-        assertTrue(search("~").isEmpty() || search("~").none { it.summary.id.startsWith("ep") })
+        assertTrue(search("~/").isEmpty(), "both episode prompts hold ~/ and neither is listed")
+    }
+
+    @Test
+    fun `a prompt that only resembles an episode prompt in another case is still found`() {
+        save("ep", prompt = "First claim the programme again (another session may hold it): ~/.claude/skills/feature/fl")
+        save("lower", prompt = "first claim the programme again, i forgot what it said about ~/ paths")
+        save("cmd", prompt = "/Orchestrate Episode notes for the retro, in ~/docs")
+        assertEquals(setOf("lower", "cmd"), search("~/").map { it.summary.id }.toSet())
+        assertEquals(listOf("lower"), search("first claim").map { it.summary.id })
     }
 
     @Test

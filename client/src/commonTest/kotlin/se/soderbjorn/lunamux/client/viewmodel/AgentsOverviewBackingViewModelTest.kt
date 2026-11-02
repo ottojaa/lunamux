@@ -217,22 +217,37 @@ class AgentsOverviewBackingViewModelTest {
         val vmAtDay100 = AgentsOverviewBackingViewModel(windowState, clock = { clockNow }) { sent += it }
         // "stale" entered its state a minute ago but its last sign of life was two days ago (the
         // state time was refreshed without the session doing anything); "fresh" is inside the idle
-        // grace; "done" ended three hours ago. The heading a row sits under and the age it shows
-        // are read from the same moment.
+        // grace; "justDone" ended a minute ago and gets the same grace; "done" ended three hours
+        // ago. The heading a row sits under and the age it shows are read from the same moment.
         windowState.updateAgentSessions(
             listOf(
                 session("stale", "idle", since = clockNow - 60_000, lastActivityAt = clockNow - 2 * day),
                 session("fresh", "idle", since = clockNow - 60_000, lastActivityAt = clockNow - 30_000),
                 session("done", "ended", endedAt = clockNow - 3 * hour, since = clockNow - 3 * hour),
+                session("justDone", "ended", endedAt = clockNow - 60_000, since = clockNow - 60_000),
             ),
             true,
         )
         val s = vmAtDay100.state
-        assertEquals(listOf("fresh"), s.now.map { it.id })
+        assertEquals(setOf("fresh", "justDone"), s.now.map { it.id }.toSet(), "a session that ended a minute ago is not under a days heading")
         assertEquals(listOf("done", "stale"), s.recent.map { it.id })
         assertEquals(clockNow - 3 * hour, s.recent.first { it.id == "done" }.sinceMillis)
         assertEquals(clockNow - 2 * day, s.recent.first { it.id == "stale" }.sinceMillis, "its age is when it was last active, not a minute")
         s.recent.forEach { assertTrue(clockNow - it.sinceMillis >= hour, "${it.id} is under a days heading but reads as a few minutes old") }
+    }
+
+    @Test
+    fun aSessionHasTheSameAgeWhetherBrowsedOrFoundBySearch() {
+        val day = 24L * 60 * 60 * 1000
+        val clockNow = 100 * day
+        val vmAtDay100 = AgentsOverviewBackingViewModel(windowState, clock = { clockNow }) { sent += it }
+        val stale = session("stale", "idle", since = clockNow - 60_000, lastActivityAt = clockNow - 2 * day)
+        windowState.updateAgentSessions(listOf(stale), true)
+        val browsed = vmAtDay100.state.recent.single().sinceMillis
+        vmAtDay100.setQuery("needle")
+        answer("needle", AgentSessionMatch(stale, "prompt", "x needle", 2, 6, null))
+        assertEquals(clockNow - 2 * day, browsed)
+        assertEquals(browsed, vmAtDay100.state.rows.single().sinceMillis, "search shows the age the list shows")
     }
 
     @Test

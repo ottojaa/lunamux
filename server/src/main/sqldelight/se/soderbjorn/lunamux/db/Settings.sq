@@ -134,10 +134,11 @@ WHERE (title LIKE :pattern ESCAPE '\'
     OR search_text LIKE :pattern ESCAPE '\'
     OR last_screen LIKE :pattern ESCAPE '\')
     -- A programme's manager episodes are not the person's sessions; keeping them out here stops
-    -- them from filling the 200 rows. The caller applies the exact rule to what is left.
+    -- them from filling the 200 rows. GLOB is case-sensitive like the Kotlin rule, so a prompt the
+    -- person wrote in another case is kept; the caller applies the exact rule to what is left.
     AND (first_prompt IS NULL
-        OR (first_prompt NOT LIKE 'First claim the programme again%'
-            AND first_prompt NOT LIKE '/orchestrate episode %'
+        OR (first_prompt NOT GLOB 'First claim the programme again*'
+            AND first_prompt NOT GLOB '/orchestrate episode *'
             AND first_prompt != '/orchestrate episode'))
 ORDER BY COALESCE(ended_at, state_since) DESC
 LIMIT 200;

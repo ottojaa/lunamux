@@ -52,7 +52,8 @@ object AgentSessionText {
     private val UNDERSCORE_ITALIC = Regex("""(^|[\s(])_(\S(?:[^_]*?\S)?)_(?=$|[\s).,;:!?])""")
     private val STRIKE = Regex("""~~(\S(?:.*?\S)?)~~""")
     private val SPACES = Regex("""\s+""")
-    private val RUN_ID = Regex("""^[a-z][a-z0-9]*-\d+(-[a-z0-9]+)*$""")
+    /** A feature-run folder name: `<ticket>-<number>-impl` or `-plan`, optionally with a `-r<round>` suffix. */
+    private val RUN_ID = Regex("""^[a-z][a-z0-9]*-\d+-(impl|plan)(-r\d+)?$""")
 
     /**
      * Whether a session's first prompt marks it as a programme's machinery: a manager episode the
@@ -153,7 +154,7 @@ object AgentSessionText {
      * Whether a stored title says what the work is, as opposed to where it ran.
      *
      * A title that is the home folder (`~`), a detached `HEAD`, a path, the session's own branch,
-     * repository or folder name, or a run id such as `abc-21-impl` is what a terminal or a git
+     * repository or folder name, or a run id (`<ticket>-<number>-impl` or `-plan`, as in `abc-21-impl`) is what a terminal or a git
      * checkout calls itself; none of them tells the person what the session was for.
      *
      * Called by the view model's title rule.
@@ -167,7 +168,7 @@ object AgentSessionText {
     fun isMeaningfulTitle(title: String?, branch: String?, repo: String?, folder: String?): Boolean {
         val t = title?.trim().orEmpty()
         if (t.isEmpty()) return false
-        if (t == "~" || t.equals("HEAD", ignoreCase = true) || isPathWord(t) || t.startsWith("~")) return false
+        if (t == "~" || t.equals("HEAD", ignoreCase = true) || (t.none { it.isWhitespace() } && isPathWord(t))) return false
         if (listOf(branch, repo, folder).any { it != null && it.isNotBlank() && it.trim().equals(t, ignoreCase = true) }) return false
         return !RUN_ID.matches(t)
     }

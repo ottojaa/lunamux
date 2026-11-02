@@ -83,7 +83,7 @@ private data class PaneLocation(val worldId: String?, val tabId: String, val lea
  *   selection changes) run. The default runs them in place until they suspend,
  *   so a `send` that returns at once is observable immediately.
  * @param clock the current epoch millis, read whenever the state is built; it decides which
- *   idle sessions are still inside their [IDLE_GRACE_MS]. Tests pass a fixed one.
+ *   idle and just-ended sessions are still inside their [IDLE_GRACE_MS]. Tests pass a fixed one.
  * @param send sends a command to the server, normally `windowSocket::send`.
  */
 class AgentsOverviewBackingViewModel(
@@ -1046,16 +1046,18 @@ class AgentsOverviewBackingViewModel(
         // it is ranked beside the single sessions that need the user or work, by its most urgent session.
         class Placed(val rank: Int, val since: Long, val rows: List<Row>)
         // An idle session stays in NOW for a while after its last activity, so a chat that finishes
-        // a turn does not jump to EARLIER and back as the next turn starts.
+        // a turn does not jump to EARLIER and back as the next turn starts. A session that has just
+        // ended gets the same grace, so it never reads a few minutes old under a heading that says
+        // days.
         val graced = singles.filter { row ->
-            row.state == IDLE && byId[row.id]?.let { inGrace(it.lastActivityAt ?: it.stateSince, nowMillis) } == true
+            (row.state == IDLE || row.state == ENDED) && byId[row.id]?.let { inGrace(activityOf(it), nowMillis) } == true
         }
         val urgent = buildList {
             singles.filter { it.state == NEEDS_YOU || it.state == WORKING }
                 .forEach { add(Placed(rankOf(it.state), it.sinceMillis, listOf(it))) }
             graced.forEach { row ->
                 val s = byId.getValue(row.id)
-                add(Placed(GRACE_RANK, s.lastActivityAt ?: s.stateSince, listOf(row)))
+                add(Placed(GRACE_RANK, activityOf(s), listOf(row)))
             }
             units.filter { !it.ended && !it.settled }
                 .forEach { add(Placed(it.rank, it.since, taskRows(it, taskStates, panes, ui, resumeError))) }
@@ -1070,12 +1072,9 @@ class AgentsOverviewBackingViewModel(
         val gracedIds = graced.mapTo(HashSet()) { it.id }
         val earlierUnits = (
             singles.filter { it.state != NEEDS_YOU && it.state != WORKING && it.id !in gracedIds }
-                // The row's age is the very time its band is chosen by, so a row never reads "now"
-                // under a heading that says days.
-                .map { row ->
-                    val at = byId[row.id]?.let(::activityOf) ?: row.sinceMillis
-                    Earlier(at, listOf(row.copy(sinceMillis = at)))
-                } +
+                // A single's row age is the very time its band is chosen by (see [toRow]), so a row
+                // never reads "now" under a heading that says days.
+                .map { row -> Earlier(row.sinceMillis, listOf(row)) } +
                 units.filter { it.ended || it.settled }
                     .map { Earlier(it.recency, taskRows(it, taskStates, panes, ui, resumeError)) }
             ).filter { inWindow(it.recency, nowMillis) }
@@ -1503,7 +1502,9 @@ class AgentsOverviewBackingViewModel(
             repo = s.repo,
             nowLine = s.nowLine?.takeIf { it.isNotBlank() },
             question = AgentSessionText.previewOf(s.question),
-            sinceMillis = if (ended) s.endedAt ?: s.stateSince else s.stateSince,
+            // A session that is not waiting on anything is as old as its last activity (the time the
+            // list's bands are chosen by), so the list and a search result give it the same age.
+            sinceMillis = if (ended || s.state == IDLE) activityOf(s) else s.stateSince,
             isLive = live,
             canResume = !live,
             activityMillis = if (s.state == WORKING) s.lastActivityAt ?: s.stateSince else null,
@@ -1620,9 +1621,10 @@ class AgentsOverviewBackingViewModel(
         }
 
         /**
-         * How long an idle session stays in NOW after its last activity before it moves to
-         * EARLIER. It keeps "going on now" from swapping with "earlier" every time a chat ends
-         * a turn.
+         * How long an idle session stays in NOW after its last activity, and an ended one after
+         * it ended, before it moves to EARLIER. It keeps "going on now" from swapping with
+         * "earlier" every time a chat ends a turn, and keeps a row aged in minutes out of a band
+         * headed in days.
          */
         const val IDLE_GRACE_MS = 10L * 60_000L
 
@@ -1630,7 +1632,7 @@ class AgentsOverviewBackingViewModel(
          * Whether a session idle since [activityMillis] is still inside [IDLE_GRACE_MS].
          * The grace ends exactly [IDLE_GRACE_MS] after the activity.
          *
-         * Called by [build] for every idle single session on each state build.
+         * Called by [build] for every idle or ended single session on each state build.
          *
          * @param activityMillis epoch millis of the session's last activity.
          * @param nowMillis the current epoch millis.

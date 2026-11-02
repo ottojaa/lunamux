@@ -195,7 +195,7 @@ class AgentsOverviewTasksViewModelTest {
             session("over-three", "ended", endedAt = now - 3 * DAY - 1),
             session("fourteen", "ended", endedAt = now - 14 * DAY),
             session("over-fourteen", "ended", endedAt = now - 14 * DAY - 1),
-            session("fresh", "ended", endedAt = now - 1_000),
+            session("fresh", "ended", endedAt = now - HOUR), // past the ten minutes a just-ended session stays under NOW
         )
         assertEquals(listOf("fresh", "three"), vm.state.recent.map { it.id })
         assertEquals(listOf("over-three", "fourteen"), vm.state.fortnight.map { it.id })
@@ -222,7 +222,7 @@ class AgentsOverviewTasksViewModelTest {
     @Test
     fun moreAppearsOnlyForTheSecondBand() {
         now = 30 * DAY // the bands are days wide; the usual clock is only hours in
-        val recent = (1..8).map { session("r$it", "ended", endedAt = now - it * 1_000L) }
+        val recent = (1..8).map { session("r$it", "ended", endedAt = now - HOUR - it * 1_000L) }
         val older = (1..7).map { session("o$it", "ended", endedAt = now - 5 * DAY - it) }
         show(emptyList(), *(recent + older).toTypedArray())
         assertEquals(8, vm.state.recent.size, "the first band is never cut")
@@ -395,7 +395,7 @@ class AgentsOverviewTasksViewModelTest {
 
     @Test
     fun aLoneSessionRightAfterATaskGetsTheGapAHeaderGetsAndASessionOfTheTaskDoesNot() {
-        val ended = now - 1_000
+        val ended = now - HOUR // past the ten minutes a just-ended session stays under NOW
         show(
             listOf(
                 task(id = "g1", members = listOf(member("a", "idle", label = "done", since = ended), member("b", "idle", label = "done", since = ended))),
@@ -1128,16 +1128,18 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aGracedIdleSessionRanksBehindEverythingThatNeedsYouOrWorksAndAClosedOneNeverGetsGrace() {
+    fun aGracedIdleSessionRanksBehindEverythingThatNeedsYouOrWorksAndAJustClosedOneIsGracedLikeIt() {
         show(
             listOf(task(members = listOf(member("run", "idle", label = "queued"), member("run2", "idle", label = "queued")))),
             session("graced", "idle", since = now - 1_000),
             session("work", "working", since = now - 5_000),
             session("need", "needs_you", since = now - 9_000),
             session("closed", "ended", since = now - 2_000, endedAt = now - 1_000),
+            session("longClosed", "ended", since = now - 3_600_000, endedAt = now - 3_600_000),
         )
-        assertEquals(listOf("need", "work", "task:g1", "graced"), vm.state.now.map { it.id })
-        assertEquals(listOf("closed"), vm.state.earlier.map { it.id })
+        assertEquals(setOf("graced", "closed"), vm.state.now.map { it.id }.filter { it == "graced" || it == "closed" }.toSet())
+        assertEquals(listOf("need", "work", "task:g1"), vm.state.now.map { it.id }.take(3))
+        assertEquals(listOf("longClosed"), vm.state.earlier.map { it.id })
         assertEquals(1, vm.state.needYouCount)
     }
 
@@ -1198,6 +1200,7 @@ class AgentsOverviewTasksViewModelTest {
 
     private companion object {
         const val EARLIER_LIMIT = AgentsOverviewBackingViewModel.EARLIER_LIMIT
+        const val HOUR = 60L * 60_000L
         const val DAY = 24L * 60 * 60_000L
     }
 }
