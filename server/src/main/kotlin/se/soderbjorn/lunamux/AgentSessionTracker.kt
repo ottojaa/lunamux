@@ -422,6 +422,20 @@ class AgentSessionTracker(
     }
 
     /**
+     * The panes that were promised [taskId] and have no agent yet.
+     *
+     * Called by [TaskIndex.openLeavesOf], so a second window created for a task before the first
+     * one's agent has started still finds the first one's tab.
+     *
+     * @param taskId the task's id.
+     * @return the layout leaf ids of those panes.
+     * @see setPendingTask
+     */
+    fun pendingLeavesOf(taskId: String): List<String> = synchronized(lock) {
+        pendingTasks.filterValues { it == taskId }.keys.toList()
+    }
+
+    /**
      * The record held in memory (every open one and the recent ended ones), without
      * touching the database.
      *

@@ -317,6 +317,24 @@ class TaskIndex(
     }
 
     /**
+     * The panes a task's sessions are in: the layout leaf of each of its open sessions, and of each
+     * pane promised the task whose agent has not started.
+     *
+     * Called by the MCP `create_window` and `run_command` tools to open a task's next window in the
+     * tab the task already uses. A session that has ended no longer counts, because its pane is
+     * gone or only holds a shell.
+     *
+     * @param taskId the task's id.
+     * @return layout leaf ids, in no particular order; empty when the task has no pane.
+     */
+    fun openLeavesOf(taskId: String): List<String> {
+        val sessions = tracker.snapshot()
+            .filter { isOpen(it) && taskIdOf(it) == taskId }
+            .mapNotNull { it.leafId }
+        return sessions + tracker.pendingLeavesOf(taskId)
+    }
+
+    /**
      * Check that a task exists, before something is created for it.
      *
      * Called by `create_window` so a mistyped task id fails before a pane is opened.
