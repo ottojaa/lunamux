@@ -1210,9 +1210,10 @@ class AgentsOverviewBackingViewModel(
         }
         // A task file speaks for its task, so the task stays in NOW while it has work to do, even
         // while nothing moves: a member in review or queued is still open work. Once every member
-        // reads done, nothing is moving or waiting and the file has said so itself, so the task goes
-        // to EARLIER at once, as a finished task does. A task of hosted sessions only has no such
-        // word: like one idle session, it stays for the grace after the last activity and then moves.
+        // reads done, nothing is moving or waiting and the file has said so itself, so the task is
+        // finished, as a task whose runs all ended is. A finished task stays in NOW for the grace
+        // after its newest activity and then goes to EARLIER. A task of hosted sessions only has no
+        // such word: like one idle session, it stays for the grace after the last activity and then moves.
         val lastActivity = runs.mapNotNull { r -> r.session?.let { it.lastActivityAt ?: it.stateSince } }.maxOrNull()
         val hostedOnly = t.source != "file"
         val quiet = hostedOnly && urgentRank == OPEN_WORK_RANK && !runs.all { it.member.state == ENDED }

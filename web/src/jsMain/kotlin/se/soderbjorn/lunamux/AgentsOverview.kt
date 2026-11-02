@@ -740,7 +740,8 @@ private fun buildConfirm(confirm: AgentsOverviewBackingViewModel.Confirm): HTMLE
 /**
  * Compact age for a row: `now`, `5m`, `3h` or `2d`.
  *
- * @param sinceMillis epoch millis the row entered its state.
+ * @param sinceMillis epoch millis the age counts from: when the row entered its state, an idle or
+ *   ended row's last sign of life, or the newest activity a task header summarises.
  * @return the age text shown at the row's right.
  */
 private fun formatAge(sinceMillis: Long): String {
