@@ -1344,6 +1344,9 @@ class AgentsOverviewBackingViewModel(
      * then, while collapsed, the sessions that need the user (longest waiting first) and those
      * that work (most recent first), or, once expanded, every session in the order needs you,
      * working, in review, queued, other labels, paused, done; the file's order within a bucket.
+     * A panel that is not in NOW (it is in EARLIER) is only its header while collapsed, even when
+     * some of its sessions work outside every open tab, and its header reads as idle: nothing in
+     * EARLIER is shown as moving.
      */
     private fun taskRows(
         u: TaskUnit,
@@ -1357,7 +1360,7 @@ class AgentsOverviewBackingViewModel(
         if (!u.panel) return rows.map { it.second }
         val header = tasks.getValue(t.id).let { task ->
             Row(
-                id = "$TASK_PREFIX${t.id}", agent = "", state = stateOfRank(u.rank), title = t.title,
+                id = "$TASK_PREFIX${t.id}", agent = "", state = if (u.inNow) stateOfRank(u.rank) else IDLE, title = t.title,
                 links = emptyList(), repo = headerRepo(u), nowLine = null, question = null,
                 sinceMillis = task.ageMillis ?: u.since,
                 isLive = task.jumpRecordId != null, canResume = false,
@@ -1376,6 +1379,8 @@ class AgentsOverviewBackingViewModel(
                 compareBy<Pair<Run, Row>> { bucketOf(it.first.member).order }
                     .thenBy { if (it.first.member.state == NEEDS_YOU) it.first.member.sinceMillis else 0L },
             )
+        } else if (!u.inNow) {
+            emptyList()
         } else {
             rows.filter { it.first.member.state == NEEDS_YOU }.sortedBy { it.first.member.sinceMillis } +
                 rows.filter { it.first.member.state == WORKING }.sortedByDescending { it.first.member.sinceMillis }

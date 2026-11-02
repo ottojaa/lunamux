@@ -278,6 +278,28 @@ class McpTaskToolsTest {
     }
 
     @Test
+    fun `a worldId limits the task's tab to that world, and falls back to its active tab`() {
+        val homeWorld = WindowState.activeWorldId()
+        val taskTab = newTab("Task tab")
+        val otherWorld = payloadOf(call("create_world", """{"name":"Elsewhere"}""")).jsonObject["worldId"]!!.jsonPrimitive.content
+        try {
+            val otherTab = WindowState.config.value.worlds.first { it.id == otherWorld }.let { it.activeTabId ?: it.tabs.first().id }
+            val id = payloadOf(call("create_task", """{"title":"Lives in the first world"}""")).jsonObject["taskId"]!!.jsonPrimitive.content
+            agentWindowIn(taskTab, id, "a-home")
+
+            val inOther = payloadOf(call("create_window", """{"taskId":"$id","worldId":"$otherWorld"}""")).jsonObject
+            assertEquals(otherTab, inOther["tabId"]!!.jsonPrimitive.content, "the task has no tab in the named world")
+
+            val inHome = payloadOf(call("create_window", """{"taskId":"$id","worldId":"$homeWorld"}""")).jsonObject
+            assertEquals(taskTab, inHome["tabId"]!!.jsonPrimitive.content)
+        } finally {
+            call("close_world", """{"worldId":"$otherWorld"}""")
+            call("switch_world", """{"worldId":"$homeWorld"}""")
+            call("close_tab", """{"tabId":"$taskTab"}""")
+        }
+    }
+
+    @Test
     fun `an ended session no longer holds its task's tab`() {
         val oldTab = newTab("Old tab")
         val activeTab = newTab("Active tab")

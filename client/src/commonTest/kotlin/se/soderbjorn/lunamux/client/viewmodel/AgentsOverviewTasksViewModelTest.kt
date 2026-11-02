@@ -475,8 +475,11 @@ class AgentsOverviewTasksViewModelTest {
 
     @Test
     fun aTaskWithOneSessionAndAnOpenActionIsAPanel() {
-        show(listOf(task(hasOpen = true, members = listOf(member("a", "working")))))
-        assertEquals(listOf("task:g1", "member:g1:#1"), vm.state.rows.map { it.id })
+        show(
+            listOf(task(hasOpen = true, members = listOf(member("a", "working", recordId = "a")))),
+            session("a", "working", lastActivityAt = now - 1_000),
+        )
+        assertEquals(listOf("task:g1", "a"), vm.state.rows.map { it.id })
         assertTrue(vm.state.tasks.getValue("g1").hasOpen)
     }
 
@@ -1215,6 +1218,19 @@ class AgentsOverviewTasksViewModelTest {
         assertTrue(vm.state.now.isEmpty())
         assertEquals("task:g1", vm.state.earlier.first().id)
         assertEquals(0, vm.state.workingCount)
+    }
+
+    @Test
+    fun anEarlierTaskWithWorkingSessionsOutsideEveryTabIsOnlyItsIdleHeaderUntilExpanded() {
+        showAway(
+            listOf(task(members = listOf(member("a", "working", recordId = "a"), member("b", "working")))),
+            session("a", "working", lastActivityAt = now - 1_000),
+        )
+        assertTrue(vm.state.now.isEmpty())
+        assertEquals(listOf("task:g1"), vm.state.earlier.map { it.id })
+        assertEquals("idle", vm.state.earlier.first().state)
+        vm.toggleTask("g1")
+        assertTrue(vm.state.earlier.size > 1, "expanding still lists the members")
     }
 
     @Test

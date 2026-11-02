@@ -501,7 +501,8 @@ private fun highlighted(text: String, start: Int, length: Int): org.w3c.dom.Docu
 /**
  * The state glyph of a row, drawn in the second column: ◆ for a session that needs the user, the
  * braille working glyph (moving while the work is live, still and dim once it is not), ○, ‖, ✓
- * or ·; nothing for a header whose task has no working session.
+ * or ·; nothing for a header whose task has no working session, or whose header reads idle (a
+ * task in EARLIER is never drawn as moving, whatever its sessions do outside the open tabs).
  *
  * @param row the row.
  * @param task the row's task header data when [row] is a header, for its working glyph.
@@ -510,7 +511,7 @@ private fun highlighted(text: String, start: Int, length: Int): org.w3c.dom.Docu
  */
 private fun stateGlyph(row: Row, task: AgentsOverviewBackingViewModel.Task?, now: Long): HTMLElement? = when {
     row.kind == Kind.TASK ->
-        task?.takeIf { it.workingCount > 0 }
+        task?.takeIf { it.workingCount > 0 && row.state != "idle" }
             ?.let { workingGlyph(AgentsOverviewBackingViewModel.isWorkingLive(it.activityMillis, now)) }
     else -> when (row.glyph) {
         Glyph.NEEDS_YOU -> span("ao-g-need", "◆")
