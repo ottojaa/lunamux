@@ -82,6 +82,14 @@ cmd = "printf %s " + json.dumps(sys.argv[2]) + " | curl -sk -m 2 -X POST -H \"X-
 print(json.dumps({"sessionId": sys.argv[1], "command": cmd}))' "$1" "$json")" >/dev/null
 }
 
+# title <terminal session id> <text> : give the pane's window a custom name, which is what the
+# session's row is called
+title() {
+    local win
+    win="$(field "$(call list_layout '{}')" '[w for t in d["tabs"] for w in t["windows"] if w.get("sessionId")=="'"$1"'"][0]["windowId"]')"
+    call rename_window "$(python3 -I -c 'import json,sys; print(json.dumps({"windowId": sys.argv[1], "title": sys.argv[2]}))' "$win" "$2")" >/dev/null
+}
+
 LAYOUT="$(call list_layout '{}')"
 TAB1="$(field "$LAYOUT" 'd["tabs"][0]["tabId"]')"
 WIN1="$(field "$LAYOUT" 'd["tabs"][0]["windows"][0]["windowId"]')"
@@ -89,6 +97,7 @@ SES1="$(field "$LAYOUT" 'd["tabs"][0]["windows"][0]["sessionId"]')"
 call rename_tab "{\"tabId\":\"$TAB1\",\"title\":\"Checkout\"}" >/dev/null
 
 # Checkout: the first session, and a task of its own so the second window has something to join.
+title "$SES1" "Rate limiter"
 hook "$SES1" live-ratelimiter '{"hook_event_name":"UserPromptSubmit","prompt":"Write the token bucket for the API gateway"}'
 hook "$SES1" live-ratelimiter '{"hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"gateway/TokenBucket.kt"}}'
 sleep 2
@@ -100,11 +109,13 @@ TAB2="$(field "$(call create_tab '{"title":"Docs"}')" 'd["tabId"]')"
 call activate_tab "{\"tabId\":\"$TAB2\"}" >/dev/null
 LAYOUT="$(call list_layout '{}')"
 SES2="$(field "$LAYOUT" '[w for t in d["tabs"] if t["tabId"]=="'"$TAB2"'" for w in t["windows"]][0]["sessionId"]')"
+title "$SES2" "Docs sweep"
 hook "$SES2" live-docs '{"hook_event_name":"UserPromptSubmit","prompt":"Sweep the docs for stale flags"}'
 hook "$SES2" live-docs '{"hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"docs/tasks.md"}}'
 ARGS="{\"tabId\":\"$TAB2\"}"
 DOCS_WIN="$(call create_window "$ARGS")"
 SES3="$(field "$DOCS_WIN" 'd["sessionId"]')"
+title "$SES3" "Which branch?"
 hook "$SES3" live-question '{"hook_event_name":"UserPromptSubmit","prompt":"Cut the release branch"}'
 hook "$SES3" live-question '{"hook_event_name":"Notification","message":"Claude needs your input","notification_type":"elicitation_dialog"}'
 
@@ -112,18 +123,22 @@ hook "$SES3" live-question '{"hook_event_name":"Notification","message":"Claude 
 TAB3="$(field "$(call create_tab '{"title":"Release notes"}')" 'd["tabId"]')"
 LAYOUT="$(call list_layout '{}')"
 SES5="$(field "$LAYOUT" '[w for t in d["tabs"] if t["tabId"]=="'"$TAB3"'" for w in t["windows"]][0]["sessionId"]')"
+title "$SES5" "Release notes"
 hook "$SES5" live-notes '{"hook_event_name":"UserPromptSubmit","prompt":"Write the release notes for 4.3 and split the checks between two agents"}'
 hook "$SES5" live-notes '{"hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"docs/release-notes.md"}}'
 BG1="$(call create_tab '{"title":"Changelog check","background":true}')"
 SES6="$(field "$BG1" 'd["sessionId"]')"
+title "$SES6" "Changelog check"
 hook "$SES6" live-changelog '{"hook_event_name":"UserPromptSubmit","prompt":"Check every changelog entry against the merged pull requests"}'
 hook "$SES6" live-changelog '{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"CHANGELOG.md"}}'
 BG2="$(call create_tab '{"title":"Screenshot refresh","background":true}')"
 SES7="$(field "$BG2" 'd["sessionId"]')"
+title "$SES7" "Screenshot refresh"
 hook "$SES7" live-screens '{"hook_event_name":"UserPromptSubmit","prompt":"Retake the screenshots the notes link to"}'
 hook "$SES7" live-screens '{"hook_event_name":"Notification","message":"Claude needs your input","notification_type":"elicitation_dialog"}'
 sleep 1
-NOTES="$(field "$(call create_task "{\"title\":\"Release notes\",\"sessionIds\":[\"$SES5\",\"$SES6\",\"$SES7\"]}")" 'd["taskId"]')"
+ARGS="{\"title\":\"Release notes\",\"sessionIds\":[\"$SES5\",\"$SES6\",\"$SES7\"]}"
+NOTES="$(field "$(call create_task "$ARGS")" 'd["taskId"]')"
 call set_task_lead "{\"taskId\":\"$NOTES\",\"sessionId\":\"$SES5\"}" >/dev/null
 call set_task_status "{\"taskId\":\"$NOTES\",\"text\":\"Notes drafted, waiting on the changelog check\"}" >/dev/null
 echo "task \"Release notes\" ($NOTES): own session in tab $TAB3, two background tabs, status set"
@@ -133,6 +148,7 @@ ARGS="{\"taskId\":\"$TASK\"}"
 NEW="$(call create_window "$ARGS")"
 LANDED="$(field "$NEW" 'd["tabId"]')"
 SES4="$(field "$NEW" 'd["sessionId"]')"
+title "$SES4" "Limiter tests"
 hook "$SES4" live-limiter-tests '{"hook_event_name":"UserPromptSubmit","prompt":"Cover the limiter with tests"}'
 if [ "$LANDED" = "$TAB1" ]; then
     echo "second window of task $TASK landed in the task's tab \"Checkout\" ($LANDED), not the active tab \"Docs\" ($TAB2)"
