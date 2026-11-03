@@ -53,10 +53,11 @@ idle, **‖** paused, **✓** done.
   wherever they run. When neither holds, the task goes to EARLIER. The chip counts what NOW shows,
   so a working session of a task that is in EARLIER is not counted as working. A tab counts as
   open whatever the tab strip shows of it.
-- **A session or task that has just ended stays in NOW for ten minutes.** This is the one thing
-  in NOW that is in no tab: a session whose last activity (or end) was less than ten minutes ago,
+- **A session or task that has just ended stays in NOW for ten minutes.** With the ◆ above, this
+  is the other thing in NOW that is in no tab: a session that has ended less than ten minutes ago,
   and a task that has just finished, so a row never reads "now" under a heading that says days.
-  After the ten minutes it goes to EARLIER by its age.
+  After the ten minutes it goes to EARLIER by its age. A session that is still running but idle,
+  in no tab, gets no such grace.
 - **Inside NOW, a task stays while it has work.** A task stays in NOW while a session needs the
   person or works. A task that a task file declares also stays there while it has open work, such
   as a session in review or queued, even when nothing is running at the moment, so it does not

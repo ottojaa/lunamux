@@ -19,9 +19,11 @@
  * expanded. A task with one session and no `open` action is drawn as that session's plain row.
  *
  * NOW is the open tabs: a session is in it only while its pane is in a tab that is open, and a
- * task only while one of its sessions is. The one exception is a session that needs the person,
- * which stays in NOW wherever it runs, so a question is never filed under EARLIER where the
- * "more" cut or the two-week window could hide it. Inside that, a task stays in NOW while it has
+ * task only while one of its sessions is. There are two exceptions. A session that needs the
+ * person stays in NOW wherever it runs, so a question is never filed under EARLIER where the
+ * "more" cut or the two-week window could hide it. And a session that has just ended, or a task
+ * that has just finished, stays for ten minutes so a row never reads "now" under a days heading;
+ * a running idle session outside every tab gets no such grace. Inside that, a task stays in NOW while it has
  * open work (a session needs the person or works, or a task file still has a session in review
  * or queued), ranked beside single sessions by its most urgent session. A task is one unit: all
  * its sessions stay with it while any one of them is in an open tab, and a session that needs the
