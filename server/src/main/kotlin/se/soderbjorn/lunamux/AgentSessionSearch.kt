@@ -52,6 +52,10 @@ object AgentSessionSearch {
      * prompt, then branch or links, then transcript or screen; within a tier open sessions come
      * first, then the newest.
      *
+     * A stored title that only says where the session ran (`~`, `HEAD`, a folder, the branch or
+     * a run id) is not searched, because the row shows a title made from the prompt instead and
+     * a hit on a word the row never shows would look like a mistake.
+     *
      * A task's title is not a column of the session, so the sessions of every task whose title
      * matches are read by task id as well, however old they are, and merged with the rows the
      * ordinary query found.
@@ -134,13 +138,17 @@ object AgentSessionSearch {
         )
     }
 
+    /** The last segment of the record's working folder, as the overview names the folder; null when it has none. */
+    private fun folderName(rec: AgentSessionRecord): String? =
+        rec.cwd?.trimEnd('/')?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+
     /** One match inside a record: its field, the text to show and where the query sits in it. */
     private class Found(val field: String, val snippet: String?, val start: Int, val length: Int)
 
     private fun bestField(
         rec: AgentSessionRecord, taskTitle: String?, transcript: String?, screen: String?, q: String,
     ): Found? {
-        rec.title?.let { t ->
+        rec.title?.takeIf { AgentSessionText.isMeaningfulTitle(it, rec.branch, rec.repo, folderName(rec)) }?.let { t ->
             val at = t.indexOf(q, ignoreCase = true)
             if (at >= 0) return Found("title", null, at, q.length)
         }

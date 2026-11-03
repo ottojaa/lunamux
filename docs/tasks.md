@@ -44,22 +44,28 @@ idle, **‖** paused, **✓** done.
 - **↵ on a session** jumps to its pane, or resumes it when it has ended. A session Lunamux does
   not host and that has a `sessionId` opens in a new tab with `claude attach <session id>`.
 - **NOW is the open tabs.** A session is in NOW only while its pane is in a tab that is open,
-  and a task only while one of its sessions is. A session that ended, or whose pane is not in any
-  open tab, is in EARLIER with the rest of what is not happening on screen, however busy it is.
-  The one exception is a session that needs the person (a ◆): it stays in NOW wherever it runs,
-  because a question must not wait where the **+ N more** cut or the fourteen-day window can hide
-  it. A task is one unit: while one of its sessions is in an open tab, all its sessions stay with
-  it in NOW, and a session that needs the person keeps its whole task there, the task's other
-  sessions too, wherever they run. When neither holds, the task goes to EARLIER. The chip counts
-  what NOW shows, so a working session of a task that is in EARLIER is not counted as working.
+  and a task only while one of its sessions is. A session whose pane is not in any open tab is in
+  EARLIER with the rest of what is not happening on screen, however busy it is. The one exception
+  is a session that needs the person (a ◆): it stays in NOW wherever it runs, because a question
+  must not wait where the **+ N more** cut or the fourteen-day window can hide it. A task is one
+  unit: while one of its sessions is in an open tab, all its sessions stay with it in NOW, and a
+  session that needs the person keeps its whole task there, the task's other sessions too,
+  wherever they run. When neither holds, the task goes to EARLIER. The chip counts what NOW shows,
+  so a working session of a task that is in EARLIER is not counted as working. A tab counts as
+  open whatever the tab strip shows of it.
+- **A session or task that has just ended stays in NOW for ten minutes.** This is the one thing
+  in NOW that is in no tab: a session whose last activity (or end) was less than ten minutes ago,
+  and a task that has just finished, so a row never reads "now" under a heading that says days.
+  After the ten minutes it goes to EARLIER by its age.
 - **Inside NOW, a task stays while it has work.** A task stays in NOW while a session needs the
   person or works. A task that a task file declares also stays there while it has open work, such
   as a session in review or queued, even when nothing is running at the moment, so it does not
   change section as sessions start and stop. Once every session of such a task reads done, nothing
-  is moving or waiting and the task goes to EARLIER, even if none of its sessions has ended. A task
-  made only of Lunamux's own sessions behaves like one idle session: it stays in NOW for ten
-  minutes after the last activity and then moves to EARLIER. A task whose sessions have all ended
-  is in EARLIER.
+  is moving or waiting and the task goes to EARLIER, even if none of its sessions has ended, once
+  ten minutes have passed since its newest activity. A task made only of Lunamux's own sessions
+  behaves like one idle session in a tab: it stays in NOW for ten minutes after the last activity
+  and then moves to EARLIER. A task whose sessions have all ended is in EARLIER after the same
+  ten minutes.
 - **EARLIER is two bands of tasks, newest first.** **LAST FEW DAYS** holds the tasks last active
   within three days, all of them. **LAST TWO WEEKS** holds those between three and fourteen days
   old; it shows the first five and a **+ N more** line (a click on it shows the rest). A band
@@ -215,7 +221,7 @@ One object per file.
 | `members[].state` | yes | `needs_you`, `working`, `idle` or `ended`. |
 | `members[].label` | no | A short status word shown in front of the line and used in the counts ("1 in review"). `in review`, `queued`, `waiting`, `paused` and `done` (or `ready`) have a glyph and a place in the order; any other label, `held` included, counts as given. Use plain statuses, not ticket keys. |
 | `members[].line` | no | One line of detail: the question for `needs_you`, otherwise what it is doing. Blank means none. |
-| `members[].sessionId` | no | The id `claude attach` takes for the member's background session. Gives the member an **open** action when Lunamux hosts no session for it. Only letters, digits, `-` and `_` are accepted; anything else is never typed into a shell. |
+| `members[].sessionId` | no | The id `claude attach` takes for the member's background session. Gives the member a **resume** action when Lunamux hosts no session for it. Only letters, digits, `-` and `_` are accepted; anything else is never typed into a shell. |
 | `members[].since` | no (recommended) | ISO-8601 time the member entered its state; drives the age and the ordering. When missing or unreadable, the file's modified time is used. |
 | `members[].links` | no | Ticket ids and pull requests such as `ACC-12` or `#212`. A `#`-number is the member's pull request, shown after `done`; Lunamux adds none of its own. |
 | `members[].match` | no | How to find the member's real session; see below. |

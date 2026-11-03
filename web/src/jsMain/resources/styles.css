@@ -3561,6 +3561,9 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     color: var(--ao-dim);
     font: 12px/1 var(--ao-mono);
     cursor: pointer;
+    /* One line at any toolbar width: the pill keeps its size and its words stay together. */
+    flex: none;
+    white-space: nowrap;
 }
 .ao-chip:hover { background: var(--ao-sel); }
 .ao-chip-need { color: var(--ao-warn); font-weight: 600; }
@@ -3653,7 +3656,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-agent { color: var(--ao-dim); }
 .ao-n-faint { color: var(--ao-faint); }
 .ao-n-error { color: var(--ao-error); }
-.ao-pr-inline { display: none; color: var(--ao-dim); }
+.ao-pr-inline { color: var(--ao-dim); }
 .ao-g-need { color: var(--ao-warn); }
 
 /* Needs you: the brightest status text, which may wrap to two lines. */
@@ -3764,7 +3767,6 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 @container ao (max-width: 900px) {
     .ao-row { grid-template-columns: 2ch 2ch 28ch minmax(0, 1fr) 4ch 10ch; }
     .ao-row > .ao-w { display: none; }
-    .ao-pr-inline { display: inline; }
     .ao-seg-move { display: none; }
 }
 @container ao (max-width: 640px) {
