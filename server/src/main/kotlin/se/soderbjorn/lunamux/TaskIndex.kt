@@ -84,7 +84,9 @@ data class TaskListing(val id: String, val title: String, val source: String, va
  *   that does not exist; replaced in tests.
  * @param clock epoch-millis time source; replaced in tests.
  * @param newSuffix mints the short random suffix of a new task id; replaced in tests.
+ * @param marks gives each task its mark; null leaves [AgentTask.mark] empty (tests that do not care).
  * @see TaskSnapshot
+ * @see ThreadMarks
  */
 class TaskIndex(
     private val repo: SettingsRepository,
@@ -93,6 +95,7 @@ class TaskIndex(
     private val leafOfSession: (String) -> String?,
     private val clock: () -> Long = System::currentTimeMillis,
     private val newSuffix: () -> String = { UUID.randomUUID().toString().take(SUFFIX_LENGTH) },
+    private val marks: ThreadMarks? = null,
 ) {
     private val lock = Any()
     private var rows: List<AgentTaskRow> = runCatching { repo.loadAgentTasks() }.getOrDefault(emptyList())
@@ -172,7 +175,67 @@ class TaskIndex(
      * record change; called by [start]'s collector and by every mutating method.
      */
     fun recompute() {
-        synchronized(lock) { _state.value = resolve(tracker.snapshot(), files.value, rows) }
+        synchronized(lock) {
+            val records = tracker.snapshot()
+            _state.value = withMarks(resolve(records, files.value, rows), records)
+        }
+    }
+
+    /**
+     * The stored mark of a task, or null when it has none yet (or marks are off).
+     *
+     * Called by [AgentSessionSearch] so a match inside a task wears the task's mark, also when
+     * every session of the task is only in the database.
+     *
+     * @param taskId the task's id.
+     * @return the mark, 0 until 35, or null.
+     * @see ThreadMarks.markOfTask
+     */
+    fun markOfTask(taskId: String): Int? = marks?.markOfTask(taskId)
+
+    /**
+     * Put each task's mark on [snapshot].
+     *
+     * A task that already has a stored mark keeps it. A task seen for the first time copies the
+     * mark of the thread of its first member, so the header and the loose sessions of that thread
+     * wear one mark. The first member is, in this order: the first member of the task file, in the
+     * file's order, whose session this server hosts and whose session belongs to a thread; else the
+     * first folder the file names (a member's `match.folder`, then `open.folder`); for a task agents
+     * made, its oldest session by creation time. Every choice is deterministic, because the first
+     * one decides the mark for good.
+     *
+     * @param snapshot the tasks and assignment [resolve] made.
+     * @param records the session records in memory.
+     * @return [snapshot] with [AgentTask.mark] set on every task; unchanged when marks are off.
+     */
+    private fun withMarks(snapshot: TaskSnapshot, records: List<AgentSessionRecord>): TaskSnapshot {
+        val m = marks ?: return snapshot
+        val now = clock()
+        val byId = records.associateBy { it.id }
+        val tasks = snapshot.tasks.map { t ->
+            val mark = m.markOfTask(t.id, now)
+                ?: m.markForTask(t.id, firstThreadKey(m, t, snapshot.assignment, byId), now)
+            t.copy(mark = mark)
+        }
+        return snapshot.copy(tasks = tasks)
+    }
+
+    private fun firstThreadKey(
+        m: ThreadMarks,
+        task: AgentTask,
+        assignment: Map<String, String>,
+        byId: Map<String, AgentSessionRecord>,
+    ): String? {
+        val file = files.value.firstOrNull { it.id == task.id }
+        val hosted = task.members.firstNotNullOfOrNull { member -> member.recordId?.let(byId::get)?.let(m::keyOf) }
+        if (hosted != null) return hosted
+        if (file != null) {
+            val folder = file.members.firstNotNullOfOrNull { it.matchFolder } ?: file.open?.folder
+            return folder?.let(m::folderKey)
+        }
+        return assignment.filterValues { it == task.id }.keys.mapNotNull(byId::get)
+            .sortedWith(compareBy({ it.createdAt }, { it.id }))
+            .firstNotNullOfOrNull(m::keyOf)
     }
 
     /**

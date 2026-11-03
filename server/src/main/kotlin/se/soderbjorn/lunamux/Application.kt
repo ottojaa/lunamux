@@ -101,11 +101,16 @@ fun main() {
         ?: SERVER_TLS_PORT
     AgentEvents.port = port
     val searchIndexer = AgentSearchIndexer(repo)
-    val agentTracker = AgentSessionTracker(repo, onEnded = searchIndexer::indexEnded).also { it.start() }
+    val threadMarks = ThreadMarks(repo)
+    val agentTracker = AgentSessionTracker(repo, onEnded = searchIndexer::indexEnded, marks = threadMarks).also { it.start() }
     searchIndexer.runningIn = agentTracker::hasUnidentifiedClaudeIn
     val claudeHooks = ClaudeHooks()
     val taskFiles = TaskFilesWatcher(AppPaths.taskDirs())
-    val taskIndex = TaskIndex(repo, agentTracker, taskFiles.files, leafOfSession = { WindowState.leafIdOfSession(it) })
+    val taskIndex = TaskIndex(
+        repo, agentTracker, taskFiles.files,
+        leafOfSession = { WindowState.leafIdOfSession(it) },
+        marks = threadMarks,
+    )
     // Sessions recorded before search existed get their text now.
     searchIndexer.backfill()
     TerminalSessions.onDestroy = agentTracker::onSessionDestroyed

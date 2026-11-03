@@ -366,6 +366,12 @@ sealed class WindowEnvelope {
  * @param taskId the id of the [AgentTask] this session belongs to, or null when it is a task of
  *   its own. Decided by the server's task index (an agent's explicit choice, then a task file's
  *   match); a client never works it out itself.
+ * @param mark the mark of the thread of work this session belongs to, 0 until 35 (shape
+ *   `mark / 6`, hue `mark % 6`), or null when the session belongs to no thread (the home folder, a
+ *   repository's default branch). For a session in a task it is the task's mark. Decided by the
+ *   server and stored there, so it never changes; a client draws it and never works it out.
+ * @param threadKey the key of that thread (a worktree or folder path, or a repository and branch),
+ *   or null; what the pane and tab marks use to tell whether two sessions are one thread.
  */
 @Serializable
 data class AgentSessionSummary(
@@ -387,6 +393,8 @@ data class AgentSessionSummary(
     val lastActivityAt: Long? = null,
     val firstPrompt: String? = null,
     val taskId: String? = null,
+    val mark: Int? = null,
+    val threadKey: String? = null,
 )
 
 /**
@@ -588,6 +596,9 @@ enum class DiffLineType {
  * @param refreshedAtMillis epoch millis the task file was last written or touched (its modification
  *   time), or null when no file declares the task. A file nobody has refreshed for a while no longer
  *   says anything about its members; the overview marks such rows stale from this alone.
+ * @param mark the task's mark, 0 until 35 (see [AgentSessionSummary.mark]). It copies the mark of
+ *   the thread of the task's first member the first time the server sees the task and is stored, so
+ *   the header and every member row wear the same mark for good. Null from an older server.
  */
 @Serializable
 data class AgentTask(
@@ -598,6 +609,7 @@ data class AgentTask(
     val hasOpen: Boolean = false,
     val members: List<AgentTaskMember> = emptyList(),
     val refreshedAtMillis: Long? = null,
+    val mark: Int? = null,
 )
 
 /**

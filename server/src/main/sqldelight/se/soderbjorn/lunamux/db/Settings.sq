@@ -46,6 +46,12 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
     updated_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS thread_marks (
+    key          TEXT NOT NULL PRIMARY KEY,
+    mark         INTEGER NOT NULL,
+    last_seen_at INTEGER NOT NULL
+);
+
 selectByKey:
 SELECT value FROM settings WHERE key = ?;
 
@@ -153,3 +159,10 @@ SELECT id, title, created_at, updated_at FROM agent_tasks ORDER BY created_at, i
 
 upsertAgentTask:
 INSERT OR REPLACE INTO agent_tasks(id, title, created_at, updated_at) VALUES (?, ?, ?, ?);
+
+-- The mark each thread of work wears (see ThreadMarks). A key is a thread key or `task:<id>`.
+selectThreadMarks:
+SELECT key, mark, last_seen_at FROM thread_marks;
+
+upsertThreadMark:
+INSERT OR REPLACE INTO thread_marks(key, mark, last_seen_at) VALUES (?, ?, ?);

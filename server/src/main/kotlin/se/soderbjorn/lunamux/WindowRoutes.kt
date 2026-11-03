@@ -447,7 +447,8 @@ internal fun Route.windowRoutes(
         // Tasks ride in the same job, sessions first, so a client that receives a task
         // already holds the records it names. A frame is sent only when its part changed.
         // Each summary carries the task the index decided for it; the tracker only knows the
-        // task an agent named explicitly.
+        // task an agent named explicitly. A session in a task wears the task's mark, so a header
+        // and its members always match.
         val agentSessionsPushJob = launch {
             var sentSessions: Pair<List<AgentSessionSummary>, Boolean>? = null
             var sentTasks: List<AgentTask>? = null
@@ -456,7 +457,11 @@ internal fun Route.windowRoutes(
                 claudeHooks.connected,
                 taskIndex?.state ?: MutableStateFlow(TaskSnapshot()),
             ) { sessions, connected, snapshot ->
-                val withTasks = sessions.map { it.copy(taskId = snapshot.assignment[it.id]) }
+                val taskMarks = snapshot.tasks.associate { it.id to it.mark }
+                val withTasks = sessions.map {
+                    val taskId = snapshot.assignment[it.id]
+                    it.copy(taskId = taskId, mark = taskId?.let(taskMarks::get) ?: it.mark)
+                }
                 Triple(withTasks, connected, snapshot.tasks)
             }.collect { (sessions, connected, tasks) ->
                 if (sentSessions != sessions to connected) {

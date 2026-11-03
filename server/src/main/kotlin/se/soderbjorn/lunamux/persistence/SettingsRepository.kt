@@ -192,6 +192,19 @@ class SettingsRepository(
             """.trimIndent(),
             parameters = 0,
         )
+        // The mark of each thread of work (see ThreadMarks): created here so a database that
+        // predates it gets the table without a migration file.
+        driver.execute(
+            identifier = null,
+            sql = """
+                CREATE TABLE IF NOT EXISTS thread_marks (
+                    key          TEXT NOT NULL PRIMARY KEY,
+                    mark         INTEGER NOT NULL,
+                    last_seen_at INTEGER NOT NULL
+                )
+            """.trimIndent(),
+            parameters = 0,
+        )
         // Same no-.sqm story for columns added to an existing table: bring
         // pre-existing DBs up to the current shape. SQLite has no
         // ADD COLUMN IF NOT EXISTS, so the "duplicate column name" error on
@@ -610,6 +623,40 @@ class SettingsRepository(
     fun loadAgentTasks(): List<AgentTaskRow> =
         database.settingsQueries.selectAgentTasks { id, title, createdAt, updatedAt ->
             AgentTaskRow(id, title, createdAt, updatedAt)
+        }.executeAsList()
+
+    /**
+     * One thread's stored mark.
+     *
+     * @property key a thread key, or `task:<id>` for a task.
+     * @property mark 0 until 35: the shape is `mark / 6`, the hue `mark % 6`.
+     * @property lastSeenAt epoch millis the thread was last seen, kept to the day.
+     */
+    data class ThreadMarkRow(val key: String, val mark: Int, val lastSeenAt: Long)
+
+    /**
+     * Insert or replace the mark of one thread.
+     *
+     * Called by [se.soderbjorn.lunamux.ThreadMarks] when it first sees a thread and when it renews
+     * a day-old `last_seen_at`.
+     *
+     * @param row the row to store, keyed by [ThreadMarkRow.key].
+     * @see loadThreadMarks
+     */
+    fun saveThreadMark(row: ThreadMarkRow) {
+        database.settingsQueries.upsertThreadMark(row.key, row.mark.toLong(), row.lastSeenAt)
+    }
+
+    /**
+     * Every stored thread mark.
+     *
+     * Called once by [se.soderbjorn.lunamux.ThreadMarks] when the server starts.
+     *
+     * @return all rows of `thread_marks`.
+     */
+    fun loadThreadMarks(): List<ThreadMarkRow> =
+        database.settingsQueries.selectThreadMarks { key, mark, lastSeenAt ->
+            ThreadMarkRow(key, mark.toInt(), lastSeenAt)
         }.executeAsList()
 
     /**

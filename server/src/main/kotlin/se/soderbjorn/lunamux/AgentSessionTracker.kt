@@ -100,7 +100,11 @@ data class GitInfo(
  * @param newId mints record ids; replaced in tests.
  * @param onEnded called, with the tracker's lock held, each time a record ends; it must only
  *   hand the record to another thread (the search indexer reads the transcript there).
+ * @param marks names each session's thread of work and gives it its mark; null leaves
+ *   [AgentSessionSummary.mark] and [AgentSessionSummary.threadKey] empty (tests that do not care).
+ *   It has its own lock and never calls back, so it may be used while the tracker's lock is held.
  * @see PaneSnapshot
+ * @see ThreadMarks
  */
 class AgentSessionTracker(
     private val repo: SettingsRepository,
@@ -108,6 +112,7 @@ class AgentSessionTracker(
     private val clock: () -> Long = System::currentTimeMillis,
     private val newId: () -> String = { UUID.randomUUID().toString() },
     private val onEnded: (AgentSessionRecord) -> Unit = {},
+    private val marks: ThreadMarks? = null,
 ) {
     private val log = LoggerFactory.getLogger(AgentSessionTracker::class.java)
     private val lock = Any()
@@ -581,7 +586,26 @@ class AgentSessionTracker(
         records.values.firstOrNull { it.state != ENDED && it.terminalSessionId == terminalSessionId }
 
     private fun publish() {
-        _summaries.value = records.values.map { it.toSummary().copy(lastActivityAt = lastActivity[it.id]) }
+        _summaries.value = records.values.map { summaryOf(it).copy(lastActivityAt = lastActivity[it.id]) }
+    }
+
+    /**
+     * The row the clients see for [rec], with its thread key and the thread's mark filled in.
+     *
+     * Called by [publish] for every record and by the session search for the matches it returns,
+     * so a search result wears the same mark as the row in the list. A session that belongs to
+     * no thread (the home folder, a repository's default branch) has neither field. A session
+     * that belongs to a task gets the task's mark on top of this, from [TaskIndex].
+     *
+     * @param rec the stored record.
+     * @return its summary.
+     * @see ThreadMarks.keyOf
+     */
+    fun summaryOf(rec: AgentSessionRecord): AgentSessionSummary {
+        val summary = rec.toSummary()
+        val m = marks ?: return summary
+        val key = m.keyOf(rec) ?: return summary
+        return summary.copy(threadKey = key, mark = m.markFor(key, clock()))
     }
 
     private companion object {
