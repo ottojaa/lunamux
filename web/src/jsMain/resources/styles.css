@@ -3876,7 +3876,9 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-action:disabled { opacity: 0.4; cursor: default; }
 .tp-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 
-.tp-facts { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; }
+/* The label column never takes more than 40%, so a long label wraps instead of squeezing the value. */
+.tp-facts { display: grid; grid-template-columns: fit-content(40%) minmax(0, 1fr); gap: 2px 12px; }
+.tp-fact-label, .tp-fact-value { min-width: 0; overflow-wrap: anywhere; }
 .tp-fact-label { color: var(--tp-dim); }
 .tp-link { display: block; color: var(--tp-accent); cursor: pointer; text-decoration: underline; }
 .tp-md .tp-link { display: inline; }
