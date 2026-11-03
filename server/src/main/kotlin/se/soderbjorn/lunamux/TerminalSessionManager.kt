@@ -171,15 +171,17 @@ interface TermSession {
      * [AgentSessionTracker] when an agent session opens in this pane, so the
      * session can say whether a person or a program started it. Starts as
      * [InputOrigin.USER]: a pane nobody has typed into was opened by a person.
+     * The MCP tools that open a pane set [InputOrigin.TOOL] on it, and the
+     * `interrupt` tool sets it too.
      */
     var inputOrigin: String
 
     /**
      * Record who is about to type [bytes], then leave [write] to deliver them.
      * Only bytes that submit a line (contain a carriage return or line feed)
-     * change [inputOrigin]: focus reports, partial typing and Ctrl-C do not start
-     * anything, so they must not take the credit for a session that a command
-     * line launched.
+     * change [inputOrigin]: focus reports, partial typing and a person's Ctrl-C
+     * do not start anything, so they must not take the credit for a session that
+     * a command line launched. (The `interrupt` tool sets [inputOrigin] itself.)
      *
      * Called from every write site (`/pty` frames, the MCP write tools and the
      * server's own "open a tab running a command" route) just before [write].

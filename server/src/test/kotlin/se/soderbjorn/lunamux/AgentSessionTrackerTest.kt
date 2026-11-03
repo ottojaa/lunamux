@@ -464,6 +464,16 @@ class AgentSessionTrackerTest {
     }
 
     @Test
+    fun `a conversation opened in a second pane while its first record is still open keeps how it first started`() {
+        val t = tracker()
+        t.onHook(pane("s1", origin = InputOrigin.TOOL), event("SessionStart", "a-1"))
+        t.onHook(pane("s9", origin = InputOrigin.USER), event("SessionStart", "a-1"))
+        val rows = t.summaries.value
+        assertEquals(2, rows.size, "the earlier record is still open, so the second pane gets a record of its own")
+        assertEquals(listOf("tool", "tool"), rows.map { it.startedBy })
+    }
+
+    @Test
     fun `a conversation known only from the database keeps its start when it is resumed after a restart`() {
         val first = tracker()
         first.onHook(pane("s1", origin = InputOrigin.TOOL), event("SessionStart", "a-1"))

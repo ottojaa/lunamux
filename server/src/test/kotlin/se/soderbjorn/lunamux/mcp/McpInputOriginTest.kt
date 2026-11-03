@@ -12,7 +12,9 @@ package se.soderbjorn.lunamux.mcp
 
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import se.soderbjorn.lunamux.AgentSession
 import se.soderbjorn.lunamux.ClaudeUsageMonitor
 import se.soderbjorn.lunamux.InputOrigin
@@ -46,6 +48,9 @@ class McpInputOriginTest {
         )
         mcpJson.parseToJsonElement(handled.body!!).jsonObject["result"]!!.jsonObject
     }
+
+    private fun JsonObject.payload(): JsonObject =
+        mcpJson.parseToJsonElement(this["content"]!!.jsonArray[0].jsonObject["text"]!!.jsonPrimitive.content).jsonObject
 
     @Test
     fun `a session nobody has typed into counts as user`() {
@@ -94,6 +99,29 @@ class McpInputOriginTest {
         val (id, session) = newSession()
         call("run_command", """{"sessionId":"$id","command":"claude","waitForExit":false}""")
         assertEquals(InputOrigin.TOOL, session.inputOrigin)
+    }
+
+    @Test
+    fun `the interrupt tool is tool input although it submits no line`() {
+        registerTools()
+        val (id, session) = newSession()
+        call("interrupt", """{"sessionId":"$id"}""")
+        assertEquals(InputOrigin.TOOL, session.inputOrigin)
+    }
+
+    @Test
+    fun `a window a tool creates starts as tool input and a person typing in it takes the credit`() {
+        registerTools()
+        val tabId = call("create_tab", """{"title":"Origin tab"}""").payload()["tabId"]!!.jsonPrimitive.content
+        try {
+            val sessionId = call("create_window", """{"tabId":"$tabId"}""").payload()["sessionId"]!!.jsonPrimitive.content
+            val session = TerminalSessions.get(sessionId)!!
+            assertEquals(InputOrigin.TOOL, session.inputOrigin)
+            acceptClientBytes(session, "c1", "claude\r".toByteArray())
+            assertEquals(InputOrigin.USER, session.inputOrigin)
+        } finally {
+            call("close_tab", """{"tabId":"$tabId"}""")
+        }
     }
 
     @Test

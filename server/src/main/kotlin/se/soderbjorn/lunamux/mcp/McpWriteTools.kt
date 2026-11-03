@@ -345,7 +345,10 @@ fun registerMcpWriteTools(settingsRepo: SettingsRepository, taskIndex: TaskIndex
         ),
     ) { _, args ->
         val sessionId = args.requireString("sessionId")
-        requireSession(sessionId).write(byteArrayOf(0x03))
+        val session = requireSession(sessionId)
+        // A tool pressing Ctrl-C is a tool at the keys, even though no line is submitted.
+        session.inputOrigin = InputOrigin.TOOL
+        session.write(byteArrayOf(0x03))
         markAgentTouchedBySession(sessionId)
         McpToolResult.text("Sent interrupt to $sessionId")
     }
@@ -472,6 +475,8 @@ fun registerMcpWriteTools(settingsRepo: SettingsRepository, taskIndex: TaskIndex
         val leaf = WindowState.addPaneToTab(tabId, initialCwd = args.optString("cwd"))
             ?: throw McpArgumentException("Unknown tabId: $tabId")
         args.optString("title")?.let { WindowState.renamePane(leaf.id, it) }
+        // A pane a tool opened starts as tool input until a person submits a line in it.
+        requireSession(leaf.sessionId).inputOrigin = InputOrigin.TOOL
         markAgentTouched(leaf.id)
         if (taskId != null) taskCall { taskIndex!!.addToTask(taskId, listOf(leaf.sessionId)) }
         McpToolResult.json(buildJsonObject {
