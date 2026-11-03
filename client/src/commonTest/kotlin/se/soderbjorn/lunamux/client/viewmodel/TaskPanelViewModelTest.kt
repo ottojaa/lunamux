@@ -171,6 +171,30 @@ class TaskPanelViewModelTest {
     }
 
     @Test
+    fun `a finished member the file labels reads exited with the label, and the peeked member is marked`() {
+        layout()
+        give(
+            listOf(
+                task(
+                    listOf(
+                        member("done", "Marks", "ended", label = "merged"),
+                        member("bg", "Writer", "working", recordId = "bg1"),
+                        member("w", "Reviewer", "working", recordId = "w1"),
+                    ),
+                ),
+            ),
+            listOf(session("own"), session("bg1", background = true, leaf = "leaf-bg"), session("w1", leaf = "leaf-w")),
+        )
+        assertEquals("exited · merged", vm.state.agents.first { it.key == "done" }.stateWord)
+        assertTrue(vm.state.agents.none { it.peeking })
+
+        runNow { vm.activateMember(vm.state.agents.first { it.key == "bg" }) }
+        assertEquals(listOf("bg"), vm.state.agents.filter { it.peeking }.map { it.key })
+        vm.closePeek()
+        assertTrue(vm.state.agents.none { it.peeking })
+    }
+
+    @Test
     fun `the lines of an agent-made task are its other hosted sessions, never the one beside the panel`() {
         layout()
         give(

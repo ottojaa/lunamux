@@ -23,20 +23,14 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.datetime.Clock
 import se.soderbjorn.lunamux.AgentSessionSummary
-import se.soderbjorn.lunamux.AgentSessionText
 import se.soderbjorn.lunamux.AgentTask
 import se.soderbjorn.lunamux.AgentTaskMember
-import se.soderbjorn.lunamux.LeafNode
-import se.soderbjorn.lunamux.TabConfig
 import se.soderbjorn.lunamux.TaskBlockContent
 import se.soderbjorn.lunamux.TaskPanelBlock
 import se.soderbjorn.lunamux.WindowCommand
 import se.soderbjorn.lunamux.WindowConfig
 import se.soderbjorn.lunamux.client.WindowStateRepository
 import se.soderbjorn.lunamux.effectiveActiveTabId
-
-/** Where a pane sits: its world (null in a config without worlds), its tab and the leaf itself. */
-private data class PanelPaneLocation(val worldId: String?, val tab: TabConfig, val leaf: LeafNode)
 
 /**
  * View model of the task panel.
@@ -82,12 +76,14 @@ class TaskPanelViewModel(
      * @property title the member's name.
      * @property state `needs_you`, `working`, `idle` or `ended`; a view picks the glyph from it.
      * @property stateWord the word for [state]: working, needs you, waiting or exited, or the task
-     *   file's own word for a member Lunamux does not host.
+     *   file's own word for a member Lunamux does not host; a finished member the file labels reads
+     *   `exited · label`.
      * @property age how long the member has been in [state], as `now`, `5m`, `3h` or `2d`.
      * @property nowLine what it is doing or asking, or null.
      * @property dimmed true for a finished member, which stays in the list but recedes.
      * @property action what a click does.
      * @property recordId the session record behind the line, or null for an unhosted member.
+     * @property peeking true while this member's screen is the open peek, so the list shows which one.
      */
     data class AgentLine(
         val key: String,
@@ -99,6 +95,7 @@ class TaskPanelViewModel(
         val dimmed: Boolean,
         val action: MemberAction,
         val recordId: String?,
+        val peeking: Boolean = false,
     )
 
     /** One entry of a timeline block, newest first. @property age how long ago. @property text what happened. */
@@ -340,10 +337,10 @@ class TaskPanelViewModel(
         val own = byId.getValue(task.leadRecordId!!)
         val now = clock()
         val live = own.state != ENDED
-        val agents = linesOf(task, sessions, byId, config, own.id, now)
-        val blocks = (panels[task.id] ?: emptyList()).map { viewOf(it, live, now) }
         val peek = ui.peek?.takeIf { ui.open && it.taskId == task.id && it.tabId == activeTab }
             ?.let { peekOf(it.recordId, byId, config) }
+        val agents = linesOf(task, sessions, byId, config, own.id, now, peek?.recordId)
+        val blocks = (panels[task.id] ?: emptyList()).map { viewOf(it, live, now) }
         return State(
             open = ui.open,
             visible = ui.open,
@@ -363,12 +360,11 @@ class TaskPanelViewModel(
         config: WindowConfig,
         ownId: String,
         now: Long,
+        peekedId: String?,
     ): List<AgentLine> {
         val fileMembers = task.members.map { it to it.recordId?.let(byId::get) }
-        val matched = fileMembers.mapNotNullTo(HashSet()) { it.second?.id }
-        val extra = sessions.filter { it.taskId == task.id && it.id !in matched }
-            .sortedWith(compareBy({ it.startedAt ?: it.stateSince }, { it.id }))
-            .map { memberOf(it) to it }
+        val extra = TaskMembers.unlistedSessions(task, byId, sessions.filter { it.taskId == task.id })
+            .map { TaskMembers.memberOf(it) to it }
         return (fileMembers + extra).filter { (_, s) -> s?.id != ownId }.map { (m, s) ->
             val where = s?.takeIf { it.state != ENDED }?.leafId?.let { locate(config, it) }
             val action = when {
@@ -381,36 +377,31 @@ class TaskPanelViewModel(
                 key = m.key,
                 title = m.title.ifBlank { "Agent session" },
                 state = m.state,
-                stateWord = (m.label?.takeIf { s == null && it.isNotBlank() }) ?: wordOf(m.state),
+                stateWord = stateWordOf(m, s),
                 age = ageOf(m.sinceMillis, now),
                 nowLine = (m.line ?: s?.nowLine)?.trim()?.takeIf { it.isNotEmpty() },
                 dimmed = m.state == ENDED,
                 action = action,
                 recordId = s?.id,
+                peeking = s != null && s.id == peekedId,
             )
         }
     }
 
-    private fun memberOf(s: AgentSessionSummary) = AgentTaskMember(
-        key = s.id,
-        title = titleOf(s),
-        links = s.links,
-        state = s.state,
-        line = if (s.state == NEEDS_YOU) s.question ?: s.nowLine else s.nowLine,
-        sinceMillis = s.stateSince,
-        recordId = s.id,
-    )
-
-    private fun titleOf(s: AgentSessionSummary): String {
-        val folder = if (s.cwdHome) "~" else s.cwd?.trimEnd('/')?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
-        s.title?.trim()?.takeIf { AgentSessionText.isMeaningfulTitle(it, s.branch, s.repo, folder) }?.let { return it }
-        return AgentSessionText.titleFromPrompt(s.firstPrompt) ?: "${s.agent.replaceFirstChar { it.uppercase() }} session"
+    /** The word under a line: the file's own label for an unhosted member, else the state's word. */
+    private fun stateWordOf(m: AgentTaskMember, s: AgentSessionSummary?): String {
+        val label = m.label?.takeIf { s == null && it.isNotBlank() }
+        return when {
+            m.state == ENDED && label != null -> "${wordOf(ENDED)} · $label"
+            label != null -> label
+            else -> wordOf(m.state)
+        }
     }
 
     private fun peekOf(recordId: String, byId: Map<String, AgentSessionSummary>, config: WindowConfig): PanelPeek? {
         val s = byId[recordId]?.takeIf { it.state != ENDED } ?: return null
         val where = s.leafId?.let { locate(config, it) } ?: return null
-        return PanelPeek(recordId, titleOf(s), where.leaf.sessionId, s.background)
+        return PanelPeek(recordId, TaskMembers.titleOf(s), where.leaf.sessionId, s.background)
     }
 
     private fun viewOf(b: TaskPanelBlock, live: Boolean, now: Long): BlockView {
@@ -436,15 +427,7 @@ class TaskPanelViewModel(
         return BlockView(b.id, b.title, b.writtenBy?.let { "$it · $age" } ?: age, body)
     }
 
-    private fun locate(config: WindowConfig, leafId: String): PanelPaneLocation? {
-        fun find(worldId: String?, tabs: List<TabConfig>): PanelPaneLocation? {
-            for (tab in tabs) for (pane in tab.panes) if (pane.leaf.id == leafId) return PanelPaneLocation(worldId, tab, pane.leaf)
-            return null
-        }
-        if (config.worlds.isEmpty()) return find(null, config.tabs)
-        for (w in config.worlds) find(w.id, w.tabs)?.let { return it }
-        return null
-    }
+    private fun locate(config: WindowConfig, leafId: String): TaskMembers.PanePlace? = TaskMembers.locate(config, leafId)
 
     companion object {
         /** Shown when a task's panel has no stored blocks. */

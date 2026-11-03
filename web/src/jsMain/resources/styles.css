@@ -3827,8 +3827,9 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 /* ====================================================================== */
 /*  Task panel (TaskPanel.kt)                                              */
 /* ====================================================================== */
-/* A 320px column at the right edge of .dt-app-frame-body, shown beside a task's own session.
-   Terminals refit through their own resize observers when it appears. */
+/* A 320px column at the right edge of .dt-app-frame-body, shown beside a task's own session. The
+   width is set only here: the peek measures the column instead of repeating it. Terminals refit
+   through their own resize observers when it appears. */
 .task-panel {
     --tp-surface: var(--dt-window-bg, var(--t-surface, #0c1a1e));
     --tp-text: var(--t-text, #cfe3e2);
@@ -3855,19 +3856,22 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-close:hover { color: var(--tp-text); }
 .tp-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 0 12px; }
 .tp-block { padding: 10px 12px; border-bottom: 1px solid var(--tp-line); overflow-wrap: anywhere; }
-.tp-block-title { color: var(--tp-dim); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 6px; }
-.tp-byline { margin-top: 8px; color: var(--tp-dim); font-size: 11px; }
+.tp-block-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.tp-block-title { min-width: 0; color: var(--tp-dim); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
+.tp-byline { flex: none; margin-left: auto; color: var(--tp-dim); font-size: 11px; white-space: nowrap; }
 .tp-muted { color: var(--tp-dim); }
 .tp-empty { padding: 14px 12px; color: var(--tp-dim); }
 
 .tp-agent { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; }
 .tp-agent.tp-dim { opacity: 0.5; }
 .tp-glyph { width: 1.2em; text-align: center; color: var(--tp-dim); flex: none; }
-.tp-state-working .tp-glyph { color: var(--tp-accent); }
+.tp-state-working .tp-glyph, .tp-agent .tp-glyph.tp-peeked { color: var(--tp-accent); }
 .tp-state-needs_you .tp-glyph { color: var(--tp-warn); }
 .tp-agent-text { flex: 1; min-width: 0; }
-.tp-agent-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tp-agent-meta, .tp-agent-now { color: var(--tp-dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-agent-top { display: flex; justify-content: space-between; gap: 8px; }
+.tp-agent-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-agent-age { flex: none; color: var(--tp-dim); font-size: 11px; }
+.tp-agent-now { color: var(--tp-dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tp-verb, .tp-action {
     border: 1px solid var(--tp-line); background: transparent; color: inherit; font: inherit; font-size: 11px;
     padding: 2px 8px; cursor: pointer;

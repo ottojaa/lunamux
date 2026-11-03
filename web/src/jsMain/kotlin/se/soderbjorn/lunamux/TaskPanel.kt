@@ -68,9 +68,6 @@ private const val PANEL_CLOCK_TICK_MS = 30_000
 private const val PEEK_MIN_FONT_PX = 6
 private const val PEEK_MAX_FONT_PX = 14
 
-/** Width of the column in pixels; the peek stops where the column starts. */
-private const val PANEL_WIDTH_PX = 320
-
 /** The shared view model; created on first use, after the window socket exists. */
 private val taskPanel: TaskPanelViewModel by lazy {
     TaskPanelViewModel(lunamuxClient.windowState, send = { windowSocket.send(it) })
@@ -244,28 +241,43 @@ private fun buildHeader(state: TaskPanelViewModel.State): HTMLElement {
     return head
 }
 
-/** The "Agents" block: one line per other session of the task. */
+/** A block's header: its title on the left, who wrote it and when (or [right]) on the right. */
+private fun blockHead(title: String?, right: String, rightClass: String): HTMLElement {
+    val head = div("tp-block-head")
+    head.appendChild(span("tp-block-title", title ?: ""))
+    head.appendChild(span(rightClass, right))
+    return head
+}
+
+/**
+ * The "Agents" block: one line per other session of the task. A line shows the member's state
+ * mark, name and age on the first row and what it is doing (or its state word) under the name;
+ * the member being peeked gets ◉ and a finished one ○.
+ */
 @OptIn(DelicateCoroutinesApi::class)
 private fun buildAgents(state: TaskPanelViewModel.State): HTMLElement {
     val block = div("tp-block tp-agents")
-    block.appendChild(div("tp-block-title").also { it.textContent = "Agents" })
+    block.appendChild(blockHead("Agents", "live", "tp-byline"))
     if (state.agents.isEmpty()) {
         block.appendChild(div("tp-muted").also { it.textContent = "No other agents in this task." })
         return block
     }
     for (line in state.agents) {
         val row = div("tp-agent tp-state-${line.state}" + if (line.dimmed) " tp-dim" else "")
-        val glyph = when (line.state) {
-            "working" -> "●"
-            "needs_you" -> "◆"
-            "idle" -> "○"
-            else -> "·"
+        val glyph = when {
+            line.peeking -> "◉"
+            line.state == "needs_you" -> "◆"
+            line.state == "ended" -> "○"
+            else -> "●"
         }
-        row.appendChild(span("tp-glyph", glyph))
+        row.appendChild(span(if (line.peeking) "tp-glyph tp-peeked" else "tp-glyph", glyph))
         val text = div("tp-agent-text")
-        text.appendChild(div("tp-agent-title").also { it.textContent = line.title })
-        text.appendChild(div("tp-agent-meta").also { it.textContent = "${line.stateWord} · ${line.age}" })
-        line.nowLine?.let { text.appendChild(div("tp-agent-now").also { n -> n.textContent = it }) }
+        val top = div("tp-agent-top")
+        top.appendChild(span("tp-agent-title", line.title))
+        top.appendChild(span("tp-agent-age", line.age))
+        text.appendChild(top)
+        val sub = if (line.state == "ended") line.stateWord else line.nowLine ?: line.stateWord
+        text.appendChild(div("tp-agent-now").also { it.textContent = sub })
         row.appendChild(text)
         val verb = when (line.action) {
             MemberAction.PEEK -> "peek"
@@ -286,11 +298,11 @@ private fun buildAgents(state: TaskPanelViewModel.State): HTMLElement {
     return block
 }
 
-/** One stored block: its title, its body and who wrote it and when. */
+/** One stored block: a header with its title and who wrote it and when, then its body. */
 @OptIn(DelicateCoroutinesApi::class)
 private fun buildBlock(view: TaskPanelViewModel.BlockView): HTMLElement {
     val block = div("tp-block")
-    view.title?.let { block.appendChild(div("tp-block-title").also { t -> t.textContent = it }) }
+    block.appendChild(blockHead(view.title, view.byline, "tp-byline"))
     when (val body = view.body) {
         is BlockBody.Text -> block.appendChild(buildMarkdown(body.nodes))
         is BlockBody.Facts -> {
@@ -335,7 +347,6 @@ private fun buildBlock(view: TaskPanelViewModel.BlockView): HTMLElement {
             block.appendChild(row)
         }
     }
-    block.appendChild(div("tp-byline").also { it.textContent = view.byline })
     return block
 }
 
@@ -495,13 +506,22 @@ private fun openPeekView(peek: TaskPanelViewModel.PanelPeek) {
     openPeek = OpenPeek(peek.recordId, root, term, socket, handler, returnFocus)
 }
 
-/** Put the peek over the area left of the column. */
+/**
+ * Put the peek over the pane the person is looking at: the focused pane's own rectangle, cut off
+ * where the column starts. With no focused pane it covers the body up to the column, so the peek
+ * never lies over the column or over a sidebar that sits in the body beside it.
+ *
+ * @param root the peek's overlay element.
+ * @param body the app frame body, used when no pane has focus.
+ */
 private fun placePeek(root: HTMLElement, body: HTMLElement) {
-    val rect = body.getBoundingClientRect()
-    root.style.left = "${rect.left}px"
-    root.style.top = "${rect.top}px"
-    root.style.height = "${rect.height}px"
-    root.style.width = "${(rect.width - PANEL_WIDTH_PX).coerceAtLeast(0.0)}px"
+    val area = (document.querySelector(".dt-pane.dt-pane-focused") as? HTMLElement ?: body).getBoundingClientRect()
+    val limit = panelElement?.getBoundingClientRect()?.left ?: area.right
+    val right = minOf(area.right, limit)
+    root.style.left = "${area.left}px"
+    root.style.top = "${area.top}px"
+    root.style.height = "${area.height}px"
+    root.style.width = "${(right - area.left).coerceAtLeast(0.0)}px"
 }
 
 /**

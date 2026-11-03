@@ -337,17 +337,19 @@ so does its ×; the choice is kept with the other UI settings. The shortcut is l
 Keyboard-shortcuts sidebar and can be rebound there. (Off macOS the default chord is Ctrl+I, which
 a terminal reads as Tab; rebind it there if that gets in the way.)
 
-The column starts with an **Agents** block: every other session of the task with its state glyph
-(● working, ◆ needs you, ○ waiting, · ended), its state word, its age and, for a working one, what
-it is doing. Ended sessions are dimmed. The action on a line is what a click does: *peek* for an
-agent in a background tab, *jump* for one in a tab of the strip, *open* for a member of a task file
-that no pane shows.
+The column starts with an **Agents** block, marked *live*: every other session of the task with its
+state mark (● working or waiting, ◆ needs you, ○ finished, ◉ the one being peeked), its name, its age
+at the right and, under the name, what it is doing, or its state word when it is not doing anything.
+A finished session is dimmed and reads "exited", followed by the task file's own label for it when
+the file gives one (for example "exited · merged"). The action on a line is what a click does:
+*peek* for an agent in a background tab, *jump* for one in a tab of the strip, *open* for a member of
+a task file that no pane shows.
 
-*Peek* lays a read-only live copy of the agent's terminal over the current pane. It is a viewer:
+*Peek* lays a read-only live copy of the agent's terminal over the pane you are looking at (the focused one, up to the column). It is a viewer:
 typing goes nowhere and the window never sends a size, so it cannot disturb the agent's grid. ⌘↵
 takes the background tab over (it becomes an ordinary tab) and esc goes back.
 
-After the agents come the blocks agents wrote. Each shows who wrote it and how long ago. They are
+After the agents come the blocks agents wrote. Each has its title on the left of its header and who wrote it and how long ago on the right. They are
 kept in the database and survive a restart; they are not removed when the task ends.
 
 | Tool | Arguments | What it does |
