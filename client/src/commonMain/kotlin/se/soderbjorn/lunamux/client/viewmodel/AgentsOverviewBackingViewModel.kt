@@ -161,6 +161,10 @@ class AgentsOverviewBackingViewModel(
      * @property taskTitle in a search result, the title of the task the session belongs to, so the
      *   result can say "in task X"; null when the session is in no task or outside a search. For a
      *   `task` match, [matchStart] and [matchLength] mark the query inside it.
+     * @property mark the mark of the thread of work the row belongs to, 0 until 35 (shape `mark / 6`,
+     *   hue `mark % 6`), drawn between the state glyph and the title; null when the row belongs to no
+     *   thread (nothing is drawn). A task header and all its members carry the task's mark, a loose
+     *   session its thread's. The server decides it and never changes it; the view only draws it.
      */
     data class Row(
         val id: String,
@@ -195,6 +199,7 @@ class AgentsOverviewBackingViewModel(
         val pullRequest: String? = null,
         val sessionId: String? = null,
         val taskTitle: String? = null,
+        val mark: Int? = null,
     )
 
     /** What a [Row] stands for. */
@@ -1395,6 +1400,7 @@ class AgentsOverviewBackingViewModel(
                 error = resumeError("$TASK_PREFIX${t.id}"), kind = RowKind.TASK, taskId = t.id,
                 glyph = Glyph.NONE,
                 status = "",
+                mark = t.mark,
             )
         }
         val shown = if (t.id in ui.expandedTasks) {
@@ -1464,6 +1470,8 @@ class AgentsOverviewBackingViewModel(
             nowLine = if (m.state == NEEDS_YOU) null else line,
             question = if (m.state == NEEDS_YOU) line else null,
             taskId = t.id,
+            // Every member wears its task's mark, hosted or not, so a header and its rows agree.
+            mark = t.mark ?: base.mark,
             memberKey = m.key.takeIf { run.fromFile },
             // The file's word ("coding") goes with a state only the file vouches for: a hosted
             // member's live state wins over what the file said, so its label is dropped while it works.
@@ -1537,6 +1545,7 @@ class AgentsOverviewBackingViewModel(
             },
             status = statusOf(s),
             where = s.repo ?: folderOf(s),
+            mark = s.mark,
         )
     }
 
