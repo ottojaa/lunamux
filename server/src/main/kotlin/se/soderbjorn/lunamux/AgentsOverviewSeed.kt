@@ -308,7 +308,8 @@ object AgentsOverviewSeed {
      * writer would.
      *
      * @param tasksDir the folder to write into.
-     * @param workdir an absolute folder for the files' `open` actions.
+     * @param workdir an absolute folder; each task file's `open` action gets a folder of its own below it,
+     *   as real tasks work in folders of their own and each one is a thread of its own.
      * @param now the time the ages are counted back from.
      * @param worktree the Invoice export worktree, the folder of that family's task file.
      * @return how many files were written.
@@ -324,7 +325,7 @@ object AgentsOverviewSeed {
                 if (links.isNotEmpty()) put("links", buildJsonArray { links.forEach { add(JsonPrimitive(it)) } })
             }
 
-        fun task(id: String, title: String, repo: String, members: List<JsonObject>, mtimeAgo: Long, folder: String = workdir) {
+        fun task(id: String, title: String, repo: String, members: List<JsonObject>, mtimeAgo: Long, folder: String = File(workdir, "work/$id").also { it.mkdirs() }.path) {
             val json = buildJsonObject {
                 put("version", 2)
                 put("id", id)
