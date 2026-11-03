@@ -3856,9 +3856,11 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-close:hover { color: var(--tp-text); }
 .tp-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 0 12px; }
 .tp-block { padding: 10px 12px; border-bottom: 1px solid var(--tp-line); overflow-wrap: anywhere; }
-.tp-block-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
-.tp-block-title { min-width: 0; color: var(--tp-dim); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
-.tp-byline { flex: none; margin-left: auto; color: var(--tp-dim); font-size: 11px; white-space: nowrap; }
+/* A block's header is title on the left, byline on the right. When the two do not fit one row (a long
+   title, or a long writer name) the byline drops under the title, right-aligned, so neither is squeezed. */
+.tp-block-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 8px; margin-bottom: 6px; }
+.tp-block-title { flex: 1 1 auto; min-width: 0; color: var(--tp-dim); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; overflow-wrap: anywhere; }
+.tp-byline { flex: 0 1 auto; max-width: 100%; margin-left: auto; text-align: right; color: var(--tp-dim); font-size: 11px; overflow-wrap: anywhere; }
 .tp-muted { color: var(--tp-dim); }
 .tp-empty { padding: 14px 12px; color: var(--tp-dim); }
 
