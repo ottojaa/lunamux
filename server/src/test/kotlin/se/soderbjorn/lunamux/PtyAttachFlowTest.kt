@@ -55,6 +55,7 @@ class PtyAttachFlowTest {
 
         override fun attachPayload(): AttachPayload = attach
         override fun bytesWritten(): Long = 0
+        override var inputOrigin: String = InputOrigin.USER
         override fun write(bytes: ByteArray) { written.add(bytes) }
         override fun noteClientInput(clientId: String) { activityFrom.add(clientId) }
         override fun resetTerminalModes() {}

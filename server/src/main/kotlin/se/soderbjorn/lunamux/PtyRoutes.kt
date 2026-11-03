@@ -129,6 +129,7 @@ internal fun Route.ptyRoutes(settingsRepo: SettingsRepository) {
 internal fun acceptClientBytes(session: TermSession, clientId: String, bytes: ByteArray) {
     if (TerminalInputClassifier.isDeviceReply(bytes)) return
     session.noteClientInput(clientId)
+    session.noteInput(InputOrigin.USER, bytes)
     session.write(bytes)
 }
 

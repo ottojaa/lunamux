@@ -109,6 +109,21 @@ internal fun pickEffectiveSize(votes: Collection<SizeVote>): Pair<Int, Int>? {
     return top.minOf { it.cols } to top.minOf { it.rows }
 }
 
+/**
+ * The two values of [TermSession.inputOrigin], stored verbatim as an agent
+ * session's `started_by` and sent to clients as `startedBy`.
+ */
+object InputOrigin {
+    /** A person typed it (a client's keystrokes, or a route acting on their click). */
+    const val USER = "user"
+
+    /** A program typed it through an MCP write tool. */
+    const val TOOL = "tool"
+}
+
+private const val CR: Byte = 0x0D
+private const val LF: Byte = 0x0A
+
 interface TermSession {
     /** Broadcast stream of output bytes for attached clients. */
     val output: kotlinx.coroutines.flow.SharedFlow<ByteArray>
@@ -148,6 +163,34 @@ interface TermSession {
 
     /** Deliver user input bytes into the session. */
     fun write(bytes: ByteArray)
+
+    /**
+     * Who submitted the most recent line to this session: [InputOrigin.USER] for
+     * keystrokes from an attached client or from a route that types on the user's own
+     * behalf, [InputOrigin.TOOL] for text typed by an MCP tool. Read by
+     * [AgentSessionTracker] when an agent session opens in this pane, so the
+     * session can say whether a person or a program started it. Starts as
+     * [InputOrigin.USER]: a pane nobody has typed into was opened by a person.
+     */
+    var inputOrigin: String
+
+    /**
+     * Record who is about to type [bytes], then leave [write] to deliver them.
+     * Only bytes that submit a line (contain a carriage return or line feed)
+     * change [inputOrigin]: focus reports, partial typing and Ctrl-C do not start
+     * anything, so they must not take the credit for a session that a command
+     * line launched.
+     *
+     * Called from every write site (`/pty` frames, the MCP write tools and the
+     * server's own "open a tab running a command" route) just before [write].
+     *
+     * @param origin [InputOrigin.USER] or [InputOrigin.TOOL].
+     * @param bytes the bytes about to be written.
+     * @see write
+     */
+    fun noteInput(origin: String, bytes: ByteArray) {
+        if (bytes.any { it == CR || it == LF }) inputOrigin = origin
+    }
 
     /**
      * Record that [clientId] just delivered user input; drives the
@@ -707,6 +750,9 @@ class TerminalSession private constructor(
             }
         }
     }
+
+    @Volatile
+    override var inputOrigin: String = InputOrigin.USER
 
     /** Write raw bytes to the PTY's stdin. */
     override fun write(bytes: ByteArray) {

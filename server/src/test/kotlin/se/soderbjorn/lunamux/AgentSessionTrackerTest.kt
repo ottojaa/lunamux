@@ -36,9 +36,9 @@ class AgentSessionTrackerTest {
 
     private fun pane(
         id: String = "s1", agent: String? = null, state: String? = null, title: String? = null,
-        screen: String? = "screen of $id", alive: Boolean = true,
+        screen: String? = "screen of $id", alive: Boolean = true, origin: String = InputOrigin.USER,
     ) = PaneSnapshot(id, leafId = "leaf-$id", cwd = "/work/repo", programTitle = title, agent = agent, state = state,
-        alive = alive, screenText = { screen })
+        alive = alive, inputOrigin = origin, screenText = { screen })
 
     private fun event(name: String, id: String = "a-1", vararg more: Pair<String, String>): JsonObject =
         buildJsonObject {
@@ -427,6 +427,62 @@ class AgentSessionTrackerTest {
         assertEquals("idle", row.state)
         assertNull(row.endedAt)
         assertEquals("leaf-s9", row.leafId)
+    }
+
+    @Test
+    fun `a record stores who started it when it opens, from the hook and from the screen`() {
+        val t = tracker()
+        t.onHook(pane("s1", origin = InputOrigin.TOOL), event("SessionStart", "a-1"))
+        t.onPoll(listOf(pane("s2", agent = "codex", state = "working", origin = InputOrigin.USER)))
+        val rows = t.summaries.value.associateBy { it.agent }
+        assertEquals("tool", rows.getValue("claude").startedBy)
+        assertEquals("user", rows.getValue("codex").startedBy)
+        assertEquals("tool", repo.findAgentSessionById(rows.getValue("claude").id)!!.startedBy)
+    }
+
+    @Test
+    fun `the start time of a row does not move when its state does`() {
+        val t = tracker()
+        t.onHook(pane(), event("SessionStart", "a-1"))
+        val started = t.summaries.value.single().startedAt
+        assertEquals(1_000L, started)
+        now = 9_000
+        t.onHook(pane(), event("UserPromptSubmit", "a-1", "prompt" to "go"))
+        t.onHook(pane(), event("Notification", "a-1", "message" to "Claude needs your permission to use Bash"))
+        val row = t.summaries.value.single()
+        assertEquals(9_000L, row.stateSince)
+        assertEquals(started, row.startedAt)
+    }
+
+    @Test
+    fun `resuming a conversation keeps how it first started, in the pane it moved to`() {
+        val t = tracker()
+        t.onHook(pane("s1", origin = InputOrigin.TOOL), event("SessionStart", "a-1"))
+        t.onSessionDestroyed("s1", "old screen")
+        t.onHook(pane("s9", origin = InputOrigin.USER), event("SessionStart", "a-1"))
+        assertEquals("tool", t.summaries.value.single().startedBy)
+    }
+
+    @Test
+    fun `a conversation known only from the database keeps its start when it is resumed after a restart`() {
+        val first = tracker()
+        first.onHook(pane("s1", origin = InputOrigin.TOOL), event("SessionStart", "a-1"))
+        first.onSessionDestroyed("s1", "old screen")
+        val restarted = tracker()
+        restarted.onHook(pane("s9", origin = InputOrigin.USER), event("SessionStart", "a-1"))
+        assertEquals("tool", restarted.summaries.value.single().startedBy)
+    }
+
+    @Test
+    fun `a record from before the field was kept stays unknown when it is resumed`() {
+        repo.saveAgentSession(
+            AgentSessionRecord(id = "old", agent = "claude", agentSessionId = "a-7", source = "hooks", state = "ended",
+                stateSince = 5, createdAt = 5, endedAt = 5),
+        )
+        val t = tracker()
+        t.onHook(pane("s9", origin = InputOrigin.USER), event("SessionStart", "a-7"))
+        val row = t.summaries.value.single { it.id == "old" }
+        assertNull(row.startedBy)
     }
 
     @Test

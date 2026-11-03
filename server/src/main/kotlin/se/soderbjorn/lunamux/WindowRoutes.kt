@@ -1149,6 +1149,10 @@ internal fun openTabRunning(folder: String, title: String, command: String?) {
     val sessionId = WindowState.config.value.worlds.flatMap { it.tabs }
         .firstOrNull { it.id == tabId }?.panes?.firstOrNull()?.leaf?.sessionId
     if (command != null && sessionId != null) {
-        TerminalSessions.get(sessionId)?.write((command + "\r").toByteArray(Charsets.UTF_8))
+        TerminalSessions.get(sessionId)?.let { session ->
+            val typed = (command + "\r").toByteArray(Charsets.UTF_8)
+            session.noteInput(InputOrigin.USER, typed)
+            session.write(typed)
+        }
     }
 }

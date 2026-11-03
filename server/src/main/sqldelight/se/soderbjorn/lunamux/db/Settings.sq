@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
     repo_root           TEXT,
     search_text         TEXT,
     last_said           TEXT,
-    task_id             TEXT
+    task_id             TEXT,
+    started_by          TEXT
 );
 
 CREATE TABLE IF NOT EXISTS agent_tasks (
@@ -79,35 +80,35 @@ upsertAgentSession:
 INSERT OR REPLACE INTO agent_sessions(
     id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
     worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at, repo_root, search_text, last_said, task_id
+    question, last_screen, created_at, ended_at, repo_root, search_text, last_said, task_id, started_by
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-    (SELECT search_text FROM agent_sessions WHERE id = ?), ?, ?);
+    (SELECT search_text FROM agent_sessions WHERE id = ?), ?, ?, ?);
 
 -- The hot reads below name their columns so the long search_text never rides
 -- along; imported history (source = 'import') is only ever found by search.
 selectRecentEndedAgentSessions:
 SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
     worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at, repo_root, last_said, task_id
+    question, last_screen, created_at, ended_at, repo_root, last_said, task_id, started_by
 FROM agent_sessions WHERE state = 'ended' AND source != 'import' AND ended_at >= ?
 ORDER BY ended_at DESC LIMIT ?;
 
 selectAgentSessionByAgentId:
 SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
     worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at, repo_root, last_said, task_id
+    question, last_screen, created_at, ended_at, repo_root, last_said, task_id, started_by
 FROM agent_sessions WHERE agent = ? AND agent_session_id = ? ORDER BY created_at DESC LIMIT 1;
 
 selectAgentSessionById:
 SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
     worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at, repo_root, last_said, task_id
+    question, last_screen, created_at, ended_at, repo_root, last_said, task_id, started_by
 FROM agent_sessions WHERE id = ?;
 
 selectOpenAgentSessions:
 SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
     worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at, repo_root, last_said, task_id
+    question, last_screen, created_at, ended_at, repo_root, last_said, task_id, started_by
 FROM agent_sessions WHERE state != 'ended';
 
 -- Close one record at the time it was last known to be alive, not at the time it was found closed.
@@ -127,7 +128,7 @@ WHERE state = 'ended' AND transcript_path IS NOT NULL AND search_text IS NULL;
 searchAgentSessions:
 SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
     worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, created_at, ended_at, repo_root, last_said, task_id,
+    question, created_at, ended_at, repo_root, last_said, task_id, started_by,
     CASE WHEN search_text LIKE :pattern ESCAPE '\'
         THEN substr(search_text, max(1, instr(lower(search_text), lower(:raw)) - 80), 240) END AS transcript_window,
     CASE WHEN last_screen LIKE :pattern ESCAPE '\'
@@ -147,7 +148,7 @@ LIMIT 200;
 selectAgentSessionsByTaskIds:
 SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
     worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at, repo_root, last_said, task_id
+    question, last_screen, created_at, ended_at, repo_root, last_said, task_id, started_by
 FROM agent_sessions WHERE task_id IN :taskIds
 ORDER BY COALESCE(ended_at, state_since) DESC
 LIMIT 200;

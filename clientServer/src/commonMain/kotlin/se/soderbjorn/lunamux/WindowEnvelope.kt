@@ -372,6 +372,11 @@ sealed class WindowEnvelope {
  *   server and stored there, so it never changes; a client draws it and never works it out.
  * @param threadKey the key of that thread (a worktree or folder path, or a repository and branch),
  *   or null; what the pane and tab marks use to tell whether two sessions are one thread.
+ * @param startedBy who started the session: `user` when a person typed the line that launched it,
+ *   `tool` when an MCP write tool did, or null for a record made before this was kept. The
+ *   overview shows `❯` for `user` and `⚙` for `tool`, and nothing for null.
+ * @param startedAt epoch millis when the server first saw the session, or null from an older
+ *   server. Unlike [stateSince] it never moves, so the overview orders rows by it.
  */
 @Serializable
 data class AgentSessionSummary(
@@ -395,6 +400,8 @@ data class AgentSessionSummary(
     val taskId: String? = null,
     val mark: Int? = null,
     val threadKey: String? = null,
+    val startedBy: String? = null,
+    val startedAt: Long? = null,
 )
 
 /**

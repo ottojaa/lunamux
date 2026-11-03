@@ -173,7 +173,8 @@ class SettingsRepository(
                     repo_root           TEXT,
                     search_text         TEXT,
                     last_said           TEXT,
-                    task_id             TEXT
+                    task_id             TEXT,
+                    started_by          TEXT
                 )
             """.trimIndent(),
             parameters = 0,
@@ -228,6 +229,9 @@ class SettingsRepository(
         }
         runCatching {
             driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN task_id TEXT", 0)
+        }
+        runCatching {
+            driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN started_by TEXT", 0)
         }
     }
 
@@ -514,7 +518,7 @@ class SettingsRepository(
             r.id, r.agent, r.agentSessionId, r.source, r.leafId, r.terminalSessionId, r.cwd,
             r.repo, r.branch, r.worktreePath, r.title, r.firstPrompt, r.transcriptPath,
             r.links.joinToString(","), r.state, r.stateSince, r.nowLine, r.question,
-            r.lastScreen, r.createdAt, r.endedAt, r.repoRoot, r.id, r.lastSaid, r.taskId,
+            r.lastScreen, r.createdAt, r.endedAt, r.repoRoot, r.id, r.lastSaid, r.taskId, r.startedBy,
         )
     }
 
@@ -583,12 +587,12 @@ class SettingsRepository(
         worktreePath: String?, title: String?, firstPrompt: String?, transcriptPath: String?,
         links: String, state: String, stateSince: Long, nowLine: String?, question: String?,
         lastScreen: String?, createdAt: Long, endedAt: Long?, repoRoot: String?,
-        lastSaid: String?, taskId: String?,
+        lastSaid: String?, taskId: String?, startedBy: String?,
     ) = AgentSessionRecord(
         id, agent, agentSessionId, source, leafId, terminalSessionId, cwd, repo, branch,
         worktreePath, title, firstPrompt, transcriptPath,
         links.split(',').filter { it.isNotEmpty() }, state, stateSince, nowLine, question,
-        lastScreen, createdAt, endedAt, repoRoot, lastSaid, taskId,
+        lastScreen, createdAt, endedAt, repoRoot, lastSaid, taskId, startedBy,
     )
 
     /**
@@ -719,13 +723,13 @@ class SettingsRepository(
         return database.settingsQueries.searchAgentSessions(pattern, query) {
                 id, agent, agentSessionId, source, leafId, terminalSessionId, cwd, repo, branch,
                 worktreePath, title, firstPrompt, transcriptPath, links, state, stateSince, nowLine,
-                question, createdAt, endedAt, repoRoot, lastSaid, taskId, transcriptWindow, screenWindow,
+                question, createdAt, endedAt, repoRoot, lastSaid, taskId, startedBy, transcriptWindow, screenWindow,
             ->
             AgentSessionHit(
                 toAgentSessionRecord(
                     id, agent, agentSessionId, source, leafId, terminalSessionId, cwd, repo, branch,
                     worktreePath, title, firstPrompt, transcriptPath, links, state, stateSince,
-                    nowLine, question, null, createdAt, endedAt, repoRoot, lastSaid, taskId,
+                    nowLine, question, null, createdAt, endedAt, repoRoot, lastSaid, taskId, startedBy,
                 ),
                 transcriptWindow,
                 screenWindow,

@@ -83,6 +83,7 @@ object AgentsOverviewSeed {
      * @property ago how long before the seed time it ended, or for an open record how long it has
      *   been in [state].
      * @property state `ended`, or the open state a restart will end.
+     * @property by who started it: `user`, `tool`, or null for a record that predates the field.
      */
     private class Case(
         val id: String,
@@ -94,6 +95,7 @@ object AgentsOverviewSeed {
         val lastSaid: String?,
         val ago: Long,
         val state: String = "ended",
+        val by: String? = null,
     )
 
     /**
@@ -104,8 +106,9 @@ object AgentsOverviewSeed {
      * @property title the stored title.
      * @property prompt what was first asked.
      * @property ago how long before the seed time it ended.
+     * @property by who started it: `user`, `tool`, or null for a record that predates the field.
      */
-    private class Loose(val id: String, val title: String, val prompt: String, val ago: Long)
+    private class Loose(val id: String, val title: String, val prompt: String, val ago: Long, val by: String?)
 
     /** An agent-made task: its id, its title, and the age of its oldest session. */
     private class SeededTask(val id: String, val title: String, val createdAgo: Long)
@@ -156,11 +159,11 @@ object AgentsOverviewSeed {
      * to no task, so they wear the same mark as the task that is named after it.
      */
     private val invoiceLoose = listOf(
-        Loose("seed-invoice-rounding", "Invoice export: fix the rounding in totals", "Totals in the export differ by a cent; fix the rounding", 5 * HOUR),
-        Loose("seed-invoice-columns", "Invoice export: review the CSV columns", "Review the CSV columns against the spec and list the gaps", 7 * HOUR),
-        Loose("seed-invoice-staging", "Invoice export: first run against staging", "Run the export against staging and compare it with last month", 1 * DAY),
-        Loose("seed-invoice-spec", "Invoice export: first draft of the spec", "Write a first draft of the export spec", 5 * DAY),
-        Loose("seed-invoice-spike", "Invoice export: spike on streaming the file", "Spike: can the export stream the file instead of building it in memory?", 6 * DAY),
+        Loose("seed-invoice-rounding", "Invoice export: fix the rounding in totals", "Totals in the export differ by a cent; fix the rounding", 5 * HOUR, "user"),
+        Loose("seed-invoice-columns", "Invoice export: review the CSV columns", "Review the CSV columns against the spec and list the gaps", 7 * HOUR, "user"),
+        Loose("seed-invoice-staging", "Invoice export: first run against staging", "Run the export against staging and compare it with last month", 1 * DAY, "tool"),
+        Loose("seed-invoice-spec", "Invoice export: first draft of the spec", "Write a first draft of the export spec", 5 * DAY, "tool"),
+        Loose("seed-invoice-spike", "Invoice export: spike on streaming the file", "Spike: can the export stream the file instead of building it in memory?", 6 * DAY, null),
     )
 
     /**
@@ -171,14 +174,14 @@ object AgentsOverviewSeed {
      * bare code fence, and two sessions still open whose state is days old.
      */
     private val cases = listOf(
-        Case("seed-home", null, null, null, inHome = true, prompt = "Why did the nightly backup email never arrive?", lastSaid = "The mail relay rejected it; I resent it.", ago = 3 * HOUR),
-        Case("seed-branch-only", null, "lunamux-agent-overview", "aov-21-impl", prompt = "Add the task rows to the overview and keep their order stable", lastSaid = "Done; the rows keep their order.", ago = 5 * HOUR),
+        Case("seed-home", null, null, null, inHome = true, prompt = "Why did the nightly backup email never arrive?", lastSaid = "The mail relay rejected it; I resent it.", ago = 3 * HOUR, by = "user"),
+        Case("seed-branch-only", null, "lunamux-agent-overview", "aov-21-impl", prompt = "Add the task rows to the overview and keep their order stable", lastSaid = "Done; the rows keep their order.", ago = 5 * HOUR, by = "tool"),
         Case("seed-run-id-title", "aov-11-impl", "lunamux", "aov-11-impl", prompt = "Fix the chip count when two sessions share a pane", lastSaid = "The count now ignores a session that has ended.", ago = 20 * HOUR),
         Case("seed-folder-title", "lunamux-agent-overview", "lunamux-agent-overview", "feat/layouts", prompt = "Compare the two layout directions and list what each trades off", lastSaid = "Direction B trades width for a clearer first column.", ago = 1 * DAY),
         Case("seed-markdown", "Owner test follow-up", "lunamux", "main", prompt = "**Plan:** read the owner's notes and `fix` the data first", lastSaid = "**4. Tell me how it went,** then decide whether the panel stays", ago = 4 * HOUR),
         Case("seed-bare-fence", "Show the migration", "billing", "feat/add-column", prompt = "Show me the migration that adds the column", lastSaid = "```", ago = 6 * HOUR),
-        Case("seed-open-idle", "Trace the slow login", "gateway", "fix/slow-login", prompt = "Why is the login call slow on Mondays?", lastSaid = "A missing index on sessions.user_id; I added it.", ago = 2 * DAY, state = "idle"),
-        Case("seed-open-working", "Rebuild the search index", "billing", "chore/search-index", prompt = "Rebuild the search index with the new analyser", lastSaid = null, ago = 5 * HOUR, state = "working"),
+        Case("seed-open-idle", "Trace the slow login", "gateway", "fix/slow-login", prompt = "Why is the login call slow on Mondays?", lastSaid = "A missing index on sessions.user_id; I added it.", ago = 2 * DAY, state = "idle", by = "user"),
+        Case("seed-open-working", "Rebuild the search index", "billing", "chore/search-index", prompt = "Rebuild the search index with the new analyser", lastSaid = null, ago = 5 * HOUR, state = "working", by = "tool"),
     )
 
     /** The branch the Invoice export worktree has checked out. */
@@ -249,6 +252,9 @@ object AgentsOverviewSeed {
                     repoRoot = workdir,
                     lastSaid = "Merged; the checks pass.",
                     taskId = s.task,
+                    // The first eight were typed by hand, the next five were started by another
+                    // session, and the older ones predate the field.
+                    startedBy = when { s.n <= 8 -> "user"; s.n <= 13 -> "tool"; else -> null },
                 ),
             )
         }
@@ -273,6 +279,7 @@ object AgentsOverviewSeed {
                     endedAt = if (open) null else at,
                     repoRoot = if (c.inHome) null else workdir,
                     lastSaid = c.lastSaid,
+                    startedBy = c.by,
                 ),
             )
         }
@@ -302,6 +309,7 @@ object AgentsOverviewSeed {
                     endedAt = at,
                     repoRoot = File(workdir, "billing").path,
                     lastSaid = "Done; the export checks pass.",
+                    startedBy = l.by,
                 ),
             )
         }

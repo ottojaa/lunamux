@@ -51,6 +51,9 @@ package se.soderbjorn.lunamux.persistence
  *   as the status line when the session has no tool line to show.
  * @property taskId the task an agent put this session in through the MCP tools, or null when it
  *   made no choice. A task file can still place a session that has none.
+ * @property startedBy who started the session: `user` or `tool` (see `InputOrigin`), or null for a
+ *   record made before this was kept. Set when the record opens and kept when the conversation is
+ *   resumed.
  */
 data class AgentSessionRecord(
     val id: String,
@@ -77,4 +80,5 @@ data class AgentSessionRecord(
     val repoRoot: String? = null,
     val lastSaid: String? = null,
     val taskId: String? = null,
+    val startedBy: String? = null,
 )

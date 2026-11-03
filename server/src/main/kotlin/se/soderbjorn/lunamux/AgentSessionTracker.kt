@@ -55,6 +55,8 @@ import java.util.concurrent.ConcurrentHashMap
  * @property alive whether the session's process is still running.
  * @property customName the name the user gave the pane (F2), if any. It becomes the
  *   record's title so the name outlives the pane.
+ * @property inputOrigin who submitted the last line typed into the pane ([InputOrigin]); it
+ *   becomes the record's `startedBy` when a new conversation opens in the pane.
  * @property screenText reads the rendered screen as plain text.
  */
 data class PaneSnapshot(
@@ -66,6 +68,7 @@ data class PaneSnapshot(
     val state: String? = null,
     val alive: Boolean = true,
     val customName: String? = null,
+    val inputOrigin: String = InputOrigin.USER,
     val screenText: () -> String? = { null },
 )
 
@@ -476,10 +479,7 @@ class AgentSessionTracker(
         }
         if (current != null) end(current, pane.screenText())
         awaitScreenClear.remove(pane.terminalSessionId)
-        val earlier = agentId?.let { id ->
-            records.values.firstOrNull { it.agent == CLAUDE && it.agentSessionId == id }
-                ?: repo.findAgentSession(CLAUDE, id)
-        }
+        val earlier = agentId?.let(::earlierOf)
         if (earlier != null && earlier.state == ENDED) {
             return earlier.copy(
                 source = SOURCE_HOOKS,
@@ -516,9 +516,15 @@ class AgentSessionTracker(
             .maxByOrNull { it.createdAt }?.taskId
             ?: repo.findAgentSession(CLAUDE, agentSessionId)?.taskId
 
+    /** The stored record of the Claude conversation [agentSessionId], from memory or the database. */
+    private fun earlierOf(agentSessionId: String): AgentSessionRecord? =
+        records.values.firstOrNull { it.agent == CLAUDE && it.agentSessionId == agentSessionId }
+            ?: repo.findAgentSession(CLAUDE, agentSessionId)
+
     private fun open(
         pane: PaneSnapshot, agent: String, source: String, agentSessionId: String?, transcriptPath: String?,
     ): AgentSessionRecord {
+        val resumed = if (agent == CLAUDE) agentSessionId?.let(::earlierOf) else null
         val git = pane.cwd?.let { gitCache[it]?.second } ?: GitInfo()
         val now = clock()
         return AgentSessionRecord(
@@ -540,6 +546,8 @@ class AgentSessionTracker(
             stateSince = now,
             createdAt = now,
             taskId = pane.leafId?.let { pendingTasks.remove(it) } ?: agentSessionId?.let(::taskOfEarlier),
+            // A resumed conversation keeps how it first started, even when that is unknown.
+            startedBy = if (resumed != null) resumed.startedBy else pane.inputOrigin,
         ).also { put(it) }
     }
 
@@ -661,6 +669,8 @@ internal fun AgentSessionRecord.toSummary() = AgentSessionSummary(
     lastSaid = lastSaid,
     firstPrompt = firstPrompt?.let(::firstPromptLine),
     taskId = taskId,
+    startedBy = startedBy,
+    startedAt = createdAt.takeIf { it > 0 },
 )
 
 private const val TOOL_LINE_MAX = 160
@@ -872,6 +882,7 @@ internal fun livePaneSnapshot(id: String, states: Map<String, String?> = emptyMa
         agent = TerminalSessions.agentOf(id),
         state = states[id],
         alive = session.isProcessAlive(),
+        inputOrigin = session.inputOrigin,
         screenText = { session.screenText() },
     )
 }

@@ -37,6 +37,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.put
+import se.soderbjorn.lunamux.InputOrigin
 import se.soderbjorn.lunamux.TaskIndex
 import se.soderbjorn.lunula.core.Appearance
 import se.soderbjorn.lunula.core.PersistKeys
@@ -300,7 +301,9 @@ fun registerMcpWriteTools(settingsRepo: SettingsRepository, taskIndex: TaskIndex
         val text = (args["text"] as? JsonPrimitive)?.contentOrNull
             ?: throw McpArgumentException("Missing required argument 'text'")
         val submit = args.optBool("submit") ?: false
-        session.write((text + if (submit) "\r" else "").toByteArray(Charsets.UTF_8))
+        val typed = (text + if (submit) "\r" else "").toByteArray(Charsets.UTF_8)
+        session.noteInput(InputOrigin.TOOL, typed)
+        session.write(typed)
         markAgentTouchedBySession(sessionId)
         McpToolResult.text("Sent ${text.length} chars${if (submit) " + Enter" else ""} to $sessionId")
     }
@@ -327,6 +330,7 @@ fun registerMcpWriteTools(settingsRepo: SettingsRepository, taskIndex: TaskIndex
                 ?: throw McpArgumentException("keys must be strings")
             bytes += encodeKeyToken(token)
         }
+        session.noteInput(InputOrigin.TOOL, bytes)
         session.write(bytes)
         markAgentTouchedBySession(sessionId)
         McpToolResult.text("Sent ${keys.size} key(s) to $sessionId")
@@ -377,7 +381,9 @@ fun registerMcpWriteTools(settingsRepo: SettingsRepository, taskIndex: TaskIndex
 
         val waitForExit = args.optBool("waitForExit") ?: true
         if (!waitForExit) {
-            session.write((command + "\r").toByteArray(Charsets.UTF_8))
+            val typed = (command + "\r").toByteArray(Charsets.UTF_8)
+            session.noteInput(InputOrigin.TOOL, typed)
+            session.write(typed)
             return@writeTool McpToolResult.json(buildJsonObject {
                 put("submitted", true)
                 put("sessionId", sessionId)
@@ -401,7 +407,11 @@ fun registerMcpWriteTools(settingsRepo: SettingsRepository, taskIndex: TaskIndex
                 // onSubscription guarantees the collector is attached before
                 // the command is written, so no output burst is missed.
                 session.output
-                    .onSubscription { session.write(full.toByteArray(Charsets.UTF_8)) }
+                    .onSubscription {
+                        val typed = full.toByteArray(Charsets.UTF_8)
+                        session.noteInput(InputOrigin.TOOL, typed)
+                        session.write(typed)
+                    }
                     .collect { chunk ->
                         buffer.append(chunk.toString(Charsets.UTF_8))
                         val m = markerRegex.find(stripAnsi(buffer.toString()))

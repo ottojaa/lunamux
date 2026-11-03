@@ -314,6 +314,9 @@ class AgentSession(
     // Cooked-mode line buffer (transcript mode typed input).
     private val lineBuf = StringBuilder()
 
+    @Volatile
+    override var inputOrigin: String = InputOrigin.USER
+
     /**
      * Client keystrokes from `/pty/{id}`. Screen mode: parse into key
      * tokens for the event channel. Transcript mode: cooked line
