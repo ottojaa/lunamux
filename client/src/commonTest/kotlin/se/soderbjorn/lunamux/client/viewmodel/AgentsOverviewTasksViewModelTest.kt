@@ -444,6 +444,21 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
+    fun aBackgroundSessionThatNeedsYouMakesItsTaskReadNeedsYouWithItsQuestion() {
+        layoutWithBackground(listOf("leaf-n"), listOf("leaf-bg"))
+        show(
+            listOf(hostedTask(lead = "n", status = null)),
+            session("n", "working", taskId = "g1", lastActivityAt = now - 1_000),
+            session("bg", "needs_you", taskId = "g1", background = true, question = "Which release?"),
+        )
+        val r = row("task:g1")
+        assertEquals("needs you", r.stateWord)
+        assertEquals("◆", r.marker)
+        assertEquals("\"Which release?\"", r.detail)
+        assertEquals(listOf("task:g1"), vm.state.rows.map { it.id })
+    }
+
+    @Test
     fun aTaskInNowWithNothingMovingOrWaitingReadsDoneAndOneInEarlierReadsFinished() {
         layout("leaf-a", "leaf-chat")
         show(
