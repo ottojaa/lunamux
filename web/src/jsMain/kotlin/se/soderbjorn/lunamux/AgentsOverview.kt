@@ -439,13 +439,21 @@ private fun renderFooter(state: AgentsOverviewBackingViewModel.State) {
         val el = span("ao-seg ${seg.cls}".trim(), "")
         el.setAttribute("data-key", seg.key)
         if (seg.key.isNotEmpty()) el.appendChild(span("ao-k", seg.key))
-        el.appendChild(document.createTextNode(seg.word))
+        if (seg.cls == "ao-legend") {
+            // One element per entry, so a narrow panel drops whole entries from the right instead of cutting one mid-way.
+            seg.word.split(" · ").forEach { el.appendChild(span("ao-leg", it)) }
+        } else {
+            el.appendChild(document.createTextNode(seg.word))
+        }
         foot.appendChild(el)
     }
 }
 
-/** What the footer says the mark, who and place cues mean. */
-private const val CUE_LEGEND = "mark = one thread of work · ❯ you started it · ⚙ a session did · 1▘ tab 1, top-left pane"
+/**
+ * What the footer says the mark, who and place cues mean: entries joined by " · ", which
+ * [renderFooter] splits so that each is drawn whole or not at all.
+ */
+private const val CUE_LEGEND = "mark = one thread · ❯ you started it · ⚙ a session did · 1▘ tab 1, top-left"
 
 /**
  * Choose the footer's entries from the selection: the view model's key hints for it, drawn with
@@ -457,8 +465,8 @@ private const val CUE_LEGEND = "mark = one thread of work · ❯ you started it 
 private fun footerSegments(state: AgentsOverviewBackingViewModel.State): List<FooterSegment> {
     val row = state.selectedRow
     val backToTask = row?.kind == Kind.SESSION && inPanel(row, state)
-    // The legend comes first and is the one entry that gives way (it is cut short, never the keys)
-    // when the panel is too narrow for all of it.
+    // The legend comes first and is the one entry that gives way (it loses whole entries from the
+    // right, never the keys) when the panel is too narrow for all of it.
     return listOf(FooterSegment("", CUE_LEGEND, "ao-legend")) + AgentsOverviewBackingViewModel.footerHints(state.footer, backToTask).map {
         FooterSegment(
             it.key, it.word,

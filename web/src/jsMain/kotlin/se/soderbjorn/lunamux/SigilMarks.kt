@@ -68,9 +68,14 @@ private data class Piece(val kind: String, val attrs: List<Pair<String, String>>
  * The pieces that draw shape number [shape]: a half-filled square, a filled square, a half-filled
  * circle, a circle with a dot, a triangle and a square with two filled corners.
  *
+ * The shapes are drawn to carry about the same weight at the 12 px they are shown at, so none reads
+ * finer than the rest: the dot of the circle is large enough to stay a dot beside its ring, and
+ * the triangle reaches a little past the 10 px box the squares fill, as triangles must to look as
+ * big as a square. The outline weight is `styles.css`'s `.ao-sigil-line`.
+ *
  * Called by [buildSigil].
  *
- * @param shape 0 until 5.
+ * @param shape 0 until 6 ([buildSigil] passes `mark / 6`).
  * @return the pieces, back to front.
  */
 private fun shapeParts(shape: Int): List<Piece> {
@@ -82,8 +87,8 @@ private fun shapeParts(shape: Int): List<Piece> {
         0 -> listOf(rect(1, 1, 10, 10, false), rect(1, 1, 5, 10, true))
         1 -> listOf(rect(1, 1, 10, 10, true))
         2 -> listOf(circle(5, false), Piece("path", listOf("d" to "M6 1 A5 5 0 0 0 6 11 Z"), true))
-        3 -> listOf(circle(5, false), circle(2.2, true))
-        4 -> listOf(Piece("path", listOf("d" to "M6 1 L11 10.5 L1 10.5 Z"), true))
+        3 -> listOf(circle(5, false), circle(2.7, true))
+        4 -> listOf(Piece("path", listOf("d" to "M6 0.6 L11.4 11 L0.6 11 Z"), true))
         else -> listOf(rect(1, 1, 10, 10, false), rect(1, 1, 5, 5, true), rect(6, 6, 5, 5, true))
     }
 }
