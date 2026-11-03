@@ -27,10 +27,12 @@
 #                    "Nightly sync" and "Billing cleanup" (task files whose members are not in any
 #                    open tab) are in EARLIER, not NOW. "Access control" stays in NOW because one of
 #                    its members needs you, wherever it runs.
-#   Close "Docs"     close the tab in the app: its panes close and their sessions end, so "Docs sweep"
-#                    and the question leave NOW for the first band of EARLIER, and the chip drops by one
-#                    working and one needs-you. (A question from a session that is still alive but not in
-#                    any open tab, like "Role model" in "Access control", stays in NOW.)
+#   Close "Docs"     close the tab in the app: its panes close and their sessions end. A session that
+#                    has just ended stays in NOW for ten minutes, so "Docs sweep" and the question are
+#                    still listed (as ended) right after the close and the chip drops by one working and
+#                    one needs-you; after the ten minutes they are in the first band of EARLIER. (A
+#                    question from a session that is still alive but not in any open tab, like
+#                    "Role model" in "Access control", stays in NOW.)
 
 set -euo pipefail
 
