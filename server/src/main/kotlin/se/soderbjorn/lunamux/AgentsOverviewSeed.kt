@@ -184,10 +184,10 @@ object AgentsOverviewSeed {
      * The folder of the Invoice export worktree, created on disk.
      *
      * Called by [seed] and by the seeder's test. The folder's name is `<workdir>/billing-wt<n>/invoice-export`,
-     * where `<n>` is the first number for which the thread's mark would start in the half-circle
-     * range (marks 12 to 17), so the seeded family wears the same sign wherever the scratch folder is.
-     * A folder that is not a real worktree is enough: the seeded records name it as their
-     * worktree, and the task file names it as its folder.
+     * where `<n>` is the first number for which the thread's own mark (before any stepping aside)
+     * lies in the half-circle range (marks 12 to 17), so the seeded family wears the same sign
+     * wherever the scratch folder is. A folder that is not a real worktree is enough: the seeded
+     * records name it as their worktree, and the task file names it as its folder.
      *
      * @param workdir the canonical scratch folder the database sits in.
      * @return the canonical path of the worktree folder.
@@ -273,6 +273,11 @@ object AgentsOverviewSeed {
             )
         }
         val worktree = invoiceWorktree(workdir)
+        // The Invoice export thread is the first the database has met, as if its owner had started it
+        // before the rest. It keeps its own mark, in the half-circle range; every other thread, which
+        // the server meets later, steps around it, so no collision can move it.
+        ThreadMarks(repo, gitInfo = { GitInfo() }, home = System.getProperty("user.home"), defaultBranchOf = { null })
+            .markFor("path:$worktree", now)
         for (l in invoiceLoose) {
             val at = now - l.ago
             repo.saveAgentSession(

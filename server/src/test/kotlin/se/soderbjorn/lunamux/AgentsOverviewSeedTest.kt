@@ -125,4 +125,26 @@ class AgentsOverviewSeedTest {
         assertTrue(rebuild.mark != taskMark && migration.mark != taskMark)
         assertEquals(null, summaries.single { it.id == "seed-home" }.mark)
     }
+
+    @Test
+    fun `the Invoice export family keeps a half-circle mark in whichever scratch folder it is seeded`() {
+        repeat(25) { i ->
+            val dir = File.createTempFile("lunamux-seed-$i-", "").apply { delete(); mkdirs(); deleteOnExit() }
+            AgentsOverviewSeed.seed(File(dir, "scratch.db"), File(dir, "tasks"), now)
+            val repo = SettingsRepository(
+                File(dir, "scratch.db"),
+                sharedThemesPath = File(dir, "seed-themes.json").path,
+                appSettingsPath = File(dir, "seed-ui-settings.json").path,
+            )
+            val marks = ThreadMarks(repo, gitInfo = { GitInfo() }, home = System.getProperty("user.home"), defaultBranchOf = { null })
+            val tracker = AgentSessionTracker(repo, clock = { now }, marks = marks).also { it.start() }
+            val watcher = TaskFilesWatcher(listOf(File(dir, "tasks"))) {}.also { it.reload() }
+            val tasks = TaskIndex(repo, tracker, watcher.files, { null }, { now }, marks = marks)
+            tasks.recompute()
+            val taskMark = tasks.state.value.tasks.single { it.id == "seed-invoice-export" }.mark
+            assertTrue(taskMark in 12..17, "folder $i: the Invoice export mark is a half-circle: $taskMark")
+            val invoice = tracker.summaries.value.filter { it.id.startsWith("seed-invoice-") }
+            assertTrue(invoice.all { it.mark == taskMark }, "folder $i: loose sessions wear the task's mark: ${invoice.map { it.mark }}")
+        }
+    }
 }
