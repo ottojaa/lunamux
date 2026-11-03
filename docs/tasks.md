@@ -30,10 +30,12 @@ idle, **‖** paused, **✓** done.
 - **Every session shows where it runs.** A session's column after the title is its repo (or its
   folder when it has none), the same as a plain row; a pull request the task file gives for it
   replaces that.
-- **Collapsed**, a panel shows the sessions that need the person (longest waiting first) and the
-  ones that are working. **Expanded** (click on the header, →, or space; ← collapses) it shows
-  every session, most urgent first: needs you, working, in review, queued, other labels, paused,
-  done. There is no "N more" line. An expansion survives closing and reopening the overview.
+- **Collapsed**, a panel shows the sessions that need the person and the ones that are working.
+  **Expanded** (click on the header, →, or space; ← collapses) it shows every session. Both keep
+  one order: the members the file lists, in the order it lists them, then the sessions only
+  Lunamux knows by when they started. A session that changes state keeps its row; only its glyph
+  and colour change. There is no "N more" line. An expansion survives closing and reopening the
+  overview.
 - **A session's status is its live line**: the question for one that needs the person, what it
   is doing for one that works, and for a finished one the word `done` plus its pull request
   (`done · #22`). An empty line shows as nothing, never as a bare separator.
@@ -53,6 +55,10 @@ idle, **‖** paused, **✓** done.
   that says days. A task made only of Lunamux's own sessions behaves like one idle session: it
   stays in NOW for ten minutes after the last activity and then moves to EARLIER. A task whose
   sessions have all ended is in EARLIER after the same ten minutes.
+- **NOW is in start order.** Rows are ordered by when their work began (a task by its earliest
+  session), never by state, so a session that starts needing the person does not jump to the top
+  and back; the ◆ and its amber row are what stand out. Opening the overview selects the first ◆
+  row of the list, else the first row.
 - **EARLIER is two bands of tasks, newest first.** **LAST FEW DAYS** holds the tasks last active
   within three days, all of them. **LAST TWO WEEKS** holds those between three and fourteen days
   old; it shows the first five and a **+ N more** line (a click on it shows the rest). A band
@@ -191,13 +197,13 @@ One object per file.
 | `open.folder` | if `open` | Absolute path, or one starting with `~/`. The new tab opens here. |
 | `lead` | no | The older spelling of `open`, read as `open` when `open` is absent. Its `sessionId` is ignored: a task has no lead. |
 | `tag`, `link`, `updatedAt` | no | Accepted and ignored. |
-| `members[]` | no | The task's sessions that tools outside Lunamux run, shown in the order listed. |
+| `members[]` | no | The task's sessions that tools outside Lunamux run, shown in the order listed. List them in the order they start: the row of a member never moves while its state changes. |
 | `members[].title` | yes | What the member is called. A matched session keeps this title. |
 | `members[].state` | yes | `needs_you`, `working`, `idle` or `ended`. |
-| `members[].label` | no | A short status word shown in front of the line and used in the counts ("1 in review"). `in review`, `queued`, `waiting`, `paused` and `done` (or `ready`) have a glyph and a place in the order; any other label, `held` included, counts as given. Use plain statuses, not ticket keys. |
+| `members[].label` | no | A short status word shown in front of the line and used in the counts ("1 in review"). `in review`, `queued`, `waiting`, `paused` and `done` (or `ready`) have a glyph and a count of their own in the header; any other label, `held` included, counts as given. Use plain statuses, not ticket keys. |
 | `members[].line` | no | One line of detail: the question for `needs_you`, otherwise what it is doing. Blank means none. |
 | `members[].sessionId` | no | The id `claude attach` takes for the member's background session. Gives the member a **resume** action when Lunamux hosts no session for it. Only letters, digits, `-` and `_` are accepted; anything else is never typed into a shell. |
-| `members[].since` | no (recommended) | ISO-8601 time the member entered its state; drives the age and the ordering. When missing or unreadable, the file's modified time is used. |
+| `members[].since` | no (recommended) | ISO-8601 time the member entered its state; drives its age and which session ↵ on the header picks. When missing or unreadable, the file's modified time is used. |
 | `members[].links` | no | Ticket ids and pull requests such as `ACC-12` or `#212`. A `#`-number is the member's pull request, shown after `done`; Lunamux adds none of its own. |
 | `members[].match` | no | How to find the member's real session; see below. |
 

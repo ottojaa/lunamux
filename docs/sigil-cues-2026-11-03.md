@@ -47,10 +47,13 @@ minimized has no place.
 
 ### Order
 
-NOW, and the members of an expanded task, are sorted by when their work started, then by id. Before,
+NOW, and the members of an expanded task, are in the order their work started, then by id. Before,
 they were sorted by state, so a session that began to need you jumped. Now it keeps its row and
-only its glyph and tint change. What NOW contains, the grace before an ended row leaves it, and
-which members a collapsed task shows (those that need you or work) are unchanged.
+only its glyph and tint change. A task's members keep the order its file lists them in (the file is
+written by another tool and says so; a member's `since` moves with its state, so it cannot order
+anything), and a session of the task that only Lunamux knows follows them by start time. A task
+sits where its earliest session started. What NOW contains, the grace before an ended row leaves
+it, and which members a collapsed task shows (those that need you or work) are unchanged.
 
 ## The pictures
 
@@ -66,6 +69,24 @@ four quarters. Tab 3 has one pane on the left and two on the right.
 | Profile the export job | `⚙` | `2▖` | tab 2, bottom-left |
 | Check the staging deploy | `❯` | `2▗` | tab 2, bottom-right |
 | Audit the access log | `⚙` | `3▝` | tab 3, top-right |
+
+The panes behind those rows, one picture per tab (the shells run a plain prompt, so the pictures
+carry no machine or user name). The pane header shows each row's title, so each place cue can be
+checked against where that pane really sits:
+
+| | Dark | Light |
+|---|---|---|
+| Tab 1, two halves | ![](sigil-cues-2026-11-03/dark-5-tab-1-panes.png) | ![](sigil-cues-2026-11-03/light-5-tab-1-panes.png) |
+| Tab 2, four quarters | ![](sigil-cues-2026-11-03/dark-5-tab-2-panes.png) | ![](sigil-cues-2026-11-03/light-5-tab-2-panes.png) |
+| Tab 3, one pane left, two right | ![](sigil-cues-2026-11-03/dark-5-tab-3-panes.png) | ![](sigil-cues-2026-11-03/light-5-tab-3-panes.png) |
+
+The overview opened over tab 2, with the seven live rows in the order they started, and a zoom of
+their who and place columns (`⚙` or `❯`, then the tab and the part of it):
+
+| | Dark | Light |
+|---|---|---|
+| The overview | ![](sigil-cues-2026-11-03/dark-6-overview-over-tab-2.png) | ![](sigil-cues-2026-11-03/light-6-overview-over-tab-2.png) |
+| Who and place, zoomed | ![](sigil-cues-2026-11-03/dark-7-place-cues-zoomed.png) | ![](sigil-cues-2026-11-03/light-7-place-cues-zoomed.png) |
 
 | | Dark | Light |
 |---|---|---|

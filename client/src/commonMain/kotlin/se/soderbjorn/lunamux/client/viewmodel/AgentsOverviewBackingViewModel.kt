@@ -1032,9 +1032,10 @@ class AgentsOverviewBackingViewModel(
      * @property task the task as the server sent it.
      * @property runs its sessions.
      * @property panel whether it is drawn as an expansion panel; false means its one session is a plain row.
-     * @property rank 0 when a session needs the person, 1 when one works, [GRACE_RANK] for a task of
-     *   hosted sessions that went quiet less than [IDLE_GRACE_MS] ago, else [OPEN_WORK_RANK].
-     * @property since the time that decides its place among tasks of the same rank.
+     * @property rank the state the task's header shows: 0 when a session needs the person, 1 when one
+     *   works, [GRACE_RANK] for a task of hosted sessions that went quiet less than [IDLE_GRACE_MS] ago,
+     *   else [OPEN_WORK_RANK]. It says nothing about where the task sits in NOW; [started] does.
+     * @property since the time the header reports as its age while the task is in NOW.
      * @property ended whether every session has ended.
      * @property settled whether no session needs the person or works and either every session reads
      *   done (a task file's word, or sessions that ended), or no task file speaks for the task and the
@@ -1065,7 +1066,7 @@ class AgentsOverviewBackingViewModel(
         val started: Long,
     )
 
-    /** How a session is counted and ordered: the bucket a header count and the expanded order use. */
+    /** How a session is counted: the bucket a header count uses, and whether the session is done. */
     private class Bucket(val order: Int, val name: String)
 
     private fun build(input: Inputs): State {
@@ -1307,7 +1308,7 @@ class AgentsOverviewBackingViewModel(
         else -> OPEN_WORK_RANK
     }
 
-    /** Which count and which place in the expanded order [m] has, from its state and the file's label. */
+    /** Which header count [m] belongs to, from its state and the file's label. */
     private fun bucketOf(m: AgentTaskMember): Bucket {
         if (m.state == NEEDS_YOU) return Bucket(0, "needs you")
         if (m.state == WORKING) return Bucket(1, "working")
