@@ -3823,24 +3823,25 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 
 /* ── Marks (SigilMarks.kt) ──
    One thread of work wears one of 36 marks everywhere: the overview's mark column, the pane header
-   and the tab. Six hues, chosen well away from the two colours that already mean something (the
-   theme's warn yellow, which says "needs you", and its accent cyan, which says "working") and from
-   the error red; the shape carries the rest, so colour-blind readers still tell the marks apart.
+   and the tab. Six hues (blue, violet, magenta, green, rose, orange), chosen well away from the two
+   colours that already mean something (the theme's warn yellow, which says "needs you", and its
+   accent cyan, which says "working"); the rose leans pink, away from the error red. The shape
+   carries the rest, so colour-blind readers still tell the marks apart.
    Dark values sit on a dark surface, light values on a light one; the body class says which. */
 body {
     --ao-mark-0: #6aa6f2; /* blue */
     --ao-mark-1: #b38af2; /* violet */
-    --ao-mark-2: #ee82bd; /* pink */
+    --ao-mark-2: #e070e0; /* magenta */
     --ao-mark-3: #52c98b; /* green */
-    --ao-mark-4: #a9d05a; /* lime */
+    --ao-mark-4: #f0799e; /* rose */
     --ao-mark-5: #ee8c5c; /* orange */
 }
 body.appearance-light {
     --ao-mark-0: #2f6fd0;
     --ao-mark-1: #7a4fd0;
-    --ao-mark-2: #c43e8e;
+    --ao-mark-2: #ac2fb0;
     --ao-mark-3: #1f8f58;
-    --ao-mark-4: #6f8f12;
+    --ao-mark-4: #cc3a68;
     --ao-mark-5: #d0602a;
 }
 .ao-sigil { display: inline-flex; align-items: center; justify-content: center; flex: none; line-height: 0; }
