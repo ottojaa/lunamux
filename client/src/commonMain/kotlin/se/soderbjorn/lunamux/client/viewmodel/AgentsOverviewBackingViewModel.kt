@@ -25,20 +25,27 @@
  * that has just finished, stays for ten minutes so a row never reads "now" under a days heading;
  * a running idle session outside every tab gets no such grace. Inside that, a task stays in NOW while it has
  * open work (a session needs the person or works, or a task file still has a session in review
- * or queued), ranked beside single sessions by its most urgent session. A task is one unit: all
+ * or queued). NOW keeps its rows in the order their work started, tasks and lone sessions alike and
+ * never by state, so a row does not move when its state flips; inside a task the members a task file
+ * lists keep the file's order and the sessions only Lunamux knows follow by start. A task is one unit: all
  * its sessions stay with it while any one of them is in an open tab, and a session that needs the
  * person keeps its whole task in NOW, even the sessions of it that run outside every open tab.
  * What has finished, gone quiet or is not in an open tab moves to EARLIER, by task: a task's
  * recency is its newest session's activity, so one recent session keeps the whole task in the
  * first band. A task there is a collapsed panel that says how many sessions it holds and how
- * long ago it was last active. The header's ↵ goes to the session that most needs the person (a ◆ that
- * has waited longest, else the busiest working one); with no live session it runs the task's
- * `open` action, and with neither it expands or collapses the panel. A session Lunamux does not
+ * long ago it was last active. A task has one session that speaks for it, and the header's ↵ goes
+ * there: to its pane, or to a peek of it when it runs in a background tab; when it has ended, the
+ * header runs the task's `open` action if there is one, else resumes that session. A task with no such
+ * session goes to the session that most needs the person (a ◆ that has waited longest, else the
+ * busiest working one); with no live session it runs the task's
+ * `open` action, and with neither it expands or collapses the panel. A session an agent started in a
+ * background tab stays a row like any other, counted and able to ask for the person; ↵ on it peeks at
+ * its screen and ⌘↵ takes its tab over. A session Lunamux does not
  * host opens with `claude attach <session id>` in a new tab; the id comes from the task file and
  * the server builds the command.
  *
  * The selection is a row id, not an index, so it stays on its row while rows appear and
- * disappear, and it opens on the ◆ that has waited longest.
+ * disappear, and it opens on the first row that needs the person.
  *
  * @see se.soderbjorn.lunamux.AgentSessionSummary
  * @see se.soderbjorn.lunamux.AgentTask
@@ -170,6 +177,8 @@ class AgentsOverviewBackingViewModel(
      * @property taskTitle in a search result, the title of the task the session belongs to, so the
      *   result can say "in task X"; null when the session is in no task or outside a search. For a
      *   `task` match, [matchStart] and [matchLength] mark the query inside it.
+     * @property background whether the session runs in a background tab an agent opened, out of
+     *   sight. ↵ on such a row peeks at its screen instead of jumping, and ⌘↵ takes its tab over.
      */
     data class Row(
         val id: String,
@@ -204,6 +213,7 @@ class AgentsOverviewBackingViewModel(
         val pullRequest: String? = null,
         val sessionId: String? = null,
         val taskTitle: String? = null,
+        val background: Boolean = false,
     )
 
     /** What a [Row] stands for. */
@@ -243,6 +253,9 @@ class AgentsOverviewBackingViewModel(
     enum class Footer {
         /** A live session or a task member in a Lunamux pane. */
         LIVE,
+
+        /** A live session in a background tab: ↵ peeks, ⌘↵ takes the tab over. */
+        BACKGROUND,
 
         /** A closed session. */
         CLOSED,
@@ -309,6 +322,10 @@ class AgentsOverviewBackingViewModel(
      *   header draws the moving glyph while [isWorkingLive] says that stamp is fresh.
      * @property ageMillis for a task in EARLIER, epoch millis of its newest session's activity, which
      *   the header shows as its age; null for a task in NOW, whose header shows counts and no age.
+     * @property leadRecordId the record of the session that speaks for the task, when the overview
+     *   knows it; null for a task with none, which keeps the plain ↵ behaviour.
+     * @property leadLive whether that session's pane is open, so ↵ goes to it.
+     * @property leadBackground whether that pane sits in a background tab, so ↵ peeks instead.
      */
     data class Task(
         val id: String,
@@ -322,6 +339,9 @@ class AgentsOverviewBackingViewModel(
         val hasOpen: Boolean,
         val activityMillis: Long? = null,
         val ageMillis: Long? = null,
+        val leadRecordId: String? = null,
+        val leadLive: Boolean = false,
+        val leadBackground: Boolean = false,
     )
 
     /**
@@ -334,6 +354,8 @@ class AgentsOverviewBackingViewModel(
      * @property lines the last non-blank screen lines.
      * @property loading true until the server has answered.
      * @property emptyText what to show instead of [lines] when there is nothing, else null.
+     * @property background whether the session runs in a background tab, so the peek offers ⌘↵ to
+     *   take the tab over.
      */
     data class Peek(
         val live: Boolean,
@@ -342,6 +364,7 @@ class AgentsOverviewBackingViewModel(
         val lines: List<String>,
         val loading: Boolean,
         val emptyText: String?,
+        val background: Boolean = false,
     )
 
     /**
@@ -770,15 +793,19 @@ class AgentsOverviewBackingViewModel(
         when {
             row.kind == RowKind.TASK -> activateTask(row)
             row.unhosted -> openMember(row)
+            row.isLive && row.background -> { select(row.id); peek() }
             row.isLive -> jump(row)
             row.canResume -> resume(row)
         }
     }
 
     /**
-     * Do what ↵ on a task header does: jump to the live session that most needs the person (the ◆
-     * that has waited longest, else the working session with the freshest sign of life); with no
-     * open session, run the task's `open` action; with neither, expand or collapse the panel.
+     * Do what ↵ on a task header does. A task with a session that speaks for it goes there: to its
+     * pane, or to a peek of its screen when it runs in a background tab; once it has ended, the task's
+     * `open` action runs when there is one, else that session is resumed. A task with no such session
+     * jumps to the live session that most needs the person (the ◆ that has waited longest, else the
+     * working session with the freshest sign of life); with no open session, it runs the task's `open`
+     * action; with neither, it expands or collapses the panel.
      *
      * Called by [activate] for a header row.
      *
@@ -789,11 +816,38 @@ class AgentsOverviewBackingViewModel(
     suspend fun activateTask(row: Row) {
         val taskId = row.taskId ?: return
         val task = state.tasks[taskId] ?: return
+        val lead = task.leadRecordId
         when {
+            lead != null && task.leadLive && task.leadBackground -> { select(row.id); peek() }
+            lead != null && task.leadLive -> jumpToRecord(lead)
+            lead != null && task.hasOpen -> openTask(row)
+            lead != null -> resumeRecord(row.id, lead)
             task.jumpRecordId != null -> jumpToRecord(task.jumpRecordId)
             task.hasOpen -> openTask(row)
             else -> toggleTask(taskId)
         }
+    }
+
+    /**
+     * Take over the background tab of the selected session: it becomes an ordinary tab, the layout
+     * switches to it and the overlay closes. On a task header it acts on the session ↵ goes to.
+     * Does nothing unless that session runs in a background tab.
+     *
+     * Called for ⌘↵, in the list and in the peek.
+     *
+     * @see WindowCommand.TakeOverTab
+     */
+    suspend fun takeOverSelected() {
+        val current = state
+        val row = current.selectedRow ?: return
+        val recordId = recordIdOf(row, current.tasks) ?: return
+        val session = windowState.agentSessions.value.firstOrNull { it.id == recordId } ?: return
+        val leafId = session.leafId ?: return
+        if (!session.background) return
+        val where = windowState.config.value?.let { locate(it, leafId) } ?: return
+        send(WindowCommand.TakeOverTab(where.tabId))
+        send(WindowCommand.SetFocusedPane(where.tabId, leafId))
+        close()
     }
 
     /**
@@ -939,12 +993,21 @@ class AgentsOverviewBackingViewModel(
      *
      * @param row an ended row.
      */
-    suspend fun resume(row: Row) {
+    suspend fun resume(row: Row) = resumeRecord(row.id, row.id)
+
+    /**
+     * Resume a record, answering on the row that asked: a task header resumes its own session, and a
+     * failure reads on the header.
+     *
+     * @param rowId the row the overlay shows the progress and any error on.
+     * @param recordId the record to resume.
+     */
+    private suspend fun resumeRecord(rowId: String, recordId: String) {
         windowState.clearAgentSessionError()
         ui.update {
-            it.copy(resumingId = row.id, resumeFromTab = windowState.config.value?.effectiveActiveTabId)
+            it.copy(resumingId = rowId, resumeFromTab = windowState.config.value?.effectiveActiveTabId)
         }
-        send(WindowCommand.ResumeAgentSession(row.id))
+        send(WindowCommand.ResumeAgentSession(recordId))
     }
 
     /**
@@ -1007,6 +1070,10 @@ class AgentsOverviewBackingViewModel(
      *   a session needs the person (the whole task stays, wherever its other sessions run) or one of
      *   its sessions is in an open tab. Every other task is in EARLIER, even one a task file still
      *   lists work for.
+     * @property started epoch millis the task started, which fixes its place in NOW.
+     * @property leadRecordId the record that speaks for the task when this client has it, else null.
+     * @property leadLive whether the pane of that record is open.
+     * @property leadBackground whether that pane is in a background tab.
      */
     private class TaskUnit(
         val task: AgentTask,
@@ -1020,6 +1087,10 @@ class AgentsOverviewBackingViewModel(
         val graced: Boolean,
         val jumpRecordId: String?,
         val inNow: Boolean,
+        val started: Long,
+        val leadRecordId: String?,
+        val leadLive: Boolean,
+        val leadBackground: Boolean,
     ) {
         /**
          * Whether the task is in EARLIER: not in NOW, and not inside the grace of a task that has
@@ -1068,7 +1139,7 @@ class AgentsOverviewBackingViewModel(
 
         // A task stays in NOW while it has open work and leaves once it is settled (see TaskUnit);
         // it is ranked beside the single sessions that need the user or work, by its most urgent session.
-        class Placed(val rank: Int, val since: Long, val rows: List<Row>)
+        class Placed(val started: Long, val tie: String, val rows: List<Row>)
         // NOW is the sessions in open tabs (a row is live when its pane is in the layout). One that
         // needs the person is listed wherever it runs; one that works, or an idle one inside its grace,
         // only while it is in a tab. The rest go to EARLIER by their last activity.
@@ -1081,20 +1152,18 @@ class AgentsOverviewBackingViewModel(
                 byId[row.id]?.let { inGrace(activityOf(it), nowMillis) } == true
         }
         val nowSingles = singles.filter { it.state == NEEDS_YOU || (it.isLive && it.state == WORKING) }
+        // NOW keeps the order work started in, for tasks and lone sessions alike, so a row never
+        // moves because its state changed. Rows that started together keep the order of their ids.
+        fun startOf(row: Row) = byId[row.id]?.let(::startedOf) ?: row.sinceMillis
         val urgent = buildList {
-            nowSingles.forEach { add(Placed(rankOf(it.state), it.sinceMillis, listOf(it))) }
-            graced.forEach { row ->
-                val s = byId.getValue(row.id)
-                add(Placed(GRACE_RANK, activityOf(s), listOf(row)))
-            }
+            nowSingles.forEach { add(Placed(startOf(it), it.id, listOf(it))) }
+            graced.forEach { row -> add(Placed(startOf(row), row.id, listOf(row))) }
             units.filter { it.inNow }
-                .forEach { add(Placed(it.rank, it.since, taskRows(it, taskStates, panes, ui, resumeError))) }
+                .forEach { add(Placed(it.started, it.task.id, taskRows(it, taskStates, panes, ui, resumeError))) }
             // A task that has just finished is graced like a session that has just ended.
             units.filter { it.graced }
-                .forEach { add(Placed(GRACE_RANK, it.recency, taskRows(it, taskStates, panes, ui, resumeError))) }
-        }.sortedWith(
-            compareBy<Placed> { it.rank }.thenBy { if (it.rank >= OPEN_WORK_RANK) -it.since else it.since },
-        )
+                .forEach { add(Placed(it.started, it.task.id, taskRows(it, taskStates, panes, ui, resumeError))) }
+        }.sortedWith(compareBy<Placed> { it.started }.thenBy { it.tie })
         val now = urgent.flatMap { it.rows }
 
         // EARLIER is built from units, a task or a lone session, each placed by its newest activity:
@@ -1123,7 +1192,7 @@ class AgentsOverviewBackingViewModel(
             ui.selectedId != null && listed.any { it.id == ui.selectedId } -> ui.selectedId
             ui.selectedId != null -> listed[ui.selectedHint.coerceIn(0, listed.lastIndex)].id
             matchMode -> listed.first().id
-            else -> oldestNeedsYou(listed)?.id ?: listed.first().id
+            else -> firstNeedsYou(listed)?.id ?: listed.first().id
         }
 
         // The selected row of a plain list also tells what Resume will do, from the inspection.
@@ -1143,6 +1212,7 @@ class AgentsOverviewBackingViewModel(
                 emptyText = if (said != null && said.screen.isEmpty()) {
                     if (selectedRow.isLive) "(the screen is empty)" else "(no saved screen)"
                 } else null,
+                background = recordIdOf(selectedRow, taskStates)?.let(byId::get)?.background == true,
             )
         } else null
 
@@ -1184,15 +1254,24 @@ class AgentsOverviewBackingViewModel(
         )
     }
 
-    /** The ◆ row that has waited longest, or null when no listed row needs the user. */
-    private fun oldestNeedsYou(rows: List<Row>): Row? =
-        rows.filter { it.glyph == Glyph.NEEDS_YOU }.minByOrNull { it.sinceMillis }
+    /** The first row in list order that needs the user, or null when none does. */
+    private fun firstNeedsYou(rows: List<Row>): Row? = rows.firstOrNull { it.glyph == Glyph.NEEDS_YOU }
+
+    /**
+     * When a session started: the time its record opened, which never changes; a server that does
+     * not send it leaves the time the session entered its current state.
+     *
+     * @param s the session.
+     * @return epoch millis.
+     */
+    private fun startedOf(s: AgentSessionSummary): Long = s.startedAt ?: s.stateSince
 
     /** Which key hints go with [row]. */
     private fun footerOf(row: Row?, tasks: Map<String, Task>): Footer = when {
         row == null -> Footer.NONE
         row.kind == RowKind.TASK -> if (tasks[row.taskId]?.expanded == true) Footer.TASK_EXPANDED else Footer.TASK_COLLAPSED
         row.unhosted -> if (row.sessionId != null) Footer.RUN_ATTACH else Footer.NO_SESSION
+        row.isLive && row.background -> Footer.BACKGROUND
         row.isLive -> Footer.LIVE
         else -> Footer.CLOSED
     }
@@ -1224,6 +1303,7 @@ class AgentsOverviewBackingViewModel(
         val fileRuns = t.members.mapIndexed { i, m -> Run(m, m.recordId?.let(byId::get), i, true) }
         val matched = fileRuns.mapNotNullTo(HashSet()) { it.session?.id }
         val extraRuns = hosted.filter { it.id !in matched }
+            .sortedWith(compareBy({ startedOf(it) }, { it.id }))
             .mapIndexed { i, s -> Run(memberOf(s), s, fileRuns.size + i, false) }
         val runs = fileRuns + extraRuns
         if (runs.isEmpty() && !t.hasOpen) return null
@@ -1257,13 +1337,21 @@ class AgentsOverviewBackingViewModel(
         val open = runs.filter { r -> r.session != null && r.session.state != ENDED && panes[r.session.leafId] != null }
         val jump = open.filter { it.member.state == NEEDS_YOU }.minByOrNull { it.member.sinceMillis }
             ?: open.filter { it.member.state == WORKING }.maxByOrNull { it.session!!.lastActivityAt ?: it.session.stateSince }
+        // The session that speaks for the task, when this client has its record and its pane is open.
+        val lead = t.leadRecordId?.let(byId::get)
+        val leadLive = lead != null && lead.state != ENDED && panes[lead.leafId] != null
+        val started = t.startedAtMillis ?: runs.mapNotNull { it.session?.let(::startedOf) }.minOrNull() ?: since
         val recency = runs.maxOfOrNull { r -> maxOf(r.member.sinceMillis, r.session?.let(::activityOf) ?: 0L) }
             ?: t.refreshedAtMillis ?: 0L
         // NOW is the open tabs: a task is in it only while one of its sessions is in a pane the layout
         // holds. A task waiting on the person is the one exception, so a question is never filed away.
         val inNow = !ended && !settled && (urgentRank == 0 || open.isNotEmpty())
         val graced = (ended || settled) && inGrace(recency, nowMillis)
-        return TaskUnit(t, runs, panel, rank, since, ended, settled, recency, graced, jump?.session?.id, inNow)
+        return TaskUnit(
+            t, runs, panel, rank, since, ended, settled, recency, graced,
+            if (leadLive) lead!!.id else jump?.session?.id, inNow, started,
+            lead?.id, leadLive, leadLive && lead!!.background,
+        )
     }
 
     /** The record behind [row] that peek and inspection ask the server about, or null when there is none. */
@@ -1336,6 +1424,9 @@ class AgentsOverviewBackingViewModel(
             activityMillis = u.runs.filter { it.member.state == WORKING }
                 .mapNotNull { workingActivity(it, t.refreshedAtMillis) }.maxOrNull(),
             ageMillis = u.recency.takeIf { inEarlier },
+            leadRecordId = u.leadRecordId,
+            leadLive = u.leadLive,
+            leadBackground = u.leadBackground,
         )
     }
 
@@ -1421,25 +1512,27 @@ class AgentsOverviewBackingViewModel(
                 sinceMillis = task.ageMillis ?: u.since,
                 isLive = task.jumpRecordId != null, canResume = false,
                 actionLabel = when {
-                    task.jumpRecordId != null -> "jump"
+                    task.jumpRecordId != null -> if (task.leadBackground) "peek" else "jump"
+                    task.leadRecordId != null && !task.hasOpen -> "resume"
                     task.hasOpen -> "open"
                     else -> ""
                 },
                 error = resumeError("$TASK_PREFIX${t.id}"), kind = RowKind.TASK, taskId = t.id,
                 glyph = Glyph.NONE,
-                status = "",
+                status = t.status.orEmpty(),
             )
         }
-        val shown = if (t.id in ui.expandedTasks) {
-            rows.sortedWith(
+        val expanded = t.id in ui.expandedTasks
+        // In NOW a task's sessions keep the order they were listed in (the file's, then Lunamux's by
+        // start), so one that changes state does not jump. A task in EARLIER is read by state.
+        val shown = when {
+            u.inEarlier && expanded -> rows.sortedWith(
                 compareBy<Pair<Run, Row>> { bucketOf(it.first.member).order }
                     .thenBy { if (it.first.member.state == NEEDS_YOU) it.first.member.sinceMillis else 0L },
             )
-        } else if (u.inEarlier) {
-            emptyList()
-        } else {
-            rows.filter { it.first.member.state == NEEDS_YOU }.sortedBy { it.first.member.sinceMillis } +
-                rows.filter { it.first.member.state == WORKING }.sortedByDescending { it.first.member.sinceMillis }
+            u.inEarlier -> emptyList()
+            expanded -> rows
+            else -> rows.filter { it.first.member.state == NEEDS_YOU || it.first.member.state == WORKING }
         }
         return listOf(header) + shown.map { it.second }
     }
@@ -1487,7 +1580,7 @@ class AgentsOverviewBackingViewModel(
             // Only the keys the task gives; the ones read from a session's branch are not the feed's.
             links = m.links,
             actionLabel = when {
-                base.isLive -> "jump"
+                base.isLive -> if (base.background) "peek" else "jump"
                 s != null -> "resume"
                 // Attaching opens the session in a new tab, which is what "resume" says everywhere else.
                 m.sessionId != null -> "resume"
@@ -1558,7 +1651,7 @@ class AgentsOverviewBackingViewModel(
             canResume = !live,
             activityMillis = if (s.state == WORKING) s.lastActivityAt ?: s.stateSince else null,
             actionLabel = when {
-                live -> "jump"
+                live -> if (s.background) "peek" else "jump"
                 s.agent == GEMINI -> "open folder"
                 else -> "resume"
             },
@@ -1572,6 +1665,7 @@ class AgentsOverviewBackingViewModel(
             },
             status = statusOf(s),
             where = s.repo ?: folderOf(s),
+            background = s.background,
         )
     }
 
@@ -1658,6 +1752,7 @@ class AgentsOverviewBackingViewModel(
             val back = Hint("←", "back to the task", HintRole.BACK).takeIf { backToTask }
             return when (footer) {
                 Footer.LIVE -> listOfNotNull(Hint("→", "peek"), Hint("⌘⌫", "close session"), back, move, esc)
+                Footer.BACKGROUND -> listOfNotNull(Hint("↵", "peek"), Hint("⌘↵", "take over"), Hint("⌘⌫", "close session"), back, move, esc)
                 Footer.CLOSED -> listOfNotNull(Hint("→", "peek at its saved screen"), back, move, esc)
                 Footer.TASK_COLLAPSED -> listOf(Hint("→", "expand"), move, esc)
                 Footer.TASK_EXPANDED -> listOf(Hint("←", "collapse"), move, esc)

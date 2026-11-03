@@ -49,11 +49,12 @@ class AgentsOverviewTasksViewModelTest {
         repo: String? = "proj", cwd: String = "/work/proj", links: List<String> = emptyList(),
         nowLine: String? = null, question: String? = null, lastActivityAt: Long? = null,
         lastSaid: String? = null, firstPrompt: String? = null, cwdHome: Boolean = false, taskId: String? = null,
+        startedAt: Long? = null, background: Boolean = false,
     ) = AgentSessionSummary(
         id = id, agent = "claude", state = state, stateSince = since, title = title, links = links,
         repo = repo, branch = null, cwd = cwd, cwdHome = cwdHome, nowLine = nowLine, question = question,
         leafId = "leaf-$id".takeIf { endedAt == null }, endedAt = endedAt, lastActivityAt = lastActivityAt,
-        lastSaid = lastSaid, firstPrompt = firstPrompt, taskId = taskId,
+        lastSaid = lastSaid, firstPrompt = firstPrompt, taskId = taskId, startedAt = startedAt, background = background,
     )
 
     /** Set once a test lays out its own tab; [show] then leaves the layout alone. */
@@ -79,11 +80,12 @@ class AgentsOverviewTasksViewModelTest {
 
     private fun task(
         id: String = "g1", members: List<AgentTaskMember>, hasOpen: Boolean = false,
-        refreshedAtMillis: Long? = null, source: String = "file", repo: String? = "proj",
+        refreshedAtMillis: Long? = null, source: String = "file", repo: String? = "proj", startedAt: Long? = null,
+        leadRecordId: String? = null, status: String? = null,
     ) = AgentTask(
         id = id, title = "Release $id", repo = repo, source = source, hasOpen = hasOpen,
         members = members.mapIndexed { i, m -> if (m.key.isEmpty()) m.copy(key = "#${i + 1}") else m },
-        refreshedAtMillis = refreshedAtMillis,
+        refreshedAtMillis = refreshedAtMillis, startedAtMillis = startedAt, leadRecordId = leadRecordId, status = status,
     )
 
     /**
@@ -102,21 +104,21 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aTaskWithASessionThatNeedsYouSitsInNowRankedByThatSession() {
+    fun aTaskSitsInNowWhereItStartedWhateverStateItsMembersAreIn() {
         show(
-            listOf(task(members = listOf(member("a", "needs_you", since = 2_000), member("b", "working", since = 100)))),
+            listOf(task(startedAt = 2_000, members = listOf(member("a", "needs_you", since = 2_000), member("b", "working", since = 100)))),
             session("old-working", "working", since = 500),
             session("late-needs", "needs_you", since = 3_000),
             session("early-needs", "needs_you", since = 1_000),
         )
         assertEquals(
-            listOf("early-needs", "task:g1", "member:g1:#1", "member:g1:#2", "late-needs", "old-working"),
+            listOf("old-working", "early-needs", "task:g1", "member:g1:#1", "member:g1:#2", "late-needs"),
             vm.state.now.map { it.id },
         )
     }
 
     @Test
-    fun aWorkingOnlyTaskIsInNowBehindEveryoneWhoNeedsYouAndRankedByWait() {
+    fun aWorkingOnlyTaskSitsAtItsFirstSessionsStartNotBehindThoseWhoNeedYou() {
         show(
             listOf(task(members = listOf(member("a", "working", since = 1, recordId = "a"), member("b", "working", since = 2, recordId = "b")))),
             session("a", "working", since = 1),
@@ -124,8 +126,8 @@ class AgentsOverviewTasksViewModelTest {
             session("n", "needs_you", since = 9_000),
             session("w", "working", since = 5_000),
         )
-        // The task's working sessions have waited longest of the working ones, so it comes first.
-        assertEquals(listOf("n", "task:g1", "b", "a", "w"), vm.state.now.map { it.id })
+        // The task began with its first session (start 1), so it leads; its sessions follow in the order they began.
+        assertEquals(listOf("task:g1", "a", "b", "w", "n"), vm.state.now.map { it.id })
     }
 
     @Test
@@ -372,7 +374,7 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun expandingShowsEverySessionMostUrgentFirstAndKeepsTheHighlightOnTheHeader() {
+    fun expandingShowsEverySessionInTheFilesOrderAndKeepsTheHighlightOnTheHeader() {
         show(listOf(task(members = listOf(
             member("a", "working"), member("b", "needs_you"), member("c", "idle", label = "done"),
             member("d", "idle", label = "held"), member("e", "idle", label = "queued"), member("f", "idle", label = "in review"),
@@ -380,19 +382,19 @@ class AgentsOverviewTasksViewModelTest {
         vm.open()
         vm.toggleTask("g1")
         assertEquals(
-            listOf("task:g1", "member:g1:#2", "member:g1:#1", "member:g1:#6", "member:g1:#5", "member:g1:#4", "member:g1:#3"),
+            listOf("task:g1", "member:g1:#1", "member:g1:#2", "member:g1:#3", "member:g1:#4", "member:g1:#5", "member:g1:#6"),
             vm.state.rows.map { it.id },
         )
         assertTrue(vm.state.tasks.getValue("g1").expanded)
         assertEquals("task:g1", vm.state.selectedId)
         vm.toggleTask("g1")
-        assertEquals(3, vm.state.rows.size, "collapsed again: the header, the one that needs you and the one that works")
+        assertEquals(3, vm.state.rows.size, "collapsed again: the header, the one that works and the one that needs you")
     }
 
     @Test
-    fun needsYouSessionsInAnExpandedTaskAreOrderedLongestWaitingFirst() {
+    fun anExpandedTaskKeepsItsSessionsInTheFilesOrderWhoeverHasWaitedLonger() {
         show(listOf(task(members = listOf(member("late", "needs_you", since = 9_000), member("early", "needs_you", since = 1_000)))))
-        assertEquals(listOf("task:g1", "member:g1:#2", "member:g1:#1"), vm.state.rows.map { it.id })
+        assertEquals(listOf("task:g1", "member:g1:#1", "member:g1:#2"), vm.state.rows.map { it.id })
     }
 
     @Test
@@ -542,10 +544,11 @@ class AgentsOverviewTasksViewModelTest {
         show(
             listOf(task(source = "agents", members = emptyList())),
             session("a", "working", taskId = "g1", nowLine = "Edit a.kt", lastActivityAt = now - 1_000),
-            session("b", "needs_you", taskId = "g1", question = "Which branch?"),
+            session("b", "needs_you", since = 2_000, taskId = "g1", question = "Which branch?"),
             session("loner", "working", since = 99_999),
         )
-        assertEquals(listOf("task:g1", "b", "a", "loner"), vm.state.now.map { it.id })
+        // b needs you but began after a, so it stays behind it.
+        assertEquals(listOf("task:g1", "a", "b", "loner"), vm.state.now.map { it.id })
         assertEquals(1, vm.state.tasks.getValue("g1").needYouCount)
         assertEquals("1 working", vm.state.tasks.getValue("g1").summary)
         assertEquals("Which branch?", vm.state.rows.first { it.id == "b" }.status)
@@ -656,7 +659,8 @@ class AgentsOverviewTasksViewModelTest {
             session("r1", "working"),
             session("x", "needs_you", taskId = "g1"),
         )
-        assertEquals(listOf("task:g1", "x", "r1"), vm.state.rows.map { it.id })
+        // The file's own members come first, then a session only Lunamux knows about.
+        assertEquals(listOf("task:g1", "r1", "x"), vm.state.rows.map { it.id })
     }
 
     @Test
@@ -854,14 +858,14 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aPausedSessionHasItsOwnGlyphAndPlaceAfterOtherLabelsAndNeverCountsAsNeedingYou() {
+    fun aPausedSessionHasItsOwnGlyphAndNeverCountsAsNeedingYou() {
         show(listOf(task(members = listOf(
             member("d", "idle", label = "done"), member("p", "idle", label = "paused: waiting for the release"),
             member("o", "idle", label = "odd"), member("w", "working", recordId = "w"),
         ))), session("w", "working", lastActivityAt = now - 1_000))
         vm.toggleTask("g1")
         val sessions = vm.state.rows.filter { it.kind == RowKind.SESSION }
-        assertEquals(listOf("w", "o", "p", "d"), sessions.map { it.title })
+        assertEquals(listOf("d", "p", "o", "w"), sessions.map { it.title }, "the file's order, whatever the labels")
         assertEquals(Glyph.PAUSED, sessions.first { it.title == "p" }.glyph)
         assertEquals(0, vm.state.needYouCount)
         assertEquals(1, vm.state.workingCount)
@@ -1048,21 +1052,21 @@ class AgentsOverviewTasksViewModelTest {
 
     @Test
     fun theSelectionStaysOnItsRowWhenRowsAppearAboveIt() {
-        show(emptyList(), session("a", "needs_you", since = 1_000), session("b", "needs_you", since = 2_000), session("c", "working"))
+        show(emptyList(), session("a", "needs_you", since = 1_000), session("b", "needs_you", since = 2_000), session("c", "working", since = 3_000))
         vm.open()
         vm.moveSelection(1)
         assertEquals("b", vm.state.selectedId)
-        show(emptyList(), session("z", "needs_you", since = 10), session("a", "needs_you", since = 1_000), session("b", "needs_you", since = 2_000), session("c", "working"))
+        show(emptyList(), session("z", "needs_you", since = 10), session("a", "needs_you", since = 1_000), session("b", "needs_you", since = 2_000), session("c", "working", since = 3_000))
         assertEquals("b", vm.state.selectedId)
         assertEquals(2, vm.state.selected)
     }
 
     @Test
     fun whenTheSelectedRowDisappearsTheRowInItsPlaceIsSelected() {
-        show(emptyList(), session("a", "needs_you", since = 1_000), session("b", "needs_you", since = 2_000), session("c", "working"))
+        show(emptyList(), session("a", "needs_you", since = 1_000), session("b", "needs_you", since = 2_000), session("c", "working", since = 3_000))
         vm.open()
         vm.moveSelection(1)
-        show(emptyList(), session("a", "needs_you", since = 1_000), session("c", "working"))
+        show(emptyList(), session("a", "needs_you", since = 1_000), session("c", "working", since = 3_000))
         assertEquals("c", vm.state.selectedId)
     }
 
@@ -1197,7 +1201,7 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aGracedIdleSessionRanksBehindEverythingThatNeedsYouOrWorksAndAJustClosedOneIsGracedLikeIt() {
+    fun aGracedIdleSessionAndAJustClosedOneStayInNowInStartOrderLikeAnyOther() {
         show(
             listOf(task(members = listOf(member("run", "idle", label = "queued", recordId = "run"), member("run2", "idle", label = "queued")))),
             session("run", "idle", since = now - 1_000_000),
@@ -1208,7 +1212,7 @@ class AgentsOverviewTasksViewModelTest {
             session("longClosed", "ended", since = now - 3_600_000, endedAt = now - 3_600_000),
         )
         assertEquals(setOf("graced", "closed"), vm.state.now.map { it.id }.filter { it == "graced" || it == "closed" }.toSet())
-        assertEquals(listOf("need", "work", "task:g1"), vm.state.now.map { it.id }.take(3))
+        assertEquals(listOf("task:g1", "need", "work", "closed", "graced"), vm.state.now.map { it.id })
         assertEquals(listOf("longClosed"), vm.state.earlier.map { it.id })
         assertEquals(1, vm.state.needYouCount)
     }
@@ -1330,5 +1334,193 @@ class AgentsOverviewTasksViewModelTest {
         )
         assertEquals(listOf("task:g1", "a", "b"), vm.state.now.map { it.id }.sortedBy { if (it.startsWith("task")) 0 else 1 })
         assertEquals(2, vm.state.workingCount, "the task is the unit: its out-of-tab member counts with the task")
+    }
+
+    /** Lays out [normal] panes in the one listed tab and [background] panes in a background tab of their own. */
+    private fun layoutWithBackground(normal: List<String>, background: List<String>) {
+        laidOut = true
+        fun panes(ids: List<String>) = ids.map { Pane(LeafNode(id = it, sessionId = "s-$it", title = it), 0.0, 0.0, 1.0, 1.0, 0) }
+        windowState.updateConfig(
+            WindowConfig(
+                tabs = listOf(
+                    TabConfig(id = "tab-1", title = "one", panes = panes(normal)),
+                    TabConfig(id = "tab-bg", title = "agents", panes = panes(background), isBackground = true),
+                ),
+                activeTabId = "tab-1",
+            ),
+        )
+    }
+
+    @Test
+    fun aBackgroundSessionIsInNowAndCountedLikeAnyOther() {
+        layoutWithBackground(listOf("leaf-n"), listOf("leaf-bg-ask", "leaf-bg-work"))
+        show(
+            emptyList(),
+            session("n", "working", since = 1_000, lastActivityAt = now - 1_000),
+            session("bg-ask", "needs_you", since = 2_000, background = true, question = "Which branch?"),
+            session("bg-work", "working", since = 3_000, background = true, lastActivityAt = now - 1_000),
+        )
+        assertEquals(listOf("n", "bg-ask", "bg-work"), vm.state.now.map { it.id })
+        assertEquals(1, vm.state.needYouCount, "a background session that needs the person is in the chip")
+        assertEquals(2, vm.state.workingCount)
+        assertTrue(vm.state.chipVisible)
+        assertTrue(vm.state.now.first { it.id == "bg-ask" }.background)
+        assertFalse(vm.state.now.first { it.id == "n" }.background)
+    }
+
+    @Test
+    fun enterOnABackgroundRowPeeksInsteadOfJumpingAndCommandEnterTakesTheTabOver() = runNow {
+        layoutWithBackground(listOf("leaf-n"), listOf("leaf-bg"))
+        show(emptyList(), session("n", "working", lastActivityAt = now - 1_000), session("bg", "needs_you", background = true, since = 2_000))
+        vm.open()
+        vm.select("bg")
+        assertEquals(Footer.BACKGROUND, vm.state.footer)
+        assertEquals("peek", vm.state.selectedRow?.actionLabel)
+        vm.activateSelected()
+        assertTrue(sent.none { it is WindowCommand.SetActiveTab || it is WindowCommand.SetFocusedPane || it is WindowCommand.TakeOverTab }, "peeking moves nothing")
+        assertTrue(vm.state.peek != null && vm.state.peek!!.background, "the peek knows it can take the tab over")
+        sent.clear()
+        vm.takeOverSelected()
+        assertEquals(
+            listOf<WindowCommand>(WindowCommand.TakeOverTab("tab-bg"), WindowCommand.SetFocusedPane("tab-bg", "leaf-bg")),
+            sent,
+        )
+        assertFalse(vm.state.open, "taking over closes the overlay")
+    }
+
+    @Test
+    fun takingOverDoesNothingForASessionInAnOrdinaryTab() = runNow {
+        layoutWithBackground(listOf("leaf-n"), listOf("leaf-bg"))
+        show(emptyList(), session("n", "needs_you"), session("bg", "working", since = 2_000, background = true))
+        vm.open()
+        vm.select("n")
+        vm.takeOverSelected()
+        assertTrue(sent.isEmpty())
+        assertTrue(vm.state.open)
+    }
+
+    @Test
+    fun closingABackgroundRowAsksTheSameQuestionAsAnyOtherSession() = runNow {
+        layoutWithBackground(listOf("leaf-n"), listOf("leaf-bg"))
+        show(emptyList(), session("n", "working"), session("bg", "working", since = 2_000, background = true))
+        vm.open()
+        vm.select("bg")
+        vm.requestClose()
+        assertEquals("bg", vm.state.confirm?.rowId)
+        assertTrue(sent.none { it is WindowCommand.CloseSession }, "nothing closes before the person confirms")
+        vm.confirmClose()
+        assertEquals(listOf<WindowCommand>(WindowCommand.CloseSession("s-leaf-bg")), sent.filterIsInstance<WindowCommand.CloseSession>())
+    }
+
+    // ---- the task's own session ----
+
+    private fun leadTask(lead: String?, hasOpen: Boolean = false) = task(
+        source = "agents", members = emptyList(), hasOpen = hasOpen, leadRecordId = lead,
+    )
+
+    @Test
+    fun enterOnATaskWhoseOwnSessionIsLiveJumpsToItsPane() = runNow {
+        layoutWithBackground(listOf("leaf-lead", "leaf-m"), emptyList())
+        show(
+            listOf(leadTask("lead")),
+            session("lead", "idle", taskId = "g1", since = 1_000),
+            session("m", "needs_you", taskId = "g1", since = 2_000),
+        )
+        vm.open()
+        vm.select("task:g1")
+        vm.activateSelected()
+        assertEquals(listOf<WindowCommand>(WindowCommand.SetActiveTab("tab-1"), WindowCommand.SetFocusedPane("tab-1", "leaf-lead")), sent)
+    }
+
+    @Test
+    fun enterOnATaskWhoseOwnSessionRunsInTheBackgroundPeeksIt() = runNow {
+        layoutWithBackground(listOf("leaf-m"), listOf("leaf-lead"))
+        show(
+            listOf(leadTask("lead")),
+            session("m", "working", taskId = "g1", since = 500, lastActivityAt = now - 1_000),
+            session("lead", "working", taskId = "g1", since = 1_000, background = true, lastActivityAt = now - 1_000),
+        )
+        vm.open()
+        vm.select("task:g1")
+        assertEquals("peek", vm.state.selectedRow?.actionLabel)
+        vm.activateSelected()
+        assertTrue(sent.none { it is WindowCommand.SetActiveTab || it is WindowCommand.SetFocusedPane }, "peeking moves nothing")
+        assertTrue(vm.state.peek?.background == true)
+        assertEquals("task:g1", vm.state.selectedId, "the header keeps the highlight while its session is peeked")
+    }
+
+    @Test
+    fun enterOnATaskWhoseOwnSessionIsGoneRunsOpenWhenTheTaskHasOpenWork() = runNow {
+        layoutWithBackground(listOf("leaf-m"), emptyList())
+        show(
+            listOf(leadTask("lead", hasOpen = true)),
+            session("lead", "ended", taskId = "g1", since = 500, endedAt = now - 5_000),
+            session("m", "needs_you", taskId = "g1", since = 2_000),
+        )
+        vm.open()
+        vm.select("task:g1")
+        vm.activateSelected()
+        assertEquals(listOf<WindowCommand>(WindowCommand.OpenTask("g1")), sent)
+    }
+
+    @Test
+    fun enterOnATaskWhoseOwnSessionIsGoneResumesItWhenThereIsNothingToOpen() = runNow {
+        layoutWithBackground(listOf("leaf-m"), emptyList())
+        show(
+            listOf(leadTask("lead")),
+            session("lead", "ended", taskId = "g1", since = 500, endedAt = now - 5_000),
+            session("m", "needs_you", taskId = "g1", since = 2_000),
+        )
+        vm.open()
+        vm.select("task:g1")
+        vm.activateSelected()
+        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("lead")), sent)
+    }
+
+    @Test
+    fun aTaskWithNoOwnSessionKeepsTheOldEnter() = runNow {
+        layoutWithBackground(listOf("leaf-m"), emptyList())
+        show(listOf(leadTask(null)), session("m", "needs_you", taskId = "g1", since = 2_000))
+        vm.open()
+        vm.select("task:g1")
+        vm.activateSelected()
+        assertEquals(listOf<WindowCommand>(WindowCommand.SetActiveTab("tab-1"), WindowCommand.SetFocusedPane("tab-1", "leaf-m")), sent)
+    }
+
+    // ---- status and order ----
+
+    @Test
+    fun aTaskHeaderShowsItsOneLineStatus() {
+        val members = listOf(member("a", "working", recordId = "a"), member("b", "working", recordId = "b"))
+        val sessions = arrayOf(session("a", "working", lastActivityAt = now - 1_000), session("b", "working", lastActivityAt = now - 1_000))
+        show(listOf(task(status = "waiting on the schema review", members = members)), *sessions)
+        assertEquals("waiting on the schema review", vm.state.rows.first { it.id == "task:g1" }.status)
+        show(listOf(task(members = members)), *sessions)
+        assertEquals("", vm.state.rows.first { it.id == "task:g1" }.status)
+    }
+
+    @Test
+    fun nowKeepsItsOrderWhenStatesFlipAndWhenTheSameFactsArriveAgainAfterARestart() {
+        fun facts(aState: String, bState: String) = arrayOf(
+            session("a", aState, since = 9_000, startedAt = 1_000),
+            session("b", bState, since = 9_500, startedAt = 2_000),
+            session("c", "working", since = 100, startedAt = 3_000),
+            session("t1", "working", since = 7_000, startedAt = 2_500, taskId = "g1"),
+            session("t2", "working", since = 7_000, startedAt = 2_600, taskId = "g1"),
+        )
+        layout("leaf-a", "leaf-b", "leaf-c", "leaf-t1", "leaf-t2")
+        val tasks = listOf(task(source = "agents", startedAt = 2_500, members = emptyList()))
+        showAway(tasks, *facts("working", "working"))
+        val before = vm.state.now.map { it.id }
+        assertEquals(listOf("a", "b", "task:g1", "t1", "t2", "c"), before)
+        showAway(tasks, *facts("needs_you", "working"))
+        assertEquals(before, vm.state.now.map { it.id })
+        showAway(tasks, *facts("working", "needs_you"))
+        assertEquals(before, vm.state.now.map { it.id })
+        // A restart brings the same facts (the server keeps each start), and the order is the same.
+        windowState.updateAgentSessions(emptyList(), true)
+        windowState.updateAgentTasks(emptyList())
+        showAway(tasks, *facts("needs_you", "needs_you"))
+        assertEquals(before, vm.state.now.map { it.id })
     }
 }

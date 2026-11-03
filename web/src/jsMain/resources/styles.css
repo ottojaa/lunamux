@@ -3789,6 +3789,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     line-height: 1.55;
 }
 .ao-peek-title { padding-bottom: 6px; font-size: 11px; letter-spacing: 0.12em; color: var(--ao-dim); }
+.ao-peek-hint { padding-top: 6px; font-size: 11px; color: var(--ao-dim); }
 .ao-peek-line { overflow: hidden; text-overflow: ellipsis; white-space: pre; font-size: 12px; color: var(--ao-muted); }
 
 /* Closing a live session asks first. */
