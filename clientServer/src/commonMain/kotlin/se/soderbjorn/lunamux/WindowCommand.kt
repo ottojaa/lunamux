@@ -313,6 +313,21 @@ sealed class WindowCommand {
     data class OpenTaskMember(val taskId: String, val memberKey: String) : WindowCommand()
 
     /**
+     * Press a button of a task's panel: the server finds the stored button, and types its text and
+     * Enter into the task's own session. The command carries no text; a window can only name a
+     * button the server already holds. It is dropped when the task has no live own session, the
+     * block or button is unknown, or the session's agent has ended.
+     *
+     * @param taskId the [AgentTask.id] whose panel holds the button
+     * @param blockId the [TaskPanelBlock.id] of the actions block
+     * @param buttonId the [TaskButton.id] inside that block
+     * @see TaskBlockContent.Actions
+     */
+    @Serializable
+    @SerialName("pressTaskButton")
+    data class PressTaskButton(val taskId: String, val blockId: String, val buttonId: String) : WindowCommand()
+
+    /**
      * Search every agent session ever recorded, open or closed, plus Claude Code
      * sessions imported from before Lunamux recorded them. The server answers
      * on the asking connection only with [WindowEnvelope.AgentSessionMatches].

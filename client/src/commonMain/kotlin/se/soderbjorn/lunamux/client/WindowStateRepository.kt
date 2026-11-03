@@ -26,6 +26,7 @@ import kotlinx.serialization.json.jsonObject
 import se.soderbjorn.lunula.core.PersistKeys
 import se.soderbjorn.lunamux.AgentTask
 import se.soderbjorn.lunamux.AgentSessionSummary
+import se.soderbjorn.lunamux.TaskPanelBlock
 import se.soderbjorn.lunamux.WindowConfig
 import se.soderbjorn.lunamux.WindowEnvelope
 
@@ -132,6 +133,11 @@ class WindowStateRepository {
     /** Observable tasks; with [agentSessions] the source of the agents overview's task panels. */
     val agentTasks: StateFlow<List<AgentTask>> = _agentTasks.asStateFlow()
 
+    /** The blocks agents wrote into each task's panel, by task id; a task with none has no entry. */
+    private val _taskPanels = MutableStateFlow<Map<String, List<TaskPanelBlock>>>(emptyMap())
+    /** Observable task panels; the source of the task panel beside a task's own session. */
+    val taskPanels: StateFlow<Map<String, List<TaskPanelBlock>>> = _taskPanels.asStateFlow()
+
     /** Whether the Claude Code settings file currently holds Lunamux's hook entries. */
     private val _claudeConnected = MutableStateFlow(false)
     /** Observable Claude Code connection flag for the App Settings row. */
@@ -204,6 +210,20 @@ class WindowStateRepository {
      */
     fun updateAgentTasks(tasks: List<AgentTask>) {
         _agentTasks.value = tasks
+    }
+
+    /**
+     * Replace one task's panel blocks.
+     *
+     * Called by [WindowSocket] when a `TaskPanel` envelope arrives. An empty list removes the
+     * task's entry, so the map only holds tasks that have blocks.
+     *
+     * @param taskId the task the blocks belong to.
+     * @param blocks all its blocks, in drawing order.
+     */
+    fun updateTaskPanel(taskId: String, blocks: List<TaskPanelBlock>) {
+        _taskPanels.value =
+            if (blocks.isEmpty()) _taskPanels.value - taskId else _taskPanels.value + (taskId to blocks)
     }
 
     /**

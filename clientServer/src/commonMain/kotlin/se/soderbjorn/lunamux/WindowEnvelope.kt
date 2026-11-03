@@ -268,6 +268,20 @@ sealed class WindowEnvelope {
     data class AgentTasks(val tasks: List<AgentTask>) : WindowEnvelope()
 
     /**
+     * The blocks agents wrote into one task's panel. Sent for every task that has blocks when a
+     * window connects, and again for a task whenever its blocks change; after the last block of a
+     * task is removed the list is sent empty once so windows drop it. Older clients fail to decode
+     * this frame and drop it, which is harmless.
+     *
+     * @param taskId the [AgentTask.id] the blocks belong to
+     * @param blocks all the blocks of that task, in the order they are drawn
+     * @see TaskPanelBlock
+     */
+    @Serializable
+    @SerialName("taskPanel")
+    data class TaskPanel(val taskId: String, val blocks: List<TaskPanelBlock>) : WindowEnvelope()
+
+    /**
      * A failed agents-overview request, sent only to the connection that made
      * it: resuming a session whose folder is gone, or connecting Claude Code
      * when its settings file cannot be edited.

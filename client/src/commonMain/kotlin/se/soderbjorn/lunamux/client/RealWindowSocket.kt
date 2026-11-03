@@ -182,6 +182,7 @@ class RealWindowSocket internal constructor(
                             is WindowEnvelope.AgentSessions ->
                                 client.windowState.updateAgentSessions(envelope.sessions, envelope.claudeConnected)
                             is WindowEnvelope.AgentTasks -> client.windowState.updateAgentTasks(envelope.tasks)
+                            is WindowEnvelope.TaskPanel -> client.windowState.updateTaskPanel(envelope.taskId, envelope.blocks)
                             is WindowEnvelope.AgentSessionError -> client.windowState.setAgentSessionError(envelope.message)
                             is WindowEnvelope.AgentSessionMatches -> client.windowState.updateAgentMatches(envelope)
                             is WindowEnvelope.AgentSessionInspection -> client.windowState.updateAgentInspection(envelope)
