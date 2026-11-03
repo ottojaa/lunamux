@@ -43,16 +43,30 @@ idle, **‖** paused, **✓** done.
   it expands or collapses the panel. A task has no "lead" session.
 - **↵ on a session** jumps to its pane, or resumes it when it has ended. A session Lunamux does
   not host and that has a `sessionId` opens in a new tab with `claude attach <session id>`.
-- **NOW and EARLIER.** A task stays in NOW while a session needs the person or works. A task
-  that a task file declares also stays there while it has open work, such as a session in review
-  or queued, even when nothing is running at the moment, so it does not change section as
-  sessions start and stop. Once every session of such a task reads done, nothing is moving or
-  waiting and the task goes to EARLIER, even if none of its sessions has ended, once ten minutes
-  have passed since its newest activity: a task that has just finished stays in NOW for those ten
-  minutes, like a session that has just ended, so its header never reads "now" under a heading
-  that says days. A task made only of Lunamux's own sessions behaves like one idle session: it
-  stays in NOW for ten minutes after the last activity and then moves to EARLIER. A task whose
-  sessions have all ended is in EARLIER after the same ten minutes.
+- **NOW is the open tabs.** A session is in NOW only while its pane is in a tab that is open,
+  and a task only while one of its sessions is. A session whose pane is not in any open tab is in
+  EARLIER with the rest of what is not happening on screen, however busy it is. The one exception
+  is a session that needs the person (a ◆): it stays in NOW wherever it runs, because a question
+  must not wait where the **+ N more** cut or the fourteen-day window can hide it. A task is one
+  unit: while one of its sessions is in an open tab, all its sessions stay with it in NOW, and a
+  session that needs the person keeps its whole task there, the task's other sessions too,
+  wherever they run. When neither holds, the task goes to EARLIER. The chip counts what NOW shows,
+  so a working session of a task that is in EARLIER is not counted as working. A tab counts as
+  open whatever the tab strip shows of it.
+- **A session or task that has just ended stays in NOW for ten minutes.** With the ◆ above, this
+  is the other thing in NOW that is in no tab: a session that has ended less than ten minutes ago,
+  and a task that has just finished, so a row never reads "now" under a heading that says days.
+  After the ten minutes it goes to EARLIER by its age. A session that is still running but idle,
+  in no tab, gets no such grace.
+- **Inside NOW, a task stays while it has work.** A task stays in NOW while a session needs the
+  person or works. A task that a task file declares also stays there while it has open work, such
+  as a session in review or queued, even when nothing is running at the moment, so it does not
+  change section as sessions start and stop. Once every session of such a task reads done, nothing
+  is moving or waiting and the task goes to EARLIER, even if none of its sessions has ended, once
+  ten minutes have passed since its newest activity. A task made only of Lunamux's own sessions
+  behaves like one idle session in a tab: it stays in NOW for ten minutes after the last activity
+  and then moves to EARLIER. A task whose sessions have all ended is in EARLIER after the same
+  ten minutes.
 - **EARLIER is two bands of tasks, newest first.** **LAST FEW DAYS** holds the tasks last active
   within three days, all of them. **LAST TWO WEEKS** holds those between three and fourteen days
   old; it shows the first five and a **+ N more** line (a click on it shows the rest). A band
@@ -114,8 +128,20 @@ Five MCP tools are registered. The first four change tasks and need a `read+writ
 
 `sessionIds` are terminal session ids: the `$LUNAMUX_SESSION_ID` of the pane a session runs in.
 An agent's own id is in its environment, and `list_sessions` shows the others. `create_window`
-also takes an optional `taskId`: the agent session that starts in the new pane then joins that
-task as soon as it appears, even though no agent runs there yet when the window is created.
+and `run_command` also take an optional `taskId`: the agent session that starts in the new pane
+then joins that task as soon as it appears, even though no agent runs there yet when the window
+is created. `run_command` takes it only when it creates the window itself; with a `sessionId` it
+types into a pane that already exists.
+
+A tab is one task's workspace, so a window made for a task opens where the task already is. The
+tab is the first of these that applies:
+
+1. The `tabId` the call names. An explicit tab always wins.
+2. The tab the task's sessions are in: where its open sessions are, or the window a call made
+   for it earlier that has no agent yet. If they are in several tabs, the one holding most of
+   them, and the tab first in the tab bar on a tie. Given a `worldId`, only that world's tabs
+   count.
+3. The active tab, as for a call that names no task.
 
 An agent told to split its work in two does this:
 

@@ -25,10 +25,12 @@
 #
 # Open https://localhost:8471, press ⌘⇧A and look at:
 #
-#   NOW              "Access control" (◆ needs you, one working, one in review) and
-#                    "Nightly sync", whose file is 25 minutes old, so its worker reads "stale 25m",
-#                    and "Billing cleanup", a file task whose two sessions are in review and queued:
-#                    nothing moves or waits on you, but work is left, so it stays in NOW.
+#   NOW              "Access control" only: one of its members needs you, and a question stays in NOW
+#                    wherever it runs. NOW is the sessions in open tabs, and nothing here is in a tab.
+#                    "Nightly sync" (its file is 25 minutes old, so its worker reads "stale 25m") and
+#                    "Billing cleanup" (a session in review, one queued) have no session in an open tab,
+#                    so they are in the first EARLIER band. Run scripts/seed-agents-overview-live.sh to
+#                    put live sessions in the tabs and see them in NOW.
 #   LAST FEW DAYS    everything finished within 3 days, all listed, newest first: "Release train",
 #                    a file task whose three sessions are all done but none has ended; today's two
 #                    sessions, "Rate limiter rewrite" and "Auth token refresh" (a session from
@@ -50,11 +52,12 @@
 #                    found only through their task's title ("in task Invoice export migration").
 #                    "token" also matches by task; "limiter" matches by title first.
 #
-# Hand-started cases (these need a running agent, so they are not seeded): open a pane in the
-# scratch server and start `claude` in it for a live NOW row. To make that agent group its own
-# sessions, give its MCP client TLS verification off (NODE_TLS_REJECT_UNAUTHORIZED=0, because the
-# dev server's certificate is self-signed; localhost only) and tell it to split the work in two.
-# Hook events can also be posted by a script to the scratch server for panes that run no agent.
+# Live cases: scripts/seed-agents-overview-live.sh puts sessions in the tabs of the running scratch
+# server (plain shell panes that post the hook events an agent would), and shows a task's second
+# window landing in the task's tab. For a real agent, open a pane in the scratch server and start
+# `claude` in it. To make that agent group its own sessions, give its MCP client TLS verification
+# off (NODE_TLS_REJECT_UNAUTHORIZED=0, because the dev server's certificate is self-signed;
+# localhost only) and tell it to split the work in two.
 
 set -euo pipefail
 

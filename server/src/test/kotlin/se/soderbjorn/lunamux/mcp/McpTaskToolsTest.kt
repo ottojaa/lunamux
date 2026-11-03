@@ -203,6 +203,167 @@ class McpTaskToolsTest {
         }
     }
 
+    /** Open a tab and return its id; the new tab becomes the active one. */
+    private fun newTab(title: String) =
+        payloadOf(call("create_tab", """{"title":"$title"}""")).jsonObject["tabId"]!!.jsonPrimitive.content
+
+    /** A window in [tabId] whose agent has started and joined [taskId]; returns the pane the agent runs in. */
+    private fun agentWindowIn(tabId: String, taskId: String, agentId: String): PaneSnapshot {
+        val created = payloadOf(call("create_window", """{"tabId":"$tabId","taskId":"$taskId"}""")).jsonObject
+        val sessionId = created["sessionId"]!!.jsonPrimitive.content
+        val pane = PaneSnapshot(sessionId, WindowState.leafIdOfSession(sessionId)!!, "/work/$agentId", null, screenText = { "x" })
+        tracker.onHook(pane, buildJsonObject { put("hook_event_name", "SessionStart"); put("session_id", agentId) })
+        return pane
+    }
+
+    private fun tabOfWindow(created: JsonObject) = WindowState.tabIdOfPane(created["windowId"]!!.jsonPrimitive.content)
+
+    @Test
+    fun `a task's next window opens in the tab its sessions are in, not the active tab`() {
+        val taskTab = newTab("Task tab")
+        val activeTab = newTab("Active tab")
+        try {
+            val id = payloadOf(call("create_task", """{"title":"Split the importer"}""")).jsonObject["taskId"]!!.jsonPrimitive.content
+            agentWindowIn(taskTab, id, "a-first")
+            call("activate_tab", """{"tabId":"$activeTab"}""")
+            val plain = payloadOf(call("create_window", "{}")).jsonObject
+            assertEquals(activeTab, tabOfWindow(plain), "the other tab is the one in front")
+
+            val second = payloadOf(call("create_window", """{"taskId":"$id"}""")).jsonObject
+            assertEquals(taskTab, second["tabId"]!!.jsonPrimitive.content)
+            assertEquals(taskTab, tabOfWindow(second))
+        } finally {
+            call("close_tab", """{"tabId":"$activeTab"}""")
+            call("close_tab", """{"tabId":"$taskTab"}""")
+        }
+    }
+
+    @Test
+    fun `a window created for a task before its agent has started still finds the tab`() {
+        val taskTab = newTab("Task tab")
+        val activeTab = newTab("Active tab")
+        try {
+            val id = payloadOf(call("create_task", """{"title":"Two quick windows"}""")).jsonObject["taskId"]!!.jsonPrimitive.content
+            call("create_window", """{"tabId":"$taskTab","taskId":"$id"}""")
+            call("activate_tab", """{"tabId":"$activeTab"}""")
+            val second = payloadOf(call("create_window", """{"taskId":"$id"}""")).jsonObject
+            assertEquals(taskTab, tabOfWindow(second), "the first pane has no agent yet, only the promise of the task")
+        } finally {
+            call("close_tab", """{"tabId":"$activeTab"}""")
+            call("close_tab", """{"tabId":"$taskTab"}""")
+        }
+    }
+
+    @Test
+    fun `with no tab for the task the window opens in the active tab, and an explicit tabId wins`() {
+        val taskTab = newTab("Task tab")
+        val activeTab = newTab("Active tab")
+        try {
+            call("activate_tab", """{"tabId":"$activeTab"}""")
+            val empty = payloadOf(call("create_task", """{"title":"Nothing open yet"}""")).jsonObject["taskId"]!!.jsonPrimitive.content
+            val first = payloadOf(call("create_window", """{"taskId":"$empty"}""")).jsonObject
+            assertEquals(activeTab, tabOfWindow(first), "a task with no pane has no tab, so the active tab as before")
+
+            val id = payloadOf(call("create_task", """{"title":"Has a tab"}""")).jsonObject["taskId"]!!.jsonPrimitive.content
+            agentWindowIn(taskTab, id, "a-has-tab")
+            val explicit = payloadOf(call("create_window", """{"taskId":"$id","tabId":"$activeTab"}""")).jsonObject
+            assertEquals(activeTab, tabOfWindow(explicit), "an explicit tabId beats the task's tab")
+
+            val plain = payloadOf(call("create_window", "{}")).jsonObject
+            assertEquals(activeTab, tabOfWindow(plain), "without a taskId nothing changes")
+        } finally {
+            call("close_tab", """{"tabId":"$activeTab"}""")
+            call("close_tab", """{"tabId":"$taskTab"}""")
+        }
+    }
+
+    @Test
+    fun `a worldId limits the task's tab to that world, and falls back to its active tab`() {
+        val homeWorld = WindowState.activeWorldId()
+        val taskTab = newTab("Task tab")
+        val otherWorld = payloadOf(call("create_world", """{"name":"Elsewhere"}""")).jsonObject["worldId"]!!.jsonPrimitive.content
+        try {
+            val otherTab = WindowState.config.value.worlds.first { it.id == otherWorld }.let { it.activeTabId ?: it.tabs.first().id }
+            val id = payloadOf(call("create_task", """{"title":"Lives in the first world"}""")).jsonObject["taskId"]!!.jsonPrimitive.content
+            agentWindowIn(taskTab, id, "a-home")
+
+            val inOther = payloadOf(call("create_window", """{"taskId":"$id","worldId":"$otherWorld"}""")).jsonObject
+            assertEquals(otherTab, inOther["tabId"]!!.jsonPrimitive.content, "the task has no tab in the named world")
+
+            val inHome = payloadOf(call("create_window", """{"taskId":"$id","worldId":"$homeWorld"}""")).jsonObject
+            assertEquals(taskTab, inHome["tabId"]!!.jsonPrimitive.content)
+        } finally {
+            call("close_world", """{"worldId":"$otherWorld"}""")
+            call("switch_world", """{"worldId":"$homeWorld"}""")
+            call("close_tab", """{"tabId":"$taskTab"}""")
+        }
+    }
+
+    @Test
+    fun `a tab the strip hides still holds its task's windows`() {
+        val taskTab = newTab("Task tab")
+        val activeTab = newTab("Active tab")
+        try {
+            val id = payloadOf(call("create_task", """{"title":"Out of sight"}""")).jsonObject["taskId"]!!.jsonPrimitive.content
+            agentWindowIn(taskTab, id, "a-hidden")
+            call("activate_tab", """{"tabId":"$activeTab"}""")
+            WindowState.setTabHidden(taskTab, true)
+            WindowState.setTabHiddenFromSidebar(taskTab, true)
+            val next = payloadOf(call("create_window", """{"taskId":"$id"}""")).jsonObject
+            assertEquals(taskTab, tabOfWindow(next), "a hidden tab is still open, so the task's window joins it")
+        } finally {
+            call("close_tab", """{"tabId":"$activeTab"}""")
+            call("close_tab", """{"tabId":"$taskTab"}""")
+        }
+    }
+
+    @Test
+    fun `an ended session no longer holds its task's tab`() {
+        val oldTab = newTab("Old tab")
+        val activeTab = newTab("Active tab")
+        try {
+            val id = payloadOf(call("create_task", """{"title":"Finished there"}""")).jsonObject["taskId"]!!.jsonPrimitive.content
+            val pane = agentWindowIn(oldTab, id, "a-ended")
+            call("activate_tab", """{"tabId":"$activeTab"}""")
+            tracker.onHook(pane, buildJsonObject { put("hook_event_name", "SessionEnd"); put("session_id", "a-ended") })
+            val next = payloadOf(call("create_window", """{"taskId":"$id"}""")).jsonObject
+            assertEquals(activeTab, tabOfWindow(next))
+        } finally {
+            call("close_tab", """{"tabId":"$activeTab"}""")
+            call("close_tab", """{"tabId":"$oldTab"}""")
+        }
+    }
+
+    @Test
+    fun `run_command that creates a window follows the task's tab and joins the task`() {
+        val taskTab = newTab("Task tab")
+        val activeTab = newTab("Active tab")
+        try {
+            val id = payloadOf(call("create_task", """{"title":"Runs in its tab"}""")).jsonObject["taskId"]!!.jsonPrimitive.content
+            agentWindowIn(taskTab, id, "a-run")
+            call("activate_tab", """{"tabId":"$activeTab"}""")
+            val ran = payloadOf(call("run_command", """{"command":"true","taskId":"$id","waitForExit":false}""")).jsonObject
+            assertEquals(taskTab, WindowState.tabIdOfPane(ran["windowId"]!!.jsonPrimitive.content))
+            assertTrue(WindowState.leafIdOfSession(ran["sessionId"]!!.jsonPrimitive.content) in tracker.pendingLeavesOf(id), "the new pane is promised the task")
+            val explicit = payloadOf(call("run_command", """{"command":"true","taskId":"$id","tabId":"$activeTab","waitForExit":false}""")).jsonObject
+            assertEquals(activeTab, WindowState.tabIdOfPane(explicit["windowId"]!!.jsonPrimitive.content))
+            val bad = call("run_command", """{"command":"true","taskId":"missing","waitForExit":false}""")
+            assertTrue(isError(bad)); assertTrue(textOf(bad).contains("missing"))
+        } finally {
+            call("close_tab", """{"tabId":"$activeTab"}""")
+            call("close_tab", """{"tabId":"$taskTab"}""")
+        }
+    }
+
+    @Test
+    fun `a task spread over tabs picks the tab with most of its panes, then the first in layout order`() {
+        assertEquals("b", busiestTab(listOf("a", "b", "b"), listOf("a", "b", "c")))
+        assertEquals("a", busiestTab(listOf("b", "a"), listOf("a", "b", "c")), "a tie goes to the first tab in layout order")
+        assertEquals("b", busiestTab(listOf("gone", "b"), listOf("a", "b")), "a pane in a tab that is not a candidate is ignored")
+        assertNull(busiestTab(emptyList(), listOf("a")))
+        assertNull(busiestTab(listOf("x"), listOf("a")))
+    }
+
     @Test
     fun `list_tasks lists the sessions of each task with their state`() {
         session("s1")

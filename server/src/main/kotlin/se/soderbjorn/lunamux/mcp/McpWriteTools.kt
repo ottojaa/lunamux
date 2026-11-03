@@ -165,6 +165,73 @@ private fun resolveTargetTab(args: JsonObject): String {
 }
 
 /**
+ * The tab, among [tabOrder], that holds the most of a task's panes.
+ *
+ * A task normally lives in one tab; when its panes are spread over several, the tab with the most
+ * of them wins and a tie goes to the tab that comes first in [tabOrder], so the answer does not
+ * depend on the order the panes were found in. Called by [taskTab].
+ *
+ * @param tabOfPane the tab id of each of the task's panes, one entry per pane.
+ * @param tabOrder every tab the choice may fall on, in layout order; panes in other tabs are ignored.
+ * @return the chosen tab id, or null when none of the panes is in [tabOrder].
+ */
+internal fun busiestTab(tabOfPane: List<String>, tabOrder: List<String>): String? =
+    tabOfPane.filter { it in tabOrder }.groupingBy { it }.eachCount().entries
+        .maxWithOrNull(compareBy({ it.value }, { -tabOrder.indexOf(it.key) }))?.key
+
+/**
+ * The tab a task's sessions are already in, for a new window of the task to open next to them.
+ *
+ * Called by [openWindow] when a window is created for a task without an explicit tab. One tab is
+ * one task, so the task's next window belongs beside the others and not in whichever tab happens
+ * to be active.
+ *
+ * @param index the task index that knows where the task's panes are.
+ * @param taskId the task the window is for.
+ * @param worldId when given, only this world's tabs are considered (the caller named a world).
+ * @return the tab id, or null when the task has no pane in a considered tab.
+ * @see busiestTab
+ */
+private fun taskTab(index: TaskIndex, taskId: String, worldId: String?): String? {
+    val cfg = WindowState.config.value
+    val tabs = cfg.worlds.filter { worldId == null || it.id == worldId }.flatMap { it.tabs }
+        .ifEmpty { if (worldId == null) cfg.tabs else emptyList() }
+        .map { it.id }
+    return busiestTab(index.openLeavesOf(taskId).mapNotNull(WindowState::tabIdOfPane), tabs)
+}
+
+/** A window [openWindow] created and the tab it is in. */
+private class NewWindow(val leaf: LeafNode, val tabId: String)
+
+/**
+ * Open a new window for `create_window` and `run_command`, and put its session in the task when
+ * the call names one.
+ *
+ * The tab is, in this order: an explicit `tabId`; the tab the task's sessions are already in, when
+ * a `taskId` is given; else the active tab of the target world as [resolveTargetTab] picks it. A
+ * `taskId` that names no task is refused before any pane is opened.
+ *
+ * @param args the tool arguments (`tabId`, `worldId`, `cwd` and `taskId` are consulted).
+ * @param taskIndex the task index, or null where tasks are not wired up (`taskId` is then refused).
+ * @return the new window's leaf and its tab.
+ * @throws McpArgumentException for an unknown tab, world or task, or tasks that are not available.
+ */
+private fun openWindow(args: JsonObject, taskIndex: TaskIndex?): NewWindow {
+    val taskId = args.optString("taskId")
+    if (taskId != null) {
+        val index = taskIndex ?: throw McpArgumentException("Tasks are not available on this server")
+        taskCall { index.requireTask(taskId) }
+    }
+    val tabId = args.optString("tabId")?.let(::requireTab)
+        ?: taskId?.let { taskTab(taskIndex!!, it, args.optString("worldId")?.let(::requireWorld)) }
+        ?: resolveTargetTab(args)
+    val leaf = WindowState.addPaneToTab(tabId, initialCwd = args.optString("cwd"))
+        ?: throw McpArgumentException("Unknown tabId: $tabId")
+    if (taskId != null) taskCall { taskIndex!!.addToTask(taskId, listOf(leaf.sessionId)) }
+    return NewWindow(leaf, tabId)
+}
+
+/**
  * Stamp the automatic agent-activity badge on [windowId] unless the
  * window already carries a (possibly custom) note. Called by every write
  * tool that touches a specific window or session.
@@ -355,9 +422,17 @@ fun registerMcpWriteTools(settingsRepo: SettingsRepository, taskIndex: TaskIndex
         inputSchema = schemaObject(
             "command" to schemaString("The command line to run."),
             "sessionId" to schemaString("Run in this existing session. Omit to create a new window."),
-            "tabId" to schemaString("When creating a window: the tab to create it in (default: active tab)."),
+            "tabId" to schemaString(
+                "When creating a window: the tab to create it in. Default: the tab the taskId's " +
+                    "sessions are already in, else the active tab.",
+            ),
             "worldId" to schemaString("When creating a window and no tabId is given: the world whose active tab to use (default: active world)."),
             "cwd" to schemaString("When creating a window: the starting directory for its shell."),
+            "taskId" to schemaString(
+                "When creating a window: the task the agent session that starts in it belongs to " +
+                    "(an id from create_task or list_tasks). The window opens in the tab that " +
+                    "task's sessions are in. Optional.",
+            ),
             "waitForExit" to schemaBool("Wait for completion and capture output. Default true."),
             "timeoutMs" to schemaInt("Max wait in ms (default $DEFAULT_RUN_TIMEOUT_MS, max $MAX_RUN_TIMEOUT_MS)."),
             required = listOf("command"),
@@ -366,11 +441,9 @@ fun registerMcpWriteTools(settingsRepo: SettingsRepository, taskIndex: TaskIndex
         val command = args.requireString("command")
         var createdWindowId: String? = null
         val sessionId = args.optString("sessionId") ?: run {
-            val tabId = resolveTargetTab(args)
-            val leaf = WindowState.addPaneToTab(tabId, initialCwd = args.optString("cwd"))
-                ?: throw McpArgumentException("Unknown tabId: $tabId")
-            createdWindowId = leaf.id
-            leaf.sessionId
+            val created = openWindow(args, taskIndex).leaf
+            createdWindowId = created.id
+            created.sessionId
         }
         val session = requireSession(sessionId)
         markAgentTouchedBySession(sessionId)
@@ -438,12 +511,18 @@ fun registerMcpWriteTools(settingsRepo: SettingsRepository, taskIndex: TaskIndex
 
     writeTool(
         name = "create_window",
-        description = "Create a new terminal window (pane). Returns the new windowId and sessionId. " +
-            "When this window will run another agent session for work you are already doing " +
-            "(for example a second session you start to split the work), pass taskId, the id " +
-            "create_task returned, so the sessions show as one task in the agents overview.",
+        description = "Create a new terminal window (pane). Returns the new windowId, sessionId and " +
+            "tabId. A tab is a task's workspace: when this window will run another agent session " +
+            "for work you are already doing (for example a second session you start to split the " +
+            "work), pass taskId, the id create_task returned. The window then opens in the tab that " +
+            "task's sessions are already in, so the task stays together, and the sessions show as " +
+            "one task in the agents overview. Without a taskId, or when the task has no tab yet, " +
+            "it opens in the active tab; an explicit tabId always wins.",
         inputSchema = schemaObject(
-            "tabId" to schemaString("Tab to create the window in (default: active tab)."),
+            "tabId" to schemaString(
+                "Tab to create the window in. Default: the tab the taskId's sessions are already " +
+                    "in, else the active tab.",
+            ),
             "worldId" to schemaString("When no tabId is given: the world whose active tab to use (default: active world)."),
             "cwd" to schemaString("Starting directory for the new shell."),
             "title" to schemaString("Optional custom window name."),
@@ -453,21 +532,13 @@ fun registerMcpWriteTools(settingsRepo: SettingsRepository, taskIndex: TaskIndex
             ),
         ),
     ) { _, args ->
-        val taskId = args.optString("taskId")
-        if (taskId != null) {
-            val index = taskIndex ?: throw McpArgumentException("Tasks are not available on this server")
-            taskCall { index.requireTask(taskId) }
-        }
-        val tabId = resolveTargetTab(args)
-        val leaf = WindowState.addPaneToTab(tabId, initialCwd = args.optString("cwd"))
-            ?: throw McpArgumentException("Unknown tabId: $tabId")
-        args.optString("title")?.let { WindowState.renamePane(leaf.id, it) }
-        markAgentTouched(leaf.id)
-        if (taskId != null) taskCall { taskIndex!!.addToTask(taskId, listOf(leaf.sessionId)) }
+        val window = openWindow(args, taskIndex)
+        args.optString("title")?.let { WindowState.renamePane(window.leaf.id, it) }
+        markAgentTouched(window.leaf.id)
         McpToolResult.json(buildJsonObject {
-            put("windowId", leaf.id)
-            put("sessionId", leaf.sessionId)
-            put("tabId", tabId)
+            put("windowId", window.leaf.id)
+            put("sessionId", window.leaf.sessionId)
+            put("tabId", window.tabId)
         })
     }
 

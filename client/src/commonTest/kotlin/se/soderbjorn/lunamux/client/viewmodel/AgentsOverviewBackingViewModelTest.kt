@@ -72,8 +72,12 @@ class AgentsOverviewBackingViewModelTest {
         )
     }
 
+    /** Puts one pane per id in an open tab, so those sessions (whose leaf is `leaf-<id>`) are in an open tab. */
+    private fun hosted(vararg ids: String) = layout(*ids.map { leaf("leaf-$it") }.toTypedArray())
+
     @Test
     fun nowListsNeedsYouFirstThenWorkingLongestWaitingFirst() {
+        hosted("w-new", "n-new", "w-old", "n-old")
         windowState.updateAgentSessions(
             listOf(
                 session("w-new", "working", since = 5_000),
@@ -97,6 +101,7 @@ class AgentsOverviewBackingViewModelTest {
 
     @Test
     fun chipCountsEqualTheNowSection() {
+        hosted("a", "b", "c", "d")
         windowState.updateAgentSessions(
             listOf(session("a", "needs_you"), session("b", "working"), session("c", "working"), session("d", "idle")),
             true,
@@ -119,6 +124,7 @@ class AgentsOverviewBackingViewModelTest {
 
     @Test
     fun chipWordingFollowsTheCounts() {
+        hosted("a", "b", "c")
         fun chip(vararg rows: AgentSessionSummary): Pair<String?, String?> {
             windowState.updateAgentSessions(rows.toList(), true)
             return vm.state.chipNeeds to vm.state.chipRest
@@ -149,6 +155,7 @@ class AgentsOverviewBackingViewModelTest {
     @Test
     fun aTitleThatOnlySaysWhereTheSessionRanIsReplacedByItsPrompt() {
         fun title(title: String?, branch: String? = null, home: Boolean = false, repo: String? = "proj", cwd: String = "/work/proj"): String {
+            layout(leaf("leaf-x"))
             windowState.updateAgentSessions(
                 listOf(session("x", "working", title = title, branch = branch, cwdHome = home, repo = repo, cwd = cwd, firstPrompt = "**Fix** the `login` bug")),
                 true,
@@ -199,6 +206,8 @@ class AgentsOverviewBackingViewModelTest {
         // state time was refreshed without the session doing anything); "fresh" is inside the idle
         // grace; "justDone" ended a minute ago and gets the same grace; "done" ended three hours
         // ago. The heading a row sits under and the age it shows are read from the same moment.
+        // The two idle ones are in open tabs; the ended ones have no pane.
+        layout(leaf("leaf-stale"), leaf("leaf-fresh"))
         windowState.updateAgentSessions(
             listOf(
                 session("stale", "idle", since = clockNow - 60_000, lastActivityAt = clockNow - 2 * day),
@@ -366,6 +375,7 @@ class AgentsOverviewBackingViewModelTest {
 
     @Test
     fun theChipCountsAreNotNarrowedByTheQuery() {
+        hosted("a", "b")
         windowState.updateAgentSessions(listOf(session("a", "working"), session("b", "working")), true)
         vm.setQuery("zzz")
         answer("zzz")
@@ -612,5 +622,62 @@ class AgentsOverviewBackingViewModelTest {
     fun geminiOffersOpenFolderInsteadOfResume() {
         windowState.updateAgentSessions(listOf(session("g", "ended", agent = "gemini", leaf = null, endedAt = 3)), true)
         assertEquals("open folder", vm.state.rows.single().actionLabel)
+    }
+
+    @Test
+    fun aWorkingSessionOutsideEveryOpenTabIsInABandNotInNowAndTheChipLeavesItOut() {
+        hosted("in")
+        windowState.updateAgentSessions(listOf(session("in", "working"), session("out", "working", leaf = "gone")), true)
+        assertEquals(listOf("in"), vm.state.now.map { it.id })
+        assertEquals(listOf("out"), vm.state.recent.map { it.id })
+        assertEquals("working", vm.state.recent.single().state, "a lone session in a band keeps its real state")
+        assertEquals(1, vm.state.workingCount)
+    }
+
+    @Test
+    fun aSessionThatNeedsYouStaysInNowWhereverItRunsAndIsCounted() {
+        hosted("in")
+        windowState.updateAgentSessions(
+            listOf(session("in", "needs_you", since = 2_000), session("out", "needs_you", since = 1_000, leaf = "gone")),
+            true,
+        )
+        assertEquals(listOf("out", "in"), vm.state.now.map { it.id }, "the question outside every tab is not hidden in a band")
+        assertEquals(2, vm.state.needYouCount)
+        assertTrue(vm.state.recent.isEmpty())
+    }
+
+    @Test
+    fun aSessionThatJustWentIdleOutsideEveryOpenTabGetsNoGraceInNow() {
+        hosted("in")
+        windowState.updateAgentSessions(
+            listOf(
+                session("in", "idle", since = now - 1_000).copy(lastActivityAt = now - 1_000),
+                session("out", "idle", since = now - 1_000, leaf = "gone").copy(lastActivityAt = now - 1_000),
+            ),
+            true,
+        )
+        assertEquals(listOf("in"), vm.state.now.map { it.id })
+        assertEquals(listOf("out"), vm.state.recent.map { it.id })
+    }
+
+    @Test
+    fun aSessionInATabTheStripHidesIsStillInAnOpenTabAndInNow() {
+        // "Open" is read from every tab of the layout, not from the ones the tab strip or the sidebar draws.
+        windowState.updateConfig(
+            WindowConfig(
+                tabs = listOf(
+                    TabConfig(id = "shown", title = "shown", panes = listOf(leaf("leaf-a"))),
+                    TabConfig(id = "hidden", title = "hidden", panes = listOf(leaf("leaf-b")), isHidden = true),
+                    TabConfig(id = "aside", title = "aside", panes = listOf(leaf("leaf-c")), isHiddenFromSidebar = true),
+                ),
+                activeTabId = "shown",
+            ),
+        )
+        windowState.updateAgentSessions(
+            listOf(session("a", "working"), session("b", "working"), session("c", "working"), session("gone", "working", leaf = "nowhere")),
+            true,
+        )
+        assertEquals(setOf("a", "b", "c"), vm.state.now.map { it.id }.toSet())
+        assertEquals(listOf("gone"), vm.state.recent.map { it.id })
     }
 }
