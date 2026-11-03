@@ -53,9 +53,25 @@
 #                    wear other marks; the home-folder session wears none. The footer says
 #                    "mark = one thread of work". The marks are stored, so seeding again and
 #                    restarting shows the same ones.
+#   Order            NOW lists tasks first, then loose sessions, each group in the order its work
+#                    started. A session going working -> needs you -> working never moves its row.
+#   Who              ⚙ marks a session an MCP tool started ("Rebuild the search index" and the file
+#                    tasks' members are seeded so) and ❯ one a person typed (for example "Trace the slow
+#                    login"); records with neither show nothing.
+#   Dim prefix       "Invoice export:" is dim and the rest bold on the rows of that thread; "first
+#                    run against staging" and "first draft of the spec" also dim "first".
+#   The ◆ row        the first row that needs you is selected on open, tinted amber with a bar.
+#   Footer           "mark = one thread of work · ❯ you started it · ⚙ a session did · 1▘ tab 1,
+#                    top-left pane" (it is cut short, never the key hints, in a narrow panel).
 #   Search           type "invoice": three sessions of "Invoice export migration", 30 days old,
 #                    found only through their task's title ("in task Invoice export migration").
 #                    "token" also matches by task; "limiter" matches by title first.
+#
+# Place cue ("2▘" = tab 2, top-left pane): needs live panes, so it is not seeded. Make a second tab
+# (the scratch server's MCP create_tab, or any tab button), split it into four panes with the layout
+# picker's Grid, open a few agents, and each live row names its tab and quarter. A pane that fills
+# its tab shows just the tab number; halves show ▌ ▐ ▀ ▄. For a session an MCP tool starts, use
+# create_window + run_command; for a person's, type the command in the pane yourself.
 #
 # Hand-started cases (these need a running agent, so they are not seeded): open a pane in the
 # scratch server and start `claude` in it for a live NOW row. To make that agent group its own
