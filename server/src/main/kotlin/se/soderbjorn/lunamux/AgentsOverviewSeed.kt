@@ -7,7 +7,9 @@
  * task files whose members are live. It also seeds the awkward rows a real installation produces:
  * sessions that say nothing about what the work is (a home folder, a branch named after a run, a
  * detached HEAD), previews written in markdown, a bare code fence, and sessions a server restart
- * ends. It is run by the Gradle task `seedAgentsOverview` (through
+ * ends. It also seeds one family of work whose rows all share a thread, "Invoice export": a task
+ * file, its two members and five loose sessions in one worktree, next to two sessions of the same
+ * repository on other branches, so the marks the overview draws can be compared. It is run by the Gradle task `seedAgentsOverview` (through
  * `scripts/seed-agents-overview.sh`) while the scratch server is stopped, and by a test.
  *
  * The seeder only ever writes to the paths it is given and refuses the folders a real
@@ -94,6 +96,17 @@ object AgentsOverviewSeed {
         val state: String = "ended",
     )
 
+    /**
+     * One loose session of the Invoice export worktree: a session that ran there and belongs to
+     * no task.
+     *
+     * @property id the record id.
+     * @property title the stored title.
+     * @property prompt what was first asked.
+     * @property ago how long before the seed time it ended.
+     */
+    private class Loose(val id: String, val title: String, val prompt: String, val ago: Long)
+
     /** An agent-made task: its id, its title, and the age of its oldest session. */
     private class SeededTask(val id: String, val title: String, val createdAgo: Long)
 
@@ -145,6 +158,14 @@ object AgentsOverviewSeed {
      * a stored title that is a run id or a folder name, a preview in bold, a preview that is a
      * bare code fence, and two sessions still open whose state is days old.
      */
+    private val invoiceLoose = listOf(
+        Loose("seed-invoice-rounding", "Invoice export: fix the rounding in totals", "Totals in the export differ by a cent; fix the rounding", 5 * HOUR),
+        Loose("seed-invoice-columns", "Invoice export: review the CSV columns", "Review the CSV columns against the spec and list the gaps", 7 * HOUR),
+        Loose("seed-invoice-staging", "Invoice export: first run against staging", "Run the export against staging and compare it with last month", 1 * DAY),
+        Loose("seed-invoice-spec", "Invoice export: first draft of the spec", "Write a first draft of the export spec", 5 * DAY),
+        Loose("seed-invoice-spike", "Invoice export: spike on streaming the file", "Spike: can the export stream the file instead of building it in memory?", 6 * DAY),
+    )
+
     private val cases = listOf(
         Case("seed-home", null, null, null, inHome = true, prompt = "Why did the nightly backup email never arrive?", lastSaid = "The mail relay rejected it; I resent it.", ago = 3 * HOUR),
         Case("seed-branch-only", null, "lunamux-agent-overview", "aov-21-impl", prompt = "Add the task rows to the overview and keep their order stable", lastSaid = "Done; the rows keep their order.", ago = 5 * HOUR),
@@ -155,6 +176,26 @@ object AgentsOverviewSeed {
         Case("seed-open-idle", "Trace the slow login", "gateway", "fix/slow-login", prompt = "Why is the login call slow on Mondays?", lastSaid = "A missing index on sessions.user_id; I added it.", ago = 2 * DAY, state = "idle"),
         Case("seed-open-working", "Rebuild the search index", "billing", "chore/search-index", prompt = "Rebuild the search index with the new analyser", lastSaid = null, ago = 5 * HOUR, state = "working"),
     )
+
+    /** The branch the Invoice export worktree has checked out. */
+    private const val INVOICE_BRANCH = "invoice-export"
+
+    /**
+     * The folder of the Invoice export worktree, created on disk.
+     *
+     * Called by [seed] and by the seeder's test. The folder's name is `<workdir>/billing-wt<n>/invoice-export`,
+     * where `<n>` is the first number for which the thread's mark would start in the half-circle
+     * range (marks 12 to 17), so the seeded family wears the same sign wherever the scratch folder is.
+     * A folder that is not a real worktree is enough: the seeded records name it as their
+     * worktree, and the task file names it as its folder.
+     *
+     * @param workdir the canonical scratch folder the database sits in.
+     * @return the canonical path of the worktree folder.
+     */
+    fun invoiceWorktree(workdir: String): String {
+        val n = (0..999).first { ThreadMarks.hashMark("path:$workdir/billing-wt$it/$INVOICE_BRANCH") / 6 == 2 }
+        return File(workdir, "billing-wt$n/$INVOICE_BRANCH").also { it.mkdirs(); File(workdir, "billing").mkdirs() }.canonicalPath
+    }
 
     /**
      * Write the seed into [dbFile] and [tasksDir].
@@ -179,7 +220,8 @@ object AgentsOverviewSeed {
             sharedThemesPath = File(dbFile.absoluteFile.parentFile, "seed-themes.json").path,
             appSettingsPath = File(dbFile.absoluteFile.parentFile, "seed-ui-settings.json").path,
         )
-        val workdir = dbFile.absoluteFile.parentFile.absolutePath
+        // Canonical, so the folders the seed names are the strings the server keys its threads on.
+        val workdir = dbFile.absoluteFile.parentFile.canonicalPath
         for (t in tasks) {
             repo.saveAgentTask(SettingsRepository.AgentTaskRow(t.id, t.title, now - t.createdAgo, now - t.createdAgo))
         }
@@ -230,12 +272,36 @@ object AgentsOverviewSeed {
                 ),
             )
         }
-        val files = writeTaskFiles(tasksDir, workdir, now)
-        return Summary(sessions.size + cases.size, tasks.size, files)
+        val worktree = invoiceWorktree(workdir)
+        for (l in invoiceLoose) {
+            val at = now - l.ago
+            repo.saveAgentSession(
+                AgentSessionRecord(
+                    id = l.id,
+                    agent = "claude",
+                    agentSessionId = "5eed0002-0000-4000-8000-%012d".format(l.id.hashCode().toLong() and 0xffffffffL),
+                    source = "hooks",
+                    cwd = worktree,
+                    repo = "billing",
+                    branch = INVOICE_BRANCH,
+                    worktreePath = worktree,
+                    title = l.title,
+                    firstPrompt = l.prompt,
+                    state = "ended",
+                    stateSince = at,
+                    createdAt = at - 40 * MINUTE,
+                    endedAt = at,
+                    repoRoot = File(workdir, "billing").path,
+                    lastSaid = "Done; the export checks pass.",
+                ),
+            )
+        }
+        val files = writeTaskFiles(tasksDir, workdir, now, worktree)
+        return Summary(sessions.size + cases.size + invoiceLoose.size, tasks.size, files)
     }
 
     /**
-     * Write the task files: one live task that needs the person and works, one whose members are all
+     * Write the task files: one live task that needs the person and works, the Invoice export task, one whose members are all
      * done but have not ended, one with work still in review or queued, one whose file has gone stale, and two whose members have all ended.
      *
      * Called by [seed]. Each file is written under a dot-name and renamed into place, as a real
@@ -244,9 +310,10 @@ object AgentsOverviewSeed {
      * @param tasksDir the folder to write into.
      * @param workdir an absolute folder for the files' `open` actions.
      * @param now the time the ages are counted back from.
+     * @param worktree the Invoice export worktree, the folder of that family's task file.
      * @return how many files were written.
      */
-    private fun writeTaskFiles(tasksDir: File, workdir: String, now: Long): Int {
+    private fun writeTaskFiles(tasksDir: File, workdir: String, now: Long, worktree: String): Int {
         fun member(title: String, state: String, ago: Long, line: String? = null, label: String? = null, links: List<String> = emptyList()): JsonObject =
             buildJsonObject {
                 put("title", title)
@@ -257,7 +324,7 @@ object AgentsOverviewSeed {
                 if (links.isNotEmpty()) put("links", buildJsonArray { links.forEach { add(JsonPrimitive(it)) } })
             }
 
-        fun task(id: String, title: String, repo: String, members: List<JsonObject>, mtimeAgo: Long) {
+        fun task(id: String, title: String, repo: String, members: List<JsonObject>, mtimeAgo: Long, folder: String = workdir) {
             val json = buildJsonObject {
                 put("version", 2)
                 put("id", id)
@@ -265,7 +332,7 @@ object AgentsOverviewSeed {
                 put("repo", repo)
                 put("open", buildJsonObject {
                     put("command", "echo opened $title")
-                    put("folder", workdir)
+                    put("folder", folder)
                 })
                 put("members", JsonArray(members))
             }
@@ -307,6 +374,17 @@ object AgentsOverviewSeed {
             ),
             mtimeAgo = 0,
         )
+        // One family of work in one worktree: this task, its two members and the loose sessions
+        // above all share a mark. The task's folder is the worktree, so it copies that thread's mark.
+        task(
+            "seed-invoice-export", "Invoice export", "billing",
+            listOf(
+                member("Invoice export: parse the ledger csv", "idle", 4 * HOUR, label = "done", links = listOf("#91")),
+                member("Invoice export: write the migration", "idle", 90 * MINUTE, label = "in review", links = listOf("#93")),
+            ),
+            mtimeAgo = 0,
+            folder = worktree,
+        )
         task(
             "seed-nightly-sync", "Nightly sync", "ops",
             listOf(member("Sync worker", "working", 2 * HOUR, line = "Copying the ledger")),
@@ -328,7 +406,7 @@ object AgentsOverviewSeed {
             ),
             mtimeAgo = 9 * DAY,
         )
-        return 6
+        return 7
     }
 
     /**

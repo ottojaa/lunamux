@@ -31,15 +31,15 @@ class AgentsOverviewSeedTest {
     @Test
     fun `the seed holds about twenty ended sessions spread over the ages the overview is read at`() {
         val summary = AgentsOverviewSeed.seed(db, tasksDir, now)
-        assertEquals(29, summary.sessions)
-        assertEquals(6, tasksDir.listFiles { f -> f.name.endsWith(".json") }!!.size)
+        assertEquals(34, summary.sessions)
+        assertEquals(7, tasksDir.listFiles { f -> f.name.endsWith(".json") }!!.size)
 
         val repo = repo()
         val kept = repo.loadRecentEndedAgentSessions(now - 14 * day, 300)
         assertTrue(kept.all { it.state == "ended" && it.endedAt != null && it.source == "hooks" })
         val ages = kept.map { (now - it.endedAt!!) / day }.toSet()
         assertTrue(0L in ages && 2L in ages && 6L in ages && 12L in ages, "ages today, 2, 6 and 12 days: $ages")
-        assertEquals(23, kept.size, "the sessions of 30 days or more are older than the window")
+        assertEquals(28, kept.size, "the sessions of 30 days or more are older than the window")
         assertTrue(repo.loadRecentEndedAgentSessions(0, 300).any { (now - it.endedAt!!) >= 30 * day })
     }
 
@@ -75,15 +75,18 @@ class AgentsOverviewSeedTest {
         val repo = repo()
         val tasks = TaskIndex(repo, AgentSessionTracker(repo), MutableStateFlow(emptyList()), { null }, { now })
         val hits = AgentSessionSearch.search(repo, null, "invoice", tasks)
-        assertEquals(3, hits.size)
-        assertTrue(hits.all { it.field == "task" && it.taskTitle == "Invoice export migration" })
+        val viaTask = hits.filter { it.field == "task" }
+        assertEquals(3, viaTask.size)
+        assertTrue(viaTask.all { it.taskTitle == "Invoice export migration" })
+        // The Invoice export family names itself in its sessions' titles, so those match directly.
+        assertEquals(5, hits.count { it.field == "title" })
     }
 
     @Test
     fun `seeding again replaces the records instead of adding to them`() {
         AgentsOverviewSeed.seed(db, tasksDir, now)
         AgentsOverviewSeed.seed(db, tasksDir, now + day)
-        assertEquals(27, repo().loadRecentEndedAgentSessions(0, 300).size)
+        assertEquals(32, repo().loadRecentEndedAgentSessions(0, 300).size)
         assertEquals(5, repo().loadAgentTasks().size)
     }
 
@@ -96,5 +99,30 @@ class AgentsOverviewSeedTest {
         assertFailsWith<IllegalArgumentException> { AgentsOverviewSeed.seed(File(root, "termtastic.db"), tasksDir, now) }
         assertFailsWith<IllegalArgumentException> { AgentsOverviewSeed.seed(db, File(home, ".lunamux/tasks"), now) }
         assertTrue(!db.exists() && !tasksDir.exists())
+    }
+
+    @Test
+    fun `the Invoice export task, its sessions and nothing else share one mark in the half-circle range`() {
+        AgentsOverviewSeed.seed(db, tasksDir, now)
+        val repo = repo()
+        val marks = ThreadMarks(repo, gitInfo = { GitInfo() }, home = System.getProperty("user.home"), defaultBranchOf = { null })
+        val tracker = AgentSessionTracker(repo, clock = { now }, marks = marks).also { it.start() }
+        val watcher = TaskFilesWatcher(listOf(tasksDir)) {}.also { it.reload() }
+        val tasks = TaskIndex(repo, tracker, watcher.files, { null }, { now }, marks = marks)
+        tasks.recompute()
+
+        val summaries = tracker.summaries.value
+        val invoice = summaries.filter { it.id.startsWith("seed-invoice-") }
+        assertEquals(5, invoice.size)
+        val taskMark = tasks.state.value.tasks.single { it.id == "seed-invoice-export" }.mark
+        assertTrue(taskMark in 12..17, "the Invoice export mark is a half-circle: $taskMark")
+        assertTrue(invoice.all { it.mark == taskMark }, "loose sessions wear the task's mark: ${invoice.map { it.mark }}")
+
+        // Other branches of the same repository wear other marks; the home-folder session none.
+        val rebuild = summaries.single { it.id == "seed-open-working" }
+        val migration = summaries.single { it.id == "seed-bare-fence" }
+        assertTrue(rebuild.mark != null && migration.mark != null && rebuild.mark != migration.mark)
+        assertTrue(rebuild.mark != taskMark && migration.mark != taskMark)
+        assertEquals(null, summaries.single { it.id == "seed-home" }.mark)
     }
 }

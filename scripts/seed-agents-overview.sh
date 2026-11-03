@@ -4,8 +4,8 @@
 #
 #   scripts/seed-agents-overview.sh <db file> <tasks folder>
 #
-# Writes 21 ended agent sessions last active today, 1, 2, 6, 12 and 30 days ago, five
-# agent-made tasks, six task files, and 8 sessions that are awkward to name or to read (listed
+# Writes 26 ended agent sessions last active today, 1, 2, 6, 12 and 30 days ago, five
+# agent-made tasks, seven task files, and 8 sessions that are awkward to name or to read (listed
 # below). Run it again to refresh the ages (it replaces its own records and touches nothing else).
 # The ages are counted from the moment it runs, so seed again on the day you look. Seed while the
 # scratch server is STOPPED: the server reads its sessions and tasks once when it starts, and it
@@ -46,6 +46,13 @@
 #   A restart        "Trace the slow login" (open, idle for 2 days) and "Rebuild the search index"
 #                    (open, working for 5 hours) are ended by the server when it starts. They are
 #                    aged from when they last did anything (2d and 5h), not from the restart.
+#   Marks            "Invoice export" (a task file, in NOW) and its two members, plus five loose
+#                    sessions further down ("Invoice export: fix the rounding in totals" and four
+#                    more), all wear the same half-circle mark: one thread of work, one mark. "Rebuild
+#                    the search index" and "Show the migration" (same repository, other branches)
+#                    wear other marks; the home-folder session wears none. The footer says
+#                    "mark = one thread of work". The marks are stored, so seeding again and
+#                    restarting shows the same ones.
 #   Search           type "invoice": three sessions of "Invoice export migration", 30 days old,
 #                    found only through their task's title ("in task Invoice export migration").
 #                    "token" also matches by task; "limiter" matches by title first.
