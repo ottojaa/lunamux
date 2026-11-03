@@ -20,6 +20,14 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+/**
+ * Tests for [TaskPanelStore]: ordering, replacing and removing blocks, persistence across a restart, every
+ * limit and refusal, and what a button press types into the task's own session.
+ *
+ * Run by `:server:test`.
+ *
+ * @see TaskPanelStore
+ */
 class TaskPanelStoreTest {
     private val dir = File.createTempFile("lunamux-panel", "").apply { delete(); mkdirs(); deleteOnExit() }
     private val dbFile = File(dir, "test.db")

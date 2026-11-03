@@ -10,6 +10,14 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+/**
+ * Tests for [PanelMarkdown]: the small markdown reader that turns a text block into nodes the panel draws.
+ * Covers the supported syntax, text that must stay literal (markup, unmatched markers) and the link schemes kept.
+ *
+ * Run by `:client:jvmTest` and `:client:jsTest`.
+ *
+ * @see PanelMarkdown
+ */
 class PanelMarkdownTest {
     private fun t(s: String) = MdInline.Text(s)
 

@@ -34,6 +34,14 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+/**
+ * Tests for the four panel tools in [registerMcpPanelTools] driven through the MCP dispatcher: setting, upserting,
+ * removing and reading blocks, the token scopes, refusals that name the offender, and tool wording.
+ *
+ * Run by `:server:test`.
+ *
+ * @see registerMcpPanelTools
+ */
 class McpPanelToolsTest {
     private val dir = File.createTempFile("lunamux-mcp-panel", "").apply { delete(); mkdirs(); deleteOnExit() }
     private val dbFile = File(dir, "test.db")

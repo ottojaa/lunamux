@@ -34,6 +34,14 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+/**
+ * Tests for [TaskPanelViewModel]: when the panel shows, the agents block and its click actions, the stored
+ * blocks with their bylines, button presses, and the read-only peek with take over.
+ *
+ * Run by `:client:jvmTest` and `:client:jsTest`.
+ *
+ * @see TaskPanelViewModel
+ */
 class TaskPanelViewModelTest {
 
     /** Runs a suspend block that never actually suspends (the fake `send` returns at once). */
