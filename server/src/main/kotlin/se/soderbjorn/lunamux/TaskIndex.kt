@@ -390,7 +390,16 @@ class TaskIndex(
         return fileListings + agentListings
     }
 
-    private fun ownSessionOf(taskId: String): String? = synchronized(lock) { meta[taskId]?.leadSession }
+    /**
+     * The pane whose session speaks for a task.
+     *
+     * Called by the task panel's button handler to find where a button's text is typed, and by
+     * [listing] for `list_tasks`.
+     *
+     * @param taskId the task's id.
+     * @return the terminal session id of the task's own session, or null when none was named.
+     */
+    fun ownSessionOf(taskId: String): String? = synchronized(lock) { meta[taskId]?.leadSession }
 
     private fun statusOf(taskId: String): String? = synchronized(lock) { meta[taskId]?.status }
 

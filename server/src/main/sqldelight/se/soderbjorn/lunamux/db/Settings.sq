@@ -59,6 +59,21 @@ CREATE TABLE IF NOT EXISTS task_meta (
     status_at    INTEGER
 );
 
+-- The blocks agents write into a task's panel, any task id (an agent-made task or a task file's).
+-- `position` is the order the blocks are drawn in; `body` is the block's content as JSON and
+-- `kind` repeats its type name for anyone reading the table by hand.
+CREATE TABLE IF NOT EXISTS task_panel_blocks (
+    task_id    TEXT NOT NULL,
+    block_id   TEXT NOT NULL,
+    position   INTEGER NOT NULL,
+    kind       TEXT NOT NULL,
+    title      TEXT,
+    body       TEXT NOT NULL,
+    written_by TEXT,
+    written_at INTEGER NOT NULL,
+    PRIMARY KEY (task_id, block_id)
+);
+
 selectByKey:
 SELECT value FROM settings WHERE key = ?;
 
@@ -185,3 +200,17 @@ UPDATE task_meta SET lead_session = ? WHERE task_id = ?;
 
 setTaskStatus:
 UPDATE task_meta SET status = ?, status_by = ?, status_at = ? WHERE task_id = ?;
+
+selectTaskPanelBlocks:
+SELECT task_id, block_id, position, kind, title, body, written_by, written_at
+FROM task_panel_blocks ORDER BY task_id, position;
+
+upsertTaskPanelBlock:
+INSERT OR REPLACE INTO task_panel_blocks(task_id, block_id, position, kind, title, body, written_by, written_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteTaskPanelBlock:
+DELETE FROM task_panel_blocks WHERE task_id = ? AND block_id = ?;
+
+deleteTaskPanel:
+DELETE FROM task_panel_blocks WHERE task_id = ?;

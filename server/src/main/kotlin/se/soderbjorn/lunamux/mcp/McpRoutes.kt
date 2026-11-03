@@ -48,7 +48,9 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
 import se.soderbjorn.lunamux.ClaudeUsageMonitor
 import se.soderbjorn.lunamux.EVENTS_SESSION_HEADER
+import se.soderbjorn.lunamux.AgentSessionTracker
 import se.soderbjorn.lunamux.TaskIndex
+import se.soderbjorn.lunamux.TaskPanelStore
 import se.soderbjorn.lunamux.auth.DeviceAuth
 import se.soderbjorn.lunamux.persistence.SettingsRepository
 import se.soderbjorn.lunamux.readAuthToken
@@ -112,15 +114,21 @@ private suspend fun ApplicationCall.mcpAuthorize(repo: SettingsRepository): McpS
  * @param usageMonitor the Claude usage monitor backing `get_claude_usage`.
  * @param taskIndex the task index behind the task tools; when null (examples) those tools are
  *   not offered.
+ * @param taskPanelStore the store behind the task panel tools; they are offered only when this
+ *   and [agentTracker] are given.
+ * @param agentTracker names the agent in the caller's session, for the panel tools' "written by".
  */
 fun Route.mcpRoutes(
     settingsRepo: SettingsRepository,
     usageMonitor: ClaudeUsageMonitor,
     taskIndex: TaskIndex? = null,
+    taskPanelStore: TaskPanelStore? = null,
+    agentTracker: AgentSessionTracker? = null,
 ) {
     registerMcpReadTools(settingsRepo, usageMonitor)
     registerMcpWriteTools(settingsRepo, taskIndex)
     if (taskIndex != null) registerMcpTaskTools(taskIndex)
+    if (taskPanelStore != null && agentTracker != null) registerMcpPanelTools(taskPanelStore, agentTracker)
     registerMcpConsoleTools()
 
     post("/mcp") {
