@@ -1,18 +1,16 @@
 /**
  * The agents overview in the web client: a topbar chip that says how many agent sessions need the
- * user and how many work, and the ⌘⇧A overlay that lists every agentic-CLI session (Claude Code,
- * Codex, Gemini) as one terminal-style table: "Now", then what finished or went quiet under
- * "Last few days" and "Last two weeks" (a heading with nothing under it is not drawn).
+ * user and how many work, and the ⌘⇧A overlay that lists every task as one aligned row under
+ * "NOW", then what finished or went quiet under "EARLIER" in two bands, "last few days" and
+ * "last two weeks" (a heading with nothing under it is not drawn).
  *
- * Every row is the same seven-column grid: a gutter (the task chevron or its tree lines), the
- * state glyph (the only place a state is drawn as a glyph), the title, where it runs, a status
- * line, the age and the row's own action. A task with several sessions is an expansion panel in
- * the same grid: a bold header whose click, →, ← and space fold it, whose action ("jump" to the
- * session that most needs the person, else "open" the task's own session) is its ↵, and whose
- * sessions hang under it on tree lines; a task with one session is that session's plain row. Typing two or more characters
- * swaps the lists for search results over every session ever run; → peeks at a session's screen
- * and ⌘⌫ closes a live one after an inline confirmation. The footer names the keys that work on
- * the selected row.
+ * Every row is the same six-column grid: a marker (◆ when the task needs the person, ▸ on the
+ * selected row), the title, where it runs, one state word, a detail line and the age. The row has no
+ * glyphs and no band; "needs you" is the only coloured word. The selected row carries one more line
+ * under it with the full text and the tab its session sits in. ↵ opens the row, ⌘↵ takes a
+ * background tab over, → peeks at the session ↵ would open, and ⌘⌫ closes a live one after an
+ * inline confirmation. Typing two or more characters swaps the lists for search results over every
+ * task ever run, one row per task. The footer is the same for every selection.
  *
  * All state and behaviour live in the shared [AgentsOverviewBackingViewModel]; this file only
  * draws its state as plain DOM and turns key presses and clicks into calls on it. Rows are found
@@ -36,10 +34,7 @@ import org.w3c.dom.HTMLInputElement
 import org.w3c.dom.events.Event
 import org.w3c.dom.events.KeyboardEvent
 import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel
-import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Footer
-import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Glyph
 import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Row
-import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.RowKind as Kind
 import se.soderbjorn.lunula.web.hotkey.Hotkey
 import se.soderbjorn.lunula.web.hotkey.HotkeyActionSpec
 import se.soderbjorn.lunula.web.hotkey.HotkeyBindings
@@ -62,7 +57,6 @@ private var chipElement: HTMLElement? = null
 private var overlayElement: HTMLElement? = null
 private var searchInput: HTMLInputElement? = null
 private var listElement: HTMLElement? = null
-private var footElement: HTMLElement? = null
 private var shownRows: Map<String, Row> = emptyMap()
 private var searchTimer: Int? = null
 private var peekTimer: Int? = null
@@ -78,14 +72,8 @@ private const val PEEK_REFRESH_MS = 2_000
 /** How often the open list redraws on its own, so ages move and a working row that has gone quiet stops moving. */
 private const val CLOCK_TICK_MS = 30_000
 
-/**
- * One entry of the footer: a key and what it does. An entry without a key is a plain remark.
- *
- * @property key the key as drawn, such as `→` or `⌘⌫`, or empty for a remark.
- * @property word what the key does, or the remark itself.
- * @property cls an extra class: how the entry gives way when the panel narrows.
- */
-private data class FooterSegment(val key: String, val word: String, val cls: String = "")
+/** The footer's keys and what they do. It is the same for every selection. */
+private val FOOTER = listOf("↵" to "open", "↑↓" to "move", "esc" to "close")
 
 /**
  * Register the configurable **agents overview** hotkey (default ⌘⇧A) with the
@@ -236,7 +224,7 @@ private fun ensureOverlay(query: String) {
     val input = document.createElement("input") as HTMLInputElement
     input.type = "text"
     input.className = "ao-search"
-    input.placeholder = "search every session, closed ones too"
+    input.placeholder = "search every task, closed ones too"
     input.value = query
     input.setAttribute("autocomplete", "off")
     input.setAttribute("spellcheck", "false")
@@ -258,6 +246,13 @@ private fun ensureOverlay(query: String) {
         val key = ((e.target as? HTMLElement)?.closest(".ao-seg") as? HTMLElement)?.getAttribute("data-key")
         if (!key.isNullOrEmpty()) onFooterKey(key)
     })
+    FOOTER.forEach { (key, word) ->
+        val seg = span("ao-seg", "")
+        seg.setAttribute("data-key", key)
+        seg.appendChild(span("ao-k", key))
+        seg.appendChild(document.createTextNode(word))
+        foot.appendChild(seg)
+    }
 
     panel.appendChild(line)
     panel.appendChild(list)
@@ -267,7 +262,6 @@ private fun ensureOverlay(query: String) {
     overlayElement = backdrop
     searchInput = input
     listElement = list
-    footElement = foot
     input.focus()
 }
 
@@ -279,18 +273,14 @@ private fun closeOverlayElement() {
     overlayElement = null
     searchInput = null
     listElement = null
-    footElement = null
     shownRows = emptyMap()
 }
 
 /**
  * Turn a click in the list into a view-model call, finding the row by its id.
  *
- * A task header folds on a click anywhere except its action, which does what ↵ does on the header
- * (jump to the session that most needs the person, else run the task's `open` action, else fold),
- * and its `open` control, which runs the task's `open` action even while a session is live;
- * the "+ N more" line shows the rest of the last two weeks; any other row is selected and done
- * (jumped to, resumed or opened), as ↵ would.
+ * The "+ N more" line shows the rest of the last two weeks; any other row is selected and opened,
+ * as ↵ would.
  *
  * @param target the element that was clicked, or null.
  */
@@ -299,26 +289,17 @@ private fun onListClick(target: HTMLElement?) {
     if (el.classList.contains("ao-more")) { agentsOverview.showMoreEarlier(); return }
     val row = el.getAttribute("data-id")?.let { shownRows[it] } ?: return
     agentsOverview.select(row.id)
-    when {
-        row.kind == Kind.TASK && target.closest(".ao-open") != null -> launchAgentsOverview { agentsOverview.openTask(row) }
-        row.kind == Kind.TASK && target.closest(".ao-x") == null -> row.taskId?.let { agentsOverview.toggleTask(it) }
-        else -> launchAgentsOverview { agentsOverview.activate(row) }
-    }
+    launchAgentsOverview { agentsOverview.activate(row) }
 }
 
 /**
  * Do what a footer segment's key does, when the segment is clicked.
  *
- * @param key the segment's key as drawn (`→`, `←`, `space`, `↵`, `⌘↵`, `⌘⌫` or `esc`); the others do nothing.
+ * @param key the segment's key as drawn (`↵` or `esc`); the others do nothing.
  */
 private fun onFooterKey(key: String) {
     when (key) {
-        "→" -> launchAgentsOverview { agentsOverview.stepIn() }
-        "←" -> agentsOverview.stepOut()
-        "space" -> launchAgentsOverview { agentsOverview.toggleSelected() }
-        "⌘⌫" -> launchAgentsOverview { agentsOverview.requestClose() }
         "↵" -> launchAgentsOverview { agentsOverview.activateSelected() }
-        "⌘↵" -> launchAgentsOverview { agentsOverview.takeOverSelected() }
         "esc" -> agentsOverview.back()
     }
 }
@@ -326,12 +307,11 @@ private fun onFooterKey(key: String) {
 /**
  * Turn a key press in the search box into a view-model call.
  *
- * ↑ and ↓ move the selection (which also closes a peek or a confirmation). → steps in when the
- * caret is at the end of the text: it unfolds a task, enters it, or peeks at a session. ←
- * steps out while the box is empty or a peek is open, and space folds or unfolds a task
- * while the box is empty. ⌘⌫ asks to close the selected session (only while the box is empty),
- * ⌘↵ takes the selected session's background tab over (in the list and in its peek), and esc
- * steps back one level.
+ * ↑ and ↓ move the selection (which also closes a peek or a confirmation). → peeks at the session
+ * ↵ would open when the caret is at the end of the text, and ← goes back out of the peek. ⌘⌫ asks
+ * to close the selected session (only while the box is empty and the row is one live session),
+ * ⌘↵ takes the selected session's background tab over (in the list and in its peek), and esc steps
+ * back one level: the peek, then the question, then the overlay. Space types into the search.
  *
  * @param e the key press in the search box.
  */
@@ -350,15 +330,11 @@ private fun onSearchKey(e: KeyboardEvent) {
         }
         e.key == "ArrowRight" && input != null && input.selectionStart == input.value.length -> {
             e.preventDefault()
-            launchAgentsOverview { agentsOverview.stepIn() }
+            launchAgentsOverview { agentsOverview.peek() }
         }
-        e.key == "ArrowLeft" && (state.peek != null || state.query.isEmpty()) -> {
+        e.key == "ArrowLeft" && state.peek != null -> {
             e.preventDefault()
-            agentsOverview.stepOut()
-        }
-        e.key == " " && state.query.isEmpty() -> {
-            e.preventDefault()
-            launchAgentsOverview { agentsOverview.toggleSelected() }
+            agentsOverview.closePeek()
         }
         e.key == "Backspace" && e.metaKey && state.query.isEmpty() -> {
             e.preventDefault()
@@ -373,10 +349,9 @@ private fun launchAgentsOverview(block: suspend () -> Unit) {
 }
 
 /**
- * Rebuild the list and the footer from [state]: search results under a "N MATCHES" heading while
- * searching, otherwise the "NOW" section and the two EARLIER bands, "LAST FEW DAYS" and
- * "LAST TWO WEEKS". The selected row is highlighted and
- * carries the peek; the close confirmation follows the row it asks about.
+ * Rebuild the list from [state]: search results under a "N MATCHES" heading while searching,
+ * otherwise the "NOW" section and the two EARLIER bands. The selected row is highlighted and
+ * carries its extra line and the peek; the close confirmation follows the row it asks about.
  *
  * @param state the view model's current state.
  */
@@ -384,25 +359,12 @@ private fun renderList(state: AgentsOverviewBackingViewModel.State) {
     val list = listElement ?: return
     list.textContent = ""
     shownRows = state.rows.associateBy { it.id }
-    renderFooter(state)
     if (state.rows.isEmpty()) {
         list.appendChild(div("ao-empty").also { it.textContent = state.emptyText })
         return
     }
-    val now = kotlin.js.Date.now().toLong()
-    fun add(rows: List<Row>) = rows.forEachIndexed { i, row ->
-        val selected = row.id == state.selectedId
-        val sameTaskAfter = rows.getOrNull(i + 1)?.let { it.taskId != null && it.taskId == row.taskId } == true
-        // A unit that starts right after a task gets the gap a header gets, so a lone session
-        // never reads as one of the task's members.
-        val gap = AgentsOverviewBackingViewModel.startsAfterTask(rows.getOrNull(i - 1), row, state.tasks)
-        list.appendChild(
-            if (row.kind == Kind.TASK) {
-                buildRow(row, state, selected, now, kids = sameTaskAfter, last = false)
-            } else {
-                buildRow(row, state, selected, now, kids = false, last = inPanel(row, state) && !sameTaskAfter, gap = gap)
-            },
-        )
+    fun add(rows: List<Row>) = rows.forEach { row ->
+        list.appendChild(buildRow(row, state, row.id == state.selectedId))
         state.confirm?.takeIf { it.rowId == row.id }?.let { list.appendChild(buildConfirm(it)) }
     }
     if (state.matchMode) {
@@ -414,67 +376,16 @@ private fun renderList(state: AgentsOverviewBackingViewModel.State) {
             add(state.now)
         }
         if (state.recent.isNotEmpty()) {
-            list.appendChild(div("ao-sec").also { it.textContent = "LAST FEW DAYS" })
+            list.appendChild(div("ao-sec").also { it.textContent = "EARLIER · LAST FEW DAYS" })
             add(state.recent)
         }
         if (state.fortnight.isNotEmpty()) {
-            list.appendChild(div("ao-sec").also { it.textContent = "LAST TWO WEEKS" })
+            list.appendChild(div("ao-sec").also { it.textContent = "EARLIER · LAST TWO WEEKS" })
             add(state.fortnight)
             if (state.earlierHidden > 0) list.appendChild(buildMoreLine(state.earlierHidden))
         }
     }
     (list.querySelector(".ao-sel") as? HTMLElement)?.asDynamic().scrollIntoView(js("({block: 'nearest'})"))
-}
-
-/**
- * The keys that work on the selected row, drawn under the list: each key in the text colour and
- * its words dim, as clickable segments.
- *
- * @param state the view model's current state; its footer says which set of keys applies.
- */
-private fun renderFooter(state: AgentsOverviewBackingViewModel.State) {
-    val foot = footElement ?: return
-    foot.textContent = ""
-    footerSegments(state).forEach { seg ->
-        val el = span("ao-seg ${seg.cls}".trim(), "")
-        el.setAttribute("data-key", seg.key)
-        if (seg.key.isNotEmpty()) el.appendChild(span("ao-k", seg.key))
-        el.appendChild(document.createTextNode(seg.word))
-        foot.appendChild(el)
-    }
-}
-
-/**
- * Choose the footer's entries from the selection: the view model's key hints for it, drawn with
- * the classes that let "move" and "back" give way when the panel narrows.
- *
- * @param state the view model's current state.
- * @return the entries, in the order they are drawn.
- */
-private fun footerSegments(state: AgentsOverviewBackingViewModel.State): List<FooterSegment> {
-    val row = state.selectedRow
-    val backToTask = row?.kind == Kind.SESSION && inPanel(row, state)
-    return AgentsOverviewBackingViewModel.footerHints(state.footer, backToTask).map {
-        FooterSegment(
-            it.key, it.word,
-            when (it.role) {
-                AgentsOverviewBackingViewModel.HintRole.MOVE -> "ao-seg-move"
-                AgentsOverviewBackingViewModel.HintRole.BACK -> "ao-seg-back"
-                AgentsOverviewBackingViewModel.HintRole.OTHER -> ""
-            },
-        )
-    }
-}
-
-/** Where a search matched, in words, for the line under a result. */
-private fun fieldLabel(field: String?): String = when (field) {
-    "task" -> "in task"
-    "prompt" -> "first prompt"
-    "branch" -> "branch"
-    "links" -> "links"
-    "transcript" -> "in transcript"
-    "screen" -> "on its last screen"
-    else -> ""
 }
 
 /**
@@ -502,199 +413,66 @@ private fun highlighted(text: String, start: Int, length: Int): org.w3c.dom.Docu
 }
 
 /**
- * The state glyph of a row, drawn in the second column: ◆ for a session that needs the user, the
- * braille working glyph (moving while the work is live, still and dim once it is not), ○, ‖, ✓
- * or ·; nothing for a header whose task has no working session, or whose header reads idle (the
- * header of a collapsed task in EARLIER does not move, whatever its sessions do outside the open
- * tabs; its sessions keep their own glyphs once it is expanded).
+ * One row of the table in the six-column grid: marker, title, where, state word, detail, age.
  *
- * @param row the row.
- * @param task the row's task header data when [row] is a header, for its working glyph.
- * @param now the current epoch millis, for the working rule.
- * @return the cell's content, or null for an empty cell.
- */
-private fun stateGlyph(row: Row, task: AgentsOverviewBackingViewModel.Task?, now: Long): HTMLElement? = when {
-    row.kind == Kind.TASK ->
-        task?.takeIf { it.workingCount > 0 && row.state != "idle" }
-            ?.let { workingGlyph(AgentsOverviewBackingViewModel.isWorkingLive(it.activityMillis, now)) }
-    else -> when (row.glyph) {
-        Glyph.NEEDS_YOU -> span("ao-g-need", "◆")
-        Glyph.WORKING -> workingGlyph(AgentsOverviewBackingViewModel.isWorkingLive(row.activityMillis, now))
-        Glyph.WAITING -> span("ao-g-plain", "○")
-        Glyph.PAUSED -> span("ao-g-plain", "‖")
-        Glyph.DONE -> span("ao-g-plain", "✓")
-        Glyph.CLOSED -> span("ao-g-plain", "·")
-        Glyph.NONE -> null
-    }
-}
-
-/**
- * The status cell of a session: a prefix when the work has gone quiet or its file stale,
- * the file's label, then the line; an error replaces all of it and is never dimmed. A finished
- * task member also carries its pull request after the status, so the "where" column keeps one meaning.
- *
- * @param row the row.
- * @param now the current epoch millis.
- * @return the cell.
- */
-private fun statusCell(row: Row, now: Long): HTMLElement {
-    val cell = span("ao-n", "")
-    val error = row.error
-    if (error != null) {
-        cell.classList.add("ao-n-error")
-        cell.textContent = error
-        return cell
-    }
-    val prefix = AgentsOverviewBackingViewModel.agePrefix(row, now)
-    if (prefix.isNotEmpty()) cell.appendChild(span("ao-n-faint", prefix))
-    val label = row.label
-    if (label != null) {
-        cell.appendChild(document.createTextNode(label))
-        if (row.status.isNotEmpty()) cell.appendChild(span("ao-n-faint", " · "))
-    }
-    cell.appendChild(document.createTextNode(row.status))
-    // The pull request is detail text after the status; the "where" column always names a place.
-    row.pullRequest?.let { cell.appendChild(span("ao-pr-inline", " · $it")) }
-    return cell
-}
-
-/**
- * The count line of a task header: "1 needs you" in the warning colour, then the dim counts,
- * joined by faint dots, then the task's one-line status when it has one.
- *
- * @param task the header's data, or null if it vanished since the row was built.
- * @param status the task's one-line status, or empty.
- * @return the cell.
- */
-private fun countsCell(task: AgentsOverviewBackingViewModel.Task?, status: String): HTMLElement {
-    val cell = span("ao-n", "")
-    if (task == null) return cell
-    val parts = task.summary.split(" · ").filter { it.isNotEmpty() }
-    if (task.needYouCount > 0) cell.appendChild(span("ao-cn", AgentsOverviewBackingViewModel.needYouText(task.needYouCount)))
-    parts.forEachIndexed { i, part ->
-        if (i > 0 || task.needYouCount > 0) cell.appendChild(span("ao-n-faint", " · "))
-        cell.appendChild(document.createTextNode(part))
-    }
-    // The task's own one-line status closes the line, so the counts that need the person come first.
-    if (status.isNotEmpty()) {
-        if (cell.hasChildNodes()) cell.appendChild(span("ao-n-faint", " · "))
-        cell.appendChild(document.createTextNode(status))
-    }
-    return cell
-}
-
-/**
- * Whether [row] hangs under a task header on screen: it belongs to a task that is drawn as a
- * panel. A task's only session is a plain row and is not.
- *
- * Called by [buildRow], [renderList] and [footerSegments] to choose tree lines and the "back" key.
- *
- * @param row the row.
- * @param state the view model's state, whose [AgentsOverviewBackingViewModel.State.tasks] lists the panels.
- * @return true for a session inside a panel.
- */
-private fun inPanel(row: Row, state: AgentsOverviewBackingViewModel.State): Boolean =
-    row.kind == Kind.SESSION && row.taskId != null && state.tasks.containsKey(row.taskId)
-
-/**
- * One row of the table, session or task header, in the seven-column grid.
- *
- * The row's colour comes from its state alone: needs-you status in the brightest text, working
- * status mid-bright, the rest dim. The selected row shows its action as "↵ jump" and the like at
- * the right end; a header shows where its ↵ goes ("jump" or "open"), or "↵ expand" / "↵ collapse"
- * when it only folds, and, when its task has an `open` action and ↵ jumps, an `open` control of
- * its own in the age column. Search snippets, the "in task X" line, the resume note, an open peek and
- * a failed open's error span the row's full width underneath.
+ * The marker is ◆ for a task that needs the person and ▸ on the selected row (which wins over
+ * ◆). Only "needs you" and "working" are coloured; a finished row is dimmed. The selected row has
+ * one more line under it, spanning the columns after the marker, with the full text and the tab
+ * ↵ opens; a failed resume or open shows in the error colour inside it. An open peek follows.
  *
  * @param row the row to draw.
- * @param state the view model's state, for the header data and the open peek.
+ * @param state the view model's state, for the open peek.
  * @param selected whether it is the highlighted row.
- * @param now the current epoch millis.
- * @param kids for a header, whether sessions are drawn under it (so a tree line runs down from it).
- * @param last for a session in a panel, whether it is the last one of its task on screen.
- * @param gap whether the row starts a unit right after a task (see
- *   [AgentsOverviewBackingViewModel.startsAfterTask]) and so gets a gap above it.
  * @return the row element, carrying the row's id as `data-id` for click routing.
  */
-private fun buildRow(
-    row: Row,
-    state: AgentsOverviewBackingViewModel.State,
-    selected: Boolean,
-    now: Long,
-    kids: Boolean,
-    last: Boolean,
-    gap: Boolean = false,
-): HTMLElement {
-    val isHead = row.kind == Kind.TASK
-    val task = state.tasks[row.taskId].takeIf { isHead }
-    val member = inPanel(row, state)
+private fun buildRow(row: Row, state: AgentsOverviewBackingViewModel.State, selected: Boolean): HTMLElement {
     val classes = mutableListOf("ao-row")
-    if (isHead) classes += "ao-head"
-    if (isHead && kids) classes += "ao-kids"
-    if (member) classes += "ao-mem"
-    if (last) classes += "ao-last"
-    if (gap) classes += "ao-gap"
     if (selected) classes += "ao-sel"
-    if (!isHead && row.glyph == Glyph.NEEDS_YOU) classes += "ao-need"
-    if (!isHead && row.glyph == Glyph.WORKING) classes += "ao-working"
-    if (!isHead && (row.glyph == Glyph.CLOSED || (!row.isLive && !member))) classes += "ao-past"
-    if (row.fileRefreshedMillis?.let { AgentsOverviewBackingViewModel.isStale(it, now) } == true) classes += "ao-stale"
+    if (row.finished) classes += "ao-old"
     val el = div(classes.joinToString(" "))
     el.setAttribute("data-id", row.id)
 
-    el.appendChild(span("ao-gut", if (isHead) (if (task?.expanded == true) "▾" else "▸") else ""))
-
-    val glyphCell = span("ao-s", "")
-    stateGlyph(row, task, now)?.let { glyphCell.appendChild(it) }
-    el.appendChild(glyphCell)
+    el.appendChild(span(if (row.needsYou && !selected) "ao-m ao-m-need" else "ao-m", if (selected) "▸" else row.marker))
 
     val title = span("ao-t", "")
-    if (row.field == "title") title.appendChild(highlighted(row.title, row.matchStart, row.matchLength))
+    if (row.matchInTitle) title.appendChild(highlighted(row.title, row.matchStart, row.matchLength))
     else title.textContent = row.title
-    if (!isHead && row.agent.isNotEmpty() && row.agent != "claude") title.appendChild(span("ao-agent", " ${row.agent}"))
     el.appendChild(title)
 
-    el.appendChild(span("ao-w", if (isHead) task?.repo ?: "" else row.where ?: ""))
-    el.appendChild(if (isHead) countsCell(task, row.status) else statusCell(row, now))
-    // A header in NOW has no age; one in EARLIER shows how long ago its newest session was active.
-    // When ↵ on a header jumps to a live session but its task also has an `open` action, that
-    // column holds the `open` control so the action stays reachable.
-    if (isHead && task?.hasOpen == true && (row.actionLabel == "jump" || row.actionLabel == "peek")) {
-        el.appendChild(span("ao-a ao-open", "open"))
-    } else {
-        val age = if (isHead) task?.ageMillis else row.sinceMillis
-        el.appendChild(span("ao-a", if (age == null || age <= 0) "" else formatAge(age)))
-    }
-    el.appendChild(
-        span(
-            "ao-x",
-            when {
-                isHead && row.actionLabel.isEmpty() ->
-                    if (selected) "↵ ${if (task?.expanded == true) "collapse" else "expand"}" else ""
-                isHead -> if (selected) "↵ ${row.actionLabel}" else row.actionLabel
-                selected && row.actionLabel.isNotEmpty() -> "↵ ${row.actionLabel}"
-                else -> ""
-            },
-        ),
-    )
+    el.appendChild(span("ao-w", row.where ?: ""))
+    el.appendChild(span("ao-sw" + if (row.needsYou) " ao-sw-need" else if (row.working) " ao-sw-work" else "", row.stateWord))
 
-    if (row.field != null && row.field != "title" && row.snippet != null) {
-        val snip = div("ao-snippet")
-        snip.appendChild(span("ao-snippet-label", fieldLabel(row.field) + "  "))
-        snip.appendChild(highlighted(row.snippet!!, row.matchStart, row.matchLength))
-        el.appendChild(snip)
-    }
-    // Every result that sits in a task says so; a match on the task's own title highlights it there.
-    row.taskTitle?.let { taskTitle ->
-        val line = div("ao-snippet ao-task-line")
-        line.appendChild(span("ao-snippet-label", "${fieldLabel("task")} "))
-        if (row.field == "task") line.appendChild(highlighted(taskTitle, row.matchStart, row.matchLength))
-        else line.appendChild(document.createTextNode(taskTitle))
-        el.appendChild(line)
-    }
-    row.resumeNote?.let { el.appendChild(div("ao-note").also { n -> n.textContent = it }) }
+    val detail = span("ao-n", "")
+    if (row.matchInSnippet) detail.appendChild(highlighted(row.detail, row.matchStart, row.matchLength))
+    else detail.textContent = row.detail
+    el.appendChild(detail)
+
+    el.appendChild(span("ao-a", if (row.sinceMillis <= 0) "" else formatAge(row.sinceMillis)))
+
+    if (selected) el.appendChild(buildFocus(row))
     state.peek?.takeIf { selected }?.let { el.appendChild(buildPeek(it)) }
     return el
+}
+
+/**
+ * The selected row's extra line: the full text, then where it was found or the tab it sits in. A
+ * failed resume or open is drawn in the error colour and never dimmed.
+ *
+ * @param row the selected row.
+ * @return the line, spanning every column after the marker.
+ */
+private fun buildFocus(row: Row): HTMLElement {
+    val focus = div("ao-focus")
+    val error = row.error
+    val at = if (error != null) row.extra.indexOf(error) else -1
+    if (error != null && at >= 0) {
+        focus.appendChild(document.createTextNode(row.extra.substring(0, at)))
+        focus.appendChild(span("ao-n-error", error))
+        focus.appendChild(document.createTextNode(row.extra.substring(at + error.length)))
+    } else {
+        focus.textContent = row.extra
+    }
+    return focus
 }
 
 /**
@@ -706,8 +484,7 @@ private fun buildRow(
  */
 private fun buildMoreLine(hidden: Int): HTMLElement {
     val el = div("ao-row ao-more")
-    el.appendChild(span("ao-gut", ""))
-    el.appendChild(span("ao-s", ""))
+    el.appendChild(span("ao-m", ""))
     el.appendChild(span("ao-t", "+ $hidden more"))
     return el
 }
@@ -762,8 +539,8 @@ private fun buildConfirm(confirm: AgentsOverviewBackingViewModel.Confirm): HTMLE
 /**
  * Compact age for a row: `now`, `5m`, `3h` or `2d`.
  *
- * @param sinceMillis epoch millis the age counts from: when the row entered its state, an idle or
- *   ended row's last sign of life, or the newest activity a task header summarises.
+ * @param sinceMillis epoch millis the age counts from: when the row entered its state, or the
+ *   newest activity of a row in EARLIER.
  * @return the age text shown at the row's right.
  */
 private fun formatAge(sinceMillis: Long): String {

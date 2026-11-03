@@ -3529,12 +3529,12 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 }
 
 /* ── Agents overview (AgentsOverview.kt) ──
-   Topbar chip plus the ⌘⇧A overlay, drawn as a terminal table: every row is the same seven-column
-   grid (gutter, state, title, where, status, age, action) and the state glyph is the only place a
-   state is a glyph. Colour says state and nothing else: amber needs you, the accent working, red a
-   failed open; every other text is a shade of the theme's text colour. Lifted above the pane
-   modals so it opens over whatever is on screen. The colours below follow the active theme and
-   fall back to the dark teal defaults. */
+   Topbar chip plus the ⌘⇧A overlay, drawn as a terminal table: one row per task, every row the same
+   six-column grid (marker, title, where, state word, detail, age). There are no glyphs and no bands.
+   Colour says state and nothing else: amber is "needs you", the accent is "working" and the selected
+   row, red a failed open; every other text is a shade of the theme's text colour, and a finished row
+   recedes. Lifted above the pane modals so it opens over whatever is on screen. The colours below
+   follow the active theme and fall back to the dark teal defaults. */
 .ao-chip, .ao-panel {
     --ao-surface: var(--dt-window-bg, var(--t-surface, #0c1a1e));
     --ao-text: var(--t-text, #cfe3e2);
@@ -3616,168 +3616,87 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 }
 .ao-search::placeholder { color: var(--ao-dim); }
 
-.ao-list { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 1ch 10px; }
+.ao-list { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 0 10px; }
 .ao-sec {
     display: flex;
     align-items: center;
     gap: 1.5ch;
     height: 30px;
-    padding: 0 1ch;
+    padding: 0 14px;
     font-size: 11px;
     letter-spacing: 0.12em;
     color: var(--ao-dim);
 }
 .ao-sec::after { content: ""; flex: 1; height: 1px; background: var(--ao-line); }
-.ao-empty { padding: 24px 1ch; color: var(--ao-dim); }
+.ao-empty { padding: 24px 14px; color: var(--ao-dim); }
 
-/* The one grid every row uses. */
+/* The one grid every row uses: marker, title, where, state word, detail, age. */
 .ao-row {
     display: grid;
-    grid-template-columns: 2ch 2ch 38ch 12ch minmax(0, 1fr) 4ch 10ch;
-    column-gap: 1.5ch;
+    grid-template-columns: 14px minmax(0, 250px) 90px 10ch minmax(0, 1fr) 36px;
+    gap: 0 12px;
     align-items: start;
-    padding: 0 1ch;
-    line-height: 26px;
+    padding: 3px 14px;
+    line-height: 20px;
     position: relative;
     cursor: pointer;
 }
-.ao-row > span { min-width: 0; }
+.ao-row > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .ao-row:hover { background: color-mix(in srgb, var(--ao-sel) 55%, transparent); }
 .ao-row.ao-sel { background: var(--ao-sel); box-shadow: inset 2px 0 0 var(--ao-accent); }
 
-.ao-gut { align-self: stretch; position: relative; color: var(--ao-dim); user-select: none; }
-.ao-s { display: flex; justify-content: center; color: var(--ao-dim); }
-.ao-t, .ao-w, .ao-n { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.ao-w { color: var(--ao-dim); }
-.ao-n { color: var(--ao-dim); }
+.ao-m { color: var(--ao-accent); user-select: none; }
+.ao-m-need { color: var(--ao-warn); }
+.ao-t { color: var(--ao-text); }
+.ao-row.ao-sel .ao-t { color: var(--ao-accent); font-weight: 600; }
+.ao-w, .ao-n { color: var(--ao-muted); }
+.ao-sw { color: var(--ao-muted); }
+.ao-sw-work { color: var(--ao-accent); }
+.ao-sw-need { color: var(--ao-warn); }
 .ao-a { text-align: right; color: var(--ao-dim); }
-.ao-x { text-align: right; white-space: nowrap; color: var(--ao-dim); }
-.ao-row.ao-sel .ao-x { color: var(--ao-text); }
-.ao-agent { color: var(--ao-dim); }
-.ao-n-faint { color: var(--ao-faint); }
 .ao-n-error { color: var(--ao-error); }
-.ao-pr-inline { color: var(--ao-dim); }
-.ao-g-need { color: var(--ao-warn); }
 
-/* Needs you: the brightest status text, which may wrap to two lines. */
-.ao-need .ao-n {
-    color: var(--ao-text);
+/* The selected row's own line: the full text and where ↵ goes, under the columns after the marker. */
+.ao-focus {
+    grid-column: 2 / -1;
     white-space: normal;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-height: 20px;
-    padding: 3px 0;
+    font-size: 12px;
+    color: var(--ao-muted);
+    padding: 1px 0 5px;
 }
-.ao-need .ao-n.ao-n-error { color: var(--ao-error); }
-.ao-need .ao-a { color: var(--ao-text); }
-/* Working: a moving glyph and a mid-bright status. */
-.ao-working .ao-n { color: var(--ao-muted); }
-.ao-working .ao-n.ao-n-error { color: var(--ao-error); }
-/* A file nobody has refreshed for a while no longer says anything: its rows recede. */
-.ao-stale > .ao-s, .ao-stale > .ao-t, .ao-stale > .ao-w, .ao-stale > .ao-a { opacity: 0.55; }
-.ao-stale > .ao-n:not(.ao-n-error) { opacity: 0.55; }
 
-/* A task with several sessions is an expansion panel: the whole header toggles, its action (jump, open) is the ↵. */
-.ao-head, .ao-gap { margin-top: 8px; }
-.ao-sec + .ao-head, .ao-sec + .ao-gap { margin-top: 0; }
-.ao-head .ao-t { font-weight: 700; }
-.ao-head .ao-x { color: var(--ao-muted); }
-.ao-head .ao-x:hover { color: var(--ao-text); text-decoration: underline; text-underline-offset: 3px; }
-.ao-head.ao-sel .ao-x { color: var(--ao-text); }
-/* The header's own `open` control, shown beside a jump so the task's open action stays reachable. */
-.ao-head .ao-open { color: var(--ao-muted); cursor: pointer; }
-.ao-head .ao-open:hover { color: var(--ao-text); text-decoration: underline; text-underline-offset: 3px; }
-.ao-cn { color: var(--ao-warn); font-weight: 600; }
-
-/* Runs: tree lines in the gutter, titles not indented. */
-.ao-mem .ao-gut::before {
-    content: "";
-    position: absolute;
-    left: calc(0.5ch - 0.5px);
-    top: 0;
-    bottom: 0;
-    width: 1px;
-    background: var(--ao-faint);
-}
-.ao-mem.ao-last .ao-gut::before { bottom: auto; height: 13px; }
-.ao-mem .ao-gut::after {
-    content: "";
-    position: absolute;
-    left: calc(0.5ch - 0.5px);
-    top: 13px;
-    width: 2.4ch;
-    height: 1px;
-    background: var(--ao-faint);
-}
-.ao-head.ao-kids .ao-gut::after {
-    content: "";
-    position: absolute;
-    left: calc(0.5ch - 0.5px);
-    top: 20px;
-    bottom: 0;
-    width: 1px;
-    background: var(--ao-faint);
-}
-.ao-mem.ao-last { margin-bottom: 8px; }
-
-/* Earlier. */
-.ao-past .ao-t { color: var(--ao-muted); }
+/* Earlier and finished rows recede. */
+.ao-old .ao-t, .ao-old .ao-w, .ao-old .ao-n, .ao-old .ao-sw { color: var(--ao-dim); }
+.ao-row.ao-sel.ao-old .ao-t { color: var(--ao-accent); }
 .ao-more { cursor: pointer; }
 .ao-more .ao-t { color: var(--ao-dim); }
 
-/* The working glyph: two layers stacked in one box and cross-faded by the script. It is drawn in
-   the accent at full opacity while the work is live; at rest the first frame is shown still and
-   dimmed. The box is 19px high and centred in the 26px row, inside the 2ch state column. */
-.ao-work {
-    position: relative;
-    flex: none;
-    display: inline-block;
-    width: 2ch;
-    height: 26px;
-    font-size: 19px;
-    line-height: 26px;
-    text-align: center;
-    color: var(--ao-accent);
-    opacity: 1;
-}
-.ao-work-layer { position: absolute; inset: 0; opacity: 0; }
-.ao-work:not(.ao-work-rest) { text-shadow: 0 0 8px color-mix(in srgb, var(--ao-accent) 55%, transparent); }
-.ao-work-rest { color: var(--ao-dim); opacity: 1; }
-
-/* Footer: keys in the text colour, words dim; it changes with the selection. */
+/* Footer: the same three keys for every selection; keys in the text colour, words dim. */
 .ao-foot {
     display: flex;
     align-items: center;
-    gap: 3ch;
+    gap: 18px;
     flex: none;
     height: 30px;
-    padding: 0 2ch;
+    padding: 0 14px;
     border-top: 1px solid var(--ao-line);
     font-size: 11.5px;
     color: var(--ao-dim);
     white-space: nowrap;
     overflow: hidden;
 }
-.ao-seg { cursor: default; }
-.ao-seg[data-key]:not([data-key=""]) { cursor: pointer; }
-.ao-k { color: var(--ao-text); margin-right: 0.8ch; }
+.ao-seg { cursor: pointer; }
+.ao-k { color: var(--ao-accent); margin-right: 0.8ch; }
 
-/* Narrow panels: drop the where column first, then shorten titles, then the footer's words. */
-@container ao (max-width: 900px) {
-    .ao-row { grid-template-columns: 2ch 2ch 28ch minmax(0, 1fr) 4ch 10ch; }
-    .ao-row > .ao-w { display: none; }
-    .ao-seg-move { display: none; }
-}
-@container ao (max-width: 640px) {
-    .ao-row { grid-template-columns: 2ch 2ch 22ch minmax(0, 1fr) 4ch 10ch; }
-    .ao-seg-back { display: none; }
+/* Narrow panels: the folder and the detail give way, the extra line then carries the detail. */
+@container ao (max-width: 700px) {
+    .ao-row { grid-template-columns: 14px minmax(0, 1fr) 10ch 36px; }
+    .ao-row > .ao-w, .ao-row > .ao-n { display: none; }
+    .ao-focus { grid-column: 2 / -1; }
 }
 
-/* Under a row, across its full width: where a search matched, the resume note and the peek. */
-.ao-snippet, .ao-note, .ao-peek { grid-column: 3 / -1; min-width: 0; }
-.ao-snippet, .ao-note { color: var(--ao-dim); line-height: 20px; padding-bottom: 4px; white-space: normal; }
-.ao-snippet-label { color: var(--ao-muted); }
+/* Under the selected row, across the columns after the marker: the peek. */
+.ao-peek { grid-column: 2 / -1; min-width: 0; }
 /* A search match is underlined in the accent colour, never filled: amber is reserved for needs-you. */
 .ao-mark { background: none; color: var(--ao-text); text-decoration: underline; text-decoration-color: var(--ao-accent); text-decoration-thickness: 2px; text-underline-offset: 3px; }
 .ao-peek {
