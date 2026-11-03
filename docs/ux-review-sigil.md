@@ -25,8 +25,10 @@ and the ◆ tint went olive on the dark theme (it should read amber), violet and
 enough to be taken for each other, the ring-with-a-dot and the triangle read finer than the filled
 shapes, and at 1024 px the footer legend was cut off in the middle of an entry. Nothing here needed
 a server or view-model change, so no Kotlin test was added; each fix is checked by measurement and
-by the pictures below. What is left for the owner is taste: where a task's loose sessions sit,
-and whether one hue should be the only difference inside a shape.
+by the pictures below. What is left for the owner: where a task's loose sessions sit, and one
+thing that is more than taste. Inside a shape the marks differ only by hue, and under a simulated
+colour-vision deficiency some of those hues collapse into one (F9). Fixing that takes a new cue or
+a new palette, both out of this ticket's scope, so it is named and shown, not decided.
 
 ## Findings
 
@@ -52,18 +54,19 @@ easy to take for a faded row.
 Done, in this PR: the tint is mixed into a neutral grey of the surface's own lightness
 (`--ao-tint-base`, using CSS relative colour, with the plain surface as fallback where the browser
 cannot do that), so the hue stays amber: about 46° on dark. The ◆ band is now ΔE 26 from the
-surface; a plain selected row is 14.6. The selected ◆ row keeps both bars: the amber one outside
-and the accent one in. See [the ◆ rows close up](ux-review-sigil/need-rows-dark.png) and
+surface; a plain selected row is 14.6. The selected ◆ row keeps both bars: the accent one on the outer edge and the amber one
+just inside it ([the selected ◆ row at 1024](ux-review-sigil/overview-dark-collapsed-1024.png), top
+◆ row). See [the ◆ rows close up](ux-review-sigil/need-rows-dark.png) and
 [light](ux-review-sigil/need-rows-light.png).
 
 ### F2 · broken · Violet and magenta can be mistaken for each other
 
-| Before (dark) | After (dark) |
+| Before (dark, 1x sheet, enlarged 6x) | After (dark, same sheet, same enlargement) |
 |---|---|
-| ![](ux-review-sigil/before-marks-sheet-dark.png) | ![](ux-review-sigil/marks-sheet-dark.png) |
+| ![](ux-review-sigil/before-marks-sheet-dark.png) | ![](ux-review-sigil/after-marks-sheet-dark-1x-upscaled.png) |
 
 Marks of one shape differ only by hue, so neighbouring hues must stay apart. Measured in CIE Lab
-(ΔE76) on the final palette, the closest pair was violet and magenta: 24.0 on dark and 25.7 on
+(ΔE76) on the palette as it was, the closest pair was violet and magenta: 24.0 on dark and 25.7 on
 light. At 12 px, next to each other in one list, those two read as one.
 
 Why it matters: two threads of work that look like one thread break "does a family read as one
@@ -77,9 +80,13 @@ or 65 on light. Which mark a thread gets did not change, only how two hues look.
 
 ### F3 · broken · The ring with a dot and the triangle read finer than the filled shapes
 
-| Before (dark) | After (light) |
+| Before (dark, 1x sheet, enlarged 6x) | After (dark, same sheet, same enlargement) |
 |---|---|
-| ![](ux-review-sigil/before-marks-sheet-dark.png) | ![](ux-review-sigil/marks-sheet-light.png) |
+| ![](ux-review-sigil/before-marks-sheet-dark.png) | ![](ux-review-sigil/after-marks-sheet-dark-1x-upscaled.png) |
+
+(Both are the pixels the browser draws at 1x, enlarged without smoothing, so the weights compare
+like with like; the crisp vector renders are [dark](ux-review-sigil/marks-sheet-dark.png) and
+[light](ux-review-sigil/marks-sheet-light.png).)
 
 Measured as ink on the 12 px mark (a filled square is 100): the outline shapes were as low as 48
 and the ◉ 53. A mark that reads lighter than its neighbours reads as fainter, as if that thread
@@ -88,8 +95,7 @@ mattered less.
 Done, in this PR: the outline stroke goes from 1.2 to 1.5 (`.ao-sigil-line`), the ◉ dot from r 2.2
 to 2.7 and the triangle about a fifth larger (it now reaches past the square's 10 px box, which a
 triangle must to look as big). Ink now runs from 56 (▲) to 100 (■): ◧ 94, ◐ 74, ◉ 68, ▚ 94.
-Measured at 1x on the same screen, identical in every hue. See the sheets for
-[dark](ux-review-sigil/marks-sheet-dark.png) and [light](ux-review-sigil/marks-sheet-light.png).
+Measured at 1x, identical in every hue.
 
 The triangle stays the lightest shape by area; a triangle cannot carry more ink without being
 bigger than its row. It still reads as a solid shape beside the others, so it was left (see taste
@@ -97,23 +103,26 @@ matter 3).
 
 ### F4 · broken · The footer legend is cut in the middle of an entry at 1024
 
-![The footer at 1024 after the fix, dark](ux-review-sigil/footer-1024-dark.png)
+![The footer at 1024 after the fix, dark: the whole legend and the widest key hints fit](ux-review-sigil/footer-1024-dark.png)
 
 The legend (`mark = one thread of work · ❯ you started it · ⚙ a session did · 1▘ tab 1, top-left
-pane`) is the key to the new cues, and it shares the footer with the key hints. When a row's hints
-are the widest ones (`no pane to jump to`, `← back to the task`) the panel at 1024 px cannot hold
-both, and the legend was cut off wherever the width ran out, in the middle of an entry (the old
-text is in the 1280 "before" pictures above; it fitted there, which is why the cut only shows
-at 1024).
+pane`) is the key to the new cues, and it shares the footer with the key hints. Drawn in full it is
+607 px wide at 1280. On a row whose hints are the widest ones (`no pane to jump to`, `← back to
+the task`, selected on a ◆ member of a task) the footer at 1024 px could not hold both, and the
+legend was cut off wherever the width ran out, in the middle of an entry. I measured the widths and
+saw the cut while working on it, but did not keep a picture of the old footer, so there is no
+"before" here, only the numbers.
 
 Why it matters: half a legend entry is worse than none; it teaches the wrong thing.
 
-Done, in this PR: each entry is its own element, so a narrow panel drops whole entries from the
-right, and the keys never give way; the text was shortened ("mark = one thread", "tab 1, top-left")
-so that at 1024 px with the widest hints the first three entries still show (the place entry goes
-first). The full legend is 607 px wide at 1280; the shortened one about 511–518. The entries are
-separated by a drawn "·" so a dropped entry leaves no stray dot. See [the legend at 1024](ux-review-sigil/footer-1024-dark.png)
-and [light](ux-review-sigil/footer-1024-light.png).
+Done, in this PR: two changes. The text is shorter ("mark = one thread", "tab 1, top-left"; about
+511–518 px), so at 1024 px with the widest hints all four entries fit
+([dark](ux-review-sigil/footer-1024-dark.png), [light](ux-review-sigil/footer-1024-light.png)). And
+each entry is its own element, so a panel that is still too narrow drops whole entries from the
+right and never cuts one: at 880 px three entries show, at 780 px two, with the keys intact
+([880](ux-review-sigil/footer-880-light.png), [780](ux-review-sigil/footer-780-light.png), light).
+The entries are separated by a drawn "·", so a dropped entry leaves no stray dot. (The `move` hint
+is the first of the keys to drop at those widths; the overview's own width rule, not the legend's.)
 
 ### F5 · pass · The place cue and the mark match the pane
 
@@ -152,7 +161,7 @@ whole name as before.
 | Case | Where to see it |
 |---|---|
 | A long name | `invoice-ex…` truncated in the folder column; *Login audit trail*'s row text cut with `…` ([1024](ux-review-sigil/overview-dark-collapsed-1024.png)); nothing wraps or pushes the cues |
-| A session with no name | the `~` rows (*Reconcile March payouts*, *Add CSV export for invoices*) show their prompt, with no mark: the home folder has no thread |
+| A row with no name of its own | *Why did the nightly backup email nev…* and *Owner test follow-up*, home-folder sessions: no mark (no thread), and the prompt text stands in for a title ([1024](ux-review-sigil/before-light-collapsed-1024.png), bottom rows) |
 | A group of one | *Nightly sync* ([1280](ux-review-sigil/overview-light-collapsed-1280.png)) |
 | A group of several | *Release train* (3 sessions), and *Access control* when expanded |
 | Nothing found | [1280 dark](ux-review-sigil/search-empty-dark-1280.png), [1280 light](ux-review-sigil/search-empty-light-1280.png), [1024 dark](ux-review-sigil/search-empty-dark-1024.png), [1024 light](ux-review-sigil/search-empty-light-1024.png): the legend stays and the keys it needs |
@@ -178,12 +187,44 @@ bold text carry it; the task header above it says "1 needs you" in bold amber.
 shapes did; now no shape is below 56 where a filled square is 100 (F3).
 ![](ux-review-sigil/marks-sheet-dark.png)
 
-**Does anything rely on colour alone?** Between families, no: the shape differs. Inside one
-shape, only the hue differs, by design: six marks of each shape, so a person tells the six apart
-by colour. That is the one place the design rests on colour, so the hues are held at least 32 ΔE
-apart (F2). The ◆ is a glyph, a bar and bold text as well as amber; the who and place cues are
-glyphs; the status words say stale, quiet and done in words. I did not simulate colour-vision
-deficiency, only measure ΔE (taste matter 2).
+**Does anything rely on colour alone?** Mostly no, and in one place yes.
+- The ◆ is a glyph, a bar and bold text as well as amber. The who and place cues are glyphs. Status
+  is said in words (stale, quiet, done, in review). Families differ by shape.
+- Inside one shape, only the hue differs: six marks per shape, told apart by colour. That is the
+  one place the design rests on colour, and it does not hold for a reader with red-green colour
+  blindness (F9).
+
+Below, the same screen as drawn, under a simulated deuteranopia, and in greyscale. The ◆ rows, the
+shapes and the who and place cues survive both; the difference between the two ◉ rows (*Billing
+cleanup*, blue; *Access control*, magenta) does not.
+![](ux-review-sigil/colour-alone-dark.png)
+![](ux-review-sigil/colour-alone-light.png)
+
+### F9 · open · Inside a shape, hue is the only difference, and some hues collapse for deuteranopes
+
+I ran every pair of hues through a deuteranopia simulation (Machado 2009, full severity) and measured
+ΔE76 again. The closest pairs are:
+
+| | Dark | Light |
+|---|---|---|
+| blue–violet | **1.8** | 6.9 |
+| green–rose | 11.3 | **3.6** |
+| violet–magenta | 15.5 | 31.3 |
+| blue–magenta | 17.0 | 25.2 |
+
+Under a simulated deuteranopia, blue and violet are the same colour on dark, and green and rose on
+light. So for about one man in twelve, two threads wearing the same shape in those hues are the same
+mark: they would take two threads for one. F2's work holds for normal vision; this is the other
+reader the north star's "nothing relies on colour alone" asks about, and the answer is that one
+thing does.
+
+Why it is left: the fix is a new cue inside the shape (a notch, a dot, a corner) or a new palette
+picked for lightness as well as hue, and both are a design choice and a new cue, which this ticket
+puts out of scope. It is the first thing I would give the owner: if their eyes are normal it may not
+matter to them, but it will to someone else who installs Lunamux.
+What already helps: shapes carry the family, and two threads never share a whole mark (the
+server probes a collision away), so a lookalike pair is always two different marks of one shape
+that happen to share a look; with six shapes and about two dozen threads, such pairs will exist.
 
 ## Left for the owner (taste)
 
@@ -192,10 +233,9 @@ deficiency, only measure ΔE (taste matter 2).
    folder to match). The mark joins them; the position doesn't. I left it: moving it would change
    how rows are grouped, which is outside this review. If it bothers you, group by mark under the
    task.
-2. **Hue is the only difference inside a shape.** Six marks share each shape. Held at ΔE ≥ 32 and
-   spread by the probing rule, they separate on screen, but a colour-blind reader would struggle
-   inside a shape. If that matters, the fix is a seventh cue (a notch, a dot), which is a new cue
-   and so out of scope here.
+2. **Hue is the only difference inside a shape** (F9, with the numbers). Held at ΔE ≥ 32 for normal
+   vision, but not for deuteranopia. If it matters, the fix is a cue inside the shape or a palette
+   chosen for lightness too.
 3. **The triangle is the lightest shape** (56 against the square's 100). Enlarging it more would
    make it taller than its row.
 4. **The stale ◆ member fades.** *Role model* is a ◆ member of a stale task, and the older
@@ -205,6 +245,7 @@ deficiency, only measure ΔE (taste matter 2).
 
 ## What the review could not see
 
+- A real person with colour-vision deficiency: I used a simulation (F9), which is a model, not a person.
 - Real, long-lived history: the seed is a few dozen rows, not two weeks of work.
 - The two `~` rows labelled *Reconcile March payouts* and *Add CSV export for invoices* in the
   pictures are ended rows left when the seeded events were sent again under a new session id; they
