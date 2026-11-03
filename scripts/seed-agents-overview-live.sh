@@ -23,18 +23,21 @@
 #   tab "Release notes"  a working session that owns a task of the same name and gives it a status line,
 #                    and two agents that session started out of sight (create_window with background
 #                    and the task's id), in background tabs that no
-#                    tab strip lists: "Changelog check" (working) and "Screenshot refresh" (asks
-#                    "Which release?"). The overview counts and shows both; ⌘↵ on one takes its tab over.
+#                    tab strip lists: "Changelog check" (working) and "Screenshot refresh" (finished its
+#                    turn). The task's row counts the background one among its working sessions and
+#                    lists neither; ⌘↵ on it takes the working one's tab over.
 #
 # What to look at (⌘⇧A):
 #
-#   NOW              the two Checkout sessions as one task panel, "Docs sweep", and the ◆ question.
+#   NOW              "Rate limiter" (the two Checkout sessions, "2 working"), "Release notes" ("2 working",
+#                    one of them in a background tab, with its status as the detail), "Docs sweep" and the
+#                    ◆ "needs you" row with its question in quotes.
 #                    "Nightly sync" and "Billing cleanup" (task files whose members are not in any
 #                    open tab) are in EARLIER, not NOW. "Access control" stays in NOW because one of
 #                    its members needs you, wherever it runs.
-#   Release notes    the task's row carries its status; ↵ on it jumps to the owning session. ↵ on a
-#                    background row opens the read-only peek, ⌘↵ takes the tab over. Close the "Release
-#                    notes" tab in the app to see the question that lists the two agents that keep running.
+#   Release notes    the selected row's second line ends "· tab n", the tab ↵ jumps to. Close the "Release
+#                    notes" tab in the app to see the question that lists the two agents that keep running;
+#                    after that ↵ on the row peeks the background session that is left, and ⌘↵ takes it over.
 #   Close "Docs"     close the tab in the app: its panes close and their sessions end. A session that
 #                    has just ended stays in NOW for ten minutes, so "Docs sweep" and the question are
 #                    still listed (as ended) right after the close and the chip drops by one working and
@@ -140,7 +143,7 @@ ARGS="{\"background\":true,\"taskId\":\"$NOTES\",\"title\":\"Screenshot refresh\
 SES7="$(field "$(call create_window "$ARGS")" 'd["sessionId"]')"
 title "$SES7" "Screenshot refresh"
 hook "$SES7" live-screens '{"hook_event_name":"UserPromptSubmit","prompt":"Retake the screenshots the notes link to"}'
-hook "$SES7" live-screens '{"hook_event_name":"Notification","message":"Claude needs your input","notification_type":"elicitation_dialog"}'
+hook "$SES7" live-screens '{"hook_event_name":"Stop"}'
 sleep 1
 call set_task_lead "{\"taskId\":\"$NOTES\",\"sessionId\":\"$SES5\"}" >/dev/null
 call set_task_status "{\"taskId\":\"$NOTES\",\"text\":\"Notes drafted, waiting on the changelog check\"}" >/dev/null
