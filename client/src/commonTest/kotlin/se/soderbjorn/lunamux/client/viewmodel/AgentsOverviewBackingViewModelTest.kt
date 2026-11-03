@@ -155,6 +155,7 @@ class AgentsOverviewBackingViewModelTest {
     @Test
     fun aTitleThatOnlySaysWhereTheSessionRanIsReplacedByItsPrompt() {
         fun title(title: String?, branch: String? = null, home: Boolean = false, repo: String? = "proj", cwd: String = "/work/proj"): String {
+            layout(leaf("leaf-x"))
             windowState.updateAgentSessions(
                 listOf(session("x", "working", title = title, branch = branch, cwdHome = home, repo = repo, cwd = cwd, firstPrompt = "**Fix** the `login` bug")),
                 true,
@@ -205,6 +206,8 @@ class AgentsOverviewBackingViewModelTest {
         // state time was refreshed without the session doing anything); "fresh" is inside the idle
         // grace; "justDone" ended a minute ago and gets the same grace; "done" ended three hours
         // ago. The heading a row sits under and the age it shows are read from the same moment.
+        // The two idle ones are in open tabs; the ended ones have no pane.
+        layout(leaf("leaf-stale"), leaf("leaf-fresh"))
         windowState.updateAgentSessions(
             listOf(
                 session("stale", "idle", since = clockNow - 60_000, lastActivityAt = clockNow - 2 * day),
@@ -655,5 +658,26 @@ class AgentsOverviewBackingViewModelTest {
         )
         assertEquals(listOf("in"), vm.state.now.map { it.id })
         assertEquals(listOf("out"), vm.state.recent.map { it.id })
+    }
+
+    @Test
+    fun aSessionInATabTheStripHidesIsStillInAnOpenTabAndInNow() {
+        // "Open" is read from every tab of the layout, not from the ones the tab strip or the sidebar draws.
+        windowState.updateConfig(
+            WindowConfig(
+                tabs = listOf(
+                    TabConfig(id = "shown", title = "shown", panes = listOf(leaf("leaf-a"))),
+                    TabConfig(id = "hidden", title = "hidden", panes = listOf(leaf("leaf-b")), isHidden = true),
+                    TabConfig(id = "aside", title = "aside", panes = listOf(leaf("leaf-c")), isHiddenFromSidebar = true),
+                ),
+                activeTabId = "shown",
+            ),
+        )
+        windowState.updateAgentSessions(
+            listOf(session("a", "working"), session("b", "working"), session("c", "working"), session("gone", "working", leaf = "nowhere")),
+            true,
+        )
+        assertEquals(setOf("a", "b", "c"), vm.state.now.map { it.id }.toSet())
+        assertEquals(listOf("gone"), vm.state.recent.map { it.id })
     }
 }

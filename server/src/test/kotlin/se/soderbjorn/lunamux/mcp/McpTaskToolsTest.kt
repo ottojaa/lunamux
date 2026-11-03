@@ -300,6 +300,24 @@ class McpTaskToolsTest {
     }
 
     @Test
+    fun `a tab the strip hides still holds its task's windows`() {
+        val taskTab = newTab("Task tab")
+        val activeTab = newTab("Active tab")
+        try {
+            val id = payloadOf(call("create_task", """{"title":"Out of sight"}""")).jsonObject["taskId"]!!.jsonPrimitive.content
+            agentWindowIn(taskTab, id, "a-hidden")
+            call("activate_tab", """{"tabId":"$activeTab"}""")
+            WindowState.setTabHidden(taskTab, true)
+            WindowState.setTabHiddenFromSidebar(taskTab, true)
+            val next = payloadOf(call("create_window", """{"taskId":"$id"}""")).jsonObject
+            assertEquals(taskTab, tabOfWindow(next), "a hidden tab is still open, so the task's window joins it")
+        } finally {
+            call("close_tab", """{"tabId":"$activeTab"}""")
+            call("close_tab", """{"tabId":"$taskTab"}""")
+        }
+    }
+
+    @Test
     fun `an ended session no longer holds its task's tab`() {
         val oldTab = newTab("Old tab")
         val activeTab = newTab("Active tab")

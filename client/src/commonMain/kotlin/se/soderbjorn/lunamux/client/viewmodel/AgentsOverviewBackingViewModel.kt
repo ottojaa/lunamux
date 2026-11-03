@@ -1018,7 +1018,14 @@ class AgentsOverviewBackingViewModel(
         val graced: Boolean,
         val jumpRecordId: String?,
         val inNow: Boolean,
-    )
+    ) {
+        /**
+         * Whether the task is in EARLIER: not in NOW, and not inside the grace of a task that has
+         * just finished (which keeps its place in NOW, see [graced]). Every place that draws a task
+         * as an EARLIER header asks this, so NOW and EARLIER never both claim the same task.
+         */
+        val inEarlier: Boolean get() = !inNow && !graced
+    }
 
     /** How a session is counted and ordered: the bucket a header count and the expanded order use. */
     private class Bucket(val order: Int, val name: String)
@@ -1097,7 +1104,7 @@ class AgentsOverviewBackingViewModel(
                 // A single's row age is the very time its band is chosen by (see [toRow]), so a row
                 // never reads "now" under a heading that says days.
                 .map { row -> Earlier(row.sinceMillis, listOf(row)) } +
-                units.filter { !it.inNow && !it.graced }
+                units.filter { it.inEarlier }
                     .map { Earlier(it.recency, taskRows(it, taskStates, panes, ui, resumeError)) }
             ).filter { inWindow(it.recency, nowMillis) }
             .sortedByDescending { it.recency }
@@ -1153,7 +1160,7 @@ class AgentsOverviewBackingViewModel(
         val taskNeeds = units.sumOf { u -> u.runs.count { it.member.state == NEEDS_YOU } }
         // The chip counts what NOW shows: a task that is not in NOW adds nothing, so a working session
         // outside every open tab is counted only as a member of a task that a question keeps in NOW.
-        val taskWorking = units.filter { it.inNow }.sumOf { u -> u.runs.count { runMoving(it, u.task.refreshedAtMillis, nowMillis) } }
+        val taskWorking = units.filter { !it.inEarlier }.sumOf { u -> u.runs.count { runMoving(it, u.task.refreshedAtMillis, nowMillis) } }
         return State(
             open = ui.open && !resumed,
             query = ui.query,
@@ -1306,7 +1313,7 @@ class AgentsOverviewBackingViewModel(
         val counted = buckets.filter { it.order > 0 }.groupBy { it.order to it.name }
             .entries.sortedWith(compareBy({ (key, _) -> key.first }, { (key, _) -> if (key.second == "working") 0 else 1 }, { (key, _) -> if (key.first == 1) key.second else "" }))
         // In EARLIER a header says how many sessions it holds and how long ago it was last active.
-        val inEarlier = !u.inNow && !u.graced
+        val inEarlier = u.inEarlier
         return Task(
             id = t.id, title = t.title, repo = repo,
             needYouCount = u.runs.count { it.member.state == NEEDS_YOU },
@@ -1407,7 +1414,7 @@ class AgentsOverviewBackingViewModel(
         if (!u.panel) return rows.map { it.second }
         val header = tasks.getValue(t.id).let { task ->
             Row(
-                id = "$TASK_PREFIX${t.id}", agent = "", state = if (u.inNow) stateOfRank(u.rank) else IDLE, title = t.title,
+                id = "$TASK_PREFIX${t.id}", agent = "", state = if (u.inEarlier) IDLE else stateOfRank(u.rank), title = t.title,
                 links = emptyList(), repo = headerRepo(u), nowLine = null, question = null,
                 sinceMillis = task.ageMillis ?: u.since,
                 isLive = task.jumpRecordId != null, canResume = false,
@@ -1426,7 +1433,7 @@ class AgentsOverviewBackingViewModel(
                 compareBy<Pair<Run, Row>> { bucketOf(it.first.member).order }
                     .thenBy { if (it.first.member.state == NEEDS_YOU) it.first.member.sinceMillis else 0L },
             )
-        } else if (!u.inNow) {
+        } else if (u.inEarlier) {
             emptyList()
         } else {
             rows.filter { it.first.member.state == NEEDS_YOU }.sortedBy { it.first.member.sinceMillis } +
