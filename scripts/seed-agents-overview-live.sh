@@ -25,6 +25,9 @@
 #                    and the task's id), in background tabs that no
 #                    tab strip lists: "Changelog check" (working) and "Screenshot refresh" (asks
 #                    "Which release?"). The overview counts and shows both; ⌘↵ on one takes its tab over.
+#                    The task also has a panel of blocks written by "release notes agent": in this tab ⌘I
+#                    shows it (the agents block first, both helpers listed, one working), in any other tab
+#                    there is no panel. "peek" on a helper opens its terminal read-only; ⌘↵ takes it over.
 #
 # What to look at (⌘⇧A):
 #
@@ -144,7 +147,23 @@ hook "$SES7" live-screens '{"hook_event_name":"Notification","message":"Claude n
 sleep 1
 call set_task_lead "{\"taskId\":\"$NOTES\",\"sessionId\":\"$SES5\"}" >/dev/null
 call set_task_status "{\"taskId\":\"$NOTES\",\"text\":\"Notes drafted, waiting on the changelog check\"}" >/dev/null
-echo "task \"Release notes\" ($NOTES): own session in tab $TAB3, two background tabs, status set"
+# The task's panel (⌘I in the "Release notes" tab): what a writing agent would put there. The
+# second text block holds markup that must stay text.
+call set_task_panel "$(python3 -I -c 'import json,sys
+import time
+now = int(time.time() * 1000)
+print(json.dumps({"taskId": sys.argv[1], "by": "release notes agent", "blocks": [
+  {"id": "status", "type": "text", "title": "Status", "text": "**Drafted**, waiting on the changelog check.\n\n- 14 entries checked\n- 2 still to match"},
+  {"id": "checks", "type": "progress", "title": "Checks", "done": 3, "total": 5, "label": "changelog entries"},
+  {"id": "history", "type": "timeline", "title": "Timeline", "items": [
+    {"at": now - 7200000, "text": "Branch cut"}, {"at": now - 2400000, "text": "Draft written"}]},
+  {"id": "links", "type": "links", "title": "Links", "items": [
+    {"label": "Draft notes", "url": "https://example.com/notes/4.3"}, {"label": "Changelog", "url": "https://example.com/changelog"}]},
+  {"id": "literal", "type": "text", "title": "Pasted from a log", "text": "Kept as text: <img src=x onerror=alert(1)>"},
+  {"id": "actions", "type": "actions", "title": "Actions", "buttons": [
+    {"id": "status", "label": "Ask for status", "text": "What is left to do?"}]},
+]}))' "$NOTES")" >/dev/null
+echo "task \"Release notes\" ($NOTES): own session in tab $TAB3, two background tabs, status and panel set"
 
 # The second window of the task, made with no tabId while "Docs" is the active tab.
 ARGS="{\"taskId\":\"$TASK\"}"

@@ -327,3 +327,54 @@ write into the folder can therefore run a command as the user. Only the user's o
 write there, and the folder should not be shared or writable by others. The command comes from
 the file on the server and is never taken from the browser, and the `claude attach` command for
 a member is built by the server from the member's `sessionId` alone.
+
+## The task panel
+
+A task can have a panel: a 320px column on the right of the window that shows what its agents
+wrote about it. It appears only in the tab that holds the task's own session (the one named by
+`set_task_lead`; a task with none has no panel), and in no other tab. ⌘I shows and hides it, and
+so does its ×; the choice is kept with the other UI settings. The shortcut is listed in the
+Keyboard-shortcuts sidebar and can be rebound there. (Off macOS the default chord is Ctrl+I, which
+a terminal reads as Tab; rebind it there if that gets in the way.)
+
+The column starts with an **Agents** block: every other session of the task with its state glyph
+(● working, ◆ needs you, ○ waiting, · ended), its state word, its age and, for a working one, what
+it is doing. Ended sessions are dimmed. The action on a line is what a click does: *peek* for an
+agent in a background tab, *jump* for one in a tab of the strip, *open* for a member of a task file
+that no pane shows.
+
+*Peek* lays a read-only live copy of the agent's terminal over the current pane. It is a viewer:
+typing goes nowhere and the window never sends a size, so it cannot disturb the agent's grid. ⌘↵
+takes the background tab over (it becomes an ordinary tab) and esc goes back.
+
+After the agents come the blocks agents wrote. Each shows who wrote it and how long ago. They are
+kept in the database and survive a restart; they are not removed when the task ends.
+
+| Tool | Arguments | What it does |
+| --- | --- | --- |
+| `set_task_panel` | `taskId`, `blocks`, optional `by` | Replaces all of the task's blocks, in the order given. Nothing changes if any block breaks a rule. |
+| `upsert_task_block` | `taskId`, `block`, optional `by` | Replaces the block with that id where it stands, or adds it at the end. |
+| `remove_task_block` | `taskId`, `id` | Removes one block. |
+| `get_task_panel` | `taskId` | Reads the blocks back (read-only; needs only a read token). |
+
+`by` names the writer; without it the calling session's title is used, else nothing (at most 40
+characters). The panel follows each call within a second.
+
+A block is an object with an `id` (letters, digits, `.`, `_`, `:` and `-`; at most 64; `agents` is reserved),
+a `type`, an optional `title` (80) and the fields of its type:
+
+| `type` | Fields | Limits |
+| --- | --- | --- |
+| `text` | `text` | 4000 characters of markdown: paragraphs, `#` to `###` headings, `-` / `1.` lists, fenced code, `**bold**`, `*italic*`, `` `code` `` and `[label](url)`. Anything else, HTML included, is shown as written. |
+| `facts` | `items`: `{label, value}` | 30 items; label 80, value 200. |
+| `links` | `items`: `{label, url}` | 30 items; `http`, `https` or `file` addresses only, 2000 characters. |
+| `timeline` | `items`: `{at, text}` | 50 items; `at` is an ISO time or epoch milliseconds; text 200. Shown newest first. |
+| `progress` | `done` and `total`, and/or `phase`; optional `label` | A bar when there is a count. |
+| `actions` | `buttons`: `{id, label, text}` | 8 buttons; label 40, text 500, one line. |
+
+A panel holds at most 24 blocks. Every refusal names the block, field or id at fault.
+
+A button types its `text` and Enter into the task's own session, exactly as if the person had
+typed it there. The text is the one stored with the block; the window only says which button was
+pressed. A button is disabled, and the server refuses quietly, while that session's agent has
+ended, so the text never runs as a shell command.
