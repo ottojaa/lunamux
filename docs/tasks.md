@@ -57,12 +57,12 @@ the panel is narrower than 700px.
   background, or resumes. The session is remembered by the pane it ran in. A server restart keeps
   it: the session is then an ended one and ↵ resumes it. It is lost only once that session is older
   than the history the overview loads (14 days, or beyond the newest 300 sessions); the task then
-  has no own session until an agent names one again. A session Lunamux does not host and that has a
-  `sessionId` opens in a new tab with `claude attach <session id>`.
+  has no own session until an agent names one again.
 - **Three keys are not hinted.** **⌘↵** takes over the background session ↵ would peek: its tab
   becomes an ordinary tab and the app switches to it. **→** at the end of the search text peeks
   the session ↵ would open (**←** or esc goes back). **⌘⌫** asks to close a row that is one
-  session, live in a pane; it never closes a task of several sessions. The question is the same as
+  session, live in a pane; it never closes a task of several sessions, and does nothing while
+  the search box has text. The question is the same as
   for closing a tab that is working. The footer is always `↵ open · ↑↓ move · esc close`. esc
   closes the peek, then the question, then the overlay.
 - **A task has a one-line status.** An agent sets it with `set_task_status` and the row shows it as

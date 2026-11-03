@@ -742,10 +742,8 @@ class AgentsOverviewBackingViewModel(
      * @property member what the task says about the session: the file's member, or one made from
      *   the session itself.
      * @property session the hosted session behind it, or null.
-     * @property order its place among the task's sessions: the file's order, then hosted-only sessions.
-     * @property fromFile whether a task file lists it.
      */
-    private class Run(val member: AgentTaskMember, val session: AgentSessionSummary?, val order: Int, val fromFile: Boolean) {
+    private class Run(val member: AgentTaskMember, val session: AgentSessionSummary?) {
         /**
          * The task file's refresh time when this member is one Lunamux does not host,
          * else null.
@@ -774,21 +772,17 @@ class AgentsOverviewBackingViewModel(
      *
      * @property task the task as the server sent it.
      * @property runs its sessions.
-     * @property rank 0 when a session needs the person, 1 when one works, [GRACE_RANK] for a task of
-     *   hosted sessions that went quiet less than [IDLE_GRACE_MS] ago, else [OPEN_WORK_RANK].
-     * @property since the time that decides its place among tasks of the same rank.
-     * @property ended whether every session has ended.
-     * @property settled whether no session needs the person or works and either every session reads
-     *   done (a task file's word, or sessions that ended), or no task file speaks for the task and the
-     *   last activity of its sessions is older than [IDLE_GRACE_MS]: it belongs in EARLIER like an
-     *   idle single session, though none of its sessions has ended.
+     * @property since the time that places the task among those in NOW: since the oldest session that
+     *   needs the person (or works) changed state, else the newest change of any session, and for a
+     *   task of hosted sessions that went quiet, their last activity.
      * @property recency epoch millis of the newest activity of any session of the task: when an ended
      *   one ended, the last activity of an open one, and the time a task file gives a member. Decides
      *   the EARLIER band and the order inside it.
-     * @property graced whether the task has just finished (it is [ended] or [settled]) and its
+     * @property graced whether the task has just finished (every session ended, or none needs the
+     *   person or works and they all read done or have been idle past [IDLE_GRACE_MS]) and its
      *   [recency] is still inside [IDLE_GRACE_MS]: like a session that has just ended, it stays in
      *   NOW for the grace instead of going to EARLIER with an age of a few minutes.
-     * @property inNow whether the task belongs in NOW: it is neither ended nor settled, and either
+     * @property inNow whether the task belongs in NOW: it has not finished, and either
      *   a session needs the person (the whole task stays, wherever its other sessions run) or one of
      *   its sessions is in an open tab. Every other task is in EARLIER, even one a task file still
      *   lists work for.
@@ -799,10 +793,7 @@ class AgentsOverviewBackingViewModel(
     private class TaskUnit(
         val task: AgentTask,
         val runs: List<Run>,
-        val rank: Int,
         val since: Long,
-        val ended: Boolean,
-        val settled: Boolean,
         val recency: Long,
         val graced: Boolean,
         val inNow: Boolean,
@@ -1028,11 +1019,11 @@ class AgentsOverviewBackingViewModel(
         panes: Map<String?, PaneLocation>,
         nowMillis: Long,
     ): TaskUnit? {
-        val fileRuns = t.members.mapIndexed { i, m -> Run(m, m.recordId?.let(byId::get), i, true) }
+        val fileRuns = t.members.map { m -> Run(m, m.recordId?.let(byId::get)) }
         val matched = fileRuns.mapNotNullTo(HashSet()) { it.session?.id }
         val extraRuns = hosted.filter { it.id !in matched }
             .sortedWith(compareBy({ startedOf(it) }, { it.id }))
-            .mapIndexed { i, s -> Run(memberOf(s), s, fileRuns.size + i, false) }
+            .map { s -> Run(memberOf(s), s) }
         val runs = fileRuns + extraRuns
         if (runs.isEmpty() && !t.hasOpen) return null
         val ended = runs.all { it.member.state == ENDED }
@@ -1052,7 +1043,6 @@ class AgentsOverviewBackingViewModel(
         val quiet = hostedOnly && urgentRank == OPEN_WORK_RANK && !runs.all { it.member.state == ENDED }
         val allDone = runs.isNotEmpty() && runs.all { isDone(it.member) }
         val settled = allDone || (quiet && (lastActivity == null || !inGrace(lastActivity, nowMillis)))
-        val rank = if (quiet && !settled) GRACE_RANK else urgentRank
         val since = when {
             runs.isEmpty() -> t.refreshedAtMillis ?: 0L
             quiet -> lastActivity ?: runs.maxOf { it.member.sinceMillis }
@@ -1069,7 +1059,7 @@ class AgentsOverviewBackingViewModel(
         val inNow = !ended && !settled && (urgentRank == 0 || open.isNotEmpty())
         val graced = (ended || settled) && inGrace(recency, nowMillis)
         val (enter, target) = enterOf(t, runs, open, byId)
-        return TaskUnit(t, runs, rank, since, ended, settled, recency, graced, inNow, started, enter, target)
+        return TaskUnit(t, runs, since, recency, graced, inNow, started, enter, target)
     }
 
     /**
@@ -1242,7 +1232,7 @@ class AgentsOverviewBackingViewModel(
         val status = t.status?.trim()?.takeIf { it.isNotEmpty() }
         val detail = status
             ?: waiting?.let(::lineOf)?.let(::quoted)
-            ?: moving.maxByOrNull { workingActivity(it, t.refreshedAtMillis) ?: 0L }?.let(::lineOf)
+            ?: moving.sortedByDescending { workingActivity(it, t.refreshedAtMillis) ?: 0L }.firstNotNullOfOrNull(::lineOf)
             ?: ""
         val target = u.target
         val live = target != null && c.live(target)
@@ -1655,7 +1645,6 @@ class AgentsOverviewBackingViewModel(
 
         private const val TASK_PREFIX = "task:"
         private const val OPEN_WORK_RANK = 2
-        private const val GRACE_RANK = 3
         private const val IDLE = "idle"
         private val DONE_LABELS = setOf("done", "ready")
         private const val NEEDS_YOU = "needs_you"

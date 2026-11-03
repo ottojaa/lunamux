@@ -534,6 +534,18 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
+    fun theDetailFallsBackToAnOlderMovingSessionsLineWhenTheNewestHasNone() {
+        layout("leaf-new", "leaf-old")
+        show(
+            listOf(task(members = listOf(member("new", "working", recordId = "new"), member("old", "working", recordId = "old")))),
+            session("new", "working", lastActivityAt = now - 1_000),
+            session("old", "working", nowLine = "Edit a.kt", lastActivityAt = now - 5_000),
+        )
+        assertEquals("2 working", row("task:g1").stateWord)
+        assertEquals("Edit a.kt", row("task:g1").detail)
+    }
+
+    @Test
     fun aBlankStatusLineOrQuestionIsNoDetailAtAll() {
         layout("leaf-w", "leaf-single")
         show(
