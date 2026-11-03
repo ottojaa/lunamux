@@ -20,6 +20,7 @@ import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import org.w3c.dom.Element
 import org.w3c.dom.HTMLElement
+import se.soderbjorn.lunamux.client.viewmodel.tabMark
 
 /** The SVG namespace the shapes are created in. */
 private const val SIGIL_SVG_NS = "http://www.w3.org/2000/svg"
@@ -102,21 +103,20 @@ internal fun sigilForPane(leafId: String): Int? =
         .firstOrNull { it.leafId == leafId && it.state != "ended" && it.mark != null }?.mark
 
 /**
- * The mark a tab wears: that of its only thread.
+ * The mark a tab wears: the one its marked panes share.
  *
  * Called by [updateSigils] for each tab in the strip. Every pane in the tab that runs a marked
- * session counts; when they all belong to one thread the tab wears its mark, and when they belong
- * to two or more it wears none (one mark would be a lie). A tab with no marked pane wears none.
+ * session counts; when they all wear one mark the tab wears it, and when they wear two or more
+ * it wears none (one mark would be a lie). Marks are compared, not thread keys: a session in a
+ * task wears the task's mark, so what the tab draws is what its panes draw. A tab with no marked
+ * pane wears none.
  *
  * @param leafIds the layout leaf ids of the tab's panes.
  * @return the mark, or null.
+ * @see tabMark
  */
-internal fun sigilForTab(leafIds: Collection<String>): Int? {
-    val live = lunamuxClient.windowState.agentSessions.value
-        .filter { it.leafId in leafIds && it.state != "ended" && it.mark != null }
-    val threads = live.map { it.threadKey ?: "mark:${it.mark}" }.toSet()
-    return if (threads.size == 1) live.first().mark else null
-}
+internal fun sigilForTab(leafIds: Collection<String>): Int? =
+    tabMark(lunamuxClient.windowState.agentSessions.value, leafIds)
 
 /**
  * Bring the marks on pane headers and tabs up to date with the sessions and the layout.
@@ -160,9 +160,10 @@ private fun markOfSlot(paneId: String?, tabId: String?): Int? {
  * Wrap a status dot with the slot the mark goes in, for the pane header and the tab strip.
  *
  * Called by the toolkit's `paneHeaderBadge` and `tabTrailingBadge` hooks, which each accept a
- * single element. The wrapper uses `display: contents`, so the slot and the dot are laid out as
- * if they were direct children of the header or tab, and CSS `order` places the mark ahead of the
- * title while the dot keeps its place. The slot is filled at once and refilled by [updateSigils].
+ * single element. The wrapper is a plain inline span holding the mark's slot and then the dot,
+ * so the toolkit's badge slot puts the mark ahead of the pane header's title and after the tab's
+ * name, with the dot next to it where it always was. The slot is filled at once and refilled by
+ * [updateSigils].
  *
  * @param attr `data-sigil-pane` or `data-sigil-tab`, saying which kind of slot this is.
  * @param id the pane's leaf id or the tab's id.
