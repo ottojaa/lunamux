@@ -823,11 +823,9 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
             val tracker = ctx.agentTracker
             if (store != null && index != null && tracker != null) {
                 pressTaskButton(store, index, tracker, cmd.taskId, cmd.blockId, cmd.buttonId) { sessionId, bytes ->
+                    // A person's press is not an agent acting, so the pane gets no agent badge.
                     val session = TerminalSessions.get(sessionId) ?: return@pressTaskButton false
                     session.write(bytes)
-                    WindowState.leafIdOfSession(sessionId)?.let { leafId ->
-                        if (WindowState.findLeaf(leafId)?.agentNote == null) WindowState.setAgentNote(leafId, "agent")
-                    }
                     true
                 }
             }

@@ -227,6 +227,18 @@ class WindowStateRepository {
     }
 
     /**
+     * Forget every task's panel blocks.
+     *
+     * Called by [RealWindowSocket] each time a connection completes its handshake, just before the
+     * server sends the panels of every task that has blocks. The server cannot tell which tasks
+     * this window still holds, so a task that lost its last block while the window was away would
+     * otherwise keep showing the old blocks.
+     */
+    fun clearTaskPanels() {
+        _taskPanels.value = emptyMap()
+    }
+
+    /**
      * Remember the server's explanation of a failed resume or connect.
      *
      * Called by [WindowSocket] when an `AgentSessionError` envelope arrives.

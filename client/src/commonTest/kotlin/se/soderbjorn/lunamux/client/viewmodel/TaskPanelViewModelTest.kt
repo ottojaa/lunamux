@@ -366,6 +366,18 @@ class TaskPanelViewModelTest {
     }
 
     @Test
+    fun `clearing the panels on reconnect removes blocks the server no longer holds`() {
+        layout()
+        give(listOf(task()), listOf(session("own")))
+        windowState.updateTaskPanel("t1", listOf(block("note", TaskBlockContent.Text("old"))))
+        assertEquals(1, vm.state.blocks.size)
+
+        windowState.clearTaskPanels()
+        assertTrue(vm.state.blocks.isEmpty())
+        assertEquals(TaskPanelViewModel.EMPTY_TEXT, vm.state.emptyText)
+    }
+
+    @Test
     fun `link targets are only http, https and file`() {
         assertEquals("https://a.example", vm.linkTarget("https://a.example"))
         assertEquals("file:///tmp/x", vm.linkTarget("file:///tmp/x"))
