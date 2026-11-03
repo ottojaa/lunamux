@@ -48,8 +48,10 @@ idle, **‖** paused, **✓** done.
   behaviour: ↵ jumps to the open session that most needs the person (the ◆ that has waited
   longest, else the working session with the freshest sign of life); with no open session it runs
   the task's `open` action, if it has one; with neither it expands or collapses the panel. The
-  session is remembered by the pane it ran in, so a server restart forgets it until an agent names
-  it again.
+  session is remembered by the pane it ran in. A server restart keeps it: the session is then an
+  ended one and ↵ resumes it. It is lost only once that session is older than the history the
+  overview loads (14 days, or beyond the newest 300 sessions); the task then has no own session
+  until an agent names one again.
 - **A task has a one-line status.** An agent sets it with `set_task_status` and the header shows it
   after the counts (`1 needs you · Notes drafted, waiting on the changelog check`). Line breaks
   become spaces, the ends are trimmed, and at most 120 characters are kept. An empty text clears it.
@@ -73,7 +75,9 @@ idle, **‖** paused, **✓** done.
   peek of its screen, and **⌘↵ takes the tab over**: it becomes an ordinary tab, the app switches to
   it and the session is searchable again. The footer reads "↵ peek · ⌘↵ take over". × closes it
   with the same confirmation as any session. A search never finds a background session while it is
-  out of sight, live or closed.
+  out of sight, live or closed. A background tab is in no tab list, so the agent that opened it
+  closes it with `close_tab` when its work is done; a server restart closes every background tab,
+  as the agents in them ended with the old process.
 - **A session or task that has just ended stays in NOW for ten minutes.** With the ◆ above, this
   is the other thing in NOW that is in no tab: a session that has ended less than ten minutes ago,
   and a task that has just finished, so a row never reads "now" under a heading that says days.

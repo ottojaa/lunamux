@@ -1459,6 +1459,9 @@ class AgentsOverviewTasksViewModelTest {
         )
         vm.open()
         vm.select("task:g1")
+        val header = vm.state.rows.first { it.id == "task:g1" }
+        assertEquals("open", header.actionLabel, "the label says what ↵ does, not jump")
+        assertFalse(header.isLive)
         vm.activateSelected()
         assertEquals(listOf<WindowCommand>(WindowCommand.OpenTask("g1")), sent)
     }
@@ -1473,6 +1476,11 @@ class AgentsOverviewTasksViewModelTest {
         )
         vm.open()
         vm.select("task:g1")
+        val header = vm.state.rows.first { it.id == "task:g1" }
+        assertEquals("resume", header.actionLabel, "the label says what ↵ does, not jump")
+        assertFalse(header.isLive)
+        assertEquals("lead", vm.state.tasks.getValue("g1").leadRecordId)
+        assertEquals(null, vm.state.tasks.getValue("g1").jumpRecordId)
         vm.activateSelected()
         assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("lead")), sent)
     }

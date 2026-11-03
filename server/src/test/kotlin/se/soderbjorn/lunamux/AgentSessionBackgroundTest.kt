@@ -54,6 +54,21 @@ class AgentSessionBackgroundTest {
     }
 
     @Test
+    fun `a session follows its pane into and out of a background tab`() {
+        val t = tracker()
+        t.onPoll(listOf(pane("s1", background = true), pane("s2", background = false)))
+
+        now = 2_000
+        t.onPoll(listOf(pane("s1", background = false), pane("s2", background = true)))
+        assertEquals(mapOf("r1" to false, "r2" to true), t.summaries.value.associate { it.id to it.background })
+        assertFalse(repo.findAgentSessionById("r1")!!.background, "the stored record moves with the pane")
+        assertTrue(repo.findAgentSessionById("r2")!!.background)
+
+        val restarted = tracker(SettingsRepository(dbFile))
+        assertFalse(restarted.summaries.value.any { it.state != "ended" })
+    }
+
+    @Test
     fun `a background session needing the person is a needs-you summary like any other`() {
         val t = tracker()
         t.onPoll(listOf(pane("s1", background = true, state = "waiting")))

@@ -700,8 +700,8 @@ fun registerMcpWriteTools(settingsRepo: SettingsRepository, taskIndex: TaskIndex
             "it. Targets the active world unless a worldId is given. With background: true the " +
             "tab is a background tab instead: it is never switched to, never shown in the tab " +
             "strip or the layout the person sees, and never takes focus; it is meant for an " +
-            "agent working out of sight. Close it with close_tab when done; the person can " +
-            "take it over from the agents overview.",
+            "agent working out of sight. Close it with close_tab when done (a server restart " +
+            "closes background tabs too); the person can take it over from the agents overview.",
         inputSchema = schemaObject(
             "title" to schemaString("Optional tab title."),
             "worldId" to schemaString("World to create the tab in (default: active world)."),

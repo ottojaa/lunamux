@@ -217,6 +217,12 @@ class AgentSessionTracker(
                 rec = rec.copy(title = name)
                 put(rec)
             }
+            // A pane can change tabs (a move, a take over): the record follows the tab it is in now,
+            // or search and the overview's jump would treat it as still where it was.
+            if (rec.background != pane.background) {
+                rec = rec.copy(background = pane.background)
+                put(rec)
+            }
             if (rec.source != SOURCE_SCREEN) {
                 // Claude Code sends no event when a permission prompt is approved, so
                 // a long tool would keep the row at needs_you until it finished. The

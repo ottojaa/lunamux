@@ -312,9 +312,11 @@ class AgentsOverviewBackingViewModel(
      *   other labels as the file gave them, paused, done, with empty counts left out; empty when
      *   every session needs the user.
      * @property expanded whether every session shows rather than only those that need the user or work.
-     * @property jumpRecordId the record of the live session that most needs the person, which ↵ on
-     *   the header jumps to: the ◆ that has waited longest, else the working session with the
-     *   freshest sign of life; null when no session of the task is open.
+     * @property jumpRecordId the record of the live session ↵ on the header jumps to: the task's own
+     *   session when it has one and its pane is open; otherwise (a task with none) the ◆ that has
+     *   waited longest, else the working session with the freshest sign of life. Null when no such
+     *   session is open, including when the own session has ended: the header then offers `open` or
+     *   `resume`, never `jump`.
      * @property hasOpen whether the task file gives an `open` action: ↵ on the header runs it when
      *   no session is open, and the header always offers it as its own `open` control.
      * @property activityMillis the latest sign of life among the working sessions (see
@@ -1349,14 +1351,16 @@ class AgentsOverviewBackingViewModel(
         val graced = (ended || settled) && inGrace(recency, nowMillis)
         return TaskUnit(
             t, runs, panel, rank, since, ended, settled, recency, graced,
-            if (leadLive) lead!!.id else jump?.session?.id, inNow, started,
+            // With an own session the header follows it alone: a task whose own session has ended
+            // offers open or resume, even while another member runs.
+            if (lead != null) lead.id.takeIf { leadLive } else jump?.session?.id, inNow, started,
             lead?.id, leadLive, leadLive && lead!!.background,
         )
     }
 
     /** The record behind [row] that peek and inspection ask the server about, or null when there is none. */
     private fun recordIdOf(row: Row, tasks: Map<String, Task>): String? = when {
-        row.kind == RowKind.TASK -> tasks[row.taskId]?.jumpRecordId
+        row.kind == RowKind.TASK -> tasks[row.taskId]?.let { it.leadRecordId ?: it.jumpRecordId }
         row.kind == RowKind.SESSION && !row.unhosted -> row.id
         else -> null
     }

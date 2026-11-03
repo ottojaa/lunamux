@@ -354,10 +354,14 @@ object WindowState {
             }
         }
 
-        fun rebuildTab(tab: TabConfig): TabConfig {
+        fun trackTabId(tab: TabConfig) {
             // Same nonce-aware numeric extraction as [trackNodeId].
             tab.id.removePrefix("t").substringBefore('-').toLongOrNull()
                 ?.let { if (it > maxTabId) maxTabId = it }
+        }
+
+        fun rebuildTab(tab: TabConfig): TabConfig {
+            trackTabId(tab)
             val rebuiltPanes = tab.panes.mapNotNull { p ->
                 val rebuilt = rebuildLeaf(p.leaf) ?: return@mapNotNull null
                 val box = PaneGeometry.normalize(p.x, p.y, p.width, p.height)
@@ -376,11 +380,20 @@ object WindowState {
         val rebuiltWorlds = loaded.worlds.map { world ->
             world.id.removePrefix("w").substringBefore('-').toLongOrNull()
                 ?.let { if (it > maxWorldId) maxWorldId = it }
-            val rebuiltTabs = world.tabs.map { rebuildTab(it) }
+            // A background tab exists for the agent that opened it, and that agent died with the old
+            // process. Rebuilt, it would be a shell nobody can see or close, so it is dropped; its
+            // ids are still counted so none is handed out again.
+            val rebuiltTabs = world.tabs.mapNotNull { tab ->
+                if (tab.isBackground) {
+                    trackTabId(tab)
+                    tab.panes.forEach { trackNodeId(it.leaf.id) }
+                    null
+                } else rebuildTab(tab)
+            }
             val tabIdSet = rebuiltTabs.mapTo(HashSet()) { it.id }
             world.copy(
                 tabs = rebuiltTabs,
-                activeTabId = world.activeTabId?.takeIf { id -> id in tabIdSet && rebuiltTabs.none { it.id == id && it.isBackground } },
+                activeTabId = world.activeTabId?.takeIf { id -> id in tabIdSet },
             )
         }
 
@@ -545,19 +558,6 @@ object WindowState {
      */
     fun isBackgroundTab(tabId: String): Boolean = synchronized(this) {
         allTabs(_config.value).any { it.id == tabId && it.isBackground }
-    }
-
-    /**
-     * The terminal session ids of every pane that sits in a background tab.
-     *
-     * Called by the agent session tracker to mark the records of sessions that run out of sight.
-     *
-     * @return the session ids; panes without a session (file browsers, say) contribute none.
-     */
-    fun backgroundSessionIds(): Set<String> = synchronized(this) {
-        allTabs(_config.value).filter { it.isBackground }
-            .flatMap { tab -> tab.panes.mapNotNull { it.leaf.sessionId.takeIf { id -> id.isNotEmpty() } } }
-            .toSet()
     }
 
     /**

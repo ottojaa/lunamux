@@ -5,7 +5,7 @@
  * [TabCloseGuard.check] says whether that would happen and, if so, what the person should be told:
  * which agent stops, which agents the closed tab's conversation started that keep running in
  * background tabs, and how to pick the work up again. The screens draw the question; this file
- * holds the facts and the exact words, so every screen asks the same thing.
+ * holds the facts and the exact words, so every screen that asks says the same thing.
  *
  * The check is for closes a person starts (the tab's × in the strip, the tab list's close). An
  * agent closing a tab through MCP does not ask, and closing a single pane is not checked.
@@ -79,7 +79,8 @@ data class TabCloseCheck(
 /**
  * Decides whether closing a tab needs the person's say-so.
  *
- * Used by [closeTabAsking], which every person-initiated tab close goes through.
+ * Used by [closeTabAsking], which the web's person-initiated tab closes go through. The Android
+ * screens close a tab with [PaneActions.closeTab] and do not ask yet.
  *
  * @see TabCloseCheck
  */
@@ -144,8 +145,8 @@ object TabCloseGuard {
  * Close [tabId] after asking, when the check says a working agent would stop.
  *
  * A tab with nothing working in it closes at once. Otherwise [ask] shows the question and the
- * tab closes only if it answers true. Called by every screen that closes a tab for a person:
- * the web tab strip and the 3D view, and any screen that wants the same question.
+ * tab closes only if it answers true. Called by the web tab strip and the web 3D view's remove,
+ * and by any screen that wants the same question.
  *
  * @param windowState where the layout, sessions and tasks are read from.
  * @param tabId the tab to close.

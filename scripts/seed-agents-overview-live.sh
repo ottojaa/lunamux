@@ -21,7 +21,8 @@
 #                    first, and its session joins the task: the script prints the tab it landed in.
 #   tab "Docs"       a working session "Docs sweep" and a session that needs you ("Which branch?").
 #   tab "Release notes"  a working session that owns a task of the same name and gives it a status line,
-#                    and two agents that session started out of sight, in background tabs that no
+#                    and two agents that session started out of sight (create_window with background
+#                    and the task's id), in background tabs that no
 #                    tab strip lists: "Changelog check" (working) and "Screenshot refresh" (asks
 #                    "Which release?"). The overview counts and shows both; ⌘↵ on one takes its tab over.
 #
@@ -126,19 +127,21 @@ SES5="$(field "$LAYOUT" '[w for t in d["tabs"] if t["tabId"]=="'"$TAB3"'" for w 
 title "$SES5" "Release notes"
 hook "$SES5" live-notes '{"hook_event_name":"UserPromptSubmit","prompt":"Write the release notes for 4.3 and split the checks between two agents"}'
 hook "$SES5" live-notes '{"hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"docs/release-notes.md"}}'
-BG1="$(call create_tab '{"title":"Changelog check","background":true}')"
-SES6="$(field "$BG1" 'd["sessionId"]')"
+# The task first, from the tab that holds its own session; then the two helpers join it as
+# background windows, the way an agent that fans work out would open them.
+ARGS="{\"title\":\"Release notes\",\"sessionIds\":[\"$SES5\"]}"
+NOTES="$(field "$(call create_task "$ARGS")" 'd["taskId"]')"
+ARGS="{\"background\":true,\"taskId\":\"$NOTES\",\"title\":\"Changelog check\"}"
+SES6="$(field "$(call create_window "$ARGS")" 'd["sessionId"]')"
 title "$SES6" "Changelog check"
 hook "$SES6" live-changelog '{"hook_event_name":"UserPromptSubmit","prompt":"Check every changelog entry against the merged pull requests"}'
 hook "$SES6" live-changelog '{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"CHANGELOG.md"}}'
-BG2="$(call create_tab '{"title":"Screenshot refresh","background":true}')"
-SES7="$(field "$BG2" 'd["sessionId"]')"
+ARGS="{\"background\":true,\"taskId\":\"$NOTES\",\"title\":\"Screenshot refresh\"}"
+SES7="$(field "$(call create_window "$ARGS")" 'd["sessionId"]')"
 title "$SES7" "Screenshot refresh"
 hook "$SES7" live-screens '{"hook_event_name":"UserPromptSubmit","prompt":"Retake the screenshots the notes link to"}'
 hook "$SES7" live-screens '{"hook_event_name":"Notification","message":"Claude needs your input","notification_type":"elicitation_dialog"}'
 sleep 1
-ARGS="{\"title\":\"Release notes\",\"sessionIds\":[\"$SES5\",\"$SES6\",\"$SES7\"]}"
-NOTES="$(field "$(call create_task "$ARGS")" 'd["taskId"]')"
 call set_task_lead "{\"taskId\":\"$NOTES\",\"sessionId\":\"$SES5\"}" >/dev/null
 call set_task_status "{\"taskId\":\"$NOTES\",\"text\":\"Notes drafted, waiting on the changelog check\"}" >/dev/null
 echo "task \"Release notes\" ($NOTES): own session in tab $TAB3, two background tabs, status set"

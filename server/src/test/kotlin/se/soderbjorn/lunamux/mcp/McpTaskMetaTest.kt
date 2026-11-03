@@ -204,6 +204,26 @@ class McpTaskMetaTest {
     }
 
     @Test
+    fun `after a server restart the own session resolves to its ended record, so enter resumes it`() {
+        session("boss")
+        val id = create("Work", "[\"boss\"]")["taskId"]!!.jsonPrimitive.content
+        val record = taskInState(id).leadRecordId
+        assertNotNull(record)
+
+        // A restart: the tracker ends the records the old process left open and loads them again.
+        now += 60_000
+        var next = 100
+        val restarted = AgentSessionTracker(
+            repo, gitInfo = { GitInfo() }, clock = { now }, newId = { "n${++next}" },
+        ).also { it.start() }
+        val reopened = TaskIndex(repo, restarted, files, leafOfSession = { null }, clock = { now })
+
+        val after = reopened.state.value.tasks.single { it.id == id }
+        assertEquals(record, after.leadRecordId, "the ended record is found by the pane id the task remembers")
+        assertEquals("ended", restarted.snapshot().single { it.id == record }.state)
+    }
+
+    @Test
     fun `a task's start is the earliest session start, stamped once and never moved`() {
         session("early"); session("late")
         val early = tracker.openRecordOf("early")!!.createdAt
