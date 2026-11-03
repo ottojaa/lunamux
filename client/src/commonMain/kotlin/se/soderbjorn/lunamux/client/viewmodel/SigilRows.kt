@@ -15,10 +15,10 @@ package se.soderbjorn.lunamux.client.viewmodel
 
 import se.soderbjorn.lunamux.AgentSessionSummary
 
-/** The value of [AgentSessionSummary.startedBy] for a session a person typed the first line of. */
+/** The value of [AgentSessionSummary.startedBy] for a session whose opening line a person submitted (the last line submitted before it opened). */
 internal const val STARTED_BY_USER = "user"
 
-/** The value of [AgentSessionSummary.startedBy] for a session an MCP tool typed the first line of. */
+/** The value of [AgentSessionSummary.startedBy] for a session whose opening line an MCP tool submitted (the last line submitted before it opened). */
 internal const val STARTED_BY_TOOL = "tool"
 
 /**

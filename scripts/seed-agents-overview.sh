@@ -53,8 +53,10 @@
 #                    wear other marks; the home-folder session wears none. The footer says
 #                    "mark = one thread of work". The marks are stored, so seeding again and
 #                    restarting shows the same ones.
-#   Order            NOW lists tasks first, then loose sessions, each group in the order its work
-#                    started. A session going working -> needs you -> working never moves its row.
+#   Order            NOW lists tasks and loose sessions together, each in the order its work
+#                    started (the seeded tasks come first only because they began earlier). A
+#                    session going working -> needs you -> working never moves its row, nor does a
+#                    task whose members change state.
 #   Who              ⚙ marks a session an MCP tool started ("Rebuild the search index" and the file
 #                    tasks' members are seeded so) and ❯ one a person typed (for example "Trace the slow
 #                    login"); records with neither show nothing.

@@ -31,9 +31,15 @@ is credited to whoever started it first. The write sites:
 | bytes arriving on the `/pty` socket (the person typing in a pane) | user |
 | the open-a-tab route's command, typed for the person | user |
 | MCP `send_text` with `submit`, `send_keys` with `enter`, `run_command` | tool |
+| MCP `interrupt` | tool |
+| a pane the MCP `create_window` opens (before anyone types in it) | tool |
+| any other new pane | user |
 
-Only a submitted line changes the origin: focus reports, partial typing and interrupts do not, so
-typing half a word into a session a tool started does not take the credit.
+Apart from those, only a submitted line changes the origin: focus reports, partial typing and a
+person's Ctrl-C do not, so typing half a word into a session a tool started does not take the credit.
+The value read when the session opens is the origin of the last line submitted before it. A pane
+opened by `run_command` without a session id is typed into by the same call, so it needs no rule of
+its own.
 
 ### Place
 
@@ -52,7 +58,12 @@ they were sorted by state, so a session that began to need you jumped. Now it ke
 only its glyph and tint change. A task's members keep the order its file lists them in (the file is
 written by another tool and says so; a member's `since` moves with its state, so it cannot order
 anything), and a session of the task that only Lunamux knows follows them by start time. A task
-sits where its earliest session started. What NOW contains, the grace before an ended row leaves
+sits where its work began: the server stamps that time the first time it sees the task (the
+earliest start of the sessions it holds then, else the earliest time a member of its file gives,
+else the file's modification time) and never changes it, so no state change, file write or
+later match of a member to a session moves the task, and every window and a restarted server
+agree. A conversation resumed after days keeps its original start, so when it re-enters NOW it
+sits above the rows that began since. What NOW contains, the grace before an ended row leaves
 it, and which members a collapsed task shows (those that need you or work) are unchanged.
 
 ## The pictures

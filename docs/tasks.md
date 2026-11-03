@@ -55,8 +55,8 @@ idle, **‖** paused, **✓** done.
   that says days. A task made only of Lunamux's own sessions behaves like one idle session: it
   stays in NOW for ten minutes after the last activity and then moves to EARLIER. A task whose
   sessions have all ended is in EARLIER after the same ten minutes.
-- **NOW is in start order.** Rows are ordered by when their work began (a task by its earliest
-  session), never by state, so a session that starts needing the person does not jump to the top
+- **NOW is in start order.** Rows are ordered by when their work began (a task by the time the server
+  first saw it, dated by its earliest session or member, and never moved after), never by state, so a session that starts needing the person does not jump to the top
   and back; the ◆ and its amber row are what stand out. Opening the overview selects the first ◆
   row of the list, else the first row.
 - **EARLIER is two bands of tasks, newest first.** **LAST FEW DAYS** holds the tasks last active
