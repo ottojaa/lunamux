@@ -3653,7 +3653,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-sw { color: var(--ao-muted); }
 .ao-sw-work { color: var(--ao-accent); }
 .ao-sw-need { color: var(--ao-warn); }
-.ao-a { text-align: right; color: var(--ao-dim); }
+.ao-age { text-align: right; color: var(--ao-dim); }
 .ao-n-error { color: var(--ao-error); }
 
 /* The selected row's own line: the full text and where ↵ goes, under the columns after the marker. */

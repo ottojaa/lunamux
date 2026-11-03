@@ -447,7 +447,7 @@ private fun buildRow(row: Row, state: AgentsOverviewBackingViewModel.State, sele
     else detail.textContent = row.detail
     el.appendChild(detail)
 
-    el.appendChild(span("ao-a", if (row.sinceMillis <= 0) "" else formatAge(row.sinceMillis)))
+    el.appendChild(span("ao-age", if (row.sinceMillis <= 0) "" else formatAge(row.sinceMillis)))
 
     if (selected) el.appendChild(buildFocus(row))
     state.peek?.takeIf { selected }?.let { el.appendChild(buildPeek(it)) }
