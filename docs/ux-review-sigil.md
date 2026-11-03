@@ -54,7 +54,9 @@ easy to take for a faded row.
 Done, in this PR: the tint is mixed into a neutral grey of the surface's own lightness
 (`--ao-tint-base`, using CSS relative colour, with the plain surface as fallback where the browser
 cannot do that), so the hue stays amber: about 46° on dark. The ◆ band is now ΔE 26 from the
-surface; a plain selected row is 14.6. The selected ◆ row keeps both bars: the accent one on the outer edge and the amber one
+surface; a plain selected row is 14.6. Two strengths moved with the change of base, and both
+change what you see: the hover tint of a ◆ row goes from 21% to 19% amber, and the selected ◆
+row's tint from 26% to 22% (the base is no longer teal, so less amber reads as amber). The selected ◆ row keeps both bars: the accent one on the outer edge and the amber one
 just inside it ([the selected ◆ row at 1024](ux-review-sigil/overview-dark-collapsed-1024.png), top
 ◆ row). See [the ◆ rows close up](ux-review-sigil/need-rows-dark.png) and
 [light](ux-review-sigil/need-rows-light.png).
@@ -115,14 +117,18 @@ saw the cut while working on it, but did not keep a picture of the old footer, s
 
 Why it matters: half a legend entry is worse than none; it teaches the wrong thing.
 
-Done, in this PR: two changes. The text is shorter ("mark = one thread", "tab 1, top-left"; about
-511–518 px), so at 1024 px with the widest hints all four entries fit
+Done, in this PR: three changes. The gap between footer entries goes from 3ch to 2ch, for every
+key hint, not only the legend, which leaves the legend more room. The text is shorter ("mark = one
+thread", "tab 1, top-left"; about 511–518 px), so at 1024 px with the widest hints all four entries fit
 ([dark](ux-review-sigil/footer-1024-dark.png), [light](ux-review-sigil/footer-1024-light.png)). And
 each entry is its own element, so a panel that is still too narrow drops whole entries from the
-right and never cuts one: at 880 px three entries show, at 780 px two, with the keys intact
+right instead of cutting one: at 880 px three entries show, at 780 px two, with the keys intact
 ([880](ux-review-sigil/footer-880-light.png), [780](ux-review-sigil/footer-780-light.png), light).
 The entries are separated by a drawn "·", so a dropped entry leaves no stray dot. (The `move` hint
 is the first of the keys to drop at those widths; the overview's own width rule, not the legend's.)
+Not covered: below the widths shown I did not test. Once the panel is narrower than the first entry
+("mark = one thread") plus the keys, that entry is clipped on its own, so the claim holds down to
+about 780 px and no further.
 
 ### F5 · pass · The place cue and the mark match the pane
 
@@ -195,10 +201,20 @@ shapes did; now no shape is below 56 where a filled square is 100 (F3).
   blindness (F9).
 
 Below, the same screen as drawn, under a simulated deuteranopia, and in greyscale. The ◆ rows, the
-shapes and the who and place cues survive both; the difference between the two ◉ rows (*Billing
-cleanup*, blue; *Access control*, magenta) does not.
+shapes and the who and place cues survive both. What does not survive is the difference between two
+marks of one shape. On dark, *Nightly sync* (blue ▲) and *Bump kotlinx-serialization* (violet ▲)
+are 33 apart as drawn and about 2 under the simulation: the same colour. *Billing cleanup* (violet
+◉) and *Access control* (magenta ◉) stay apart in both (15.5 and 31.3, F9's table). On light, the
+screen holds no pair that collapses: the blue and violet ▲ are 6.3 apart under the simulation, close
+but not equal, and the pair that does collapse there, green and rose, is not on this screen (it is
+in the marks sheet after the pictures).
 ![](ux-review-sigil/colour-alone-dark.png)
 ![](ux-review-sigil/colour-alone-light.png)
+
+The pairs of F9's table across every shape, as drawn and simulated. Blue and violet are one colour
+on dark (the first two columns); green and rose are one colour on light (the fourth and fifth).
+![](ux-review-sigil/colour-alone-marks-dark.png)
+![](ux-review-sigil/colour-alone-marks-light.png)
 
 ### F9 · open · Inside a shape, hue is the only difference, and some hues collapse for deuteranopes
 
@@ -213,8 +229,10 @@ I ran every pair of hues through a deuteranopia simulation (Machado 2009, full s
 | blue–magenta | 17.0 | 25.2 |
 
 Under a simulated deuteranopia, blue and violet are the same colour on dark, and green and rose on
-light. So for about one man in twelve, two threads wearing the same shape in those hues are the same
-mark: they would take two threads for one. F2's work holds for normal vision; this is the other
+light. The simulation is full-severity deuteranopia (no working green cones), which is about 1% of
+men; red-green colour-vision deficiency of every degree is about one man in twelve, and the milder
+forms sit between the two. For those readers, two threads wearing the same shape in those hues are
+the same mark (or close to it): they would take two threads for one. F2's work holds for normal vision; this is the other
 reader the north star's "nothing relies on colour alone" asks about, and the answer is that one
 thing does.
 

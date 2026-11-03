@@ -88,8 +88,10 @@ private const val CLOCK_TICK_MS = 30_000
  * @property key the key as drawn, such as `→` or `⌘⌫`, or empty for a remark.
  * @property word what the key does, or the remark itself.
  * @property cls an extra class: how the entry gives way when the panel narrows.
+ * @property parts for a remark made of several entries that must each be shown whole or not at
+ *   all (the cue legend), the entries; [word] is then ignored. Empty for an ordinary entry.
  */
-private data class FooterSegment(val key: String, val word: String, val cls: String = "")
+private data class FooterSegment(val key: String, val word: String, val cls: String = "", val parts: List<String> = emptyList())
 
 /**
  * Register the configurable **agents overview** hotkey (default ⌘⇧A) with the
@@ -439,9 +441,9 @@ private fun renderFooter(state: AgentsOverviewBackingViewModel.State) {
         val el = span("ao-seg ${seg.cls}".trim(), "")
         el.setAttribute("data-key", seg.key)
         if (seg.key.isNotEmpty()) el.appendChild(span("ao-k", seg.key))
-        if (seg.cls == "ao-legend") {
+        if (seg.parts.isNotEmpty()) {
             // One element per entry, so a narrow panel drops whole entries from the right instead of cutting one mid-way.
-            seg.word.split(" · ").forEach { el.appendChild(span("ao-leg", it)) }
+            seg.parts.forEach { el.appendChild(span("ao-leg", it)) }
         } else {
             el.appendChild(document.createTextNode(seg.word))
         }
@@ -450,10 +452,10 @@ private fun renderFooter(state: AgentsOverviewBackingViewModel.State) {
 }
 
 /**
- * What the footer says the mark, who and place cues mean: entries joined by " · ", which
- * [renderFooter] splits so that each is drawn whole or not at all.
+ * What the footer says the mark, who and place cues mean, one entry per element so that
+ * [renderFooter] draws each whole or not at all.
  */
-private const val CUE_LEGEND = "mark = one thread · ❯ you started it · ⚙ a session did · 1▘ tab 1, top-left"
+private val CUE_LEGEND = listOf("mark = one thread", "❯ you started it", "⚙ a session did", "1▘ tab 1, top-left")
 
 /**
  * Choose the footer's entries from the selection: the view model's key hints for it, drawn with
@@ -467,7 +469,7 @@ private fun footerSegments(state: AgentsOverviewBackingViewModel.State): List<Fo
     val backToTask = row?.kind == Kind.SESSION && inPanel(row, state)
     // The legend comes first and is the one entry that gives way (it loses whole entries from the
     // right, never the keys) when the panel is too narrow for all of it.
-    return listOf(FooterSegment("", CUE_LEGEND, "ao-legend")) + AgentsOverviewBackingViewModel.footerHints(state.footer, backToTask).map {
+    return listOf(FooterSegment("", "", "ao-legend", CUE_LEGEND)) + AgentsOverviewBackingViewModel.footerHints(state.footer, backToTask).map {
         FooterSegment(
             it.key, it.word,
             when (it.role) {

@@ -3790,8 +3790,9 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 }
 .ao-seg { cursor: default; flex: none; }
 /* The cue legend is the one entry that gives way: before any key hint is cut it loses whole entries,
-   last first. Its entries wrap onto a second line that the fixed height hides, so none is ever
-   shown half ("1▘ tab …" explains nothing). */
+   last first. Its entries wrap onto a second line that the fixed height hides, so an entry is not
+   shown half ("1▘ tab …" explains nothing). That holds while the panel can hold the first entry
+   beside the keys; narrower than that, the first entry is clipped on its own line. */
 .ao-legend { flex: 0 1 auto; min-width: 0; display: flex; flex-wrap: wrap; column-gap: 1ch; height: 16px; line-height: 16px; overflow: hidden; }
 .ao-leg { flex: none; white-space: nowrap; }
 .ao-leg + .ao-leg::before { content: "·"; margin-right: 1ch; }
