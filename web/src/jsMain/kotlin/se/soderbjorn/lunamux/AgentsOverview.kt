@@ -455,23 +455,31 @@ private fun buildRow(row: Row, state: AgentsOverviewBackingViewModel.State, sele
 }
 
 /**
- * The selected row's extra line: the full text, then where it was found or the tab it sits in. A
- * failed resume or open is drawn in the error colour and never dimmed.
+ * The selected row's extra line: the full text, then where it was found or the tab it sits in. The
+ * tab at the end is drawn dimmer than the text before it, and a failed resume or open in the error
+ * colour, never dimmed.
  *
  * @param row the selected row.
  * @return the line, spanning every column after the marker.
+ * @see Row.tab
+ * @see Row.error
  */
 private fun buildFocus(row: Row): HTMLElement {
     val focus = div("ao-focus")
+    val tab = row.tab
+    // The tab note is the last part of the extra line; what it is joined to by " · " belongs to the dim part.
+    val tabStart = if (tab.isNotEmpty() && row.extra.endsWith(tab)) row.extra.length - tab.length else -1
+    val main = if (tabStart >= 0) row.extra.substring(0, tabStart).removeSuffix(" · ") else row.extra
     val error = row.error
-    val at = if (error != null) row.extra.indexOf(error) else -1
+    val at = if (error != null) main.indexOf(error) else -1
     if (error != null && at >= 0) {
-        focus.appendChild(document.createTextNode(row.extra.substring(0, at)))
+        focus.appendChild(document.createTextNode(main.substring(0, at)))
         focus.appendChild(span("ao-n-error", error))
-        focus.appendChild(document.createTextNode(row.extra.substring(at + error.length)))
+        focus.appendChild(document.createTextNode(main.substring(at + error.length)))
     } else {
-        focus.textContent = row.extra
+        focus.appendChild(document.createTextNode(main))
     }
+    if (tabStart >= 0) focus.appendChild(span("ao-tab", if (main.isEmpty()) tab else " · $tab"))
     return focus
 }
 

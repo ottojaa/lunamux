@@ -3655,6 +3655,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-sw-need { color: var(--ao-warn); }
 .ao-age { text-align: right; color: var(--ao-dim); }
 .ao-n-error { color: var(--ao-error); }
+.ao-tab { color: var(--ao-dim); }
 
 /* The selected row's own line: the full text and where ↵ goes, under the columns after the marker. */
 .ao-focus {

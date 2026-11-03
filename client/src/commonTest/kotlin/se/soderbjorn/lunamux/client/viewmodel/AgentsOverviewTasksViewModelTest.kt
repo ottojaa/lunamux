@@ -376,7 +376,7 @@ class AgentsOverviewTasksViewModelTest {
 
     @Test
     fun theChipCountsAsWorkingOnlyTheSessionsThatAreMovingAndTheClockAloneEndsThat() {
-        // Window-wide stamps: hosted singles by their last activity, an unhosted member by its file's refresh time.
+        // Window-wide stamps: hosted singles by their last activity, a member Lunamux does not host by its file's refresh time.
         show(
             listOf(task(id = "f", refreshedAtMillis = now - 25 * MINUTE, members = listOf(member("file-run", "working"), member("other", "idle")))),
             session("live", "working", lastActivityAt = now - MINUTE),
@@ -485,7 +485,7 @@ class AgentsOverviewTasksViewModelTest {
 
     @Test
     fun aWorkingSessionOutsideLunamuxIsMovingWhileItsFileIsFreshAndStopsWhenItIsNotRefreshed() {
-        show(listOf(task(refreshedAtMillis = now - MINUTE, members = listOf(member("unhosted", "working", line = "Doing a thing"), member("other", "idle")))))
+        show(listOf(task(refreshedAtMillis = now - MINUTE, members = listOf(member("filed", "working", line = "Doing a thing"), member("other", "idle")))))
         assertEquals("working", row("task:g1").stateWord)
         assertEquals("Doing a thing", row("task:g1").detail)
         now += 5 * MINUTE
@@ -561,6 +561,9 @@ class AgentsOverviewTasksViewModelTest {
         )
         assertEquals("\"Which branch?\" · tab 2", row("task:g1").extra)
         assertEquals("Edit x.kt · tab 1", row("x").extra)
+        // The tab is also a field of its own, so the view can draw it dimmer; it is the end of the extra line.
+        assertEquals("tab 2", row("task:g1").tab)
+        assertEquals("tab 1", row("x").tab)
     }
 
     @Test
@@ -568,6 +571,7 @@ class AgentsOverviewTasksViewModelTest {
         layoutTwoWorlds(listOf("leaf-a"))
         show(emptyList(), session("a", "working", nowLine = "Edit a.kt", lastActivityAt = now - 1_000))
         assertEquals("Edit a.kt · tab 1 in Work", row("a").extra)
+        assertEquals("tab 1 in Work", row("a").tab)
     }
 
     @Test
@@ -579,6 +583,7 @@ class AgentsOverviewTasksViewModelTest {
             session("lead", "working", taskId = "g1", background = true, lastActivityAt = now - 1_000),
         )
         assertEquals("Notes drafted", row("task:g1").extra)
+        assertEquals("", row("task:g1").tab)
     }
 
     @Test
@@ -587,6 +592,7 @@ class AgentsOverviewTasksViewModelTest {
         val r = row("task:g1")
         assertEquals(Enter.NONE, r.enter)
         assertEquals("Doing a thing · nothing to jump to: this session is not in a Lunamux pane", r.extra)
+        assertEquals("", r.tab)
     }
 
     // ---- what ↵ opens ----

@@ -160,6 +160,8 @@ class AgentsOverviewBackingViewModel(
      *   unpushed commit"), a note that there is nothing to jump to, the error of the last failed
      *   resume or open, where a search matched ("in transcript of Reviewer"), and the tab the
      *   session [enter] opens sits in ("tab 2", or "tab 2 in Work" in another world).
+     * @property tab that last part of [extra] on its own ("tab 2", "tab 2 in Work"), empty when the
+     *   extra has none, so the view can draw it dimmer than the text before it.
      * @property sinceMillis epoch millis the row's age counts from: the time the task entered its
      *   current state for a task in NOW, its newest session's activity (when it ended, for an
      *   ended one) for a task in EARLIER; the view turns it into an age.
@@ -189,6 +191,7 @@ class AgentsOverviewBackingViewModel(
         val stateWord: String,
         val detail: String,
         val extra: String,
+        val tab: String = "",
         val sinceMillis: Long,
         val enter: Enter,
         val recordId: String?,
@@ -1246,6 +1249,7 @@ class AgentsOverviewBackingViewModel(
         val single = u.runs.singleOrNull()?.session
         val folder = u.runs.mapNotNull { it.session }.map(::folderOf).distinct().singleOrNull()
         val error = c.errorOf(id)
+        val tab = if (u.enter == Enter.JUMP) tabNote(c.panes[target?.leafId], c.config) else null
         return Row(
             id = id,
             taskId = t.id,
@@ -1259,8 +1263,9 @@ class AgentsOverviewBackingViewModel(
                 c.noteOf(target?.id),
                 NOTHING_TO_JUMP.takeIf { u.enter == Enter.NONE },
                 error,
-                if (u.enter == Enter.JUMP) tabNote(c.panes[target?.leafId], c.config) else null,
+                tab,
             ),
+            tab = tab.orEmpty(),
             sinceMillis = if (u.inEarlier) u.recency else u.since,
             enter = u.enter,
             recordId = target?.id,
@@ -1300,6 +1305,7 @@ class AgentsOverviewBackingViewModel(
             else -> Enter.RESUME
         }
         val error = c.errorOf(id)
+        val tab = if (enter == Enter.JUMP) tabNote(c.panes[s.leafId], c.config) else null
         return Row(
             id = id,
             taskId = s.taskId.takeIf { taskTitle != null },
@@ -1313,7 +1319,8 @@ class AgentsOverviewBackingViewModel(
                 else -> STATE_DONE
             },
             detail = detail,
-            extra = extraOf(detail, c.noteOf(s.id), error, if (enter == Enter.JUMP) tabNote(c.panes[s.leafId], c.config) else null),
+            extra = extraOf(detail, c.noteOf(s.id), error, tab),
+            tab = tab.orEmpty(),
             sinceMillis = sinceOf(s),
             enter = enter,
             recordId = s.id,
@@ -1359,9 +1366,11 @@ class AgentsOverviewBackingViewModel(
         val highlight = titleCurrent && (inTitle || snippet != null)
         val where = "in ${fieldLabel(m.field)}" + if (sessionTitle != base.title && m.field != "task") " of $sessionTitle" else ""
         val note = m.resumeNote ?: c.noteOf(s.id)
+        val tab = if (enter == Enter.JUMP) tabNote(c.panes[s.leafId], c.config) else null
         return base.copy(
             detail = snippet ?: base.detail,
-            extra = extraOf(snippet ?: base.detail, note, base.error, where, if (enter == Enter.JUMP) tabNote(c.panes[s.leafId], c.config) else null),
+            extra = extraOf(snippet ?: base.detail, note, base.error, where, tab),
+            tab = tab.orEmpty(),
             enter = enter,
             recordId = s.id,
             isLive = live,
