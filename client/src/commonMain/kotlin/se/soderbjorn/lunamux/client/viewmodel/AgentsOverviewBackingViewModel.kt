@@ -587,7 +587,7 @@ class AgentsOverviewBackingViewModel(
     }
 
     /**
-     * Show the overlay with an empty search and the ◆ row that has waited longest selected (the
+     * Show the overlay with an empty search and the first ◆ row in list order selected (the
      * first row when nothing needs the user). Task panels the user expanded stay expanded. Called by
      * ⌘⇧A and the chip.
      */
