@@ -3762,7 +3762,6 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     overflow: hidden;
 }
 .ao-seg { cursor: default; }
-.ao-seg-legend { color: var(--ao-faint); }
 .ao-seg[data-key]:not([data-key=""]) { cursor: pointer; }
 .ao-k { color: var(--ao-text); margin-right: 0.8ch; }
 

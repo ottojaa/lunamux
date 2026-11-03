@@ -456,7 +456,7 @@ private fun footerSegments(state: AgentsOverviewBackingViewModel.State): List<Fo
     val backToTask = row?.kind == Kind.SESSION && inPanel(row, state)
     // The legend for the mark column comes first, so the narrow-panel rules that drop "move" and
     // "back" never take it away.
-    return listOf(FooterSegment("", MARK_LEGEND, "ao-seg-legend")) + AgentsOverviewBackingViewModel.footerHints(state.footer, backToTask).map {
+    return listOf(FooterSegment("", MARK_LEGEND)) + AgentsOverviewBackingViewModel.footerHints(state.footer, backToTask).map {
         FooterSegment(
             it.key, it.word,
             when (it.role) {
