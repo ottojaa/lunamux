@@ -592,20 +592,26 @@ class AgentSessionTracker(
     /**
      * The row the clients see for [rec], with its thread key and the thread's mark filled in.
      *
-     * Called by [publish] for every record and by the session search for the matches it returns,
-     * so a search result wears the same mark as the row in the list. A session that belongs to
-     * no thread (the home folder, a repository's default branch) has neither field. A session
-     * that belongs to a task gets the task's mark on top of this, from [TaskIndex].
+     * Called by [publish] for every record (which assigns the mark of a thread the first time it
+     * is seen) and by the session search with `assign = false` for the matches it returns, so a
+     * search result wears the mark the thread already has, without a query making threads count
+     * as seen. A session that belongs to no thread (the home folder, a repository's default
+     * branch) has neither field. A session that belongs to a task gets the task's mark on top of
+     * this, from [TaskIndex].
      *
      * @param rec the stored record.
+     * @param assign true to give a thread without a mark its mark now; false to only read one.
+     *   A thread without a stored mark then keeps its key and has no mark.
      * @return its summary.
      * @see ThreadMarks.keyOf
+     * @see ThreadMarks.peekMark
      */
-    fun summaryOf(rec: AgentSessionRecord): AgentSessionSummary {
+    fun summaryOf(rec: AgentSessionRecord, assign: Boolean = true): AgentSessionSummary {
         val summary = rec.toSummary()
         val m = marks ?: return summary
         val key = m.keyOf(rec) ?: return summary
-        return summary.copy(threadKey = key, mark = m.markFor(key, clock()))
+        val mark = if (assign) m.markFor(key, clock()) else m.peekMark(key)
+        return summary.copy(threadKey = key, mark = mark)
     }
 
     private companion object {

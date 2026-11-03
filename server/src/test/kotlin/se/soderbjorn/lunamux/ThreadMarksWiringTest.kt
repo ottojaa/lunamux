@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import se.soderbjorn.lunamux.persistence.AgentSessionRecord
 import se.soderbjorn.lunamux.persistence.SettingsRepository
 import java.io.File
 import java.nio.file.Files
@@ -169,12 +170,40 @@ class ThreadMarksWiringTest {
     @Test
     fun aTaskKeepsItsMarkAcrossARestart() {
         val wt = worktree("invoice-export")
+        // Another thread holds the worktree's hash mark first, so the task's mark is a probed one
+        // that a restart can only know from the stored row.
+        val hash = ThreadMarks.hashMark("path:$wt")
+        marks.markFor((0..10_000).map { "path:/rival$it" }.first { ThreadMarks.hashMark(it) == hash }, now)
         files.value = listOf(taskFile("inv", member("parse", wt)))
         index.recompute()
         val before = index.state.value.tasks.single().mark
+        assertNotEquals(hash, before, "the task's mark was probed past the rival's")
 
         val restarted = ThreadMarks(SettingsRepository(File(dir, "test.db")), home = homeDir, defaultBranchOf = { null })
         val index2 = TaskIndex(repo, tracker, files, leafOfSession = { null }, clock = { now + 1 }, marks = restarted)
         assertEquals(before, index2.state.value.tasks.single().mark)
+    }
+
+    @Test
+    fun aSearchShowsTheMarkAThreadHasButNeverGivesOrRenewsOne() {
+        val seen = worktree("invoice-export")
+        val unseen = worktree("search-index")
+        startSession("p1", seen)
+        val stored = marks.peekMark("path:$seen")
+        assertNotNull(stored)
+        val record = AgentSessionRecord(
+            id = "old-1", agent = "claude", agentSessionId = "11111111-0000-4000-8000-000000000001", source = "hooks",
+            cwd = unseen, repo = "billing", branch = "search-index", title = "needle in the search index",
+            firstPrompt = "find the needle", state = "ended", stateSince = 100, createdAt = 50, endedAt = 100,
+            repoRoot = folder("billing"), worktreePath = unseen,
+        )
+        repo.saveAgentSession(record)
+        repo.saveAgentSession(record.copy(id = "old-2", cwd = seen, branch = "invoice-export", worktreePath = seen, title = "needle in the invoice export"))
+
+        val hits = AgentSessionSearch.search(repo, tracker, "needle").associateBy { it.summary.id }
+        assertEquals(stored, hits.getValue("old-2").summary.mark, "a thread with a stored mark shows it")
+        assertNull(hits.getValue("old-1").summary.mark, "a thread no one has met gets no mark from a search")
+        assertEquals("path:$unseen", hits.getValue("old-1").summary.threadKey)
+        assertNull(marks.peekMark("path:$unseen"), "and nothing was stored for it")
     }
 }

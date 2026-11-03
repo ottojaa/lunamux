@@ -87,6 +87,33 @@ class ThreadMarksTest {
     }
 
     @Test
+    fun aRecordThatKnowsItsBranchButNotItsRepositoryRootIsStillInsideGit() {
+        val m = marks()
+        val checkout = folder("imported/search")
+        assertNull(m.keyOf(null, null, "main", checkout), "the default branch of a main checkout has no thread")
+        assertNull(m.keyOf(null, null, "master", checkout))
+        val reindex = m.keyOf(null, null, "reindex", checkout)
+        assertEquals("branch:$checkout#reindex", reindex)
+        assertNotEquals(reindex, m.keyOf(null, null, "other", checkout), "each branch is a thread of its own")
+        assertEquals("branch:$checkout#reindex", m.keyOf(null, null, "reindex", "$checkout/"))
+    }
+
+    @Test
+    fun aTaskFilesFolderOnTheHomeFolderOrADefaultBranchHasNoThread() {
+        val main = folder("search")
+        val other = folder("search-reindex")
+        gitFacts = mapOf(
+            main to GitInfo(repo = "search", branch = "main", repoRoot = main),
+            other to GitInfo(repo = "search", branch = "reindex", repoRoot = other),
+            homeDir to GitInfo(),
+        )
+        val m = marks()
+        assertNull(m.folderKey(main), "a repository's default branch names no thread")
+        assertNull(m.folderKey(homeDir), "neither does the home folder")
+        assertEquals("branch:$other#reindex", m.folderKey(other))
+    }
+
+    @Test
     fun aSymlinkedFolderAndItsTargetAreOneThread() {
         val target = folder("real/project")
         val link = File(dir, "link").also { Files.createSymbolicLink(it.toPath(), File(target).toPath()) }
@@ -166,15 +193,18 @@ class ThreadMarksTest {
 
     @Test
     fun aStoredMarkSurvivesARestart() {
-        val repo = SettingsRepository(db)
-        val before = marks(repo)
-        val a = before.markFor("path:/a", 1_000)
-        val b = before.markFor("path:/b", 1_000)
+        val first = ThreadMarks.hashMark("path:/a")
+        val clash = (0..10_000).map { "path:/b$it" }.first { ThreadMarks.hashMark(it) == first }
+        val before = marks(SettingsRepository(db))
+        before.markFor("path:/a", 1_000)
+        val probed = before.markFor(clash, 1_000)
+        assertNotEquals(first, probed, "the second thread was probed to another mark")
         val task = before.markForTask("t1", "path:/a", 1_000)
 
+        // After a restart the probed thread is met before its rival: only the stored row knows its mark.
         val after = marks(SettingsRepository(db))
-        assertEquals(a, after.markFor("path:/a", 9_000_000_000))
-        assertEquals(b, after.markFor("path:/b", 9_000_000_000))
+        assertEquals(probed, after.markFor(clash, 9_000_000_000))
+        assertEquals(first, after.markFor("path:/a", 9_000_000_000))
         assertEquals(task, after.markOfTask("t1"))
     }
 
@@ -187,8 +217,25 @@ class ThreadMarksTest {
         val taken = before.markFor(clash, 1_000 + 15 * day)
         assertEquals(first, taken, "the quiet thread's mark was free for the newcomer")
 
+        // The newcomer is met first after the restart, so the quiet thread's only claim is its stored row.
         val after = marks(SettingsRepository(db))
+        assertEquals(first, after.markFor(clash, 1_000 + 16 * day))
         assertEquals(first, after.markFor("path:/a", 1_000 + 16 * day), "the first thread still wears its own")
+    }
+
+    @Test
+    fun peekingAtAMarkNeitherAssignsItNorRenewsTheThread() {
+        val m = marks()
+        assertNull(m.peekMark("path:/a"), "a thread nobody has met has no mark to read")
+        val first = ThreadMarks.hashMark("path:/a")
+        val clash = (0..10_000).map { "path:/b$it" }.first { ThreadMarks.hashMark(it) == first }
+        assertNull(m.peekMark("path:/a"))
+        assertEquals(first, m.markFor(clash, 1_000), "peeking at path:/a held nothing: the clash keeps its hash mark")
+        assertEquals(first, m.peekMark(clash))
+        // A peek 15 days later renews nothing, so the thread's mark is free for a newcomer.
+        m.peekMark(clash)
+        val third = (0..10_000).map { "path:/c$it" }.first { ThreadMarks.hashMark(it) == first }
+        assertEquals(first, m.markFor(third, 1_000 + 15 * day))
     }
 
     // --- tasks --------------------------------------------------------------------------------

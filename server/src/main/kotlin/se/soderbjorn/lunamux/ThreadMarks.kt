@@ -75,9 +75,11 @@ class ThreadMarks(
      * Called by [AgentSessionTracker] for every summary it publishes and by [TaskIndex] when a
      * task takes its first member's mark. The rules, first match wins:
      *  1. the session ran in a linked worktree: `path:<worktree root>`;
-     *  2. its branch is not the repository's default branch (`main`, `master`, or what
-     *     `origin/HEAD` names): `branch:<repository root>#<branch>`;
-     *  3. its folder is not inside a git repository and is not the home folder: `path:<folder>`;
+     *  2. it ran in a git checkout (it has a repository root, or only a branch, as a record
+     *     imported from Claude's own history does) on a branch that is not the repository's
+     *     default (`main`, `master`, or what `origin/HEAD` names):
+     *     `branch:<repository root, else the folder>#<branch>`;
+     *  3. it ran in no git checkout and its folder is not the home folder: `path:<folder>`;
      *  4. otherwise none. The home folder, a repository's default branch in its main checkout, a
      *     detached HEAD and a session with no folder are not one thread of work; a mark there
      *     would tie unrelated work together.
@@ -102,9 +104,11 @@ class ThreadMarks(
      */
     fun keyOf(worktreePath: String?, repoRoot: String?, branch: String?, cwd: String?): String? {
         if (!worktreePath.isNullOrBlank()) return "path:${canonicalOf(worktreePath)}"
-        if (!repoRoot.isNullOrBlank()) {
-            val onDefault = branch == null || isDefaultBranch(repoRoot, branch)
-            return if (onDefault) null else "branch:${canonicalOf(repoRoot)}#$branch"
+        if (!repoRoot.isNullOrBlank() || !branch.isNullOrBlank()) {
+            // A record can know its branch without knowing its repository root; the folder stands in.
+            val root = repoRoot?.takeIf { it.isNotBlank() } ?: cwd?.takeIf { it.isNotBlank() } ?: return null
+            val onDefault = branch.isNullOrBlank() || isDefaultBranch(root, branch)
+            return if (onDefault) null else "branch:${canonicalOf(root)}#$branch"
         }
         if (cwd.isNullOrBlank()) return null
         val folder = canonicalOf(cwd)
@@ -114,15 +118,34 @@ class ThreadMarks(
     /**
      * The thread key of a folder a task file names (`members[].match.folder`, `open.folder`).
      *
-     * Called by [TaskIndex] the first time it meets a task. The same rules as [keyOf] for a
-     * folder that git places in a linked worktree (`path:<worktree root>`); any other folder
-     * keys as itself, so a seeded folder that does not exist on disk still keys as `path:<folder>`.
+     * Called by [TaskIndex] the first time it meets a task. It asks git about the folder and
+     * applies the same rules as [keyOf]: a folder in a linked worktree keys as the worktree
+     * root, one on a non-default branch of a repository keys as that branch, a plain folder keys
+     * as itself (so a seeded folder that does not exist on disk still keys as `path:<folder>`),
+     * and the home folder or a repository's default branch has no key.
      *
      * @param folder an absolute folder.
-     * @return the thread key.
+     * @return the thread key, or null when the folder belongs to no thread (the task then gets a
+     *   mark of its own).
+     * @see keyOf
      */
-    fun folderKey(folder: String): String =
-        "path:${canonicalOf(gitInfo(folder).worktreePath ?: folder)}"
+    fun folderKey(folder: String): String? {
+        val info = gitInfo(folder)
+        return keyOf(info.worktreePath, info.repoRoot, info.branch, folder)
+    }
+
+    /**
+     * The mark already stored for a thread, without assigning one or renewing the thread.
+     *
+     * Called by the session search, which must show the mark a row has but must not make a
+     * thread that only matched a query count as seen: a broad search would otherwise hold
+     * marks for threads nobody is working in.
+     *
+     * @param key a thread key from [keyOf] or [folderKey].
+     * @return the stored mark, or null when the thread has none yet.
+     * @see markFor
+     */
+    fun peekMark(key: String): Int? = synchronized(lock) { entries[key]?.mark }
 
     /**
      * The mark of a thread, assigned the first time the thread is seen.

@@ -98,7 +98,7 @@ object AgentSessionSearch {
             .take(MAX_MATCHES)
             .map { (rec, found, taskTitle) ->
                 AgentSessionMatch(
-                    summary = (tracker?.summaryOf(rec) ?: rec.toSummary()).let { s ->
+                    summary = (tracker?.summaryOf(rec, assign = false) ?: rec.toSummary()).let { s ->
                         val taskMark = tasks?.taskIdOf(rec)?.let(tasks::markOfTask)
                         if (taskMark != null) s.copy(mark = taskMark) else s
                     },
