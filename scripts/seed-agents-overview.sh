@@ -4,7 +4,7 @@
 #
 #   scripts/seed-agents-overview.sh <db file> <tasks folder>
 #
-# Writes 21 ended agent sessions last active today, 1, 2, 6, 12 and 30 days ago, five
+# Writes 24 ended agent sessions last active today, 1, 2, 6, 12 and 30 days ago, six
 # agent-made tasks, six task files, and 8 sessions that are awkward to name or to read (listed
 # below). Run it again to refresh the ages (it replaces its own records and touches nothing else).
 # The ages are counted from the moment it runs, so seed again on the day you look. Seed while the
@@ -48,6 +48,10 @@
 #   A restart        "Trace the slow login" (open, idle for 2 days) and "Rebuild the search index"
 #                    (open, working for 5 hours) are ended by the server when it starts. They are
 #                    aged from when they last did anything (2d and 5h), not from the restart.
+#   Release notes    an agent-made task with its own session, the status "Notes drafted, waiting on the
+#                    changelog check" and two members that ran in background tabs, all ended, so it is
+#                    in the first EARLIER band. Search finds its own session but never the two background
+#                    ones. Run scripts/seed-agents-overview-live.sh for the live version in NOW.
 #   Search           type "invoice": three sessions of "Invoice export migration", 30 days old,
 #                    found only through their task's title ("in task Invoice export migration").
 #                    "token" also matches by task; "limiter" matches by title first.

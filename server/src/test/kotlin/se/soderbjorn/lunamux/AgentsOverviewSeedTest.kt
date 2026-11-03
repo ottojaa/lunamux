@@ -32,7 +32,7 @@ class AgentsOverviewSeedTest {
     @Test
     fun `the seed holds about twenty ended sessions spread over the ages the overview is read at`() {
         val summary = AgentsOverviewSeed.seed(db, tasksDir, now)
-        assertEquals(29, summary.sessions)
+        assertEquals(32, summary.sessions)
         assertEquals(6, tasksDir.listFiles { f -> f.name.endsWith(".json") }!!.size)
 
         val repo = repo()
@@ -40,7 +40,7 @@ class AgentsOverviewSeedTest {
         assertTrue(kept.all { it.state == "ended" && it.endedAt != null && it.source == "hooks" })
         val ages = kept.map { (now - it.endedAt!!) / day }.toSet()
         assertTrue(0L in ages && 2L in ages && 6L in ages && 12L in ages, "ages today, 2, 6 and 12 days: $ages")
-        assertEquals(23, kept.size, "the sessions of 30 days or more are older than the window")
+        assertEquals(26, kept.size, "the sessions of 30 days or more are older than the window")
         assertTrue(repo.loadRecentEndedAgentSessions(0, 300).any { (now - it.endedAt!!) >= 30 * day })
     }
 
@@ -81,6 +81,25 @@ class AgentsOverviewSeedTest {
     }
 
     @Test
+    fun `the seed holds a task with its own session, a status and two background members that search never finds`() {
+        AgentsOverviewSeed.seed(db, tasksDir, now)
+        val repo = repo()
+        val meta = repo.loadTaskMeta().single { it.taskId == "seed-task-notes" }
+        assertEquals("seed-pty-notes", meta.leadSession)
+        assertEquals("Notes drafted, waiting on the changelog check", meta.status)
+        val members = repo.loadRecentEndedAgentSessions(0, 300).filter { it.taskId == "seed-task-notes" }
+        assertEquals(3, members.size)
+        assertEquals(setOf("seed-notes-2", "seed-notes-3"), members.filter { it.background }.map { it.id }.toSet())
+
+        val tasks = TaskIndex(repo, AgentSessionTracker(repo), MutableStateFlow(emptyList()), { null }, { now })
+        val own = AgentSessionSearch.search(repo, null, "release notes", tasks).map { it.summary.id }
+        assertTrue("seed-notes-1" in own, "the task's own session is found: $own")
+        assertTrue(own.none { it in setOf("seed-notes-2", "seed-notes-3") }, "a background session is never found, not even through its task: $own")
+        val byWords = AgentSessionSearch.search(repo, null, "changelog entry", tasks).map { it.summary.id }
+        assertTrue("seed-notes-2" !in byWords, "nor by its own words: $byWords")
+    }
+
+    @Test
     fun `the seed turns mcp on with a read-write token so the live script can drive the scratch server`() {
         AgentsOverviewSeed.seed(db, tasksDir, now)
         val repo = repo()
@@ -95,8 +114,8 @@ class AgentsOverviewSeedTest {
     fun `seeding again replaces the records instead of adding to them`() {
         AgentsOverviewSeed.seed(db, tasksDir, now)
         AgentsOverviewSeed.seed(db, tasksDir, now + day)
-        assertEquals(27, repo().loadRecentEndedAgentSessions(0, 300).size)
-        assertEquals(5, repo().loadAgentTasks().size)
+        assertEquals(30, repo().loadRecentEndedAgentSessions(0, 300).size)
+        assertEquals(6, repo().loadAgentTasks().size)
     }
 
     @Test
