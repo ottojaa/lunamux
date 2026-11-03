@@ -1337,7 +1337,7 @@ fun bootViaToolkitShell(root: HTMLElement) {
             // link) return `null` and so don't get a header dot. Replaces the
             // former spinner / warning-triangle glyph.
             paneHeaderBadge = { _, paneId ->
-                sessionIdForPane(paneId)?.let { buildStatusDot(it, header = true) }
+                sessionIdForPane(paneId)?.let { withSigil("data-sigil-pane", paneId, buildStatusDot(it, header = true)) }
             },
             // The sidebar badge slot holds the per-row status DOT (trailing bead,
             // after the label) for EVERY pane — terminal panes are state-driven
@@ -1360,7 +1360,7 @@ fun bootViaToolkitShell(root: HTMLElement) {
             // `updateStateIndicators` aggregates pane states per tab in its
             // `for (tab in cfg.tabs)` block and repaints every
             // `.tt-status-dot[data-tab-state='<tabId>']` element it finds.
-            tabTrailingBadge = { tabId -> buildTabStatusDot(tabId) },
+            tabTrailingBadge = { tabId -> withSigil("data-sigil-tab", tabId, buildTabStatusDot(tabId)) },
             // App-switcher button in the LEADING trailing-cluster slot — the toolkit
             // renders `extraTopbarBeforeStandard` immediately to the left of the
             // standard "+" New split-button (with a small divider between), so

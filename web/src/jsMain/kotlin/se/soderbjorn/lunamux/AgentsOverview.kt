@@ -4,8 +4,9 @@
  * Codex, Gemini) as one terminal-style table: "Now", then what finished or went quiet under
  * "Last few days" and "Last two weeks" (a heading with nothing under it is not drawn).
  *
- * Every row is the same seven-column grid: a gutter (the task chevron or its tree lines), the
- * state glyph (the only place a state is drawn as a glyph), the title, where it runs, a status
+ * Every row is the same eight-column grid: a gutter (the task chevron or its tree lines), the
+ * state glyph (the only place a state is drawn as a glyph), the mark of the row's thread of work
+ * (empty for a row with none), the title, where it runs, a status
  * line, the age and the row's own action. A task with several sessions is an expansion panel in
  * the same grid: a bold header whose click, →, ← and space fold it, whose action ("jump" to the
  * session that most needs the person, else "open" the task's own session) is its ↵, and whose
@@ -440,6 +441,9 @@ private fun renderFooter(state: AgentsOverviewBackingViewModel.State) {
     }
 }
 
+/** What the footer says the mark column means. */
+private const val MARK_LEGEND = "mark = one thread of work"
+
 /**
  * Choose the footer's entries from the selection: the view model's key hints for it, drawn with
  * the classes that let "move" and "back" give way when the panel narrows.
@@ -450,7 +454,9 @@ private fun renderFooter(state: AgentsOverviewBackingViewModel.State) {
 private fun footerSegments(state: AgentsOverviewBackingViewModel.State): List<FooterSegment> {
     val row = state.selectedRow
     val backToTask = row?.kind == Kind.SESSION && inPanel(row, state)
-    return AgentsOverviewBackingViewModel.footerHints(state.footer, backToTask).map {
+    // The legend for the mark column comes first, so the narrow-panel rules that drop "move" and
+    // "back" never take it away.
+    return listOf(FooterSegment("", MARK_LEGEND, "ao-seg-legend")) + AgentsOverviewBackingViewModel.footerHints(state.footer, backToTask).map {
         FooterSegment(
             it.key, it.word,
             when (it.role) {
@@ -585,7 +591,7 @@ private fun inPanel(row: Row, state: AgentsOverviewBackingViewModel.State): Bool
     row.kind == Kind.SESSION && row.taskId != null && state.tasks.containsKey(row.taskId)
 
 /**
- * One row of the table, session or task header, in the seven-column grid.
+ * One row of the table, session or task header, in the eight-column grid.
  *
  * The row's colour comes from its state alone: needs-you status in the brightest text, working
  * status mid-bright, the rest dim. The selected row shows its action as "↵ jump" and the like at
@@ -635,6 +641,11 @@ private fun buildRow(
     val glyphCell = span("ao-s", "")
     stateGlyph(row, task, now)?.let { glyphCell.appendChild(it) }
     el.appendChild(glyphCell)
+
+    // The mark of the row's thread of work; an empty cell keeps the columns aligned for a row with none.
+    val markCell = span("ao-m", "")
+    row.mark?.let { markCell.appendChild(buildSigil(it)) }
+    el.appendChild(markCell)
 
     val title = span("ao-t", "")
     if (row.field == "title") title.appendChild(highlighted(row.title, row.matchStart, row.matchLength))
@@ -696,6 +707,7 @@ private fun buildMoreLine(hidden: Int): HTMLElement {
     val el = div("ao-row ao-more")
     el.appendChild(span("ao-gut", ""))
     el.appendChild(span("ao-s", ""))
+    el.appendChild(span("ao-m", ""))
     el.appendChild(span("ao-t", "+ $hidden more"))
     return el
 }

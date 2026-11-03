@@ -522,6 +522,7 @@ fun renderConfig(config: dynamic) {
  * independently via their own run() loops.
  */
 fun connectWindow() {
+    startSigilMarks()
     GlobalScope.launch {
         windowSocket.envelopes.collect { envelope ->
             when (envelope) {

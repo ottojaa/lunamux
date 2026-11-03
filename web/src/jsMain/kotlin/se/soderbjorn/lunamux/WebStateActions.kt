@@ -894,6 +894,8 @@ internal fun updateStateIndicators(sessionStates: Map<String, String?>) {
     // Desktop notifications intentionally stay on the RAW states below — an
     // override is a visual preview, not a real agent event to notify about.
     val effectiveStates = applySignalOverrides(sessionStates)
+    // Pane headers and tabs wear the mark of their thread; the layout and the states both land here.
+    updateSigils()
     checkStateNotifications(sessionStates)
     updateAppLogoState(effectiveStates)
     // Repaint the sidebar-footer world-status block from the same push. It reads
