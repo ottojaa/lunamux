@@ -13,9 +13,15 @@ All pictures come from the seeded dev server (`scripts/seed-agents-overview.sh`)
 The server derives a *thread key* from where a session runs (`ThreadMarks.keyOf`), in this order:
 
 1. a linked git worktree: `path:<worktree root>`;
-2. a repository checked out on a branch that is not the default one: `branch:<repo root>#<branch>`;
-3. a folder that is not a repository: `path:<folder>`;
-4. the home folder, a default branch, a detached head, no folder: no thread, no mark.
+2. a session inside a repository (it names a repository root or a branch) on a branch that is not
+   the default one (`main`, `master` or whatever `origin/HEAD` names): `branch:<repo root>#<branch>`;
+   on the default branch, or with a detached head, there is no thread;
+3. a folder that is not a repository: `path:<folder>`, except the home folder, which has none;
+4. no folder: no thread, no mark.
+
+Paths are canonicalised first, so a symlink and its target are one thread. A task file's folder
+goes through the same rules (`ThreadMarks.folderKey`), so a task whose folder is the home folder or
+a default branch has no thread either.
 
 A task takes the thread of its first member (its `match.folder`, else the task's open folder), and
 stores it as `task:<id>`, so the header and its members agree even when no session is running.
@@ -26,10 +32,14 @@ stored in `thread_marks` and read back first, so a restart, a reseed or a thread
 moves a mark. Shape is `mark / 6` (◧ ■ ◐ ◉ ▲ ▚), hue is `mark % 6`; marks 12 to 17 are the
 half-circle.
 
+Only a session that is shown gets a mark assigned. Searching the overview reads the stored mark
+(`peekMark`) and never assigns one or renews a thread's last-seen day, so typing a query cannot use
+up marks or keep a quiet thread's mark reserved.
+
 ## The overview
 
 Collapsed, then with the *Invoice export* task expanded: the header, its two members and the five
-loose sessions further down all wear the pink half-circle (mark 14). *Rebuild the search index* and
+loose sessions further down all wear the magenta half-circle (mark 14). *Rebuild the search index* and
 *Show the migration* run in the same repository on other branches and wear other marks; the
 home-folder session wears none.
 
@@ -40,10 +50,12 @@ home-folder session wears none.
 | Collapsed, 1024 | ![](sigil-marks-2026-11-03/overview-dark-collapsed-1024.png) | ![](sigil-marks-2026-11-03/overview-light-collapsed-1024.png) |
 | Expanded, 1024 | ![](sigil-marks-2026-11-03/overview-dark-expanded-1024.png) | ![](sigil-marks-2026-11-03/overview-light-expanded-1024.png) |
 
-The six hues are `#6aa6f2 #b38af2 #ee82bd #52c98b #a9d05a #ee8c5c` on dark and
-`#2f6fd0 #7a4fd0 #c43e8e #1f8f58 #6f8f12 #d0602a` on light. Neither theme's warn yellow
-(`#f2c14e`, `#FFD60A`) nor the accent cyan (`#5fd4d0`) is among them, so a mark is never mistaken
-for a status colour.
+The six hues are blue, violet, magenta, green, rose and orange: `#6aa6f2 #b38af2 #e070e0 #52c98b
+#f0799e #ee8c5c` on dark and `#2f6fd0 #7a4fd0 #ac2fb0 #1f8f58 #cc3a68 #d0602a` on light. Neither
+theme's warn yellow (`#f2c14e`, `#FFD60A`) nor the accent cyan (`#5fd4d0`) is among them, so a mark
+is never mistaken for a status colour. The hue families come from the design mockups; an earlier
+palette used a lime in place of the rose, but on light it was hard to tell from the green and sat
+close to the warn yellow.
 
 ## The pane header and the tab
 
@@ -63,7 +75,8 @@ keeps its own place.
 
 | Where | What |
 |---|---|
-| `server/.../ThreadMarks.kt` | key rules, `markFor`, `markForTask`, the `thread_marks` table |
+| `server/.../ThreadMarks.kt` | key rules (`keyOf`, `folderKey`), `markFor`, `peekMark`, `markForTask`, the `thread_marks` table |
 | `clientServer/.../WindowEnvelope.kt` | `mark` and `threadKey` on the session summary, `mark` on the task (both default to null, so old summaries and old clients decode) |
 | `client/.../AgentsOverviewBackingViewModel.kt` | `Row.mark` |
+| `client/.../viewmodel/PaneMarks.kt` | `tabMark`: the one mark a tab wears, or none when its panes hold two threads (tested in `PaneMarksTest`) |
 | `web/.../SigilMarks.kt`, `styles.css` | the mark element (`.ao-sigil`, tokens `--ao-mark-0…5`), pane and tab slots |
