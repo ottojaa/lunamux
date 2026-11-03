@@ -152,11 +152,8 @@ object AgentsOverviewSeed {
     )
 
     /**
-     * The sessions that name their work badly or carry markdown in a preview.
-     *
-     * Each one is a case the overview must handle: the home folder, a branch named after a run,
-     * a stored title that is a run id or a folder name, a preview in bold, a preview that is a
-     * bare code fence, and two sessions still open whose state is days old.
+     * The five loose sessions of the *Invoice export* thread: they run in its worktree and belong
+     * to no task, so they wear the same mark as the task that is named after it.
      */
     private val invoiceLoose = listOf(
         Loose("seed-invoice-rounding", "Invoice export: fix the rounding in totals", "Totals in the export differ by a cent; fix the rounding", 5 * HOUR),
@@ -166,6 +163,13 @@ object AgentsOverviewSeed {
         Loose("seed-invoice-spike", "Invoice export: spike on streaming the file", "Spike: can the export stream the file instead of building it in memory?", 6 * DAY),
     )
 
+    /**
+     * The sessions that name their work badly or carry markdown in a preview.
+     *
+     * Each one is a case the overview must handle: the home folder, a branch named after a run,
+     * a stored title that is a run id or a folder name, a preview in bold, a preview that is a
+     * bare code fence, and two sessions still open whose state is days old.
+     */
     private val cases = listOf(
         Case("seed-home", null, null, null, inHome = true, prompt = "Why did the nightly backup email never arrive?", lastSaid = "The mail relay rejected it; I resent it.", ago = 3 * HOUR),
         Case("seed-branch-only", null, "lunamux-agent-overview", "aov-21-impl", prompt = "Add the task rows to the overview and keep their order stable", lastSaid = "Done; the rows keep their order.", ago = 5 * HOUR),
@@ -267,7 +271,7 @@ object AgentsOverviewSeed {
                     stateSince = at,
                     createdAt = at - 40 * MINUTE,
                     endedAt = if (open) null else at,
-                    repoRoot = workdir,
+                    repoRoot = if (c.inHome) null else workdir,
                     lastSaid = c.lastSaid,
                 ),
             )
