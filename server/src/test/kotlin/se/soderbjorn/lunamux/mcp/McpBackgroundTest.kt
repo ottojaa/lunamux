@@ -13,12 +13,15 @@ package se.soderbjorn.lunamux.mcp
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import se.soderbjorn.lunamux.AgentSessionTracker
 import se.soderbjorn.lunamux.ClaudeUsageMonitor
 import se.soderbjorn.lunamux.GitInfo
+import se.soderbjorn.lunamux.PaneSnapshot
 import se.soderbjorn.lunamux.TaskFile
 import se.soderbjorn.lunamux.TaskIndex
 import se.soderbjorn.lunamux.WindowState
@@ -188,5 +191,20 @@ class McpBackgroundTest {
         val r = call("close_tab", """{"tabId":"$bg"}""")
         assertFalse(isError(r), textOf(r))
         assertTrue(allTabs().none { it.id == bg })
+    }
+
+    @Test
+    fun `close_tab closes a tab an agent is working in without asking anyone`() {
+        val created = payloadOf(call("create_tab", """{"title":"Busy"}"""))
+        val tabId = str(created, "tabId")
+        val leafId = str(created, "windowId")
+        tracker.onHook(
+            PaneSnapshot("pty-busy", leafId, "/work/busy", null),
+            buildJsonObject { put("hook_event_name", "UserPromptSubmit"); put("session_id", "a-busy"); put("prompt", "go") },
+        )
+        assertEquals("working", tracker.openRecordOf("pty-busy")!!.state, "the tab holds a working agent")
+        val r = call("close_tab", """{"tabId":"$tabId"}""")
+        assertFalse(isError(r), textOf(r))
+        assertTrue(allTabs().none { it.id == tabId }, "an agent's close_tab never waits for a confirmation")
     }
 }

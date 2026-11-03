@@ -47,7 +47,7 @@ class AppBackingViewModel(
     private val windowState: WindowStateRepository,
     private val settingsPersister: SettingsPersister? = null,
 ) {
-    private val layout = LayoutViewModel(windowSocket)
+    private val layout = LayoutViewModel(windowSocket, windowState)
     private val settings = SettingsViewModel(settingsPersister)
     private val sessionState = SessionStateViewModel(windowSocket, windowState)
 
@@ -416,9 +416,23 @@ class AppBackingViewModel(
     @Throws(CancellationException::class, Exception::class)
     suspend fun addTab() = layout.addTab()
 
-    /** Close tab [tabId] and all panes within it. */
+    /** Close tab [tabId] and all panes within it, without asking. */
     @Throws(CancellationException::class, Exception::class)
-    suspend fun closeTab(tabId: String) = layout.closeTab(tabId)
+    suspend fun closeTab(tabId: String) {
+        layout.closeTab(tabId)
+    }
+
+    /**
+     * Close tab [tabId] after asking when an agent is working in it.
+     *
+     * @param tabId the tab to close.
+     * @param ask shows the question the guard built and returns whether the person chose to close.
+     * @return true when the close was sent, false when the person kept the tab.
+     * @see se.soderbjorn.lunamux.client.TabCloseGuard
+     */
+    @Throws(CancellationException::class, Exception::class)
+    suspend fun closeTab(tabId: String, ask: suspend (se.soderbjorn.lunamux.client.TabCloseCheck) -> Boolean): Boolean =
+        layout.closeTab(tabId, ask)
 
     /** Rename tab [tabId] to [title]. */
     @Throws(CancellationException::class, Exception::class)

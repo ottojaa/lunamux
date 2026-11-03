@@ -10,16 +10,21 @@
 package se.soderbjorn.lunamux.client.viewmodel
 
 import se.soderbjorn.lunamux.WindowCommand
+import se.soderbjorn.lunamux.client.TabCloseCheck
 import se.soderbjorn.lunamux.client.WindowSocket
+import se.soderbjorn.lunamux.client.WindowStateRepository
+import se.soderbjorn.lunamux.client.closeTabAsking
 
 /**
  * Routes layout commands (tabs, panes, geometry, focus) to the server
  * via [windowSocket].
  *
  * @param windowSocket the live `/window` WebSocket for sending commands.
+ * @param windowState where the layout, sessions and tasks are read from when a tab close asks first.
  */
 internal class LayoutViewModel(
     private val windowSocket: WindowSocket,
+    private val windowState: WindowStateRepository? = null,
 ) {
     /** Tell the server to switch to tab [tabId]. */
     suspend fun setActiveTab(tabId: String) {
@@ -36,9 +41,23 @@ internal class LayoutViewModel(
         windowSocket.send(WindowCommand.AddTab)
     }
 
-    /** Close tab [tabId] and all panes within it. */
-    suspend fun closeTab(tabId: String) {
+    /**
+     * Close tab [tabId] and all panes within it.
+     *
+     * With [ask], a tab that has an agent working in it is closed only if [ask] answers true for
+     * the question the tab close guard builds; without it (a screen that asks for itself) the tab
+     * closes at once.
+     *
+     * @param tabId the tab to close.
+     * @param ask shows the question and returns whether the person chose to close, or null to close without asking.
+     * @return true when the close was sent, false when the person kept the tab.
+     * @see se.soderbjorn.lunamux.client.TabCloseGuard
+     */
+    suspend fun closeTab(tabId: String, ask: (suspend (TabCloseCheck) -> Boolean)? = null): Boolean {
+        val state = windowState
+        if (ask != null && state != null) return closeTabAsking(state, tabId, { windowSocket.send(it) }, ask)
         windowSocket.send(WindowCommand.CloseTab(tabId = tabId))
+        return true
     }
 
     /** Rename tab [tabId] to [title]. */

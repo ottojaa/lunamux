@@ -458,5 +458,6 @@ internal fun confirmRemove() {
     // No front pane ⇒ the current tab is empty; remove its card and the (empty) tab.
     val card = spikeEmptyTabs.firstOrNull { !it.dying && it.tabOrd == spikeTabIndex } ?: return
     card.dying = true
-    launchCmd(WindowCommand.CloseTab(card.tabId))
+    // An empty tab has no agent to stop, so the guard lets this through; it keeps the path the same as the strip's.
+    GlobalScope.launch { closeTabFromPerson(card.tabId) }
 }

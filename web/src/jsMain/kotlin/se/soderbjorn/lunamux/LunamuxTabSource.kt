@@ -24,6 +24,7 @@ import se.soderbjorn.lunula.web.shell.TabListSnapshot
 import se.soderbjorn.lunula.web.shell.TabSnapshotEntry
 import se.soderbjorn.lunula.web.shell.TabSource
 import se.soderbjorn.lunamux.client.WindowSocket
+import se.soderbjorn.lunamux.client.closeTabAsking
 import se.soderbjorn.lunamux.client.WindowStateRepository
 import se.soderbjorn.lunamux.WindowCommand
 import se.soderbjorn.lunamux.isListed
@@ -182,7 +183,8 @@ fun lunamuxTabSource(
     // switching land on the last-requested tab in order.
     onSelect = { id -> activeTabRequests.trySend(id) },
     onAdd = { scope.launch { socket.send(WindowCommand.AddTab) } },
-    onClose = { id -> scope.launch { socket.send(WindowCommand.CloseTab(id)) } },
+    // A tab with an agent working in it asks before it closes (see TabCloseDialog.kt).
+    onClose = { id -> scope.launch { closeTabAsking(windowState, id, { socket.send(it) }) { showTabCloseDialog(it) } } },
     onRename = { id, label -> scope.launch { socket.send(WindowCommand.RenameTab(id, label)) } },
     onReorder = { sourceId, targetId, before ->
         scope.launch {
