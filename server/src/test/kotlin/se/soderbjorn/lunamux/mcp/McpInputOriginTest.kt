@@ -18,6 +18,7 @@ import se.soderbjorn.lunamux.ClaudeUsageMonitor
 import se.soderbjorn.lunamux.InputOrigin
 import se.soderbjorn.lunamux.TerminalSessions
 import se.soderbjorn.lunamux.acceptClientBytes
+import se.soderbjorn.lunamux.typeCommandForUser
 import se.soderbjorn.lunamux.persistence.SettingsRepository
 import java.io.File
 import kotlin.test.Test
@@ -101,6 +102,16 @@ class McpInputOriginTest {
         val (id, session) = newSession()
         call("run_command", """{"sessionId":"$id","command":"ls","waitForExit":false}""")
         acceptClientBytes(session, "c1", "claude\r".toByteArray())
+        assertEquals(InputOrigin.USER, session.inputOrigin)
+    }
+
+    @Test
+    fun `a command typed for the person by the open-a-tab route is user input`() {
+        registerTools()
+        val (id, session) = newSession()
+        call("run_command", """{"sessionId":"$id","command":"ls","waitForExit":false}""")
+        assertEquals(InputOrigin.TOOL, session.inputOrigin)
+        typeCommandForUser(session, "claude")
         assertEquals(InputOrigin.USER, session.inputOrigin)
     }
 }

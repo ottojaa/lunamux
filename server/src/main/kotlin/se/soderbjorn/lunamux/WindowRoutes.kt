@@ -1149,10 +1149,25 @@ internal fun openTabRunning(folder: String, title: String, command: String?) {
     val sessionId = WindowState.config.value.worlds.flatMap { it.tabs }
         .firstOrNull { it.id == tabId }?.panes?.firstOrNull()?.leaf?.sessionId
     if (command != null && sessionId != null) {
-        TerminalSessions.get(sessionId)?.let { session ->
-            val typed = (command + "\r").toByteArray(Charsets.UTF_8)
-            session.noteInput(InputOrigin.USER, typed)
-            session.write(typed)
-        }
+        TerminalSessions.get(sessionId)?.let { typeCommandForUser(it, command) }
     }
+}
+
+/**
+ * Type [command] and a carriage return into [session] as if the person had typed it.
+ *
+ * The server types on the person's behalf here (they asked for the tab to run something), so the
+ * line counts as user input: a session that command starts is credited to them, even when a tool
+ * had typed into the pane earlier.
+ *
+ * Called by [openTabRunning] for the command of a freshly opened tab.
+ *
+ * @param session the terminal session whose shell receives the line.
+ * @param command the line to type, without its line ending.
+ * @see TermSession.noteInput
+ */
+internal fun typeCommandForUser(session: TermSession, command: String) {
+    val typed = (command + "\r").toByteArray(Charsets.UTF_8)
+    session.noteInput(InputOrigin.USER, typed)
+    session.write(typed)
 }
