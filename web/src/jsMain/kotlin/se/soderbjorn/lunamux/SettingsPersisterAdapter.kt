@@ -78,6 +78,9 @@ class SettingsPersisterAdapter(
         // and existing saved data keep reading the default world's layout under
         // the legacy key. See [WorldLayoutKeys.serverKeyForToolkitKey].
         settingsPersister.putSetting(serverKeyForToolkitKey(key), outgoing)
+        // A saved layout is a drag, resize, maximize or minimize: the agents
+        // overview's place cues follow it without waiting for the server echo.
+        if (key == PersistKeys.LAYOUT_STATE || worldIdOfToolkitLayoutKey(key) != null) notifyLayoutWritten()
     }
 
     /**

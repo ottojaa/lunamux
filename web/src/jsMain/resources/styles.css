@@ -3633,7 +3633,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 /* The one grid every row uses. */
 .ao-row {
     display: grid;
-    grid-template-columns: 2ch 2ch 2ch 38ch 12ch minmax(0, 1fr) 4ch 10ch;
+    grid-template-columns: 2ch 2ch 2ch 38ch 12ch 2ch minmax(0, 1fr) 4ch 10ch;
     column-gap: 1.5ch;
     align-items: start;
     padding: 0 1ch;
@@ -3651,6 +3651,13 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-m { display: flex; align-items: center; justify-content: center; height: 26px; }
 .ao-t, .ao-w, .ao-n { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .ao-w { color: var(--ao-dim); }
+/* Who started the session: one glyph, quiet, so it reads as a cue and never as a state. */
+.ao-wh { text-align: center; color: var(--ao-dim); user-select: none; }
+/* Where the session's pane is ("1▘"), ahead of the status text. */
+.ao-place { color: var(--ao-muted); margin-right: 1ch; }
+/* A title whose leading words other rows of its thread share: those dim, the words that differ lead. */
+.ao-t-shared { color: var(--ao-dim); font-weight: 400; }
+.ao-t-own { font-weight: 700; }
 .ao-n { color: var(--ao-dim); }
 .ao-a { text-align: right; color: var(--ao-dim); }
 .ao-x { text-align: right; white-space: nowrap; color: var(--ao-dim); }
@@ -3673,11 +3680,21 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 }
 .ao-need .ao-n.ao-n-error { color: var(--ao-error); }
 .ao-need .ao-a { color: var(--ao-text); }
+.ao-need .ao-place { color: var(--ao-text); }
+/* The row that needs you is tinted amber with a bar on its leading edge, so it stays the loudest
+   thing in the list. When it is also the selected row the accent bar stays outermost and the amber
+   one sits just inside it, so the selection and the need both still read. */
+.ao-row.ao-need { background: color-mix(in srgb, var(--ao-warn) 15%, var(--ao-surface)); box-shadow: inset 3px 0 0 var(--ao-warn); }
+.ao-row.ao-need:hover { background: color-mix(in srgb, var(--ao-warn) 21%, var(--ao-surface)); }
+.ao-row.ao-need.ao-sel {
+    background: color-mix(in srgb, var(--ao-warn) 26%, var(--ao-sel));
+    box-shadow: inset 2px 0 0 var(--ao-accent), inset 5px 0 0 var(--ao-warn);
+}
 /* Working: a moving glyph and a mid-bright status. */
 .ao-working .ao-n { color: var(--ao-muted); }
 .ao-working .ao-n.ao-n-error { color: var(--ao-error); }
 /* A file nobody has refreshed for a while no longer says anything: its rows recede. */
-.ao-stale > .ao-s, .ao-stale > .ao-m, .ao-stale > .ao-t, .ao-stale > .ao-w, .ao-stale > .ao-a { opacity: 0.55; }
+.ao-stale > .ao-s, .ao-stale > .ao-m, .ao-stale > .ao-t, .ao-stale > .ao-w, .ao-stale > .ao-wh, .ao-stale > .ao-a { opacity: 0.55; }
 .ao-stale > .ao-n:not(.ao-n-error) { opacity: 0.55; }
 
 /* A task with several sessions is an expansion panel: the whole header toggles, its action (jump, open) is the ↵. */
@@ -3761,18 +3778,20 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     white-space: nowrap;
     overflow: hidden;
 }
-.ao-seg { cursor: default; }
+.ao-seg { cursor: default; flex: none; }
+/* The cue legend is the one entry that gives way: it is cut short before any key hint is. */
+.ao-legend { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ao-seg[data-key]:not([data-key=""]) { cursor: pointer; }
 .ao-k { color: var(--ao-text); margin-right: 0.8ch; }
 
 /* Narrow panels: drop the where column first, then shorten titles, then the footer's words. */
 @container ao (max-width: 900px) {
-    .ao-row { grid-template-columns: 2ch 2ch 2ch 28ch minmax(0, 1fr) 4ch 10ch; }
+    .ao-row { grid-template-columns: 2ch 2ch 2ch 28ch 2ch minmax(0, 1fr) 4ch 10ch; }
     .ao-row > .ao-w { display: none; }
     .ao-seg-move { display: none; }
 }
 @container ao (max-width: 640px) {
-    .ao-row { grid-template-columns: 2ch 2ch 2ch 22ch minmax(0, 1fr) 4ch 10ch; }
+    .ao-row { grid-template-columns: 2ch 2ch 2ch 22ch 2ch minmax(0, 1fr) 4ch 10ch; }
     .ao-seg-back { display: none; }
 }
 

@@ -1700,7 +1700,7 @@ class AgentsOverviewBackingViewModel(
                 Footer.TASK_COLLAPSED -> listOf(Hint("→", "expand"), move, esc)
                 Footer.TASK_EXPANDED -> listOf(Hint("←", "collapse"), move, esc)
                 Footer.RUN_ATTACH -> listOfNotNull(back, move, esc)
-                Footer.NO_SESSION -> listOfNotNull(Hint("", "nothing to jump to: this session is not in a Lunamux pane"), back, move, esc)
+                Footer.NO_SESSION -> listOfNotNull(Hint("", "no pane to jump to"), back, move, esc)
                 Footer.NONE -> listOf(move, esc)
             }
         }

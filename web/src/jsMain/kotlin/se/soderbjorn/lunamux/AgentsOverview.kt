@@ -4,10 +4,12 @@
  * Codex, Gemini) as one terminal-style table: "Now", then what finished or went quiet under
  * "Last few days" and "Last two weeks" (a heading with nothing under it is not drawn).
  *
- * Every row is the same eight-column grid: a gutter (the task chevron or its tree lines), the
+ * Every row is the same nine-column grid: a gutter (the task chevron or its tree lines), the
  * state glyph (the only place a state is drawn as a glyph), the mark of the row's thread of work
- * (empty for a row with none), the title, where it runs, a status
- * line, the age and the row's own action. A task with several sessions is an expansion panel in
+ * (empty for a row with none), the title (its leading words dim when other rows of the same thread
+ * share them), where it runs, who started the session (❯ a person, ⚙ a session or tool, nothing
+ * for an old record), a status line that a live session's place ("1▘": tab 1, top-left pane)
+ * leads, the age and the row's own action. A task with several sessions is an expansion panel in
  * the same grid: a bold header whose click, →, ← and space fold it, whose action ("jump" to the
  * session that most needs the person, else "open" the task's own session) is its ↵, and whose
  * sessions hang under it on tree lines; a task with one session is that session's plain row. Typing two or more characters
@@ -56,7 +58,8 @@ internal const val AGENTS_OVERVIEW_HOTKEY_ACTION_ID: String = "Lunamux.agentsOve
 
 /** The shared view model; created on first use, after the window socket exists. */
 private val agentsOverview: AgentsOverviewBackingViewModel by lazy {
-    AgentsOverviewBackingViewModel(lunamuxClient.windowState) { windowSocket.send(it) }
+    startPlaceTracking(GlobalScope)
+    AgentsOverviewBackingViewModel(lunamuxClient.windowState, places = placesFlow) { windowSocket.send(it) }
 }
 
 private var chipElement: HTMLElement? = null
@@ -441,8 +444,8 @@ private fun renderFooter(state: AgentsOverviewBackingViewModel.State) {
     }
 }
 
-/** What the footer says the mark column means. */
-private const val MARK_LEGEND = "mark = one thread of work"
+/** What the footer says the mark, who and place cues mean. */
+private const val CUE_LEGEND = "mark = one thread of work · ❯ you started it · ⚙ a session did · 1▘ tab 1, top-left pane"
 
 /**
  * Choose the footer's entries from the selection: the view model's key hints for it, drawn with
@@ -454,9 +457,9 @@ private const val MARK_LEGEND = "mark = one thread of work"
 private fun footerSegments(state: AgentsOverviewBackingViewModel.State): List<FooterSegment> {
     val row = state.selectedRow
     val backToTask = row?.kind == Kind.SESSION && inPanel(row, state)
-    // The legend for the mark column comes first, so the narrow-panel rules that drop "move" and
-    // "back" never take it away.
-    return listOf(FooterSegment("", MARK_LEGEND)) + AgentsOverviewBackingViewModel.footerHints(state.footer, backToTask).map {
+    // The legend comes first and is the one entry that gives way (it is cut short, never the keys)
+    // when the panel is too narrow for all of it.
+    return listOf(FooterSegment("", CUE_LEGEND, "ao-legend")) + AgentsOverviewBackingViewModel.footerHints(state.footer, backToTask).map {
         FooterSegment(
             it.key, it.word,
             when (it.role) {
@@ -545,6 +548,7 @@ private fun statusCell(row: Row, now: Long): HTMLElement {
         cell.textContent = error
         return cell
     }
+    row.place?.let { cell.appendChild(span("ao-place", it)) }
     val prefix = AgentsOverviewBackingViewModel.agePrefix(row, now)
     if (prefix.isNotEmpty()) cell.appendChild(span("ao-n-faint", prefix))
     val label = row.label
@@ -555,6 +559,26 @@ private fun statusCell(row: Row, now: Long): HTMLElement {
     cell.appendChild(document.createTextNode(row.status))
     // The pull request is detail text after the status; the "where" column always names a place.
     row.pullRequest?.let { cell.appendChild(span("ao-pr-inline", " · $it")) }
+    return cell
+}
+
+/**
+ * The cell that says who started a session: ❯ for a person, ⚙ for a session or tool, empty for a
+ * record that does not say and for a task header. Its tooltip says the same in words.
+ *
+ * Called by [buildRow] for every row, so the column stays aligned.
+ *
+ * @param row the row.
+ * @return the cell.
+ * @see AgentsOverviewBackingViewModel.Row.who
+ */
+private fun whoCell(row: Row): HTMLElement {
+    val cell = span("ao-wh", row.who.glyph)
+    when (row.who) {
+        AgentsOverviewBackingViewModel.Who.USER -> cell.title = "You started this session"
+        AgentsOverviewBackingViewModel.Who.TOOL -> cell.title = "A session or tool started this session"
+        AgentsOverviewBackingViewModel.Who.NONE -> {}
+    }
     return cell
 }
 
@@ -591,7 +615,7 @@ private fun inPanel(row: Row, state: AgentsOverviewBackingViewModel.State): Bool
     row.kind == Kind.SESSION && row.taskId != null && state.tasks.containsKey(row.taskId)
 
 /**
- * One row of the table, session or task header, in the eight-column grid.
+ * One row of the table, session or task header, in the nine-column grid.
  *
  * The row's colour comes from its state alone: needs-you status in the brightest text, working
  * status mid-bright, the rest dim. The selected row shows its action as "↵ jump" and the like at
@@ -649,11 +673,16 @@ private fun buildRow(
 
     val title = span("ao-t", "")
     if (row.field == "title") title.appendChild(highlighted(row.title, row.matchStart, row.matchLength))
-    else title.textContent = row.title
+    else if (row.dimPrefix in 1 until row.title.length) {
+        // Words other rows of the thread share are dim; the words that tell this row apart lead.
+        title.appendChild(span("ao-t-shared", row.title.substring(0, row.dimPrefix)))
+        title.appendChild(span("ao-t-own", row.title.substring(row.dimPrefix)))
+    } else title.textContent = row.title
     if (!isHead && row.agent.isNotEmpty() && row.agent != "claude") title.appendChild(span("ao-agent", " ${row.agent}"))
     el.appendChild(title)
 
     el.appendChild(span("ao-w", if (isHead) task?.repo ?: "" else row.where ?: ""))
+    el.appendChild(whoCell(row))
     el.appendChild(if (isHead) countsCell(task) else statusCell(row, now))
     // A header in NOW has no age; one in EARLIER shows how long ago its newest session was active.
     // When ↵ on a header jumps to a live session but its task also has an `open` action, that
