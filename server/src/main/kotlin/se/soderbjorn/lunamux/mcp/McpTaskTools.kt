@@ -3,8 +3,10 @@
  *
  * Every agent session belongs to one task, and the agents overview shows tasks. An agent that
  * splits its work over several sessions calls these tools, unprompted, so the person sees one
- * task with its sessions rather than a flat list: `create_task`, `add_to_task`, `remove_from_task`
- * and `rename_task` change tasks, and `list_tasks` reads them. `create_window` in
+ * task with its sessions rather than a flat list: `create_task`, `add_to_task`, `remove_from_task`,
+ * `rename_task`, `set_task_lead` and `set_task_status` change tasks, and `list_tasks` reads them.
+ * Every task has one session that speaks for it (the one that made it, unless another is named) and
+ * a one-line status. `create_window` in
  * [registerMcpWriteTools] also takes a `taskId`.
  *
  * The rules (what counts as a known task, what happens to a pane with no agent yet) live in
@@ -59,9 +61,10 @@ private fun JsonObject.stringList(name: String): List<String> {
 }
 
 /**
- * Register `create_task`, `add_to_task`, `remove_from_task`, `rename_task` and `list_tasks`.
+ * Register `create_task`, `add_to_task`, `remove_from_task`, `rename_task`, `set_task_lead`,
+ * `set_task_status` and `list_tasks`.
  *
- * Called once at boot from [mcpRoutes], when the server has a [TaskIndex]. The four tools that
+ * Called once at boot from [mcpRoutes], when the server has a [TaskIndex]. The tools that
  * change tasks need a `read+write` token; `list_tasks` needs only `read`.
  *
  * @param taskIndex the index every tool reads and writes.
@@ -80,19 +83,21 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
             "as one row in the agents overview. Call this when you split your work across a second " +
             "agent session, passing your own \$LUNAMUX_SESSION_ID in sessionIds, then start the other " +
             "session with create_window and the returned taskId (or add it with add_to_task). Returns " +
-            "the taskId. Work that is one session needs no task.",
+            "the taskId. The session that makes the task is the one that speaks for it in the overview " +
+            "(change that with set_task_lead). Work that is one session needs no task.",
         inputSchema = schemaObject(
             "title" to schemaString("What the work is, in a few words; this is the row's name."),
             "sessionIds" to sessionIdsSchema,
             required = listOf("title"),
         ),
-    ) { _, args ->
+    ) { ctx, args ->
         val title = args.requireString("title")
         val sessionIds = args.stringList("sessionIds")
-        val id = taskCall { taskIndex.createTask(title, sessionIds) }
+        val id = taskCall { taskIndex.createTask(title, sessionIds, ctx.callerSessionId) }
         McpToolResult.json(buildJsonObject {
             put("taskId", id)
             put("sessions", sessionIds.size)
+            put("ownSession", taskIndex.listing().firstOrNull { it.id == id }?.ownSessionId?.let(::JsonPrimitive) ?: JsonNull)
         })
     }
 
@@ -152,6 +157,50 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
         McpToolResult.text("Renamed $taskId")
     }
 
+    writeTool(
+        name = "set_task_lead",
+        description = "Name the session that speaks for a task: the one the person is taken to when " +
+            "they open the task in the agents overview. A task starts with the session that made it; " +
+            "call this when another session is the one to talk to, for example the one that coordinates " +
+            "the others. Any session of yours or another agent's will do. Returns the taskId and the " +
+            "session now named as ownSession.",
+        inputSchema = schemaObject(
+            "taskId" to schemaString("The task."),
+            "sessionId" to schemaString("The session that speaks for it (\$LUNAMUX_SESSION_ID of its pane)."),
+            required = listOf("taskId", "sessionId"),
+        ),
+    ) { _, args ->
+        val taskId = args.requireString("taskId")
+        val sessionId = args.requireString("sessionId")
+        taskCall { taskIndex.setOwnSession(taskId, sessionId) }
+        McpToolResult.json(buildJsonObject {
+            put("taskId", taskId)
+            put("ownSession", sessionId)
+        })
+    }
+
+    writeTool(
+        name = "set_task_status",
+        description = "Say in one line where a task stands, shown on its row in the agents overview " +
+            "(for example \"2 of 3 migrations done, tests running\"). Call it when something worth " +
+            "knowing changes, not on every step. Line breaks become spaces and the text is cut at 120 " +
+            "characters. An empty text clears the status.",
+        inputSchema = schemaObject(
+            "taskId" to schemaString("The task."),
+            "text" to schemaString("The status line; empty clears it."),
+            required = listOf("taskId", "text"),
+        ),
+    ) { ctx, args ->
+        val taskId = args.requireString("taskId")
+        val text = (args["text"] as? JsonPrimitive)?.contentOrNull
+            ?: throw McpArgumentException("'text' must be a string")
+        val stored = taskCall { taskIndex.setStatus(taskId, text, ctx.callerSessionId) }
+        McpToolResult.json(buildJsonObject {
+            put("taskId", taskId)
+            put("status", stored?.let(::JsonPrimitive) ?: JsonNull)
+        })
+    }
+
     McpServer.register(
         McpTool(
             name = "list_tasks",
@@ -166,6 +215,8 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
                     put("taskId", t.id)
                     put("title", t.title)
                     put("source", t.source)
+                    put("ownSession", t.ownSessionId?.let(::JsonPrimitive) ?: JsonNull)
+                    put("status", t.status?.let(::JsonPrimitive) ?: JsonNull)
                     put("sessions", buildJsonArray {
                         for (m in t.members) add(buildJsonObject {
                             put("sessionId", m.sessionId?.let(::JsonPrimitive) ?: JsonNull)

@@ -366,6 +366,8 @@ sealed class WindowEnvelope {
  * @param taskId the id of the [AgentTask] this session belongs to, or null when it is a task of
  *   its own. Decided by the server's task index (an agent's explicit choice, then a task file's
  *   match); a client never works it out itself.
+ * @param startedAt epoch millis the record opened. Never changes, so the overview keeps sessions in
+ *   the order they started; null from servers that do not send it.
  * @param background whether the session runs in a background tab an agent opened, out of sight.
  *   It is still a member of its task and still counted; the overview shows it as a member row
  *   that opens a read-only peek instead of jumping to a tab, and search never finds it.
@@ -391,6 +393,7 @@ data class AgentSessionSummary(
     val firstPrompt: String? = null,
     val taskId: String? = null,
     val background: Boolean = false,
+    val startedAt: Long? = null,
 )
 
 /**

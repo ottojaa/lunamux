@@ -677,6 +677,7 @@ internal fun AgentSessionRecord.toSummary() = AgentSessionSummary(
     firstPrompt = firstPrompt?.let(::firstPromptLine),
     taskId = taskId,
     background = background,
+    startedAt = createdAt,
 )
 
 private const val TOOL_LINE_MAX = 160

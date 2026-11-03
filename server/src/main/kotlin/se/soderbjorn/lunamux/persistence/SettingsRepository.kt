@@ -192,6 +192,21 @@ class SettingsRepository(
             """.trimIndent(),
             parameters = 0,
         )
+        // The per-task facts (first seen, the session that speaks for it, status).
+        driver.execute(
+            identifier = null,
+            sql = """
+                CREATE TABLE IF NOT EXISTS task_meta (
+                    task_id      TEXT NOT NULL PRIMARY KEY,
+                    started_at   INTEGER NOT NULL,
+                    lead_session TEXT,
+                    status       TEXT,
+                    status_by    TEXT,
+                    status_at    INTEGER
+                )
+            """.trimIndent(),
+            parameters = 0,
+        )
         // Same no-.sqm story for columns added to an existing table: bring
         // pre-existing DBs up to the current shape. SQLite has no
         // ADD COLUMN IF NOT EXISTS, so the "duplicate column name" error on
@@ -627,6 +642,70 @@ class SettingsRepository(
         database.settingsQueries.selectAgentTasks { id, title, createdAt, updatedAt ->
             AgentTaskRow(id, title, createdAt, updatedAt)
         }.executeAsList()
+
+    /**
+     * What is kept about one task besides its name.
+     *
+     * @property taskId the task's id, an agent-made task's or a task file's.
+     * @property startedAt epoch millis the server first saw the task; never changes.
+     * @property leadSession the terminal session id of the pane whose session speaks for the task, or null.
+     * @property status the task's one-line status, or null.
+     * @property statusBy the terminal session id of the pane that set the status, or null.
+     * @property statusAt epoch millis the status was set, or null with no status.
+     */
+    data class TaskMetaRow(
+        val taskId: String,
+        val startedAt: Long,
+        val leadSession: String? = null,
+        val status: String? = null,
+        val statusBy: String? = null,
+        val statusAt: Long? = null,
+    )
+
+    /**
+     * Every task's stored facts.
+     *
+     * Called by [se.soderbjorn.lunamux.TaskIndex] when it starts; it keeps the rows in memory after that
+     * and writes through the methods below, so it is the only owner of this table.
+     *
+     * @return one row per task the server has seen.
+     */
+    fun loadTaskMeta(): List<TaskMetaRow> =
+        database.settingsQueries.selectTaskMeta { id, startedAt, lead, status, by, at ->
+            TaskMetaRow(id, startedAt, lead, status, by, at)
+        }.executeAsList()
+
+    /**
+     * Record when the server first saw a task, unless it already has a row.
+     *
+     * @param taskId the task's id.
+     * @param startedAt epoch millis to store when the task has no row yet.
+     */
+    fun stampTaskStart(taskId: String, startedAt: Long) {
+        database.settingsQueries.stampTaskStart(taskId, startedAt)
+    }
+
+    /**
+     * Name the session that speaks for a task; the task needs a row (see [stampTaskStart]).
+     *
+     * @param taskId the task's id.
+     * @param leadSession the terminal session id of the pane, or null to clear it.
+     */
+    fun setTaskLead(taskId: String, leadSession: String?) {
+        database.settingsQueries.setTaskLead(leadSession, taskId)
+    }
+
+    /**
+     * Store a task's status line; the task needs a row (see [stampTaskStart]).
+     *
+     * @param taskId the task's id.
+     * @param status the cleaned text, or null to clear the status.
+     * @param by the terminal session id of the pane that set it, or null.
+     * @param at epoch millis it was set.
+     */
+    fun setTaskStatus(taskId: String, status: String?, by: String?, at: Long) {
+        database.settingsQueries.setTaskStatus(status, if (status == null) null else by, if (status == null) null else at, taskId)
+    }
 
     /**
      * Store the searchable conversation text of one record.

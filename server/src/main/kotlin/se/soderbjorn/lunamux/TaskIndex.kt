@@ -23,6 +23,7 @@ import kotlinx.coroutines.launch
 import se.soderbjorn.lunamux.persistence.AgentSessionRecord
 import se.soderbjorn.lunamux.persistence.SettingsRepository
 import se.soderbjorn.lunamux.persistence.SettingsRepository.AgentTaskRow
+import se.soderbjorn.lunamux.persistence.SettingsRepository.TaskMetaRow
 import java.util.UUID
 
 /**
@@ -61,8 +62,17 @@ data class TaskListMember(val sessionId: String?, val title: String, val state: 
  * @property title the task's name.
  * @property source `file` when a task file declares it, else `agents`.
  * @property members its sessions and file members.
+ * @property ownSessionId the pane whose session speaks for the task, or null when none was named.
+ * @property status the task's one-line status, or null.
  */
-data class TaskListing(val id: String, val title: String, val source: String, val members: List<TaskListMember>)
+data class TaskListing(
+    val id: String,
+    val title: String,
+    val source: String,
+    val members: List<TaskListMember>,
+    val ownSessionId: String? = null,
+    val status: String? = null,
+)
 
 /**
  * Decides each session's task and carries the operations that change it.
@@ -96,6 +106,8 @@ class TaskIndex(
 ) {
     private val lock = Any()
     private var rows: List<AgentTaskRow> = runCatching { repo.loadAgentTasks() }.getOrDefault(emptyList())
+    private var meta: Map<String, TaskMetaRow> =
+        runCatching { repo.loadTaskMeta() }.getOrDefault(emptyList()).associateBy { it.taskId }
     private val _state = MutableStateFlow(TaskSnapshot())
 
     /** The current tasks and assignment; collected per window socket by `WindowRoutes`. */
@@ -172,7 +184,17 @@ class TaskIndex(
      * record change; called by [start]'s collector and by every mutating method.
      */
     fun recompute() {
-        synchronized(lock) { _state.value = resolve(tracker.snapshot(), files.value, rows) }
+        synchronized(lock) {
+            val snapshot = resolve(tracker.snapshot(), files.value, rows, meta)
+            val fresh = snapshot.tasks.filter { it.id !in meta }
+            if (fresh.isNotEmpty()) {
+                // A task's start is fixed the first time it is seen, so its place in the overview
+                // never moves when its sessions come and go afterwards.
+                for (t in fresh) t.startedAtMillis?.let { repo.stampTaskStart(t.id, it) }
+                meta = meta + fresh.mapNotNull { t -> t.startedAtMillis?.let { t.id to TaskMetaRow(t.id, it) } }
+            }
+            _state.value = snapshot
+        }
     }
 
     /**
@@ -180,14 +202,19 @@ class TaskIndex(
      *
      * Called by the MCP `create_task` tool.
      *
+     * The task's own session is the caller's pane when the caller is a known pane, else the first
+     * of [sessionIds], else none.
+     *
      * @param title the task's name; blank is refused.
      * @param sessionIds panes (`LUNAMUX_SESSION_ID` values) to put in it straight away.
+     * @param callerSessionId the pane the calling agent runs in, when the request says so.
      * @return the new task's id.
      * @throws TaskException when the title is blank or a session id names no pane.
      */
-    fun createTask(title: String, sessionIds: List<String>): String {
+    fun createTask(title: String, sessionIds: List<String>, callerSessionId: String? = null): String {
         val clean = cleanTitle(title)
         val targets = sessionIds.map(::targetOf)
+        val own = callerSessionId?.takeIf(::isKnownPane) ?: sessionIds.firstOrNull()
         val id = synchronized(lock) {
             val known = rows.map { it.id }.toSet() + files.value.map { it.id }
             var candidate: String
@@ -201,8 +228,72 @@ class TaskIndex(
         recompute()
         targets.forEach { apply(it, id) }
         recompute()
+        if (own != null) storeOwnSession(id, own)
         return id
     }
+
+    /**
+     * Name the session that speaks for a task.
+     *
+     * Called by the MCP `set_task_lead` tool. The pane is looked up the way `add_to_task` looks up
+     * its panes, so the same mistake gets the same error. It is not moved into the task.
+     *
+     * @param taskId an agent-made task or a task file's id.
+     * @param sessionId the pane (`LUNAMUX_SESSION_ID` value) whose session speaks for the task.
+     * @throws TaskException when the task is unknown or the id names no pane.
+     */
+    fun setOwnSession(taskId: String, sessionId: String) {
+        requireTask(taskId)
+        targetOf(sessionId)
+        storeOwnSession(taskId, sessionId)
+    }
+
+    /**
+     * Set or clear a task's one-line status.
+     *
+     * Called by the MCP `set_task_status` tool. Line breaks become single spaces, the ends are
+     * trimmed and the text is cut at [STATUS_MAX] characters; nothing left clears the status.
+     *
+     * @param taskId an agent-made task or a task file's id.
+     * @param text what the work is doing now.
+     * @param by the pane that reports it, when the request says so.
+     * @return the stored status, or null when it was cleared.
+     * @throws TaskException when the task is unknown.
+     */
+    fun setStatus(taskId: String, text: String, by: String?): String? {
+        requireTask(taskId)
+        val clean = text.replace(Regex("\\s*[\\r\\n]+\\s*"), " ").trim().take(STATUS_MAX).trim().ifEmpty { null }
+        synchronized(lock) {
+            val now = clock()
+            ensureMeta(taskId)
+            repo.setTaskStatus(taskId, clean, by, now)
+            meta = meta + (taskId to meta.getValue(taskId).copy(
+                status = clean, statusBy = clean?.let { by }, statusAt = clean?.let { now },
+            ))
+        }
+        recompute()
+        return clean
+    }
+
+    private fun storeOwnSession(taskId: String, sessionId: String) {
+        synchronized(lock) {
+            ensureMeta(taskId)
+            repo.setTaskLead(taskId, sessionId)
+            meta = meta + (taskId to meta.getValue(taskId).copy(leadSession = sessionId))
+        }
+        recompute()
+    }
+
+    /** Make sure the task has a stored row to write to; call with [lock] held. */
+    private fun ensureMeta(taskId: String) {
+        if (taskId in meta) return
+        val at = _state.value.tasks.firstOrNull { it.id == taskId }?.startedAtMillis ?: clock()
+        repo.stampTaskStart(taskId, at)
+        meta = meta + (taskId to TaskMetaRow(taskId, at))
+    }
+
+    private fun isKnownPane(sessionId: String): Boolean =
+        tracker.openRecordOf(sessionId) != null || leafOfSession(sessionId) != null
 
     /**
      * Move sessions into a task, out of whatever task they were in.
@@ -291,13 +382,17 @@ class TaskIndex(
                 val rec = m.recordId?.let { id -> records.firstOrNull { it.id == id } }
                 TaskListMember(rec?.terminalSessionId?.takeIf { rec.state != ENDED }, m.title, m.state)
             }
-            TaskListing(f.id, f.title, "file", declared + sessionsOf(f.id, claimed))
+            TaskListing(f.id, f.title, "file", declared + sessionsOf(f.id, claimed), ownSessionOf(f.id), statusOf(f.id))
         }
         val fileIds = files.value.map { it.id }.toSet()
         val agentListings = rows.filter { it.id !in fileIds }.sortedBy { it.id }
-            .map { TaskListing(it.id, it.title, "agents", sessionsOf(it.id, emptySet())) }
+            .map { TaskListing(it.id, it.title, "agents", sessionsOf(it.id, emptySet()), ownSessionOf(it.id), statusOf(it.id)) }
         return fileListings + agentListings
     }
+
+    private fun ownSessionOf(taskId: String): String? = synchronized(lock) { meta[taskId]?.leadSession }
+
+    private fun statusOf(taskId: String): String? = synchronized(lock) { meta[taskId]?.status }
 
     /** A pane or a record an operation applies to: the open record when an agent runs, else the pane's leaf. */
     private class Target(val recordId: String?, val leafId: String?)
@@ -364,6 +459,7 @@ class TaskIndex(
         private const val TITLE_MAX = 120
         private const val SLUG_MAX = 40
         private const val SUFFIX_LENGTH = 4
+        const val STATUS_MAX = 120
 
         /**
          * Work out the tasks and every record's task from the three inputs. Pure, so tests and
@@ -372,9 +468,15 @@ class TaskIndex(
          * @param records the session records in memory.
          * @param files the parsed task files.
          * @param rows the agent-made tasks.
+         * @param meta what is stored per task (start, own session, status), by task id.
          * @return the tasks to push and the assignment of records to them.
          */
-        fun resolve(records: List<AgentSessionRecord>, files: List<TaskFile>, rows: List<AgentTaskRow>): TaskSnapshot {
+        fun resolve(
+            records: List<AgentSessionRecord>,
+            files: List<TaskFile>,
+            rows: List<AgentTaskRow>,
+            meta: Map<String, TaskMetaRow> = emptyMap(),
+        ): TaskSnapshot {
             val fileIds = files.map { it.id }.toSet()
             val known = fileIds + rows.map { it.id }
             val assignment = LinkedHashMap<String, String>()
@@ -414,8 +516,25 @@ class TaskIndex(
             val used = assignment.values.toSet()
             val agentTasks = rows.filter { it.id !in fileIds && it.id in used }
                 .map { AgentTask(id = it.id, title = it.title, source = "agents") }
-            return TaskSnapshot((fileTasks + agentTasks).sortedBy { it.id }, assignment)
+            val recordsByTask = records.filter { it.id in assignment }.groupBy { assignment.getValue(it.id) }
+            val tasks = (fileTasks + agentTasks).map { t ->
+                val m = meta[t.id]
+                val firstSeen = recordsByTask[t.id].orEmpty().map { it.createdAt }.filter { it > 0 }.minOrNull()
+                    ?: t.members.map { it.sinceMillis }.filter { it > 0 }.minOrNull()
+                    ?: t.refreshedAtMillis
+                    ?: rows.firstOrNull { it.id == t.id }?.createdAt
+                t.copy(
+                    leadRecordId = m?.leadSession?.let { sid -> newestWithTerminal(records, sid)?.id },
+                    status = m?.status,
+                    statusAtMillis = m?.statusAt,
+                    startedAtMillis = m?.startedAt ?: firstSeen,
+                )
+            }
+            return TaskSnapshot(tasks.sortedBy { it.id }, assignment)
         }
+
+        private fun newestWithTerminal(records: List<AgentSessionRecord>, terminalId: String): AgentSessionRecord? =
+            records.filter { it.terminalSessionId == terminalId }.maxByOrNull { it.createdAt }
 
         private fun isOpen(r: AgentSessionRecord) = r.state != ENDED && r.leafId != null
     }

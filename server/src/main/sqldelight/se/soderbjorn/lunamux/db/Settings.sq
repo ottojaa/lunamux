@@ -47,6 +47,18 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
     updated_at INTEGER NOT NULL
 );
 
+-- What the server keeps about a task besides its name, for any task id (an agent-made task or a
+-- task file's): when the server first saw it, the session that speaks for it, and its one-line
+-- status. A row is made on first sight of the task and never replaces another.
+CREATE TABLE IF NOT EXISTS task_meta (
+    task_id      TEXT NOT NULL PRIMARY KEY,
+    started_at   INTEGER NOT NULL,
+    lead_session TEXT,
+    status       TEXT,
+    status_by    TEXT,
+    status_at    INTEGER
+);
+
 selectByKey:
 SELECT value FROM settings WHERE key = ?;
 
@@ -160,3 +172,16 @@ SELECT id, title, created_at, updated_at FROM agent_tasks ORDER BY created_at, i
 
 upsertAgentTask:
 INSERT OR REPLACE INTO agent_tasks(id, title, created_at, updated_at) VALUES (?, ?, ?, ?);
+
+selectTaskMeta:
+SELECT task_id, started_at, lead_session, status, status_by, status_at FROM task_meta;
+
+-- The first stamp wins: a task's place in the overview must not move once it has one.
+stampTaskStart:
+INSERT OR IGNORE INTO task_meta(task_id, started_at) VALUES (?, ?);
+
+setTaskLead:
+UPDATE task_meta SET lead_session = ? WHERE task_id = ?;
+
+setTaskStatus:
+UPDATE task_meta SET status = ?, status_by = ?, status_at = ? WHERE task_id = ?;
