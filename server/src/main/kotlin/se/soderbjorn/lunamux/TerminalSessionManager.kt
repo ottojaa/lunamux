@@ -171,8 +171,10 @@ interface TermSession {
      * [AgentSessionTracker] when an agent session opens in this pane, so the
      * session can say whether a person or a program started it. Starts as
      * [InputOrigin.USER]: a pane nobody has typed into was opened by a person.
-     * The MCP tools that open a pane set [InputOrigin.TOOL] on it, and the
-     * `interrupt` tool sets it too.
+     * The MCP `create_window` tool sets [InputOrigin.TOOL] on the pane it opens
+     * (every other new pane, including the one `create_tab` seeds and those
+     * `apply_workspace` opens, stays [InputOrigin.USER]), and the `interrupt`
+     * tool sets it too.
      */
     var inputOrigin: String
 
