@@ -1,12 +1,14 @@
 /**
- * The two pure rules behind the agents overview's row cues that do not depend on the layout: the
- * order rows keep (by when their work started, never by what state they are in) and the shared
- * words of titles that belong to one thread of work.
+ * The pure rules behind the agents overview's row cues: the order rows keep (by when their work
+ * started, never by what state they are in), the shared words of titles that belong to one thread of
+ * work, and the glyph that says which part of its tab a pane fills.
  *
- * Both are plain functions over session summaries and titles so they can be tested without a view
- * model; [AgentsOverviewBackingViewModel] calls them while it builds the list.
+ * All are plain functions over session summaries, titles and rectangles so they can be tested
+ * without a view model; [AgentsOverviewBackingViewModel] calls the first two while it builds the
+ * list, and the web layer calls [placeGlyph] when it works out where each pane sits.
  *
  * @see AgentsOverviewBackingViewModel.Row.dimPrefix
+ * @see AgentsOverviewBackingViewModel.Row.place
  * @see AgentsOverviewBackingViewModel.Who
  */
 package se.soderbjorn.lunamux.client.viewmodel
@@ -87,6 +89,50 @@ internal fun dimPrefixLengths(threads: List<String?>, titles: List<String>): Lis
     }
     return out.toList()
 }
+
+/**
+ * The glyph that says which part of its tab a pane fills, from the pane's rectangle.
+ *
+ * A pane that fills (nearly) the whole tab has no glyph. A pane that fills (nearly) one full side
+ * and about half of the other is a half: `▌` left, `▐` right, `▀` top, `▄` bottom. A pane about
+ * half as wide and half as tall is a quarter: `▘` top-left, `▝` top-right, `▖` bottom-left, `▗`
+ * bottom-right. Any other shape (a third, a sliver, a floating window) takes the quarter its centre
+ * lies in, so every pane gets some answer; a centre exactly on a middle line counts as the right
+ * or bottom side.
+ *
+ * Called by the web layer's place calculation for each pane of a tab, with the rectangle from the
+ * toolkit's layout or the pane's own stored geometry.
+ *
+ * @param x left edge as a fraction of the tab's width.
+ * @param y top edge as a fraction of the tab's height.
+ * @param width width as a fraction of the tab's width.
+ * @param height height as a fraction of the tab's height.
+ * @return the empty string for a pane that fills its tab, else one glyph.
+ * @see AgentsOverviewBackingViewModel.Row.place
+ */
+fun placeGlyph(x: Double, y: Double, width: Double, height: Double): String {
+    val wide = width >= FILLS
+    val tall = height >= FILLS
+    val halfWide = width in HALF_LOW..HALF_HIGH
+    val halfTall = height in HALF_LOW..HALF_HIGH
+    val cx = x + width / 2
+    val cy = y + height / 2
+    val right = cx >= 0.5
+    val bottom = cy >= 0.5
+    return when {
+        wide && tall -> ""
+        tall && halfWide -> if (right) "▐" else "▌"
+        wide && halfTall -> if (bottom) "▄" else "▀"
+        else -> if (bottom) (if (right) "▗" else "▖") else (if (right) "▝" else "▘")
+    }
+}
+
+/** The share of a tab's width or height from which a pane counts as filling it. */
+private const val FILLS = 0.9
+
+/** The range of shares around one half in which a side counts as half of the tab. */
+private const val HALF_LOW = 0.4
+private const val HALF_HIGH = 0.6
 
 /** One whitespace-separated piece of a title and where it begins in it. */
 private class Word(val text: String, val start: Int)
