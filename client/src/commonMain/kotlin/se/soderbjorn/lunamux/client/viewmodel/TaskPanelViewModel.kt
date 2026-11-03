@@ -19,6 +19,7 @@ package se.soderbjorn.lunamux.client.viewmodel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.datetime.Clock
 import se.soderbjorn.lunamux.AgentSessionSummary
@@ -184,7 +185,14 @@ class TaskPanelViewModel(
         val peek: PanelPeek? = null,
     )
 
-    private data class Ui(val open: Boolean = true, val peekRecordId: String? = null)
+    /**
+     * What the person has chosen. A peek is remembered with the task and tab it was opened in, so
+     * it can only ever show there and is dropped as soon as the panel stops showing that task.
+     */
+    private data class Ui(val open: Boolean = true, val peek: PeekScope? = null)
+
+    /** A peek on [recordId], opened beside task [taskId] while tab [tabId] was active. */
+    private data class PeekScope(val recordId: String, val taskId: String, val tabId: String)
 
     private val ui = MutableStateFlow(Ui())
     private val clockTick = MutableStateFlow(0)
@@ -208,14 +216,26 @@ class TaskPanelViewModel(
             v[0] as List<AgentTask>, v[1] as List<AgentSessionSummary>, v[2] as WindowConfig?,
             v[3] as Map<String, List<TaskPanelBlock>>, v[4] as Ui,
         )
-    }
+    }.onEach(::forgetStalePeek)
 
-    /** The state right now, for key handlers that must act on what is on screen. */
+    /**
+     * The state right now, for key handlers that must act on what is on screen. Reading it also
+     * forgets a peek that no longer shows.
+     */
     val state: State
         get() = build(
             windowState.agentTasks.value, windowState.agentSessions.value, windowState.config.value,
             windowState.taskPanels.value, ui.value,
-        )
+        ).also(::forgetStalePeek)
+
+    /**
+     * Drop the remembered peek when [built] shows none: the panel was hidden, another tab or task
+     * took its place, or the member ended. Without this the peek would come back, and take every
+     * key, the next time the person returned to the tab.
+     */
+    private fun forgetStalePeek(built: State) {
+        if (built.peek == null && ui.value.peek != null) ui.update { it.copy(peek = null) }
+    }
 
     /**
      * Show or hide the panel by the person's choice. Called at start with the stored setting and
@@ -238,7 +258,11 @@ class TaskPanelViewModel(
     suspend fun activateMember(line: AgentLine) {
         val taskId = state.taskId ?: return
         when (line.action) {
-            MemberAction.PEEK -> ui.update { it.copy(peekRecordId = line.recordId) }
+            MemberAction.PEEK -> {
+                val tabId = windowState.config.value?.effectiveActiveTabId
+                val recordId = line.recordId
+                if (tabId != null && recordId != null) ui.update { it.copy(peek = PeekScope(recordId, taskId, tabId)) }
+            }
             MemberAction.JUMP -> jump(line.recordId)
             MemberAction.OPEN -> send(WindowCommand.OpenTaskMember(taskId, line.key))
             MemberAction.NONE -> Unit
@@ -252,7 +276,7 @@ class TaskPanelViewModel(
      * @see WindowCommand.TakeOverTab
      */
     suspend fun takeOver() {
-        val recordId = ui.value.peekRecordId ?: return
+        val recordId = ui.value.peek?.recordId ?: return
         val session = windowState.agentSessions.value.firstOrNull { it.id == recordId } ?: return
         val where = session.leafId?.let { windowState.config.value?.let { c -> locate(c, it) } } ?: return
         if (!session.background) return
@@ -262,7 +286,7 @@ class TaskPanelViewModel(
     }
 
     /** Close the peek. Called for esc. */
-    fun closePeek() = ui.update { it.copy(peekRecordId = null) }
+    fun closePeek() = ui.update { it.copy(peek = null) }
 
     /**
      * Press a button of an actions block. The server holds the text; only the names travel. Does
@@ -318,7 +342,8 @@ class TaskPanelViewModel(
         val live = own.state != ENDED
         val agents = linesOf(task, sessions, byId, config, own.id, now)
         val blocks = (panels[task.id] ?: emptyList()).map { viewOf(it, live, now) }
-        val peek = ui.peekRecordId?.let { peekOf(it, byId, config) }
+        val peek = ui.peek?.takeIf { ui.open && it.taskId == task.id && it.tabId == activeTab }
+            ?.let { peekOf(it.recordId, byId, config) }
         return State(
             open = ui.open,
             visible = ui.open,

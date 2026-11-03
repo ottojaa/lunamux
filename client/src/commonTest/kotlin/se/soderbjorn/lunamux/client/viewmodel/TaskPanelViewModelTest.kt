@@ -342,6 +342,30 @@ class TaskPanelViewModelTest {
     }
 
     @Test
+    fun `a peek is forgotten when the panel hides, so it never comes back with the tab`() {
+        layout()
+        give(
+            listOf(task(listOf(member("bg", "bg", "working", recordId = "bg1")))),
+            listOf(session("own"), session("bg1", background = true, leaf = "leaf-bg")),
+        )
+
+        runNow { vm.activateMember(vm.state.agents.single()) }
+        assertEquals("bg1", vm.state.peek?.recordId)
+        layout(active = "tab-2")
+        assertNull(vm.state.peek, "another tab shows no panel and so no peek")
+        layout(active = "tab-1")
+        assertNull(vm.state.peek, "coming back must not bring the peek back")
+
+        runNow { vm.activateMember(vm.state.agents.single()) }
+        assertEquals("bg1", vm.state.peek?.recordId)
+        vm.setOpen(false)
+        assertNull(vm.state.peek)
+        vm.setOpen(true)
+        assertNull(vm.state.peek, "showing the panel again starts without a peek")
+        assertTrue(sent.isEmpty())
+    }
+
+    @Test
     fun `link targets are only http, https and file`() {
         assertEquals("https://a.example", vm.linkTarget("https://a.example"))
         assertEquals("file:///tmp/x", vm.linkTarget("file:///tmp/x"))
