@@ -194,6 +194,8 @@ private fun isOnlyFocusChange(prev: dynamic, next: dynamic): Boolean {
         // renders, so toggling it must trigger a full rebuild.
         if ((pt.isHidden as? Boolean ?: false) != (nt.isHidden as? Boolean ?: false)) return false
         if ((pt.isHiddenFromSidebar as? Boolean ?: false) != (nt.isHiddenFromSidebar as? Boolean ?: false)) return false
+        // A tab turning into (or out of) a background tab changes which tabs are listed.
+        if ((pt.isBackground as? Boolean ?: false) != (nt.isBackground as? Boolean ?: false)) return false
         if (stringify(pt.panes) != stringify(nt.panes)) return false
     }
     return true
@@ -371,6 +373,7 @@ private fun structuralConfigSignature(config: dynamic): String {
         sb.append(",ti:").append(tab.title as? String ?: "")
         sb.append(",h:").append((tab.isHidden as? Boolean ?: false).toString())
         sb.append(",hs:").append((tab.isHiddenFromSidebar as? Boolean ?: false).toString())
+        sb.append(",bg:").append((tab.isBackground as? Boolean ?: false).toString())
         sb.append(",f:").append(tab.focusedPaneId as? String ?: "")
         val panes = tab.panes as? Array<dynamic> ?: continue
         for (p in panes) sb.append(",p:").append(p.leaf.id as? String ?: "")

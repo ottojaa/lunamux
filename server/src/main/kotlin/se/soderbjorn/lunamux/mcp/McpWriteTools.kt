@@ -47,6 +47,7 @@ import se.soderbjorn.lunamux.GitContent
 import se.soderbjorn.lunamux.LeafNode
 import se.soderbjorn.lunamux.TerminalContent
 import se.soderbjorn.lunamux.WindowEnvelope
+import se.soderbjorn.lunamux.isListed
 import se.soderbjorn.lunamux.WindowState
 import se.soderbjorn.lunamux.WorldThemeSelection
 import se.soderbjorn.lunamux.persistence.SettingsRepository
@@ -160,7 +161,7 @@ private fun resolveTargetTab(args: JsonObject): String {
     val cfg = WindowState.config.value
     val worldId = args.optString("worldId")?.let { requireWorld(it) } ?: WindowState.activeWorldId()
     val world = cfg.worlds.firstOrNull { it.id == worldId } ?: cfg.worlds.firstOrNull()
-    return world?.activeTabId ?: world?.tabs?.firstOrNull()?.id
+    return world?.activeTabId ?: world?.tabs?.firstOrNull { it.isListed }?.id
         ?: throw McpArgumentException("No tabs exist")
 }
 

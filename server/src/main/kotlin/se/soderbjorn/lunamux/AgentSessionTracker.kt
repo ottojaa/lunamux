@@ -55,7 +55,9 @@ import java.util.concurrent.ConcurrentHashMap
  * @property alive whether the session's process is still running.
  * @property customName the name the user gave the pane (F2), if any. It becomes the
  *   record's title so the name outlives the pane.
- * @property screenText reads the rendered screen as plain text.
+ * @property background whether the pane sits in a background tab (see [TabConfig.isBackground]).
+ * @property screenText reads the rendered screen as plain text. Kept last so callers can pass it as a
+ *   trailing lambda.
  */
 data class PaneSnapshot(
     val terminalSessionId: String,
@@ -66,6 +68,7 @@ data class PaneSnapshot(
     val state: String? = null,
     val alive: Boolean = true,
     val customName: String? = null,
+    val background: Boolean = false,
     val screenText: () -> String? = { null },
 )
 
@@ -411,6 +414,32 @@ class AgentSessionTracker(
     }
 
     /**
+     * Make the sessions that ran in the panes [leafIds] ordinary sessions again.
+     *
+     * Called by the `TakeOverTab` handler once a background tab became a normal tab: its records
+     * (open and closed, in memory and stored) lose [AgentSessionRecord.background], so search finds
+     * them from then on.
+     *
+     * @param leafIds the layout leaf ids of the tab's panes.
+     * @see WindowState.takeOverTab
+     */
+    fun clearBackground(leafIds: Collection<String>) = synchronized(lock) {
+        if (leafIds.isEmpty()) return@synchronized
+        var changed = false
+        for (leaf in leafIds) {
+            runCatching { repo.clearAgentSessionBackgroundByLeaf(leaf) }
+                .onFailure { log.warn("Failed to clear background flag for pane {}", leaf, it) }
+        }
+        for (rec in records.values.toList()) {
+            if (rec.background && rec.leafId in leafIds) {
+                records[rec.id] = rec.copy(background = false)
+                changed = true
+            }
+        }
+        if (changed) publish()
+    }
+
+    /**
      * Promise a task to the next agent session that opens in a pane.
      *
      * Called by [TaskIndex] for a pane that has no agent yet (a window just created with a task,
@@ -501,6 +530,7 @@ class AgentSessionTracker(
                 lastScreen = null,
                 endedAt = null,
                 taskId = pane.leafId?.let { pendingTasks.remove(it) } ?: earlier.taskId,
+                background = pane.background,
             ).also { put(it) }
         }
         return open(pane, CLAUDE, SOURCE_HOOKS, agentId, transcript)
@@ -549,6 +579,7 @@ class AgentSessionTracker(
             stateSince = now,
             createdAt = now,
             taskId = pane.leafId?.let { pendingTasks.remove(it) } ?: agentSessionId?.let(::taskOfEarlier),
+            background = pane.background,
         ).also { put(it) }
     }
 
@@ -645,6 +676,7 @@ internal fun AgentSessionRecord.toSummary() = AgentSessionSummary(
     lastSaid = lastSaid,
     firstPrompt = firstPrompt?.let(::firstPromptLine),
     taskId = taskId,
+    background = background,
 )
 
 private const val TOOL_LINE_MAX = 160
@@ -857,5 +889,6 @@ internal fun livePaneSnapshot(id: String, states: Map<String, String?> = emptyMa
         state = states[id],
         alive = session.isProcessAlive(),
         screenText = { session.screenText() },
+        background = WindowState.isBackgroundSession(id),
     )
 }

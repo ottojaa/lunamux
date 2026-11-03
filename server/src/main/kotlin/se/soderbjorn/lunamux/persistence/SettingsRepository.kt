@@ -216,6 +216,9 @@ class SettingsRepository(
         runCatching {
             driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN task_id TEXT", 0)
         }
+        runCatching {
+            driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN background INTEGER NOT NULL DEFAULT 0", 0)
+        }
     }
 
     /**
@@ -489,6 +492,18 @@ class SettingsRepository(
         database.settingsQueries.selectAllScrollbackLeafIds().executeAsList().toSet()
 
     /**
+     * Make every record that ran in layout leaf [leafId] an ordinary (not background) session.
+     *
+     * Called by [se.soderbjorn.lunamux.AgentSessionTracker.clearBackground] when a person takes a
+     * background tab over, so records already dropped from memory become searchable too.
+     *
+     * @param leafId the pane's layout leaf id.
+     */
+    fun clearAgentSessionBackgroundByLeaf(leafId: String) {
+        database.settingsQueries.clearAgentSessionBackgroundByLeaf(leafId)
+    }
+
+    /**
      * Insert or replace one agent-session record.
      *
      * Called by [se.soderbjorn.lunamux.AgentSessionTracker] whenever a record
@@ -502,6 +517,7 @@ class SettingsRepository(
             r.repo, r.branch, r.worktreePath, r.title, r.firstPrompt, r.transcriptPath,
             r.links.joinToString(","), r.state, r.stateSince, r.nowLine, r.question,
             r.lastScreen, r.createdAt, r.endedAt, r.repoRoot, r.id, r.lastSaid, r.taskId,
+            if (r.background) 1L else 0L,
         )
     }
 
@@ -570,12 +586,12 @@ class SettingsRepository(
         worktreePath: String?, title: String?, firstPrompt: String?, transcriptPath: String?,
         links: String, state: String, stateSince: Long, nowLine: String?, question: String?,
         lastScreen: String?, createdAt: Long, endedAt: Long?, repoRoot: String?,
-        lastSaid: String?, taskId: String?,
+        lastSaid: String?, taskId: String?, background: Long,
     ) = AgentSessionRecord(
         id, agent, agentSessionId, source, leafId, terminalSessionId, cwd, repo, branch,
         worktreePath, title, firstPrompt, transcriptPath,
         links.split(',').filter { it.isNotEmpty() }, state, stateSince, nowLine, question,
-        lastScreen, createdAt, endedAt, repoRoot, lastSaid, taskId,
+        lastScreen, createdAt, endedAt, repoRoot, lastSaid, taskId, background != 0L,
     )
 
     /**
@@ -672,13 +688,13 @@ class SettingsRepository(
         return database.settingsQueries.searchAgentSessions(pattern, query) {
                 id, agent, agentSessionId, source, leafId, terminalSessionId, cwd, repo, branch,
                 worktreePath, title, firstPrompt, transcriptPath, links, state, stateSince, nowLine,
-                question, createdAt, endedAt, repoRoot, lastSaid, taskId, transcriptWindow, screenWindow,
+                question, createdAt, endedAt, repoRoot, lastSaid, taskId, background, transcriptWindow, screenWindow,
             ->
             AgentSessionHit(
                 toAgentSessionRecord(
                     id, agent, agentSessionId, source, leafId, terminalSessionId, cwd, repo, branch,
                     worktreePath, title, firstPrompt, transcriptPath, links, state, stateSince,
-                    nowLine, question, null, createdAt, endedAt, repoRoot, lastSaid, taskId,
+                    nowLine, question, null, createdAt, endedAt, repoRoot, lastSaid, taskId, background,
                 ),
                 transcriptWindow,
                 screenWindow,

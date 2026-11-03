@@ -380,7 +380,7 @@ object WindowState {
             val tabIdSet = rebuiltTabs.mapTo(HashSet()) { it.id }
             world.copy(
                 tabs = rebuiltTabs,
-                activeTabId = world.activeTabId?.takeIf { it in tabIdSet },
+                activeTabId = world.activeTabId?.takeIf { id -> id in tabIdSet && rebuiltTabs.none { it.id == id && it.isBackground } },
             )
         }
 
@@ -454,10 +454,16 @@ object WindowState {
      *
      *  @param worldId the world to add the tab to, or null for the active world.
      *  @param initialCwd folder the tab's shell starts in, or null for the home folder.
+     *  @param background true to open the tab as a background tab: it is not made the active tab
+     *    and appears in no tab list (see [TabConfig.isBackground]).
      *  @return the newly minted tab id (used by the MCP `create_tab` tool
      *    to report the created tab; the `/window` command path ignores it).
      */
-    fun addTab(worldId: String? = null, initialCwd: String? = null): String = synchronized(this) {
+    fun addTab(
+        worldId: String? = null,
+        initialCwd: String? = null,
+        background: Boolean = false,
+    ): String = synchronized(this) {
         // Bootstrap a default world if the config is world-less (the
         // pre-[initialize] path some unit tests exercise). Production always
         // has at least the cold-start "Home" world from [buildDefault].
@@ -475,6 +481,7 @@ object WindowState {
             newTabId = tabId,
             newNodeId = nodeId,
             sessionId = sessionId,
+            background = background,
         )
         _config.value = writeBackWorld(cfg, wid, newView)
         // Register the auto preset in the live map so pane add/remove/focus
@@ -500,12 +507,81 @@ object WindowState {
         commitWithSessionGc(cfg, writeBackWorld(cfg, world.id, newView))
     }
 
-    /** Mark [tabId] as the currently-selected tab (within its own world). */
+    /**
+     * Mark [tabId] as the currently-selected tab (within its own world). A background tab is
+     * refused: only [takeOverTab] makes one active.
+     */
     fun setActiveTab(tabId: String) = synchronized(this) {
         val cfg = _config.value
         val world = worldOfTab(cfg, tabId) ?: return@synchronized
         val newView = TabManager.setActiveTab(viewOf(world), tabId) ?: return@synchronized
         _config.value = writeBackWorld(cfg, world.id, newView)
+    }
+
+    /**
+     * Turn a background tab into a normal tab and make it the active tab of its world, switching
+     * to that world when it is another one. Called by the `TakeOverTab` window command.
+     *
+     * @param tabId the tab to take over; unknown ids are ignored.
+     * @return true when the tab exists (whether or not it was a background tab).
+     * @see TabConfig.isBackground
+     */
+    fun takeOverTab(tabId: String): Boolean = synchronized(this) {
+        val cfg = _config.value
+        val world = worldOfTab(cfg, tabId) ?: return@synchronized false
+        val newView = TabManager.takeOverTab(viewOf(world), tabId)
+        val withTab = if (newView != null) writeBackWorld(cfg, world.id, newView) else cfg
+        _config.value = if (withTab.activeWorldId != world.id) {
+            syncLegacyMirror(withTab.copy(activeWorldId = world.id))
+        } else withTab
+        true
+    }
+
+    /**
+     * Whether [tabId] is a background tab.
+     *
+     * @param tabId the tab to look up.
+     * @return true when the tab exists and is a background tab.
+     */
+    fun isBackgroundTab(tabId: String): Boolean = synchronized(this) {
+        allTabs(_config.value).any { it.id == tabId && it.isBackground }
+    }
+
+    /**
+     * The terminal session ids of every pane that sits in a background tab.
+     *
+     * Called by the agent session tracker to mark the records of sessions that run out of sight.
+     *
+     * @return the session ids; panes without a session (file browsers, say) contribute none.
+     */
+    fun backgroundSessionIds(): Set<String> = synchronized(this) {
+        allTabs(_config.value).filter { it.isBackground }
+            .flatMap { tab -> tab.panes.mapNotNull { it.leaf.sessionId.takeIf { id -> id.isNotEmpty() } } }
+            .toSet()
+    }
+
+    /**
+     * Whether the pane showing terminal session [sessionId] sits in a background tab.
+     *
+     * Called by [livePaneSnapshot] so a new agent record knows whether it runs out of sight.
+     *
+     * @param sessionId a terminal session id.
+     * @return true for a pane in a background tab; false for any other pane or an unknown session.
+     */
+    fun isBackgroundSession(sessionId: String): Boolean = synchronized(this) {
+        allTabs(_config.value).any { tab -> tab.isBackground && tab.panes.any { it.leaf.sessionId == sessionId } }
+    }
+
+    /**
+     * The layout leaf ids of every pane in [tabId].
+     *
+     * Called by the `TakeOverTab` handler to tell the agent tracker which records to make ordinary.
+     *
+     * @param tabId the tab to look up.
+     * @return the leaf ids, or an empty list for an unknown tab.
+     */
+    fun leafIdsOfTab(tabId: String): List<String> = synchronized(this) {
+        allTabs(_config.value).firstOrNull { it.id == tabId }?.panes?.map { it.leaf.id } ?: emptyList()
     }
 
     /** Record the user's focus on [paneId] in [tabId]. */
@@ -670,7 +746,9 @@ object WindowState {
         if (src.tabs.size <= 1) return@synchronized // don't strand the source world empty
         val moving = src.tabs.first { it.id == tabId }
         val srcRemaining = src.tabs.filterNot { it.id == tabId }
-        val srcActive = if (src.activeTabId == tabId) srcRemaining.first().id else src.activeTabId
+        // A world must keep a tab a person can see.
+        if (srcRemaining.none { it.isListed }) return@synchronized
+        val srcActive = if (src.activeTabId == tabId) srcRemaining.first { it.isListed }.id else src.activeTabId
         val newWorlds = cfg.worlds.map { w ->
             when (w.id) {
                 src.id -> w.copy(tabs = srcRemaining, activeTabId = srcActive)

@@ -280,7 +280,8 @@ internal fun clientSupportsWorlds(version: String?): Boolean {
 internal fun WindowConfig.flattenToFirstWorld(): WindowConfig {
     val first = worlds.firstOrNull()
     return copy(
-        tabs = first?.tabs ?: tabs,
+        // A client that predates background tabs would show them, so it never hears of them.
+        tabs = (first?.tabs ?: tabs).filter { it.isListed },
         activeTabId = first?.activeTabId ?: activeTabId,
         worlds = emptyList(),
         activeWorldId = null,
@@ -823,7 +824,13 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
             val error = if (cmd.connected) hooks.connect() else hooks.disconnect()
             if (error != null) ctx.send(WindowEnvelope.AgentSessionError(null, error))
         }
-        is WindowCommand.CloseTab -> WindowState.closeTab(cmd.tabId)
+        // A window never lists a background tab, so it cannot mean to close one; only the agent
+        // that opened it closes it (the MCP close_tab tool), or the person after taking it over.
+        is WindowCommand.CloseTab -> if (!WindowState.isBackgroundTab(cmd.tabId)) WindowState.closeTab(cmd.tabId)
+        is WindowCommand.TakeOverTab -> {
+            val leaves = WindowState.leafIdsOfTab(cmd.tabId)
+            if (WindowState.takeOverTab(cmd.tabId)) ctx.agentTracker?.clearBackground(leaves)
+        }
         is WindowCommand.RenameTab -> WindowState.renameTab(cmd.tabId, cmd.title)
         is WindowCommand.MoveTab -> WindowState.moveTab(cmd.tabId, cmd.targetTabId, cmd.before)
         is WindowCommand.SetTabHidden -> WindowState.setTabHidden(cmd.tabId, cmd.hidden)

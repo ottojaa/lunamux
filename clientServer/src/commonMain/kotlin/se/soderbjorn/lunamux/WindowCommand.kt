@@ -358,6 +358,20 @@ sealed class WindowCommand {
     data class CloseTab(val tabId: String) : WindowCommand()
 
     /**
+     * Take over a background tab: it becomes a normal tab (its [TabConfig.isBackground] is
+     * cleared, and so is the `background` flag of the agent sessions in it), the server makes it
+     * the active tab, and the world that holds it becomes the active world.
+     *
+     * Sent by the agents overview for ⌘↵ on a background session.
+     *
+     * @param tabId the id of the background tab to take over
+     * @see TabConfig.isBackground
+     */
+    @Serializable
+    @SerialName("takeOverTab")
+    data class TakeOverTab(val tabId: String) : WindowCommand()
+
+    /**
      * Change the display title of a tab in the tab bar.
      *
      * @param tabId the id of the tab to rename
