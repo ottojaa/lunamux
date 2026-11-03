@@ -46,11 +46,11 @@ class AgentsOverviewBackingViewModelTest {
         id: String, state: String, since: Long = 1_000, title: String? = null, agent: String = "claude",
         leaf: String? = "leaf-$id", endedAt: Long? = null, branch: String? = null, cwd: String? = "/work/proj",
         nowLine: String? = null, question: String? = null, firstPrompt: String? = null, lastSaid: String? = null,
-        cwdHome: Boolean = false, repo: String? = "proj", lastActivityAt: Long? = null,
+        cwdHome: Boolean = false, repo: String? = "proj", lastActivityAt: Long? = null, startedAt: Long? = null,
     ) = AgentSessionSummary(
         id = id, agent = agent, state = state, stateSince = since, title = title, links = emptyList(),
         repo = repo, branch = branch, cwd = cwd, nowLine = nowLine, question = question, leafId = leaf, endedAt = endedAt,
-        firstPrompt = firstPrompt, lastSaid = lastSaid, cwdHome = cwdHome,
+        firstPrompt = firstPrompt, lastSaid = lastSaid, cwdHome = cwdHome, startedAt = startedAt,
         // A working session is moving (not quiet) unless a test says otherwise, as the chip counts only those.
         lastActivityAt = lastActivityAt ?: if (state == "working") now - 1_000 else null,
     )
@@ -73,17 +73,17 @@ class AgentsOverviewBackingViewModelTest {
     }
 
     @Test
-    fun nowListsNeedsYouFirstThenWorkingLongestWaitingFirst() {
+    fun nowIsOrderedByWhenEachSessionStartedWhateverItsState() {
         windowState.updateAgentSessions(
             listOf(
-                session("w-new", "working", since = 5_000),
-                session("n-new", "needs_you", since = 4_000),
-                session("w-old", "working", since = 1_000),
-                session("n-old", "needs_you", since = 2_000),
+                session("w-new", "working", since = 5_000, startedAt = 300),
+                session("n-new", "needs_you", since = 4_000, startedAt = 200),
+                session("w-old", "working", since = 1_000, startedAt = 100),
+                session("n-old", "needs_you", since = 2_000, startedAt = 400),
             ),
             claudeConnected = true,
         )
-        assertEquals(listOf("n-old", "n-new", "w-old", "w-new"), vm.state.now.map { it.id })
+        assertEquals(listOf("w-old", "n-new", "w-new", "n-old"), vm.state.now.map { it.id })
     }
 
     @Test

@@ -49,11 +49,12 @@ class AgentsOverviewTasksViewModelTest {
         repo: String? = "proj", cwd: String = "/work/proj", links: List<String> = emptyList(),
         nowLine: String? = null, question: String? = null, lastActivityAt: Long? = null,
         lastSaid: String? = null, firstPrompt: String? = null, cwdHome: Boolean = false, taskId: String? = null,
+        startedAt: Long? = null,
     ) = AgentSessionSummary(
         id = id, agent = "claude", state = state, stateSince = since, title = title, links = links,
         repo = repo, branch = null, cwd = cwd, cwdHome = cwdHome, nowLine = nowLine, question = question,
         leafId = "leaf-$id".takeIf { endedAt == null }, endedAt = endedAt, lastActivityAt = lastActivityAt,
-        lastSaid = lastSaid, firstPrompt = firstPrompt, taskId = taskId,
+        lastSaid = lastSaid, firstPrompt = firstPrompt, taskId = taskId, startedAt = startedAt,
     )
 
     private fun layout(vararg leafIds: String) {
@@ -88,7 +89,7 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aTaskWithASessionThatNeedsYouSitsInNowRankedByThatSession() {
+    fun aTaskWithASessionThatNeedsYouSitsInNowWhereItsEarliestMemberStarted() {
         show(
             listOf(task(members = listOf(member("a", "needs_you", since = 2_000), member("b", "working", since = 100)))),
             session("old-working", "working", since = 500),
@@ -96,20 +97,21 @@ class AgentsOverviewTasksViewModelTest {
             session("early-needs", "needs_you", since = 1_000),
         )
         assertEquals(
-            listOf("early-needs", "task:g1", "member:g1:#1", "member:g1:#2", "late-needs", "old-working"),
+            listOf("task:g1", "member:g1:#1", "member:g1:#2", "old-working", "early-needs", "late-needs"),
             vm.state.now.map { it.id },
         )
     }
 
     @Test
-    fun aWorkingOnlyTaskIsInNowBehindEveryoneWhoNeedsYouAndRankedByWait() {
+    fun aTaskIsPlacedInNowByItsEarliestMemberWhateverTheStatesAre() {
         show(
             listOf(task(members = listOf(member("a", "working", since = 1), member("b", "working", since = 2)))),
             session("n", "needs_you", since = 9_000),
             session("w", "working", since = 5_000),
         )
-        // The task's working sessions have waited longest of the working ones, so it comes first.
-        assertEquals(listOf("n", "task:g1", "member:g1:#2", "member:g1:#1", "w"), vm.state.now.map { it.id })
+        // The task's earliest member began before either single session, so it comes first; its
+        // members keep the file's order, and the session that needs you does not jump the queue.
+        assertEquals(listOf("task:g1", "member:g1:#1", "member:g1:#2", "w", "n"), vm.state.now.map { it.id })
     }
 
     @Test
@@ -353,7 +355,7 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun expandingShowsEverySessionMostUrgentFirstAndKeepsTheHighlightOnTheHeader() {
+    fun expandingShowsEverySessionInTheFilesOrderAndKeepsTheHighlightOnTheHeader() {
         show(listOf(task(members = listOf(
             member("a", "working"), member("b", "needs_you"), member("c", "idle", label = "done"),
             member("d", "idle", label = "held"), member("e", "idle", label = "queued"), member("f", "idle", label = "in review"),
@@ -361,7 +363,7 @@ class AgentsOverviewTasksViewModelTest {
         vm.open()
         vm.toggleTask("g1")
         assertEquals(
-            listOf("task:g1", "member:g1:#2", "member:g1:#1", "member:g1:#6", "member:g1:#5", "member:g1:#4", "member:g1:#3"),
+            listOf("task:g1", "member:g1:#1", "member:g1:#2", "member:g1:#3", "member:g1:#4", "member:g1:#5", "member:g1:#6"),
             vm.state.rows.map { it.id },
         )
         assertTrue(vm.state.tasks.getValue("g1").expanded)
@@ -371,9 +373,9 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun needsYouSessionsInAnExpandedTaskAreOrderedLongestWaitingFirst() {
+    fun sessionsInATaskKeepTheFilesOrderWhoeverHasWaitedLonger() {
         show(listOf(task(members = listOf(member("late", "needs_you", since = 9_000), member("early", "needs_you", since = 1_000)))))
-        assertEquals(listOf("task:g1", "member:g1:#2", "member:g1:#1"), vm.state.rows.map { it.id })
+        assertEquals(listOf("task:g1", "member:g1:#1", "member:g1:#2"), vm.state.rows.map { it.id })
     }
 
     @Test
@@ -519,11 +521,12 @@ class AgentsOverviewTasksViewModelTest {
         layout("leaf-a", "leaf-b")
         show(
             listOf(task(source = "agents", members = emptyList())),
-            session("a", "working", taskId = "g1", nowLine = "Edit a.kt", lastActivityAt = now - 1_000),
-            session("b", "needs_you", taskId = "g1", question = "Which branch?"),
+            session("a", "working", taskId = "g1", nowLine = "Edit a.kt", lastActivityAt = now - 1_000, startedAt = 1_000),
+            session("b", "needs_you", taskId = "g1", question = "Which branch?", startedAt = 2_000),
             session("loner", "working", since = 99_999),
         )
-        assertEquals(listOf("task:g1", "b", "a", "loner"), vm.state.now.map { it.id })
+        // Hosted members follow each other by start time; the one that needs you does not lift itself.
+        assertEquals(listOf("task:g1", "a", "b", "loner"), vm.state.now.map { it.id })
         assertEquals(1, vm.state.tasks.getValue("g1").needYouCount)
         assertEquals("1 working", vm.state.tasks.getValue("g1").summary)
         assertEquals("Which branch?", vm.state.rows.first { it.id == "b" }.status)
@@ -634,7 +637,8 @@ class AgentsOverviewTasksViewModelTest {
             session("r1", "working"),
             session("x", "needs_you", taskId = "g1"),
         )
-        assertEquals(listOf("task:g1", "x", "r1"), vm.state.rows.map { it.id })
+        // The file's member first, then the session only Lunamux knows, though that one needs you.
+        assertEquals(listOf("task:g1", "r1", "x"), vm.state.rows.map { it.id })
     }
 
     @Test
@@ -832,14 +836,14 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aPausedSessionHasItsOwnGlyphAndPlaceAfterOtherLabelsAndNeverCountsAsNeedingYou() {
+    fun aPausedSessionHasItsOwnGlyphAndStaysWhereTheFilePutsItAndNeverCountsAsNeedingYou() {
         show(listOf(task(members = listOf(
             member("d", "idle", label = "done"), member("p", "idle", label = "paused: waiting for the release"),
             member("o", "idle", label = "odd"), member("w", "working"),
         ))))
         vm.toggleTask("g1")
         val sessions = vm.state.rows.filter { it.kind == RowKind.SESSION }
-        assertEquals(listOf("w", "o", "p", "d"), sessions.map { it.title })
+        assertEquals(listOf("d", "p", "o", "w"), sessions.map { it.title })
         assertEquals(Glyph.PAUSED, sessions.first { it.title == "p" }.glyph)
         assertEquals(0, vm.state.needYouCount)
         assertEquals(1, vm.state.workingCount)
@@ -1026,21 +1030,21 @@ class AgentsOverviewTasksViewModelTest {
 
     @Test
     fun theSelectionStaysOnItsRowWhenRowsAppearAboveIt() {
-        show(emptyList(), session("a", "needs_you", since = 1_000), session("b", "needs_you", since = 2_000), session("c", "working"))
+        show(emptyList(), session("a", "needs_you", since = 1_000), session("b", "needs_you", since = 2_000), session("c", "working", since = 3_000))
         vm.open()
         vm.moveSelection(1)
         assertEquals("b", vm.state.selectedId)
-        show(emptyList(), session("z", "needs_you", since = 10), session("a", "needs_you", since = 1_000), session("b", "needs_you", since = 2_000), session("c", "working"))
+        show(emptyList(), session("z", "needs_you", since = 10), session("a", "needs_you", since = 1_000), session("b", "needs_you", since = 2_000), session("c", "working", since = 3_000))
         assertEquals("b", vm.state.selectedId)
         assertEquals(2, vm.state.selected)
     }
 
     @Test
     fun whenTheSelectedRowDisappearsTheRowInItsPlaceIsSelected() {
-        show(emptyList(), session("a", "needs_you", since = 1_000), session("b", "needs_you", since = 2_000), session("c", "working"))
+        show(emptyList(), session("a", "needs_you", since = 1_000), session("b", "needs_you", since = 2_000), session("c", "working", since = 3_000))
         vm.open()
         vm.moveSelection(1)
-        show(emptyList(), session("a", "needs_you", since = 1_000), session("c", "working"))
+        show(emptyList(), session("a", "needs_you", since = 1_000), session("c", "working", since = 3_000))
         assertEquals("c", vm.state.selectedId)
     }
 
@@ -1174,7 +1178,7 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aGracedIdleSessionRanksBehindEverythingThatNeedsYouOrWorksAndAJustClosedOneIsGracedLikeIt() {
+    fun aGracedIdleSessionAndAJustClosedOneKeepTheirPlaceInTheStartOrder() {
         show(
             listOf(task(members = listOf(member("run", "idle", label = "queued"), member("run2", "idle", label = "queued")))),
             session("graced", "idle", since = now - 1_000),
@@ -1184,7 +1188,7 @@ class AgentsOverviewTasksViewModelTest {
             session("longClosed", "ended", since = now - 3_600_000, endedAt = now - 3_600_000),
         )
         assertEquals(setOf("graced", "closed"), vm.state.now.map { it.id }.filter { it == "graced" || it == "closed" }.toSet())
-        assertEquals(listOf("need", "work", "task:g1"), vm.state.now.map { it.id }.take(3))
+        assertEquals(listOf("task:g1", "need", "work", "closed", "graced"), vm.state.now.map { it.id })
         assertEquals(listOf("longClosed"), vm.state.earlier.map { it.id })
         assertEquals(1, vm.state.needYouCount)
     }
