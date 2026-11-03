@@ -206,6 +206,17 @@ class SettingsRepository(
             """.trimIndent(),
             parameters = 0,
         )
+        // When each task's work began (see TaskIndex): written once per task and never changed.
+        driver.execute(
+            identifier = null,
+            sql = """
+                CREATE TABLE IF NOT EXISTS task_starts (
+                    task_id    TEXT NOT NULL PRIMARY KEY,
+                    started_at INTEGER NOT NULL
+                )
+            """.trimIndent(),
+            parameters = 0,
+        )
         // Same no-.sqm story for columns added to an existing table: bring
         // pre-existing DBs up to the current shape. SQLite has no
         // ADD COLUMN IF NOT EXISTS, so the "duplicate column name" error on
@@ -662,6 +673,29 @@ class SettingsRepository(
         database.settingsQueries.selectThreadMarks { key, mark, lastSeenAt ->
             ThreadMarkRow(key, mark.toInt(), lastSeenAt)
         }.executeAsList()
+
+    /**
+     * Store when a task's work began, unless it already has a time: the first one stays for good.
+     *
+     * Called by [se.soderbjorn.lunamux.TaskIndex] the first time it sees a task.
+     *
+     * @param taskId the task's id.
+     * @param startedAt epoch millis the task's work began.
+     * @see loadTaskStarts
+     */
+    fun saveTaskStart(taskId: String, startedAt: Long) {
+        database.settingsQueries.insertTaskStart(taskId, startedAt)
+    }
+
+    /**
+     * Every stored task start.
+     *
+     * Called once by [se.soderbjorn.lunamux.TaskIndex] when the server starts.
+     *
+     * @return the start time of each task that has one, by task id.
+     */
+    fun loadTaskStarts(): Map<String, Long> =
+        database.settingsQueries.selectTaskStarts().executeAsList().associate { it.task_id to it.started_at }
 
     /**
      * Store the searchable conversation text of one record.

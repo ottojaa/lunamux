@@ -99,6 +99,9 @@ class TaskIndex(
 ) {
     private val lock = Any()
     private var rows: List<AgentTaskRow> = runCatching { repo.loadAgentTasks() }.getOrDefault(emptyList())
+
+    /** When each task's work began, by task id: the stored stamps plus those made since start. */
+    private val starts = HashMap<String, Long>(runCatching { repo.loadTaskStarts() }.getOrDefault(emptyMap()))
     private val _state = MutableStateFlow(TaskSnapshot())
 
     /** The current tasks and assignment; collected per window socket by `WindowRoutes`. */
@@ -177,7 +180,7 @@ class TaskIndex(
     fun recompute() {
         synchronized(lock) {
             val records = tracker.snapshot()
-            _state.value = withMarks(resolve(records, files.value, rows), records)
+            _state.value = withStarts(withMarks(resolve(records, files.value, rows), records), records)
         }
     }
 
@@ -216,6 +219,31 @@ class TaskIndex(
             val mark = m.markOfTask(t.id, now)
                 ?: m.markForTask(t.id, firstThreadKey(m, t, snapshot.assignment, byId), now)
             t.copy(mark = mark)
+        }
+        return snapshot.copy(tasks = tasks)
+    }
+
+    /**
+     * Put the time each task's work began on [snapshot].
+     *
+     * A task that has a stamp keeps it, whatever its members do afterwards. A task seen for the
+     * first time is stamped with [startOf] and the stamp is stored, so the overview places the task
+     * in NOW by a time that no state change, file write or later match of a member can move, and
+     * every window and a restarted server agree on it. A task with nothing to date it by gets no
+     * stamp yet.
+     *
+     * @param snapshot the tasks and assignment [resolve] made.
+     * @param records the session records in memory.
+     * @return [snapshot] with [AgentTask.startedAtMillis] set where a stamp exists.
+     */
+    private fun withStarts(snapshot: TaskSnapshot, records: List<AgentSessionRecord>): TaskSnapshot {
+        val byId = records.associateBy { it.id }
+        val tasks = snapshot.tasks.map { t ->
+            val start = starts[t.id] ?: startOf(t, snapshot.assignment, byId)?.also {
+                starts[t.id] = it
+                runCatching { repo.saveTaskStart(t.id, it) }
+            }
+            t.copy(startedAtMillis = start)
         }
         return snapshot.copy(tasks = tasks)
     }
@@ -461,6 +489,22 @@ class TaskIndex(
                 .map { AgentTask(id = it.id, title = it.title, source = "agents") }
             return TaskSnapshot((fileTasks + agentTasks).sortedBy { it.id }, assignment)
         }
+
+        /**
+         * When a task's work began, as far as the server can tell right now: the earliest creation
+         * time of the sessions that belong to it, else the earliest time a member of its file gives,
+         * else the file's modification time. Pure, so tests and [withStarts] share it.
+         *
+         * @param task the task as [resolve] made it.
+         * @param assignment record id to task id, from [resolve].
+         * @param records the session records by id.
+         * @return epoch millis, or null when nothing dates the task.
+         */
+        fun startOf(task: AgentTask, assignment: Map<String, String>, records: Map<String, AgentSessionRecord>): Long? =
+            assignment.filterValues { it == task.id }.keys
+                .mapNotNull { records[it]?.createdAt?.takeIf { at -> at > 0 } }.minOrNull()
+                ?: task.members.map { it.sinceMillis }.filter { it > 0 }.minOrNull()
+                ?: task.refreshedAtMillis?.takeIf { it > 0 }
 
         private fun isOpen(r: AgentSessionRecord) = r.state != ENDED && r.leafId != null
     }

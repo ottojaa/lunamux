@@ -53,6 +53,11 @@ CREATE TABLE IF NOT EXISTS thread_marks (
     last_seen_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS task_starts (
+    task_id    TEXT NOT NULL PRIMARY KEY,
+    started_at INTEGER NOT NULL
+);
+
 selectByKey:
 SELECT value FROM settings WHERE key = ?;
 
@@ -167,3 +172,10 @@ SELECT key, mark, last_seen_at FROM thread_marks;
 
 upsertThreadMark:
 INSERT OR REPLACE INTO thread_marks(key, mark, last_seen_at) VALUES (?, ?, ?);
+
+-- When each task's work began, stamped once the first time the task is seen (see TaskIndex).
+selectTaskStarts:
+SELECT task_id, started_at FROM task_starts;
+
+insertTaskStart:
+INSERT OR IGNORE INTO task_starts(task_id, started_at) VALUES (?, ?);

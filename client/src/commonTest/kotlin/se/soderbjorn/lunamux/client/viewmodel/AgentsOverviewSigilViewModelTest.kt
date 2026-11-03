@@ -224,6 +224,66 @@ class AgentsOverviewSigilViewModelTest {
         }
     }
 
+    private fun fileMember(key: String, state: String, since: Long, recordId: String? = null) =
+        AgentTaskMember(key = key, title = "member $key", state = state, sinceMillis = since, recordId = recordId)
+
+    private fun fileTask(startedAtMillis: Long?, vararg members: AgentTaskMember) =
+        AgentTask(id = "t", title = "Task t", source = "file", members = members.toList(), refreshedAtMillis = 9_000, mark = 1,
+            startedAtMillis = startedAtMillis)
+
+    @Test
+    fun aTaskOfFileMembersKeepsItsPlaceWhenAMemberChangesStateAndItsSince() {
+        layout("leaf-s")
+        val single = session("s", startedAt = 3_000)
+        show(listOf(single), listOf(fileTask(1_000, fileMember("a", "working", 1_000), fileMember("b", "working", 5_000))))
+        vm.toggleTask("t")
+        val before = vm.state.rows.map { it.id }
+        assertEquals(listOf("task:t", "member:t:a", "member:t:b", "s"), before)
+        // The member the task began with turns to needing the person: its since moves to now.
+        show(listOf(single), listOf(fileTask(1_000, fileMember("a", "needs_you", 6_000), fileMember("b", "working", 5_000))))
+        assertEquals(before, vm.state.rows.map { it.id })
+        // The file is rewritten without any since, so every member reads the file's time.
+        show(listOf(single), listOf(fileTask(1_000, fileMember("a", "needs_you", 9_000), fileMember("b", "working", 9_000))))
+        assertEquals(before, vm.state.rows.map { it.id })
+    }
+
+    @Test
+    fun aTaskKeepsItsPlaceWhenAFileMemberIsFirstMatchedToASessionThatStartedLater() {
+        layout("leaf-s", "leaf-m")
+        val single = session("s", startedAt = 3_000)
+        val members = arrayOf(fileMember("a", "working", 1_000), fileMember("b", "working", 5_000))
+        show(listOf(single), listOf(fileTask(1_000, *members)))
+        val before = vm.state.now.map { it.id }
+        assertEquals("task:t", before.first())
+        // Lunamux now hosts member a, in a session that began after the single did.
+        val hosted = session("m", startedAt = 9_000, taskId = "t")
+        show(listOf(single, hosted), listOf(fileTask(1_000, fileMember("a", "working", 9_000, recordId = "m"), members[1])))
+        assertEquals("task:t", vm.state.now.first().id)
+        assertEquals(listOf("task:t", "s"), nowIds().filter { it == "task:t" || it == "s" })
+    }
+
+    @Test
+    fun aTaskFromAnOlderServerStillFallsBackToItsMembersTimes() {
+        layout("leaf-s")
+        show(listOf(session("s", startedAt = 3_000)), listOf(fileTask(null, fileMember("a", "working", 1_000), fileMember("b", "working", 5_000))))
+        assertEquals(listOf("task:t", "s"), nowIds().filter { it == "task:t" || it == "s" })
+    }
+
+    @Test
+    fun aSessionThatBecomesATaskPanelWhenASecondOneJoinsDoesNotMove() {
+        layout("leaf-a", "leaf-b", "leaf-x")
+        val a = session("a", startedAt = 2_000, taskId = "t")
+        val x = session("x", startedAt = 3_000)
+        // One hosted session and nothing else: the task is not drawn, the session is a plain row.
+        val stamped = AgentTask(id = "t", title = "Task t", source = "agents", mark = 1, startedAtMillis = 2_000)
+        show(listOf(a, x), listOf(stamped))
+        assertEquals(listOf("a", "x"), nowIds())
+        // A second session joins, started after x: the task becomes a panel at the first one's start.
+        val b = session("b", startedAt = 4_000, taskId = "t")
+        show(listOf(a, x, b), listOf(stamped))
+        assertEquals(listOf("task:t", "x"), nowIds().filter { it == "task:t" || it == "x" })
+    }
+
     @Test
     fun aTaskStartsWhereItsEarliestSessionStartedEvenWhenThatSessionHasEnded() {
         layout("leaf-late", "leaf-loose")

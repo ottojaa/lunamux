@@ -454,4 +454,54 @@ class TaskIndexTest {
         assertEquals("claude go", index.fileTask("prog")!!.open!!.command)
         assertNull(index.fileTask("nope"))
     }
+    // ── When a task's work began ────────────────────────────────────────────────────────
+
+    private fun fileAt(id: String, since: Long, modified: Long, matchFolder: String? = null) = TaskFile(
+        id, "File $id", repo = null, open = null, modified = modified,
+        members = listOf(TaskFileMember(AgentTaskMember("m", "m", state = "working", sinceMillis = since), null, matchFolder)),
+    )
+
+    @Test
+    fun `a task is dated by its earliest session, else its earliest member, else its file`() {
+        val withSessions = resolve(
+            listOf(rec("late", createdAt = 50, taskId = "f"), rec("early", createdAt = 20, taskId = "f")),
+            listOf(file("f", member("m"))),
+        )
+        val assignment = withSessions.assignment
+        val records = mapOf("late" to rec("late", createdAt = 50), "early" to rec("early", createdAt = 20))
+        assertEquals(20L, TaskIndex.startOf(withSessions.tasks.single(), assignment, records))
+        val members = resolve(emptyList(), listOf(file("f", member("m"), member("n"))))
+        assertEquals(7L, TaskIndex.startOf(members.tasks.single(), members.assignment, emptyMap()))
+        val bare = resolve(emptyList(), listOf(file("f")))
+        assertEquals(99L, TaskIndex.startOf(bare.tasks.single(), bare.assignment, emptyMap()))
+    }
+
+    @Test
+    fun `a task start is stamped once and no later change of its members, file or sessions moves it`() {
+        files.value = listOf(fileAt("prog", since = 7, modified = 99, matchFolder = folder("wt")))
+        index.recompute()
+        assertEquals(7L, index.state.value.tasks.single().startedAtMillis)
+        // The member changes state: its since moves, and the file is written again.
+        files.value = listOf(fileAt("prog", since = 5_000, modified = 6_000, matchFolder = folder("wt")))
+        index.recompute()
+        assertEquals(7L, index.state.value.tasks.single().startedAtMillis)
+        // A session Lunamux hosts is matched to the member, and it began long after.
+        now = 20_000
+        session("s1", cwd = folder("wt"))
+        index.recompute()
+        assertEquals("prog", index.state.value.assignment[tracker.openRecordOf("s1")!!.id])
+        assertEquals(7L, index.state.value.tasks.single().startedAtMillis)
+    }
+
+    @Test
+    fun `a task start survives a restart and is not stamped while nothing dates the task`() {
+        files.value = listOf(fileAt("prog", since = 7, modified = 99))
+        index.recompute()
+        val restarted = TaskIndex(repo, tracker, MutableStateFlow(listOf(fileAt("prog", since = 8_000, modified = 8_000))), leafOfSession = { null })
+        assertEquals(7L, restarted.state.value.tasks.single().startedAtMillis)
+
+        val undated = TaskFile("undated", "Undated", repo = null, open = null, members = emptyList(), modified = 0)
+        val other = TaskIndex(repo, tracker, MutableStateFlow(listOf(undated)), leafOfSession = { null })
+        assertNull(other.state.value.tasks.single().startedAtMillis)
+    }
 }

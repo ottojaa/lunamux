@@ -231,7 +231,7 @@ class AgentsOverviewBackingViewModel(
     )
 
     /**
-     * Who started a session, from the first line typed into its pane.
+     * Who started a session: whoever submitted the last line into its pane before the session opened.
      *
      * @property glyph the character the view draws; empty for [NONE].
      */
@@ -239,7 +239,7 @@ class AgentsOverviewBackingViewModel(
         /** Nothing is known, or the row is not a session (a task header). */
         NONE(""),
 
-        /** A person typed the line that started it. */
+        /** A person submitted the line that started it. */
         USER("❯"),
 
         /** A session or tool did: an MCP write, or a member a task file started. */
@@ -1048,9 +1048,10 @@ class AgentsOverviewBackingViewModel(
      *   [recency] is still inside [IDLE_GRACE_MS]: like a session that has just ended, it stays in
      *   NOW for the grace instead of going to EARLIER with an age of a few minutes.
      * @property jumpRecordId the open session that most needs the person, or null.
-     * @property started when the task's work began: the earliest start of any of its hosted
-     *   sessions, ended ones included, else the earliest time a member of its file gives. It places
-     *   the task in NOW and does not move while members change state.
+     * @property started when the task's work began: [AgentTask.startedAtMillis], which the server
+     *   stamps once. From a server that sends none it is the earliest start of any hosted session of
+     *   the task, else the earliest time a member of its file gives, and may then move with the
+     *   members. It places the task in NOW.
      */
     private class TaskUnit(
         val task: AgentTask,
@@ -1290,7 +1291,10 @@ class AgentsOverviewBackingViewModel(
         val recency = runs.maxOfOrNull { r -> maxOf(r.member.sinceMillis, r.session?.let(::activityOf) ?: 0L) }
             ?: t.refreshedAtMillis ?: 0L
         val graced = (ended || settled) && inGrace(recency, nowMillis)
-        val started = runs.mapNotNull { r -> r.session?.let(::startOf) }.minOrNull()
+        // The server stamps the start once, so no state change, file write or later match moves
+        // it. The fallback is for an older server, and it can move; it is only a stopgap.
+        val started = t.startedAtMillis
+            ?: runs.mapNotNull { r -> r.session?.let(::startOf) }.minOrNull()
             ?: runs.minOfOrNull { it.member.sinceMillis } ?: t.refreshedAtMillis ?: 0L
         return TaskUnit(t, runs, panel, rank, since, ended, settled, recency, graced, jump?.session?.id, started)
     }

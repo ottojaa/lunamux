@@ -606,6 +606,11 @@ enum class DiffLineType {
  * @param mark the task's mark, 0 until 35 (see [AgentSessionSummary.mark]). It copies the mark of
  *   the thread of the task's first member the first time the server sees the task and is stored, so
  *   the header and every member row wear the same mark for good. Null from an older server.
+ * @param startedAtMillis epoch millis the task's work began, stamped the first time the server sees
+ *   the task and never changed after: the earliest start of the sessions it held then, else the
+ *   earliest time a member of its file gave, else the file's modification time. It places the task
+ *   in the overview's NOW band, so the task keeps its place whatever its members do. Null from an
+ *   older server, or for a task with nothing to date it by.
  */
 @Serializable
 data class AgentTask(
@@ -617,6 +622,7 @@ data class AgentTask(
     val members: List<AgentTaskMember> = emptyList(),
     val refreshedAtMillis: Long? = null,
     val mark: Int? = null,
+    val startedAtMillis: Long? = null,
 )
 
 /**
