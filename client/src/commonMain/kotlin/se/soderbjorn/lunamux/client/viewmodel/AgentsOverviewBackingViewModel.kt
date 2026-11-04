@@ -278,7 +278,9 @@ class AgentsOverviewBackingViewModel(
      *   [WINDOW_MS] old, newest first. Nothing older is listed; search finds it.
      *   [recent] and [fortnight] together hold only the newest [EARLIER_LIMIT] rows of EARLIER
      *   until "+ N more" is pressed, so the second band may be empty or cut short.
-     * @property earlierHidden how many EARLIER rows "+ N more" would reveal.
+     * @property earlierHidden how many EARLIER rows "+ N more" would reveal. It describes the list outside a
+     *   search only: while [matchMode] is on the lists are empty and a client draws no "+ N more" line,
+     *   whatever this holds.
      * @property needYouCount sessions asking for the user; the chip's first number.
      * @property workingCount sessions that work and are moving (neither quiet nor stale, see
      *   [isMoving]); the chip's second number.

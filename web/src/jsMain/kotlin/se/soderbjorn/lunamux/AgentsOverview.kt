@@ -7,7 +7,7 @@
  * Every row is the same six-column grid: a marker (◆ when the task needs the person, ▸ on the
  * selected row), the title, where it runs, one state word, a detail line and the age. Brightness
  * and colour follow the state: a working or needs-you row has a bright title, a done one a
- * mid-grey title, an EARLIER one a dim row. The state word is cyan with the app's working glyph in
+ * mid-grey title, and a finished one in EARLIER a dim row (a task in EARLIER whose agent still moves stays bright, with the glyph). The state word is cyan with the app's working glyph in
  * front while an agent moves ([workingGlyph]), yellow when the task needs the person, a muted
  * green when it is done. The selected row carries one more line under it with the full text and
  * the tab its session sits in, and none when there is nothing to put on it. ↵ opens the row, ⌘↵ takes a
@@ -284,7 +284,7 @@ private fun closeOverlayElement() {
 /**
  * Turn a click in the list into a view-model call, finding the row by its id.
  *
- * The "+ N more" line shows the rest of the last two weeks; any other row is selected and opened,
+ * The "+ N more" line shows the rest of EARLIER; any other row is selected and opened,
  * as ↵ would.
  *
  * @param target the element that was clicked, or null.
@@ -529,10 +529,10 @@ private fun buildFocus(row: Row): HTMLElement? {
 }
 
 /**
- * The dim "+ 6 more" line that ends the last two weeks. It is not a row anyone can select; a click
- * shows the rest.
+ * The dim "+ 6 more" line that ends EARLIER, after whichever of its two bands holds the last shown
+ * row. It is not a row anyone can select; a click shows the rest.
  *
- * @param hidden how many entries of that band are still hidden.
+ * @param hidden how many EARLIER entries, across both bands, are still hidden.
  * @return the line, laid out on the same grid as a row.
  */
 private fun buildMoreLine(hidden: Int): HTMLElement {

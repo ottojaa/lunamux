@@ -19,7 +19,8 @@ of one, so it is a row too; a session that belongs to a task is never a row of i
 runs in a tab or in the background. A row has no mark but one: **◆** at the start of a task that
 needs the person (the selected row shows **▸** there instead). Rows are told apart by brightness
 and by the colour of the state word: a task that works or needs the person has a bright title, a
-done one a mid-grey title, and everything in EARLIER a dim one.
+done one a mid-grey title, and a finished one in EARLIER a dim one (a task in EARLIER whose
+agent still moves stays bright, with the working glyph).
 
 A row reads, left to right: the **title**, **where** (the task's repo, else the folder the session
 runs in, home as `~`), one **state word**, a **detail** and the **age**. The state word is one of:
@@ -112,7 +113,7 @@ the panel is narrower than 700px.
   behaves like one idle session in a tab: it stays in NOW for ten minutes after the last activity
   and then moves to EARLIER. A task whose sessions have all ended is in EARLIER after the same
   ten minutes.
-- **EARLIER is two bands, newest first, dimmed.** **LAST FEW DAYS** holds the rows last active
+- **EARLIER is two bands, newest first; finished rows are dimmed.** **LAST FEW DAYS** holds the rows last active
   within three days. **LAST TWO WEEKS** holds those between three and fourteen days old. Together
   they show the newest five rows, then one **+ N more** line (a click on it, or ↓ on the last row,
   shows the rest). A band with nothing to show has no heading. Older rows are not listed, but
