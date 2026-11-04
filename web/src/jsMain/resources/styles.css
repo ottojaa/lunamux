@@ -3685,8 +3685,10 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-more { cursor: pointer; }
 
 /* The working glyph (WorkingGlyph.kt): two layers stacked in one box and cross-faded by the script,
-   in the accent with a soft glow. The box is as high as a row's line so it does not grow the row, and
-   the cell it sits in lets the glow spill past its edge. Its weight is its own and always regular,
+   in the accent with a soft glow. The box is the one the glyph was first drawn in: 26px high, its
+   line 26px, centred on the row. A row is 26px (a 20px line and 3px of padding each side), so the 3px
+   margins above and below hand that padding back and the box does not grow its row. The cell it sits
+   in lets the glow spill past its edge. Its weight is its own and always regular,
    never the word's beside it: the monospace face has no braille, so the system falls back to Apple
    Braille, and a bold weight there picks its outlined six-dot face, which draws a ring at every dot
    position the pair does not light. */
@@ -3695,10 +3697,11 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     position: relative;
     display: inline-block;
     width: 2ch;
-    height: 20px;
+    height: 26px;
+    margin: -3px 0;
     font-size: 19px;
     font-weight: 400;
-    line-height: 20px;
+    line-height: 26px;
     vertical-align: top;
     text-align: center;
     color: var(--ao-accent);

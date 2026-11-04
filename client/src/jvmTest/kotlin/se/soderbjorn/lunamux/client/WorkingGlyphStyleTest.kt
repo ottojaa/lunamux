@@ -7,7 +7,7 @@
  * back to Apple Braille, and inheriting the bold weight of the word beside it (the state cell of a
  * working row is bold) picks that font's outlined six-dot face, which draws a ring at every dot
  * the pair leaves unlit. These tests fail when the `.ao-work` rule stops saying its own weight or
- * stops being as high as a row's line.
+ * stops being the box it was first drawn in, kept inside the height of its row.
  *
  * @see se.soderbjorn.lunamux.WorkingGlyphSpec
  */
@@ -52,20 +52,26 @@ class WorkingGlyphStyleTest {
         assertEquals("400", glyphRule()["font-weight"])
     }
 
-    /** The glyph's box is as high as a row's line, so it never grows its row. */
+    /**
+     * The glyph's box is the 26px one it was first drawn in, centred on the row, and its 3px
+     * negative margins take back the row's padding so it never grows the row.
+     */
     @Test
-    fun glyphBoxIsAsHighAsARowLine() {
+    fun glyphBoxIsTheOriginalOneAndDoesNotGrowItsRow() {
         val rule = glyphRule()
-        assertEquals("20px", rule["height"])
-        assertEquals(rule["height"], rule["line-height"])
+        assertEquals("26px", rule["height"])
+        assertEquals("26px", rule["line-height"])
         assertEquals("2ch", rule["width"])
+        assertEquals("center", rule["text-align"])
+        assertEquals("-3px 0", rule["margin"])
     }
 
-    /** The row's line is 20px, the height the glyph's box is held to above. */
+    /** The row is a 20px line with 3px of padding above and below, which the glyph's margins give back. */
     @Test
-    fun rowLineIsTheGlyphBoxHeight() {
+    fun rowPaddingIsWhatTheGlyphMarginsGiveBack() {
         val css = stylesheet()
         val row = Regex("""(?m)^\.ao-row\s*\{([^}]*)}""").find(css)?.groupValues?.get(1)
         assertTrue(row != null && Regex("""line-height:\s*20px""").containsMatchIn(row), "`.ao-row` line is not 20px")
+        assertTrue(Regex("""padding:\s*3px 14px""").containsMatchIn(row), "`.ao-row` padding is not 3px 14px")
     }
 }
