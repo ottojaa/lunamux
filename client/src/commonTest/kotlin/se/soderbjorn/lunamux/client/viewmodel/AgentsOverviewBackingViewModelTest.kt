@@ -46,11 +46,11 @@ class AgentsOverviewBackingViewModelTest {
         id: String, state: String, since: Long = 1_000, title: String? = null, agent: String = "claude",
         leaf: String? = "leaf-$id", endedAt: Long? = null, branch: String? = null, cwd: String? = "/work/proj",
         nowLine: String? = null, question: String? = null, firstPrompt: String? = null, lastSaid: String? = null,
-        cwdHome: Boolean = false, repo: String? = "proj", lastActivityAt: Long? = null,
+        cwdHome: Boolean = false, repo: String? = "proj", lastActivityAt: Long? = null, taskId: String? = null,
     ) = AgentSessionSummary(
         id = id, agent = agent, state = state, stateSince = since, title = title, links = emptyList(),
         repo = repo, branch = branch, cwd = cwd, nowLine = nowLine, question = question, leafId = leaf, endedAt = endedAt,
-        firstPrompt = firstPrompt, lastSaid = lastSaid, cwdHome = cwdHome,
+        firstPrompt = firstPrompt, lastSaid = lastSaid, cwdHome = cwdHome, taskId = taskId,
         // A working session is moving (not quiet) unless a test says otherwise, as the chip counts only those.
         lastActivityAt = lastActivityAt ?: if (state == "working") now - 1_000 else null,
     )
@@ -127,12 +127,29 @@ class AgentsOverviewBackingViewModelTest {
     }
 
     @Test
-    fun earlierListsOpenIdleAndClosedSessionsTogetherNewestFirstAndCutsOnlyTheSecondBand() {
+    fun earlierListsOpenIdleAndClosedSessionsTogetherNewestFirstAndCutsAfterTheNewestFive() {
         val rows = (1..7).map { session("e$it", if (it % 2 == 0) "idle" else "ended", since = it * 1_000L, endedAt = it * 1_000L) }
         windowState.updateAgentSessions(rows, false)
-        assertEquals(listOf("e7", "e6", "e5", "e4", "e3", "e2", "e1"), vm.state.recent.map { it.id }, "all of the first band shows")
+        assertEquals(listOf("e7", "e6", "e5", "e4", "e3"), vm.state.recent.map { it.id }, "the newest five show")
         assertTrue(vm.state.fortnight.isEmpty())
+        assertEquals(2, vm.state.earlierHidden)
+        vm.showMoreEarlier()
+        assertEquals(listOf("e7", "e6", "e5", "e4", "e3", "e2", "e1"), vm.state.recent.map { it.id })
         assertEquals(0, vm.state.earlierHidden)
+    }
+
+    @Test
+    fun theDownArrowPastTheLastRowRevealsTheHiddenEarlierRowsAndLandsOnTheFirstOfThem() {
+        val rows = (1..7).map { session("e$it", "ended", since = it * 1_000L, endedAt = it * 1_000L) }
+        windowState.updateAgentSessions(rows, false)
+        vm.select("e3")
+        assertEquals(2, vm.state.earlierHidden)
+        vm.moveSelection(1)
+        assertEquals("e2", vm.state.selectedId, "the first row that was hidden")
+        assertEquals(0, vm.state.earlierHidden)
+        vm.moveSelection(1)
+        vm.moveSelection(1)
+        assertEquals("e1", vm.state.selectedId, "↓ on the very last row stays there")
     }
 
     @Test
@@ -217,22 +234,6 @@ class AgentsOverviewBackingViewModelTest {
     }
 
     @Test
-    fun aPreviewIsPlainTextAndNeverAFence() {
-        windowState.updateAgentSessions(
-            listOf(
-                session("md", "ended", endedAt = 10, lastSaid = "**4. Tell me how it went,** then decide"),
-                session("fence", "ended", endedAt = 20, lastSaid = "```", firstPrompt = "## Fix `the` login"),
-                session("head", "ended", endedAt = 30, lastSaid = "- run `gradle test` now"),
-            ),
-            false,
-        )
-        val status = vm.state.rows.associate { it.id to it.status }
-        assertEquals("4. Tell me how it went, then decide", status["md"])
-        assertEquals("❯ Fix the login", status["fence"], "a bare fence says nothing, so the first prompt shows")
-        assertEquals("run gradle test now", status["head"])
-    }
-
-    @Test
     fun aRowNeverReadsNowUnderAHeadingThatSaysDays() {
         val hour = 60L * 60 * 1000
         val day = 24 * hour
@@ -276,32 +277,15 @@ class AgentsOverviewBackingViewModelTest {
     }
 
     @Test
-    fun theFooterNamesEachKeyOnceAndEachActionWithOneWord() {
-        val all = AgentsOverviewBackingViewModel.Footer.entries.flatMap { f ->
-            listOf(true, false).flatMap { AgentsOverviewBackingViewModel.footerHints(f, it).map { h -> f to h } }
-        }
-        AgentsOverviewBackingViewModel.Footer.entries.forEach { f ->
-            val hints = AgentsOverviewBackingViewModel.footerHints(f, backToTask = true)
-            assertEquals(hints.map { it.word }.distinct(), hints.map { it.word }, "$f says one thing twice")
-        }
-        assertEquals(listOf("→ expand", "↑↓ move", "esc close"), AgentsOverviewBackingViewModel.footerHints(AgentsOverviewBackingViewModel.Footer.TASK_COLLAPSED, false).map { "${it.key} ${it.word}" })
-        assertEquals(listOf("← collapse", "↑↓ move", "esc close"), AgentsOverviewBackingViewModel.footerHints(AgentsOverviewBackingViewModel.Footer.TASK_EXPANDED, false).map { "${it.key} ${it.word}" })
-        assertTrue(all.none { it.second.word == "space" || it.second.key == "space" })
-        assertEquals(listOf("←", "↑↓", "esc"), AgentsOverviewBackingViewModel.footerHints(AgentsOverviewBackingViewModel.Footer.RUN_ATTACH, true).map { it.key })
-        // "open" is only a task header's own action, so a row with no pane says there is nothing to jump to.
-        assertTrue(all.none { it.second.word.contains("to open") })
-    }
-
-    @Test
-    fun theSameSessionGetsTheSameWordWhetherBrowsedOrFoundBySearch() = runNow {
+    fun theSameSessionOpensTheSameWayWhetherBrowsedOrFoundBySearch() = runNow {
         val closed = session("a", "ended", title = "Plan", endedAt = 10)
         windowState.updateAgentSessions(listOf(closed), false)
-        val browsed = vm.state.rows.single().actionLabel
+        val browsed = vm.state.rows.single().enter
         vm.open()
         vm.setQuery("plan")
         answer("plan", AgentSessionMatch(closed, "title", null, 0, 4))
-        assertEquals(browsed, vm.state.rows.single().actionLabel)
-        assertEquals("resume", browsed)
+        assertEquals(browsed, vm.state.rows.single().enter)
+        assertEquals(AgentsOverviewBackingViewModel.Enter.RESUME, browsed)
     }
 
     @Test
@@ -353,11 +337,10 @@ class AgentsOverviewBackingViewModelTest {
         assertTrue(s.now.isEmpty() && s.earlier.isEmpty())
         assertEquals("3 MATCHES", s.matchHeading)
         assertEquals("title", s.rows[0].field)
-        assertNull(s.rows[0].taskTitle)
         assertEquals(0 to 6, s.rows[0].matchStart to s.rows[0].matchLength)
         assertEquals("…a needle here…", s.rows[1].snippet)
-        assertEquals("Worktree removed. Resume recreates it from branch x.", s.rows[2].resumeNote)
-        assertEquals("resume", s.rows[2].actionLabel)
+        assertEquals("fix needle · Worktree removed. Resume recreates it from branch x. · in first prompt", s.rows[2].extra)
+        assertEquals(AgentsOverviewBackingViewModel.Enter.RESUME, s.rows[2].enter)
     }
 
     @Test
@@ -367,19 +350,20 @@ class AgentsOverviewBackingViewModelTest {
         answer(
             "access",
             AgentSessionMatch(
-                session("old", "ended", leaf = null, endedAt = 5, title = "wire the thing"), "task", null, 0, 6, null,
+                session("old", "ended", leaf = null, endedAt = 5, title = "wire the thing", taskId = "g9"), "task", null, 0, 6, null,
                 taskTitle = "Access control",
             ),
             AgentSessionMatch(
-                session("own", "ended", leaf = null, endedAt = 4, title = "Access notes"), "title", null, 0, 6, null,
+                session("own", "ended", leaf = null, endedAt = 4, title = "Access notes", taskId = "g8"), "title", null, 0, 6, null,
                 taskTitle = "Billing",
             ),
         )
         val rows = vm.state.rows
         assertEquals(listOf("task", "title"), rows.map { it.field })
-        assertEquals(listOf("Access control", "Billing"), rows.map { it.taskTitle })
+        assertEquals(listOf("task:g9", "task:g8"), rows.map { it.id }, "a task older than the pushed list is still one row")
+        assertEquals(listOf("Access control", "Billing"), rows.map { it.title })
         assertEquals(0 to 6, rows[0].matchStart to rows[0].matchLength, "the match sits inside the task title")
-        assertEquals("wire the thing", rows[0].title)
+        assertEquals("in task title", rows[0].extra)
     }
 
     @Test
@@ -404,9 +388,9 @@ class AgentsOverviewBackingViewModelTest {
         windowState.updateAgentSessions(listOf(session("a", "needs_you")), true)
         answer("needle", AgentSessionMatch(session("a", "ended", leaf = "leaf-a", endedAt = 5), "prompt", "x needle", 2, 6, null))
         val row = vm.state.rows.single()
-        assertEquals("needs_you", row.state)
+        assertEquals("needs you", row.stateWord)
         assertTrue(row.isLive)
-        assertEquals("jump", row.actionLabel)
+        assertEquals(AgentsOverviewBackingViewModel.Enter.JUMP, row.enter)
     }
 
     @Test
@@ -425,9 +409,9 @@ class AgentsOverviewBackingViewModelTest {
         vm.inspectSelected()
         vm.inspectSelected()
         assertEquals(listOf<WindowCommand>(WindowCommand.InspectAgentSession("old")), sent)
-        assertNull(vm.state.rows.single().resumeNote)
+        assertEquals("", vm.state.rows.single().extra)
         windowState.updateAgentInspection(WindowEnvelope.AgentSessionInspection("old", live = false, resumeNote = "Worktree removed."))
-        assertEquals("Worktree removed.", vm.state.rows.single().resumeNote)
+        assertEquals("Worktree removed.", vm.state.rows.single().extra)
     }
 
     @Test
@@ -619,7 +603,7 @@ class AgentsOverviewBackingViewModelTest {
         layout(leaf("leaf-x"))
         windowState.updateAgentSessions(listOf(session("old", "ended", leaf = null, endedAt = 9)), true)
         vm.open()
-        assertEquals("resume", vm.state.rows.single().actionLabel)
+        assertEquals(AgentsOverviewBackingViewModel.Enter.RESUME, vm.state.rows.single().enter)
         vm.activateSelected()
         assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("old")), sent)
         assertTrue(vm.state.open)
@@ -655,9 +639,9 @@ class AgentsOverviewBackingViewModelTest {
     }
 
     @Test
-    fun geminiOffersOpenFolderInsteadOfResume() {
+    fun anEndedGeminiSessionOpensLikeAnyOtherEndedSession() {
         windowState.updateAgentSessions(listOf(session("g", "ended", agent = "gemini", leaf = null, endedAt = 3)), true)
-        assertEquals("open folder", vm.state.rows.single().actionLabel)
+        assertEquals(AgentsOverviewBackingViewModel.Enter.RESUME, vm.state.rows.single().enter)
     }
 
     @Test
@@ -666,7 +650,7 @@ class AgentsOverviewBackingViewModelTest {
         windowState.updateAgentSessions(listOf(session("in", "working"), session("out", "working", leaf = "gone")), true)
         assertEquals(listOf("in"), vm.state.now.map { it.id })
         assertEquals(listOf("out"), vm.state.recent.map { it.id })
-        assertEquals("working", vm.state.recent.single().state, "a lone session in a band keeps its real state")
+        assertEquals("working", vm.state.recent.single().stateWord, "a lone session in a band keeps its real state")
         assertEquals(1, vm.state.workingCount)
     }
 

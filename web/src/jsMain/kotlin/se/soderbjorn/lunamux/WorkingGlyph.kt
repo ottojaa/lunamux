@@ -1,14 +1,13 @@
 /**
- * The small glyph the agents overview draws to say "this agent is working": in the state column of
- * a working row, and in the header of a task while any of its sessions works.
+ * The small glyph the agents overview draws in front of "working" in the state cell of a row whose
+ * task has an agent moving.
  *
  * It is one component whose look is entirely its [WorkingGlyphSpec] (the frames and their
  * timings), so changing the glyph means changing [BRAILLE_PAIR_TURN], not the drawing code.
  * Each glyph is two stacked layers; a shared clock sets the incoming layer to the next frame and
- * lets CSS fade it in while the other fades out. A glyph that is not busy (a session that has
- * gone quiet) is drawn still and dimmed; every glyph under the reduced-motion preference is drawn
- * still but keeps the accent colour. The look of the box and its resting state are the `.ao-work*`
- * rules in `styles.css`.
+ * lets CSS fade it in while the other fades out. Under the reduced-motion preference the glyph is
+ * drawn still, in the same colour and glow. The look of the box is the `.ao-work*` rules in
+ * `styles.css`.
  *
  * @see workingGlyph
  * @see WorkingGlyphSpec
@@ -71,21 +70,17 @@ private fun tick() {
 /**
  * Build the working glyph.
  *
- * Called by the agents overview for the state column of each working row and of a task
- * header with a working session.
+ * Called by the agents overview's row builder for the state cell of each row that reads "working"
+ * or "N working". Such a row is moving by definition, so the glyph is always live.
  *
- * @param active whether the work is live (heard from lately, see
- *   [se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.isWorkingLive]); false
- *   draws the first frame still and dimmed.
  * @param spec the frames and timings.
  * @return a small inline element, hidden from assistive technology (the row's text says the rest).
  */
-internal fun workingGlyph(active: Boolean, spec: WorkingGlyphSpec = BRAILLE_PAIR_TURN): HTMLElement {
+internal fun workingGlyph(spec: WorkingGlyphSpec = BRAILLE_PAIR_TURN): HTMLElement {
     val box = element("ao-work")
     box.setAttribute("aria-hidden", "true")
     val reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
-    if (!active || reduceMotion || spec.frames.size < 2) {
-        box.classList.add(if (active) "ao-work-still" else "ao-work-rest")
+    if (reduceMotion || spec.frames.size < 2) {
         box.textContent = spec.frames.first()
         return box
     }
@@ -97,5 +92,6 @@ internal fun workingGlyph(active: Boolean, spec: WorkingGlyphSpec = BRAILLE_PAIR
     return box
 }
 
+/** A `span` with [className], the building block of the glyph's box and layers. */
 private fun element(className: String): HTMLElement =
     (document.createElement("span") as HTMLElement).also { it.className = className }
