@@ -1,14 +1,17 @@
 /**
- * Tests for the task part of [AgentsOverviewBackingViewModel]: where a task sits among the single
- * sessions (it stays in NOW while it has open work, and goes to EARLIER once every session reads done or ended), when a task is an expansion panel
- * and when it is one plain row, what a collapsed and an expanded panel show and in which order,
- * the glyph, status and counts of each session, which session the header's ↵ goes to (and the
- * task's `open` action, and expanding when there is neither), a session Lunamux does not host and
- * one opened with `claude attach`, the arrow and space keys, the selection staying on its row,
- * and when a working session counts as live, quiet or stale.
+ * Tests for the task part of [AgentsOverviewBackingViewModel]: every task is one row, and a
+ * session in no task is a task of one. They cover where a task sits (it stays in NOW while it has
+ * open work and goes to EARLIER once every session reads done or ended), the state word of a row
+ * ("needs you", "N working", "working", "done", "finished") and the detail and extra line behind
+ * it, what ↵ opens in every branch (the task's own session, a live session in a listed tab, the
+ * task's `open` action, a peek at a background session, a resume, nothing), ⌘↵ and → on a task,
+ * which rows ⌘⌫ may close, how a search folds the sessions of one task into one row, the selection
+ * staying on its row, the stable order of NOW, and when a working session counts as moving, quiet
+ * or stale.
  */
 package se.soderbjorn.lunamux.client.viewmodel
 
+import se.soderbjorn.lunamux.AgentSessionMatch
 import se.soderbjorn.lunamux.AgentSessionSummary
 import se.soderbjorn.lunamux.AgentTask
 import se.soderbjorn.lunamux.AgentTaskMember
@@ -17,10 +20,10 @@ import se.soderbjorn.lunamux.Pane
 import se.soderbjorn.lunamux.TabConfig
 import se.soderbjorn.lunamux.WindowCommand
 import se.soderbjorn.lunamux.WindowConfig
+import se.soderbjorn.lunamux.WindowEnvelope
+import se.soderbjorn.lunamux.WorldConfig
 import se.soderbjorn.lunamux.client.WindowStateRepository
-import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Footer
-import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Glyph
-import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.RowKind
+import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Enter
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.coroutines.startCoroutine
@@ -57,13 +60,54 @@ class AgentsOverviewTasksViewModelTest {
         lastSaid = lastSaid, firstPrompt = firstPrompt, taskId = taskId, startedAt = startedAt, background = background,
     )
 
-    /** Set once a test lays out its own tab; [show] then leaves the layout alone. */
+    /** Set once a test lays out its own tabs; [show] then leaves the layout alone. */
     private var laidOut = false
+
+    private fun panes(ids: List<String>) =
+        ids.map { Pane(LeafNode(id = it, sessionId = "s-$it", title = it), 0.0, 0.0, 1.0, 1.0, 0) }
 
     private fun layout(vararg leafIds: String) {
         laidOut = true
-        val panes = leafIds.map { Pane(LeafNode(id = it, sessionId = "s-$it", title = it), 0.0, 0.0, 1.0, 1.0, 0) }
-        windowState.updateConfig(WindowConfig(tabs = listOf(TabConfig(id = "tab-1", title = "one", panes = panes)), activeTabId = "tab-1"))
+        windowState.updateConfig(WindowConfig(tabs = listOf(TabConfig(id = "tab-1", title = "one", panes = panes(leafIds.toList()))), activeTabId = "tab-1"))
+    }
+
+    /** Lays out [first] in the listed tab 1 and [second] in the listed tab 2. */
+    private fun layoutTwoTabs(first: List<String>, second: List<String>) {
+        laidOut = true
+        windowState.updateConfig(
+            WindowConfig(
+                tabs = listOf(TabConfig(id = "tab-1", title = "one", panes = panes(first)), TabConfig(id = "tab-2", title = "two", panes = panes(second))),
+                activeTabId = "tab-1",
+            ),
+        )
+    }
+
+    /** Lays out [normal] panes in the one listed tab and [background] panes in a background tab of their own. */
+    private fun layoutWithBackground(normal: List<String>, background: List<String>) {
+        laidOut = true
+        windowState.updateConfig(
+            WindowConfig(
+                tabs = listOf(
+                    TabConfig(id = "tab-1", title = "one", panes = panes(normal)),
+                    TabConfig(id = "tab-bg", title = "agents", panes = panes(background), isBackground = true),
+                ),
+                activeTabId = "tab-1",
+            ),
+        )
+    }
+
+    /** Lays out an empty home world showing and [inWork] in the first tab of a second world named "Work". */
+    private fun layoutTwoWorlds(inWork: List<String>) {
+        laidOut = true
+        windowState.updateConfig(
+            WindowConfig(
+                worlds = listOf(
+                    WorldConfig("w1", "Home", tabs = listOf(TabConfig("t0", "t0"))),
+                    WorldConfig("w2", "Work", tabs = listOf(TabConfig("t1", "t1", panes = panes(inWork)))),
+                ),
+                activeWorldId = "w1",
+            ),
+        )
     }
 
     /**
@@ -88,6 +132,10 @@ class AgentsOverviewTasksViewModelTest {
         refreshedAtMillis = refreshedAtMillis, startedAtMillis = startedAt, leadRecordId = leadRecordId, status = status,
     )
 
+    /** A task whose sessions are all hosted ones that carry its id, with [lead] as its own session. */
+    private fun hostedTask(lead: String? = null, hasOpen: Boolean = false, status: String? = null) =
+        task(source = "agents", members = emptyList(), hasOpen = hasOpen, leadRecordId = lead, status = status)
+
     /**
      * Shows [tasks] and [sessions]. Unless the test laid out its own tab, every session with a pane
      * is put in one open tab, as NOW lists only sessions in open tabs; [showAway] leaves them out.
@@ -103,6 +151,15 @@ class AgentsOverviewTasksViewModelTest {
         windowState.updateAgentTasks(tasks)
     }
 
+    /** The one row with [id]. */
+    private fun row(id: String) = vm.state.rows.single { it.id == id }
+
+    /** The jump to [leaf] in the listed tab [tab]. */
+    private fun jumpTo(leaf: String, tab: String = "tab-1") =
+        listOf(WindowCommand.SetActiveTab(tab), WindowCommand.SetFocusedPane(tab, leaf))
+
+    // ---- placement ----
+
     @Test
     fun aTaskSitsInNowWhereItStartedWhateverStateItsMembersAreIn() {
         show(
@@ -111,10 +168,7 @@ class AgentsOverviewTasksViewModelTest {
             session("late-needs", "needs_you", since = 3_000),
             session("early-needs", "needs_you", since = 1_000),
         )
-        assertEquals(
-            listOf("old-working", "early-needs", "task:g1", "member:g1:#1", "member:g1:#2", "late-needs"),
-            vm.state.now.map { it.id },
-        )
+        assertEquals(listOf("old-working", "early-needs", "task:g1", "late-needs"), vm.state.now.map { it.id })
     }
 
     @Test
@@ -126,8 +180,8 @@ class AgentsOverviewTasksViewModelTest {
             session("n", "needs_you", since = 9_000),
             session("w", "working", since = 5_000),
         )
-        // The task began with its first session (start 1), so it leads; its sessions follow in the order they began.
-        assertEquals(listOf("task:g1", "a", "b", "w", "n"), vm.state.now.map { it.id })
+        // The task began with its first session (start 1), so it leads; its sessions are not rows of their own.
+        assertEquals(listOf("task:g1", "w", "n"), vm.state.now.map { it.id })
     }
 
     @Test
@@ -175,11 +229,11 @@ class AgentsOverviewTasksViewModelTest {
         show(listOf(task(members = listOf(member("a", "idle", label = "done", since = now - 11 * MINUTE), member("b", "idle", label = "done", since = now - 12 * MINUTE)))))
         assertTrue(vm.state.now.isEmpty())
         assertEquals(listOf("task:g1"), vm.state.earlier.map { it.id })
-        assertEquals(now - 11 * MINUTE, vm.state.tasks.getValue("g1").ageMillis)
+        assertEquals(now - 11 * MINUTE, vm.state.earlier.single().sinceMillis)
     }
 
     @Test
-    fun aTaskThatJustFinishedStaysInNowForTheGraceSoItsHeaderNeverReadsMinutesUnderDays() {
+    fun aTaskThatJustFinishedStaysInNowForTheGraceSoItsRowNeverReadsMinutesUnderDays() {
         val ended = now - MINUTE
         show(
             listOf(
@@ -197,7 +251,7 @@ class AgentsOverviewTasksViewModelTest {
         assertEquals(setOf("task:file", "task:closed", "task:hosted"), vm.state.now.map { it.id }.filter { it.startsWith("task:") }.toSet())
         assertEquals(listOf("task:oldFile"), vm.state.earlier.map { it.id }.filter { it.startsWith("task:") })
         assertTrue(vm.state.earlier.all { it.sinceMillis <= now - 10 * MINUTE }, "nothing under an earlier heading reads younger than the grace")
-        assertTrue(vm.state.tasks.getValue("file").ageMillis == null, "a header in NOW shows no age")
+        assertEquals(setOf("done"), vm.state.now.filter { it.id.startsWith("task:") }.map { it.stateWord }.toSet(), "still in NOW, so not yet finished")
 
         now += 10 * MINUTE
         show(
@@ -205,20 +259,8 @@ class AgentsOverviewTasksViewModelTest {
         )
         assertTrue(vm.state.now.isEmpty())
         assertEquals(listOf("task:file"), vm.state.earlier.map { it.id })
-        assertEquals(ended, vm.state.tasks.getValue("file").ageMillis)
-    }
-
-    @Test
-    fun anIdleSessionInATaskIsAsOldAsItsLastActivityLikeALoneOne() {
-        layout("leaf-a", "leaf-b")
-        val quietSince = now - 3 * HOUR
-        show(
-            listOf(task(source = "agents", members = emptyList())),
-            session("a", "idle", taskId = "g1", since = now - MINUTE, lastActivityAt = quietSince),
-            session("b", "working", taskId = "g1", lastActivityAt = now - 1_000),
-        )
-        vm.toggleTask("g1")
-        assertEquals(quietSince, vm.state.rows.first { it.id == "a" }.sinceMillis, "an idle session in a task is as old as its last activity")
+        assertEquals(ended, vm.state.earlier.single().sinceMillis)
+        assertEquals("finished", vm.state.earlier.single().stateWord)
     }
 
     @Test
@@ -240,14 +282,14 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aTaskIsOneUnitInTheSecondBandsLimit() {
+    fun aTaskIsOneUnitInTheEarlierLimit() {
         now = 30 * DAY // the bands are days wide; the usual clock is only hours in
         val tasks = (1..6).map {
             task(id = "g$it", members = listOf(member("m", "ended", since = now - 5 * DAY + it), member("n", "ended", since = now - 5 * DAY + it)))
         }
         show(tasks)
         assertTrue(vm.state.recent.isEmpty())
-        assertEquals(EARLIER_LIMIT, vm.state.fortnight.count { it.kind == RowKind.TASK })
+        assertEquals(EARLIER_LIMIT, vm.state.fortnight.size)
         assertEquals(1, vm.state.earlierHidden)
     }
 
@@ -279,46 +321,36 @@ class AgentsOverviewTasksViewModelTest {
         )
         assertEquals(listOf("task:mixed"), vm.state.recent.map { it.id })
         assertEquals(listOf("task:slow"), vm.state.fortnight.map { it.id })
-        assertEquals(now - DAY, vm.state.tasks.getValue("mixed").ageMillis)
-        assertEquals(now - 5 * DAY, vm.state.tasks.getValue("slow").ageMillis)
+        assertEquals(now - DAY, row("task:mixed").sinceMillis)
+        assertEquals(now - 5 * DAY, row("task:slow").sinceMillis)
         assertFalse("task:ancient" in vm.state.rows.map { it.id }, "older than two weeks is only found by search")
     }
 
     @Test
-    fun moreAppearsOnlyForTheSecondBand() {
+    fun theEarlierLimitCountsRowsAcrossBothBandsAndMoreRevealsTheRest() {
         now = 30 * DAY // the bands are days wide; the usual clock is only hours in
-        val recent = (1..8).map { session("r$it", "ended", endedAt = now - HOUR - it * 1_000L) }
+        val recent = (1..3).map { session("r$it", "ended", endedAt = now - HOUR - it * 1_000L) }
         val older = (1..7).map { session("o$it", "ended", endedAt = now - 5 * DAY - it) }
         show(emptyList(), *(recent + older).toTypedArray())
-        assertEquals(8, vm.state.recent.size, "the first band is never cut")
-        assertEquals(EARLIER_LIMIT, vm.state.fortnight.size)
-        assertEquals(2, vm.state.earlierHidden)
+        assertEquals(3, vm.state.recent.size, "the newest rows come first, so the first band is whole here")
+        assertEquals(EARLIER_LIMIT - 3, vm.state.fortnight.size, "the second band takes what is left of the five")
+        assertEquals(5, vm.state.earlierHidden)
         vm.showMoreEarlier()
         assertEquals(7, vm.state.fortnight.size)
         assertEquals(0, vm.state.earlierHidden)
     }
 
     @Test
-    fun anEarlierTaskIsACollapsedHeaderWithItsSessionCountAndAgeAndNowKeepsItsCountsWithoutAge() {
+    fun aFirstBandLongerThanTheLimitIsCutToo() {
         now = 30 * DAY // the bands are days wide; the usual clock is only hours in
-        show(
-            listOf(
-                task(id = "done", members = listOf(member("a", "ended", since = now - 2 * DAY), member("b", "ended", since = now - 3 * DAY), member("c", "ended", since = now - 4 * DAY))),
-                task(id = "live", members = listOf(member("x", "working", since = now - 100, recordId = "x"), member("y", "ended", since = now - DAY))),
-            ),
-            session("x", "working", since = now - 100),
-        )
-        val done = vm.state.tasks.getValue("done")
-        assertEquals("3 sessions", done.summary)
-        assertEquals(now - 2 * DAY, done.ageMillis)
-        assertEquals(listOf("task:done"), vm.state.recent.map { it.id }, "collapsed: the sessions wait behind the header")
-        val live = vm.state.tasks.getValue("live")
-        assertNull(live.ageMillis)
-        assertTrue(live.summary.contains("done"), live.summary)
+        show(emptyList(), *(1..8).map { session("r$it", "ended", endedAt = now - HOUR - it * 1_000L) }.toTypedArray())
+        assertEquals(EARLIER_LIMIT, vm.state.recent.size)
+        assertTrue(vm.state.fortnight.isEmpty())
+        assertEquals(3, vm.state.earlierHidden)
     }
 
     @Test
-    fun expandingAnEarlierTaskListsItsSessionsAndTheDownArrowCrossesFromTheFirstBandToTheSecond() {
+    fun theDownArrowCrossesFromTheFirstBandToTheSecondAndEarlierRowsOfEndedSessionsResume() {
         now = 30 * DAY // the bands are days wide; the usual clock is only hours in
         layout()
         show(
@@ -328,88 +360,19 @@ class AgentsOverviewTasksViewModelTest {
             session("later", "ended", endedAt = now - 6 * DAY),
         )
         assertEquals(listOf("task:g1"), vm.state.recent.map { it.id })
+        assertEquals(listOf("later"), vm.state.fortnight.map { it.id })
+        assertEquals(listOf(Enter.RESUME, Enter.RESUME), vm.state.earlier.map { it.enter })
         vm.select("task:g1")
-        vm.toggleTask("g1")
-        assertEquals(listOf("task:g1", "s-a", "s-b"), vm.state.recent.map { it.id })
-        assertEquals(listOf("resume", "resume"), vm.state.recent.drop(1).map { it.actionLabel })
-        vm.select("s-b")
         vm.moveSelection(1)
         assertEquals("later", vm.state.selectedId, "↓ from the last row of band 1 lands on the first of band 2")
         vm.moveSelection(-1)
-        assertEquals("s-b", vm.state.selectedId)
-    }
-
-    @Test
-    fun collapsedShowsTheHeaderAndTheSessionsThatNeedYouOrWorkAndTheCountsSayTheRest() {
-        show(listOf(task(members = listOf(
-            member("a", "needs_you"), member("b", "working"), member("c", "idle", label = "in review"),
-        ))))
-        val rows = vm.state.rows
-        assertEquals(listOf("task:g1", "member:g1:#1", "member:g1:#2"), rows.map { it.id }, "needs you first, then working")
-        assertEquals(RowKind.TASK, rows[0].kind)
-        assertEquals(Glyph.NONE, rows[0].glyph, "a header never carries a state glyph, least of all the ◆")
-        val g = vm.state.tasks.getValue("g1")
-        assertEquals(1, g.needYouCount)
-        assertEquals("1 working · 1 in review", g.summary)
-        assertFalse(g.expanded)
-    }
-
-    @Test
-    fun headerCountsComeInAFixedOrderWithNoZerosAndUnknownLabelsAsGiven() {
-        show(listOf(task(members = listOf(
-            member("a", "idle", label = "done", links = listOf("#22")),
-            member("b", "idle", label = "ready"),
-            member("c", "idle", label = "held: not merging yet"),
-            member("d", "idle", label = "weird thing"),
-            member("e", "idle", label = "waiting"),
-            member("f", "idle", label = "queued"),
-            member("g", "idle", label = "in review · round 2"),
-            member("h", "working", recordId = "h"),
-            member("i", "idle"),
-        ))), session("h", "working", lastActivityAt = now - 1_000))
-        assertEquals(
-            "1 working · 1 in review · 2 queued · 1 held: not merging yet · 1 weird thing · 1 idle · 2 done",
-            vm.state.tasks.getValue("g1").summary,
-        )
-    }
-
-    @Test
-    fun expandingShowsEverySessionInTheFilesOrderAndKeepsTheHighlightOnTheHeader() {
-        show(listOf(task(members = listOf(
-            member("a", "working"), member("b", "needs_you"), member("c", "idle", label = "done"),
-            member("d", "idle", label = "held"), member("e", "idle", label = "queued"), member("f", "idle", label = "in review"),
-        ))))
-        vm.open()
-        vm.toggleTask("g1")
-        assertEquals(
-            listOf("task:g1", "member:g1:#1", "member:g1:#2", "member:g1:#3", "member:g1:#4", "member:g1:#5", "member:g1:#6"),
-            vm.state.rows.map { it.id },
-        )
-        assertTrue(vm.state.tasks.getValue("g1").expanded)
         assertEquals("task:g1", vm.state.selectedId)
-        vm.toggleTask("g1")
-        assertEquals(3, vm.state.rows.size, "collapsed again: the header, the one that works and the one that needs you")
     }
 
-    @Test
-    fun anExpandedTaskKeepsItsSessionsInTheFilesOrderWhoeverHasWaitedLonger() {
-        show(listOf(task(members = listOf(member("late", "needs_you", since = 9_000), member("early", "needs_you", since = 1_000)))))
-        assertEquals(listOf("task:g1", "member:g1:#1", "member:g1:#2"), vm.state.rows.map { it.id })
-    }
+    // ---- the chip ----
 
     @Test
-    fun anExpandedTaskStaysExpandedWhenTheOverlayIsClosedAndOpenedAgain() {
-        show(listOf(task(members = listOf(member("a", "working"), member("b", "idle")))))
-        vm.open()
-        vm.toggleTask("g1")
-        vm.close()
-        assertFalse(vm.state.open)
-        vm.open()
-        assertTrue(vm.state.tasks.getValue("g1").expanded)
-    }
-
-    @Test
-    fun chipCountsIncludeTaskSessionsEvenWhenCollapsed() {
+    fun chipCountsIncludeTaskSessions() {
         show(
             listOf(task(members = listOf(member("a", "needs_you"), member("b", "working"), member("c", "working"), member("d", "idle")))),
             session("s1", "needs_you"),
@@ -422,233 +385,685 @@ class AgentsOverviewTasksViewModelTest {
 
     @Test
     fun theChipCountsAsWorkingOnlyTheSessionsThatAreMovingAndTheClockAloneEndsThat() {
-        val min = 60_000L
-        // Window-wide stamps: hosted singles by their last activity, an unhosted member by its file's refresh time.
+        // Window-wide stamps: hosted singles by their last activity, a member Lunamux does not host by its file's refresh time.
         show(
-            listOf(task(id = "f", refreshedAtMillis = now - 25 * min, members = listOf(member("file-run", "working"), member("other", "idle")))),
-            session("live", "working", lastActivityAt = now - min),
-            session("quiet", "working", lastActivityAt = now - 6 * min),
+            listOf(task(id = "f", refreshedAtMillis = now - 25 * MINUTE, members = listOf(member("file-run", "working"), member("other", "idle")))),
+            session("live", "working", lastActivityAt = now - MINUTE),
+            session("quiet", "working", lastActivityAt = now - 6 * MINUTE),
         )
         // One moving; the quiet single and the stale file member are not counted.
         assertEquals(1, vm.state.workingCount)
         assertEquals("1 working", vm.state.chipRest)
-        now += 5 * min
+        now += 5 * MINUTE
         vm.tick()
         assertEquals(0, vm.state.workingCount)
         assertEquals("agents idle", vm.state.chipRest)
     }
 
     @Test
-    fun aTaskLineCountsAQuietOrStaleSessionUnderThatWordAndNeverAsWorking() {
-        val min = 60_000L
+    fun aTaskRowCountsAQuietOrStaleSessionAsNotWorking() {
         layout("leaf-w1", "leaf-w2")
         show(
-            listOf(task(refreshedAtMillis = now - 25 * min, members = listOf(
+            listOf(task(refreshedAtMillis = now - 25 * MINUTE, members = listOf(
                 member("one", "working", recordId = "w1"),
                 member("two", "working", recordId = "w2"),
                 member("three", "working"),
                 member("four", "idle", label = "in review"),
             ))),
-            session("w1", "working", lastActivityAt = now - min),
-            session("w2", "working", lastActivityAt = now - 6 * min),
+            session("w1", "working", lastActivityAt = now - MINUTE),
+            session("w2", "working", lastActivityAt = now - 6 * MINUTE),
         )
-        val header = vm.state.tasks.getValue("g1")
-        assertEquals("1 working · 1 quiet · 1 stale · 1 in review", header.summary)
-        // The header's moving glyph still needs to know sessions are at work.
-        assertEquals(3, header.workingCount)
+        assertEquals("working", row("task:g1").stateWord, "only the first moves: the second is quiet, the third stale")
         assertEquals(1, vm.state.workingCount)
     }
 
+    // ---- state words ----
+
     @Test
-    fun aLoneSessionRightAfterATaskGetsTheGapAHeaderGetsAndASessionOfTheTaskDoesNot() {
-        val ended = now - HOUR // past the ten minutes a just-ended session stays under NOW
+    fun aTaskWithASessionWaitingOnYouReadsNeedsYouWithTheMarkerAndItsQuestionInQuotes() {
+        layout("leaf-r1", "leaf-r2")
         show(
-            listOf(
-                task(id = "g1", members = listOf(member("a", "idle", label = "done", since = ended), member("b", "idle", label = "done", since = ended))),
-                task(id = "g2", members = listOf(member("c", "idle", label = "done", since = ended - 10), member("d", "idle", label = "done", since = ended - 10))),
-            ),
-            session("lone1", "ended", since = ended - 20, endedAt = ended - 20),
-            session("lone2", "ended", since = ended - 30, endedAt = ended - 30),
+            listOf(task(members = listOf(
+                member("One", "needs_you", recordId = "r1", line = "Which branch?"),
+                member("Two", "working", recordId = "r2", line = "Edit a.kt"),
+            ))),
+            session("r1", "needs_you"),
+            session("r2", "working", lastActivityAt = now - 1_000),
         )
-        val tasks = vm.state.tasks
-        fun gap(rows: List<AgentsOverviewBackingViewModel.Row>, i: Int) =
-            AgentsOverviewBackingViewModel.startsAfterTask(rows.getOrNull(i - 1), rows[i], tasks)
-        val collapsed = vm.state.recent
-        assertEquals(listOf("task:g1", "task:g2", "lone1", "lone2"), collapsed.map { it.id })
-        assertFalse(gap(collapsed, 0), "the first row of a band has no gap")
-        assertFalse(gap(collapsed, 1), "a header brings its own gap")
-        assertTrue(gap(collapsed, 2), "a lone session after a collapsed task is its own unit")
-        assertFalse(gap(collapsed, 3), "one lone session after another is not a task")
-        vm.toggleTask("g2")
-        val expanded = vm.state.recent
-        assertEquals(listOf("task:g1", "task:g2", "member:g2:#1", "member:g2:#2", "lone1", "lone2"), expanded.map { it.id })
-        assertFalse(gap(expanded, 3), "a session of the task directly under it has no gap")
-        assertTrue(gap(expanded, 4), "a lone session after an expanded task's last session")
+        val r = row("task:g1")
+        assertEquals("needs you", r.stateWord)
+        assertEquals("◆", r.marker)
+        assertEquals("\"Which branch?\"", r.detail)
+        assertTrue(r.needsYou)
     }
 
     @Test
-    fun aTaskWithOneSessionIsThatSessionsPlainRowAndNotAPanel() {
+    fun oneMovingSessionReadsWorkingAndSeveralReadNWorkingBackgroundSessionsCountedToo() {
+        layoutWithBackground(listOf("leaf-n"), listOf("leaf-bg"))
+        show(
+            listOf(hostedTask(lead = "n", status = "Notes drafted"), task(id = "g2", source = "agents", members = emptyList())),
+            session("n", "working", taskId = "g1", lastActivityAt = now - 1_000),
+            session("bg", "working", taskId = "g1", background = true, lastActivityAt = now - 1_000),
+            session("only", "working", taskId = "g2", lastActivityAt = now - 1_000),
+        )
+        assertEquals("2 working", row("task:g1").stateWord, "the background session counts although it is no row")
+        assertEquals("working", row("task:g2").stateWord)
+        assertEquals("", row("task:g1").marker)
+        assertEquals(listOf("task:g1", "task:g2"), vm.state.rows.map { it.id }.filter { it.startsWith("task:") })
+    }
+
+    @Test
+    fun aBackgroundSessionThatNeedsYouMakesItsTaskReadNeedsYouWithItsQuestion() {
+        layoutWithBackground(listOf("leaf-n"), listOf("leaf-bg"))
+        show(
+            listOf(hostedTask(lead = "n", status = null)),
+            session("n", "working", taskId = "g1", lastActivityAt = now - 1_000),
+            session("bg", "needs_you", taskId = "g1", background = true, question = "Which release?"),
+        )
+        val r = row("task:g1")
+        assertEquals("needs you", r.stateWord)
+        assertEquals("◆", r.marker)
+        assertEquals("\"Which release?\"", r.detail)
+        assertEquals(listOf("task:g1"), vm.state.rows.map { it.id })
+    }
+
+    @Test
+    fun aTaskInNowWithNothingMovingOrWaitingReadsDoneAndOneInEarlierReadsFinished() {
+        layout("leaf-a", "leaf-chat")
+        show(
+            listOf(
+                task(id = "review", members = listOf(member("a", "idle", label = "in review", recordId = "a"), member("b", "idle", label = "queued"))),
+                task(id = "closed", members = listOf(member("c", "ended", since = now - HOUR), member("d", "ended", since = now - HOUR))),
+            ),
+            session("a", "idle"),
+            session("chat", "idle", since = now - MINUTE),
+            session("old", "ended", endedAt = now - HOUR),
+        )
+        assertEquals("done", row("task:review").stateWord)
+        assertEquals("finished", row("task:closed").stateWord)
+        assertEquals("done", row("chat").stateWord, "a chat inside the grace is still in NOW")
+        assertEquals("finished", row("old").stateWord)
+        assertTrue(row("old").finished)
+        assertFalse(row("chat").finished)
+    }
+
+    @Test
+    fun aTaskOutsideEveryTabWithSessionsThatMoveStillReadsWorkingNotFinished() {
+        showAway(
+            listOf(task(members = listOf(member("a", "working", recordId = "a"), member("b", "working")))),
+            session("a", "working", lastActivityAt = now - 1_000),
+        )
+        assertTrue(vm.state.now.isEmpty())
+        assertEquals(listOf("task:g1"), vm.state.earlier.map { it.id })
+        assertEquals("2 working", vm.state.earlier.single().stateWord)
+        assertEquals(0, vm.state.workingCount, "the chip counts what NOW shows")
+    }
+
+    @Test
+    fun aSessionThatWorksButHasGoneQuietDoesNotMakeItsTaskReadWorking() {
+        layout("leaf-a")
+        show(listOf(task(members = listOf(member("a", "working", recordId = "a"), member("b", "idle", label = "queued")))), session("a", "working", lastActivityAt = now - 6 * MINUTE))
+        assertEquals(listOf("task:g1"), vm.state.now.map { it.id })
+        assertEquals("done", row("task:g1").stateWord)
+    }
+
+    @Test
+    fun aWorkingSessionOutsideLunamuxIsMovingWhileItsFileIsFreshAndStopsWhenItIsNotRefreshed() {
+        show(listOf(task(refreshedAtMillis = now - MINUTE, members = listOf(member("filed", "working", line = "Doing a thing"), member("other", "idle")))))
+        assertEquals("working", row("task:g1").stateWord)
+        assertEquals("Doing a thing", row("task:g1").detail)
+        now += 5 * MINUTE
+        vm.tick()
+        assertFalse(row("task:g1").working, "six minutes since the file was refreshed")
+        now += 20 * MINUTE
+        vm.tick()
+        assertFalse(row("task:g1").working, "stale")
+    }
+
+    @Test
+    fun aLoneSessionHasTheSameStateWordsAndNoStatus() {
+        layout("leaf-n", "leaf-w", "leaf-i")
+        show(
+            emptyList(),
+            session("n", "needs_you", question = "Which branch?"),
+            session("w", "working", nowLine = "Edit a.kt", lastActivityAt = now - 1_000),
+            session("i", "idle", since = now - MINUTE),
+        )
+        assertEquals(listOf("needs you", "working", "done"), listOf("n", "w", "i").map { row(it).stateWord })
+        assertEquals(listOf("\"Which branch?\"", "Edit a.kt", ""), listOf("n", "w", "i").map { row(it).detail })
+        assertEquals("◆", row("n").marker)
+        assertEquals("", row("w").marker)
+        assertTrue(listOf("n", "w", "i").all { row(it).taskId == null })
+    }
+
+    // ---- detail ----
+
+    @Test
+    fun theDetailIsTheStatusThenTheQuotedQuestionThenTheMovingSessionsLineThenNothing() {
+        layout("leaf-r1", "leaf-r2", "leaf-r3", "leaf-r4")
+        show(
+            listOf(
+                task(id = "status", status = "waiting on the schema review", members = listOf(member("a", "needs_you", recordId = "r1", line = "Which branch?"), member("b", "working", recordId = "r2", line = "Edit a.kt"))),
+                task(id = "question", members = listOf(member("a", "needs_you", recordId = "r3", line = "Which branch?"), member("b", "working", line = "Edit a.kt"))),
+                task(id = "line", members = listOf(member("a", "working", recordId = "r4", line = "Edit a.kt"), member("b", "idle", label = "queued"))),
+                task(id = "empty", members = listOf(member("a", "idle", label = "in review"), member("b", "idle", label = "queued"))),
+            ),
+            session("r1", "needs_you"), session("r2", "working", lastActivityAt = now - 1_000),
+            session("r3", "needs_you"), session("r4", "working", lastActivityAt = now - 1_000),
+        )
+        assertEquals("waiting on the schema review", row("task:status").detail)
+        assertEquals("\"Which branch?\"", row("task:question").detail)
+        assertEquals("Edit a.kt", row("task:line").detail)
+        assertEquals("", row("task:empty").detail)
+    }
+
+    @Test
+    fun theDetailFallsBackToAnOlderMovingSessionsLineWhenTheNewestHasNone() {
+        layout("leaf-new", "leaf-old")
+        show(
+            listOf(task(members = listOf(member("new", "working", recordId = "new"), member("old", "working", recordId = "old")))),
+            session("new", "working", lastActivityAt = now - 1_000),
+            session("old", "working", nowLine = "Edit a.kt", lastActivityAt = now - 5_000),
+        )
+        assertEquals("2 working", row("task:g1").stateWord)
+        assertEquals("Edit a.kt", row("task:g1").detail)
+    }
+
+    @Test
+    fun aBlankStatusLineOrQuestionIsNoDetailAtAll() {
+        layout("leaf-w", "leaf-single")
+        show(
+            listOf(task(status = "   ", members = listOf(
+                member("needs", "needs_you", line = "   "),
+                member("working", "working", recordId = "w", line = ""),
+            ))),
+            session("w", "working", nowLine = "   ", lastActivityAt = now - 1_000),
+            session("single", "working", nowLine = "  ", question = " ", lastActivityAt = now - 1_000),
+        )
+        assertEquals("", row("task:g1").detail)
+        assertEquals("", row("single").detail)
+        assertEquals("needs you", row("task:g1").stateWord)
+    }
+
+    // ---- extra ----
+
+    @Test
+    fun theExtraLineEndsWithTheTabTheSessionEnterOpensSitsInAndDoesNotRepeatTheDetail() {
+        layoutTwoTabs(listOf("leaf-x"), listOf("leaf-a"))
+        show(
+            listOf(hostedTask()),
+            session("x", "working", nowLine = "Edit x.kt", lastActivityAt = now - 1_000),
+            session("a", "needs_you", taskId = "g1", question = "Which branch?"),
+        )
+        assertEquals("tab 2", row("task:g1").extra)
+        assertEquals("tab 1", row("x").extra)
+        assertEquals("\"Which branch?\"", row("task:g1").detail, "the detail stays a field of its own; the view repeats it only when it cuts it")
+        assertEquals("Edit x.kt", row("x").detail)
+        // The tab is also a field of its own, so the view can draw it dimmer; it is the end of the extra line.
+        assertEquals("tab 2", row("task:g1").tab)
+        assertEquals("tab 1", row("x").tab)
+    }
+
+    @Test
+    fun aSessionWithNothingToSayButItsTabHasTheTabAloneAsItsExtraLine() {
+        layoutTwoTabs(listOf("leaf-x"), listOf("leaf-a"))
+        show(emptyList(), session("x", "working", lastActivityAt = now - 1_000))
+        val r = row("x")
+        assertEquals("", r.detail)
+        assertEquals("tab 1", r.extra, "no separator in front of the tab when nothing comes before it")
+        assertEquals("tab 1", r.tab)
+    }
+
+    @Test
+    fun theTabOfASessionInAnotherWorldNamesTheWorld() {
+        layoutTwoWorlds(listOf("leaf-a"))
+        show(emptyList(), session("a", "working", nowLine = "Edit a.kt", lastActivityAt = now - 1_000))
+        assertEquals("tab 1 in Work", row("a").extra)
+        assertEquals("tab 1 in Work", row("a").tab)
+    }
+
+    @Test
+    fun aTaskWhoseOwnSessionRunsInTheBackgroundHasNoTabInItsExtraLine() {
+        layoutWithBackground(listOf("leaf-m"), listOf("leaf-lead"))
+        show(
+            listOf(hostedTask(lead = "lead", status = "Notes drafted")),
+            session("m", "working", taskId = "g1", lastActivityAt = now - 1_000),
+            session("lead", "working", taskId = "g1", background = true, lastActivityAt = now - 1_000),
+        )
+        assertEquals("Notes drafted", row("task:g1").detail)
+        assertEquals("", row("task:g1").extra, "nothing but the detail, which the row shows itself")
+        assertEquals("", row("task:g1").tab)
+    }
+
+    @Test
+    fun theExtraLineSaysThereIsNothingToJumpToForATaskNoSessionOfWhichIsInALunamuxPane() {
+        show(listOf(task(members = listOf(member("a", "working", line = "Doing a thing"), member("b", "idle", label = "queued")))))
+        val r = row("task:g1")
+        assertEquals(Enter.NONE, r.enter)
+        assertEquals("nothing to jump to: this session is not in a Lunamux pane", r.extra)
+        assertEquals("Doing a thing", r.detail)
+        assertEquals("", r.tab)
+    }
+
+    @Test
+    fun aSessionWithNoDetailAndNoTabHasNoExtraLineAtAll() {
+        layoutWithBackground(listOf("leaf-m"), listOf("leaf-quiet"))
+        show(emptyList(), session("quiet", "working", background = true, lastActivityAt = now - 1_000))
+        val r = row("quiet")
+        assertEquals("", r.detail)
+        assertEquals("", r.tab)
+        assertEquals("", r.extra, "the view draws no line for an empty extra, so the selected row has no blank second line")
+    }
+
+    // ---- what ↵ opens ----
+
+    @Test
+    fun aLoneSessionJumpsPeeksWhenInTheBackgroundAndResumesWhenItsPaneIsGone() = runNow {
+        layoutWithBackground(listOf("leaf-n"), listOf("leaf-bg"))
+        show(
+            emptyList(),
+            session("n", "working", lastActivityAt = now - 1_000),
+            session("bg", "working", background = true, lastActivityAt = now - 1_000),
+            session("gone", "ended", endedAt = now - HOUR),
+        )
+        assertEquals(listOf(Enter.JUMP, Enter.PEEK, Enter.RESUME), listOf("n", "bg", "gone").map { row(it).enter })
+        vm.open()
+        vm.activate(row("n"))
+        assertEquals(jumpTo("leaf-n"), sent)
+        sent.clear()
+        vm.open()
+        vm.activate(row("gone"))
+        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("gone")), sent)
+    }
+
+    @Test
+    fun enterOnATaskWhoseOwnSessionIsLiveJumpsToItsPane() = runNow {
+        layout("leaf-lead", "leaf-m")
+        show(
+            listOf(hostedTask(lead = "lead")),
+            session("lead", "idle", taskId = "g1", since = 1_000),
+            session("m", "needs_you", taskId = "g1", since = 2_000),
+        )
+        vm.open()
+        vm.select("task:g1")
+        assertEquals(Enter.JUMP, vm.state.selectedRow?.enter)
+        vm.activateSelected()
+        assertEquals(jumpTo("leaf-lead"), sent)
+    }
+
+    @Test
+    fun enterOnATaskWhoseOwnSessionRunsInTheBackgroundPeeksIt() = runNow {
+        layoutWithBackground(listOf("leaf-m"), listOf("leaf-lead"))
+        show(
+            listOf(hostedTask(lead = "lead")),
+            session("m", "working", taskId = "g1", since = 500, lastActivityAt = now - 1_000),
+            session("lead", "working", taskId = "g1", since = 1_000, background = true, lastActivityAt = now - 1_000),
+        )
+        vm.open()
+        vm.select("task:g1")
+        assertEquals(Enter.PEEK, vm.state.selectedRow?.enter)
+        vm.activateSelected()
+        assertTrue(sent.none { it is WindowCommand.SetActiveTab || it is WindowCommand.SetFocusedPane }, "peeking moves nothing")
+        assertEquals(listOf<WindowCommand>(WindowCommand.InspectAgentSession("lead")), sent)
+        assertTrue(vm.state.peek?.background == true)
+        assertEquals("task:g1", vm.state.selectedId, "the row keeps the highlight while its session is peeked")
+    }
+
+    @Test
+    fun enterOnATaskWhoseOwnSessionIsGoneRunsOpenWhenTheTaskHasOpenWork() = runNow {
+        layout("leaf-m")
+        show(
+            listOf(hostedTask(lead = "lead", hasOpen = true)),
+            session("lead", "ended", taskId = "g1", since = 500, endedAt = now - 5_000),
+            session("m", "needs_you", taskId = "g1", since = 2_000),
+        )
+        vm.open()
+        vm.select("task:g1")
+        val r = row("task:g1")
+        assertEquals(Enter.OPEN, r.enter)
+        assertFalse(r.isLive)
+        assertNull(r.recordId)
+        vm.activateSelected()
+        assertEquals(listOf<WindowCommand>(WindowCommand.OpenTask("g1")), sent)
+        assertTrue(vm.state.open, "the overlay waits for the new tab")
+    }
+
+    @Test
+    fun enterOnATaskWhoseOwnSessionIsGoneResumesItWhenThereIsNothingToOpen() = runNow {
+        layout("leaf-m")
+        show(
+            listOf(hostedTask(lead = "lead")),
+            session("lead", "ended", taskId = "g1", since = 500, endedAt = now - 5_000),
+            session("m", "needs_you", taskId = "g1", since = 2_000),
+        )
+        vm.open()
+        vm.select("task:g1")
+        val r = row("task:g1")
+        assertEquals(Enter.RESUME, r.enter)
+        assertFalse(r.isLive)
+        assertEquals("lead", r.recordId)
+        vm.activateSelected()
+        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("lead")), sent)
+    }
+
+    @Test
+    fun aTaskWithNoOwnSessionJumpsToTheLiveSessionInAListedTabThatWaitedLongest() = runNow {
+        layout("leaf-r1", "leaf-r2", "leaf-r3")
+        show(
+            listOf(task(members = listOf(
+                member("late", "needs_you", since = 2_000, recordId = "r1"),
+                member("early", "needs_you", since = 1_000, recordId = "r2"),
+                member("busy", "working", recordId = "r3"),
+            ))),
+            session("r1", "needs_you"), session("r2", "needs_you"), session("r3", "working", lastActivityAt = 9_000),
+        )
+        val r = row("task:g1")
+        assertEquals(Enter.JUMP, r.enter)
+        assertEquals("r2", r.recordId)
+        vm.activate(r)
+        assertEquals(jumpTo("leaf-r2"), sent)
+    }
+
+    @Test
+    fun aTaskWithNoOwnSessionAndNobodyWaitingJumpsToTheWorkingSessionWithTheFreshestSignOfLife() = runNow {
+        layout("leaf-r1", "leaf-r2")
+        show(
+            listOf(task(members = listOf(member("older", "working", recordId = "r1"), member("fresher", "working", recordId = "r2")))),
+            session("r1", "working", lastActivityAt = 7_000), session("r2", "working", lastActivityAt = 9_000),
+        )
+        vm.activate(row("task:g1"))
+        assertEquals(jumpTo("leaf-r2"), sent)
+    }
+
+    @Test
+    fun aTaskWithNoOwnSessionNeverPicksABackgroundSessionWhileAListedOneIsLive() = runNow {
+        layoutWithBackground(listOf("leaf-listed"), listOf("leaf-bg"))
+        show(
+            listOf(hostedTask(hasOpen = true)),
+            // the background session waits for the person and has done longest, yet the listed one is chosen
+            session("bg", "needs_you", taskId = "g1", since = 1_000, background = true),
+            session("listed", "working", taskId = "g1", since = 2_000, lastActivityAt = now - 1_000),
+        )
+        val r = row("task:g1")
+        assertEquals(Enter.JUMP, r.enter)
+        assertEquals("listed", r.recordId)
+        assertFalse(r.background)
+        vm.activate(r)
+        assertEquals(jumpTo("leaf-listed"), sent)
+    }
+
+    @Test
+    fun aTaskWithNoOwnSessionAndNoneInAListedTabRunsOpenBeforePeekingABackgroundSession() = runNow {
+        layoutWithBackground(listOf("leaf-other"), listOf("leaf-bg"))
+        show(
+            listOf(hostedTask(hasOpen = true)),
+            session("bg", "working", taskId = "g1", background = true, lastActivityAt = now - 1_000),
+        )
+        assertEquals(Enter.OPEN, row("task:g1").enter)
+        vm.activate(row("task:g1"))
+        assertEquals(listOf<WindowCommand>(WindowCommand.OpenTask("g1")), sent)
+    }
+
+    @Test
+    fun aTaskWithNoOwnSessionNoListedOneAndNoOpenActionPeeksALiveBackgroundSession() = runNow {
+        layoutWithBackground(listOf("leaf-other"), listOf("leaf-bg"))
+        show(
+            listOf(hostedTask()),
+            session("bg", "working", taskId = "g1", background = true, lastActivityAt = now - 1_000),
+            session("old", "ended", taskId = "g1", endedAt = now - HOUR),
+        )
+        val r = row("task:g1")
+        assertEquals(Enter.PEEK, r.enter)
+        assertEquals("bg", r.recordId)
+        assertTrue(r.background)
+        vm.open()
+        vm.activate(r)
+        assertEquals(listOf<WindowCommand>(WindowCommand.InspectAgentSession("bg")), sent)
+    }
+
+    @Test
+    fun aTaskWithNothingLiveAndNoOpenActionResumesItsNewestSession() = runNow {
+        layout("leaf-other")
+        show(
+            listOf(hostedTask()),
+            session("older", "ended", taskId = "g1", since = 100, endedAt = now - 2 * HOUR),
+            session("newer", "ended", taskId = "g1", since = 200, endedAt = now - HOUR),
+        )
+        val r = row("task:g1")
+        assertEquals(Enter.RESUME, r.enter)
+        assertEquals("newer", r.recordId)
+        vm.activate(r)
+        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("newer")), sent)
+    }
+
+    @Test
+    fun aTaskWhoseOpenActionIsTheOnlyWayInRunsItAndAnEndedSessionIsNeverTheJumpTarget() = runNow {
+        layout("leaf-w", "leaf-other")
+        show(
+            listOf(
+                task(id = "g1", hasOpen = true, members = listOf(member("gone", "ended", recordId = "r1"), member("w", "working", recordId = "w"))),
+                task(id = "g2", hasOpen = true, members = emptyList()),
+            ),
+            session("r1", "ended", endedAt = 5_000),
+            session("w", "working"),
+        )
+        assertEquals("w", row("task:g1").recordId)
+        assertEquals(Enter.OPEN, row("task:g2").enter)
+        vm.activate(row("task:g2"))
+        assertEquals(listOf<WindowCommand>(WindowCommand.OpenTask("g2")), sent)
+    }
+
+    @Test
+    fun aTaskWithNoSessionLunamuxKnowsAndNoOpenActionDoesNothingOnEnter() = runNow {
+        show(listOf(task(members = listOf(member("a", "idle", label = "queued"), member("b", "idle", label = "queued")))))
+        vm.open()
+        vm.select("task:g1")
+        assertEquals(Enter.NONE, row("task:g1").enter)
+        vm.activateSelected()
+        assertTrue(sent.isEmpty())
+        assertTrue(vm.state.open)
+    }
+
+    @Test
+    fun theOverlayStaysOpenAfterAnOpenActionUntilTheNewTabIsActive() = runNow {
+        layout("leaf-other")
+        show(listOf(task(hasOpen = true, members = emptyList())))
+        vm.open()
+        vm.activate(row("task:g1"))
+        assertTrue(vm.state.open)
+        windowState.updateConfig(windowState.config.value!!.copy(activeTabId = "new-tab"))
+        assertFalse(vm.state.open)
+    }
+
+    // ---- ⌘↵, → and ⌘⌫ ----
+
+    @Test
+    fun commandEnterOnATaskTakesOverTheBackgroundSessionEnterWouldPeek() = runNow {
+        layoutWithBackground(listOf("leaf-m"), listOf("leaf-lead"))
+        show(
+            listOf(hostedTask(lead = "lead")),
+            session("m", "working", taskId = "g1", lastActivityAt = now - 1_000),
+            session("lead", "working", taskId = "g1", background = true, lastActivityAt = now - 1_000),
+        )
+        vm.open()
+        vm.select("task:g1")
+        vm.takeOverSelected()
+        assertEquals(
+            listOf<WindowCommand>(WindowCommand.TakeOverTab("tab-bg"), WindowCommand.SetFocusedPane("tab-bg", "leaf-lead")),
+            sent,
+        )
+        assertFalse(vm.state.open)
+    }
+
+    @Test
+    fun commandEnterOnATaskThatJumpsToAListedTabDoesNothing() = runNow {
+        layoutWithBackground(listOf("leaf-m"), listOf("leaf-bg"))
+        show(
+            listOf(hostedTask()),
+            session("m", "working", taskId = "g1", lastActivityAt = now - 1_000),
+            session("bg", "working", taskId = "g1", background = true, lastActivityAt = now - 1_000),
+        )
+        vm.open()
+        vm.select("task:g1")
+        vm.takeOverSelected()
+        assertTrue(sent.isEmpty())
+        assertTrue(vm.state.open)
+    }
+
+    @Test
+    fun rightOnATaskPeeksTheSessionEnterWouldOpenAndDoesNothingForATaskWithoutOne() = runNow {
+        layout("leaf-r1")
+        show(
+            listOf(
+                task(members = listOf(member("a", "needs_you", recordId = "r1"), member("b", "idle"))),
+                task(id = "g2", members = listOf(member("c", "idle", label = "queued"), member("d", "idle", label = "queued"))),
+            ),
+            session("r1", "needs_you"),
+        )
+        vm.open()
+        vm.select("task:g1")
+        vm.peek()
+        assertEquals(listOf<WindowCommand>(WindowCommand.InspectAgentSession("r1")), sent)
+        assertTrue(vm.state.peek != null)
+        vm.closePeek()
+        assertNull(vm.state.peek)
+        sent.clear()
+        vm.select("task:g2")
+        vm.peek()
+        assertTrue(sent.isEmpty(), "a task with no session Lunamux hosts has nothing to peek")
+        assertNull(vm.state.peek)
+    }
+
+    @Test
+    fun rightOnALoneSessionPeeksAndLeftClosesThePeek() = runNow {
+        layout("leaf-a")
+        show(emptyList(), session("a", "working"))
+        vm.open()
+        vm.peek()
+        assertTrue(vm.state.peek != null)
+        vm.closePeek()
+        assertNull(vm.state.peek)
+    }
+
+    @Test
+    fun escapeStepsBackFromTheQuestionThenThePeekThenTheOverlay() = runNow {
+        layout("leaf-a")
+        show(emptyList(), session("a", "working"))
+        vm.open()
+        vm.peek()
+        vm.requestClose()
+        assertTrue(vm.state.confirm != null)
+        vm.back()
+        assertNull(vm.state.confirm)
+        vm.peek()
+        vm.back()
+        assertNull(vm.state.peek)
+        assertTrue(vm.state.open)
+        vm.back()
+        assertFalse(vm.state.open)
+    }
+
+    @Test
+    fun closingIsOfferedOnlyForARowThatIsOneLiveSession() = runNow {
+        layout("leaf-r1", "leaf-r2", "leaf-r3", "leaf-lone")
+        show(
+            listOf(
+                task(id = "many", members = listOf(member("a", "working", recordId = "r1"), member("b", "working", recordId = "r2"))),
+                task(id = "one", members = listOf(member("c", "working", recordId = "r3"))),
+                task(id = "gone", members = listOf(member("d", "ended", recordId = "r4"))),
+            ),
+            session("r1", "working", lastActivityAt = now - 1_000),
+            session("r2", "working", lastActivityAt = now - 1_000),
+            session("r3", "working", lastActivityAt = now - 1_000),
+            session("r4", "ended", endedAt = now - 5_000),
+            session("lone", "working", lastActivityAt = now - 1_000),
+        )
+        assertEquals(
+            mapOf("task:many" to false, "task:one" to true, "task:gone" to false, "lone" to true),
+            listOf("task:many", "task:one", "task:gone", "lone").associateWith { row(it).canClose },
+        )
+        vm.open()
+        vm.select("task:many")
+        vm.requestClose(fromKeyboard = true)
+        assertNull(vm.state.confirm, "⌘⌫ on a task of several sessions asks nothing")
+        assertTrue(sent.isEmpty())
+        vm.select("task:one")
+        vm.requestClose(fromKeyboard = true)
+        assertEquals("task:one", vm.state.confirm?.rowId)
+        vm.confirmClose()
+        assertEquals(listOf<WindowCommand>(WindowCommand.CloseSession("s-leaf-r3")), sent.filterIsInstance<WindowCommand.CloseSession>())
+    }
+
+    @Test
+    fun closingABackgroundRowAsksTheSameQuestionAsAnyOtherSession() = runNow {
+        layoutWithBackground(listOf("leaf-n"), listOf("leaf-bg"))
+        show(emptyList(), session("n", "working"), session("bg", "working", since = 2_000, background = true))
+        vm.open()
+        vm.select("bg")
+        vm.requestClose()
+        assertEquals("bg", vm.state.confirm?.rowId)
+        assertTrue(sent.none { it is WindowCommand.CloseSession }, "nothing closes before the person confirms")
+        vm.confirmClose()
+        assertEquals(listOf<WindowCommand>(WindowCommand.CloseSession("s-leaf-bg")), sent.filterIsInstance<WindowCommand.CloseSession>())
+    }
+
+    // ---- one row per task ----
+
+    @Test
+    fun aTaskWithOneSessionIsOneTaskRowNamedByTheTaskAndStillClosable() {
         layout("leaf-r1")
         show(
             listOf(task(members = listOf(member("Task one", "needs_you", recordId = "r1", line = "Which branch?")))),
             session("r1", "needs_you"),
         )
         val rows = vm.state.rows
-        assertEquals(listOf("r1"), rows.map { it.id })
-        assertEquals(RowKind.SESSION, rows[0].kind)
-        assertEquals("Task one", rows[0].title)
-        assertEquals("Which branch?", rows[0].status)
-        assertEquals(Glyph.NEEDS_YOU, rows[0].glyph)
+        assertEquals(listOf("task:g1"), rows.map { it.id })
+        assertEquals("Release g1", rows[0].title)
+        assertEquals("\"Which branch?\"", rows[0].detail)
         assertEquals("g1", rows[0].taskId)
-        assertEquals("#1", rows[0].memberKey)
-        assertTrue(vm.state.tasks.isEmpty())
+        assertEquals("r1", rows[0].recordId)
+        assertTrue(rows[0].canClose)
     }
 
     @Test
-    fun aTaskWithTwoSessionsIsAPanelAndItsHostedSessionsAreNotListedAgain() {
-        layout("leaf-r1", "leaf-r2")
+    fun aTaskWithSeveralSessionsIsOneRowAndItsSessionsAreNotListedAgain() {
+        layout("leaf-r1", "leaf-r2", "leaf-r3")
         show(
-            listOf(task(members = listOf(
-                member("One", "needs_you", recordId = "r1", line = "Which branch?"),
-                member("Two", "working", recordId = "r2"),
-            ))),
-            session("r1", "needs_you"),
-            session("r2", "working"),
+            listOf(hostedTask(lead = "r1")),
+            session("r1", "needs_you", taskId = "g1", question = "Which branch?"),
+            session("r2", "working", taskId = "g1", lastActivityAt = now - 1_000),
+            session("r3", "idle", taskId = "g1"),
         )
-        assertEquals(listOf("task:g1", "r1", "r2"), vm.state.rows.map { it.id })
-        assertEquals(listOf("g1"), vm.state.tasks.keys.toList())
-        assertEquals(1, vm.state.rows.count { it.id == "r1" })
-    }
-
-    @Test
-    fun aTaskWithOneSessionAndAnOpenActionIsAPanel() {
-        show(
-            listOf(task(hasOpen = true, members = listOf(member("a", "working", recordId = "a")))),
-            session("a", "working", lastActivityAt = now - 1_000),
-        )
-        assertEquals(listOf("task:g1", "a"), vm.state.rows.map { it.id })
-        assertTrue(vm.state.tasks.getValue("g1").hasOpen)
-    }
-
-    @Test
-    fun aTaskWithNoSessionsAndAnOpenActionIsAHeaderWhoseSummarySaysSo() {
-        show(listOf(task(hasOpen = true, members = emptyList())))
         assertEquals(listOf("task:g1"), vm.state.rows.map { it.id })
-        assertEquals("no sessions", vm.state.tasks.getValue("g1").summary)
-        assertEquals("open", vm.state.rows.single().actionLabel)
+        assertFalse(vm.state.rows.single().canClose)
     }
 
     @Test
-    fun hostedSessionsThatCarryATaskIdFormAPanelWithoutAnyTaskFile() {
-        layout("leaf-a", "leaf-b", "leaf-loner")
-        show(
-            listOf(task(source = "agents", members = emptyList())),
-            session("a", "working", taskId = "g1", nowLine = "Edit a.kt", lastActivityAt = now - 1_000),
-            session("b", "needs_you", since = 2_000, taskId = "g1", question = "Which branch?"),
-            session("loner", "working", since = 99_999),
-        )
-        // b needs you but began after a, so it stays behind it.
-        assertEquals(listOf("task:g1", "a", "b", "loner"), vm.state.now.map { it.id })
-        assertEquals(1, vm.state.tasks.getValue("g1").needYouCount)
-        assertEquals("1 working", vm.state.tasks.getValue("g1").summary)
-        assertEquals("Which branch?", vm.state.rows.first { it.id == "b" }.status)
-        assertEquals("g1", vm.state.rows.first { it.id == "a" }.taskId)
-        assertNull(vm.state.rows.first { it.id == "a" }.memberKey, "a session no file lists has no file member key")
-    }
-
-    @Test
-    fun aSessionInAPanelKeepsItsRepoOrFolderAndAPullRequestIsDetailTextNeverTheColumn() {
-        layout("leaf-a", "leaf-b", "leaf-c")
-        show(
-            listOf(task(source = "agents", repo = null, members = emptyList())),
-            session("a", "working", taskId = "g1", repo = "lunamux"),
-            session("b", "working", taskId = "g1", repo = null, cwd = "/work/notes"),
-            session("c", "working", taskId = "g1", repo = "lunamux"),
-        )
-        val where = vm.state.rows.filter { it.kind == RowKind.SESSION }.associate { it.id to it.where }
-        assertEquals(mapOf("a" to "lunamux", "b" to "notes", "c" to "lunamux"), where)
-
-        show(
-            listOf(task(members = listOf(member("a", "working", recordId = "a", links = listOf("#22")), member("x", "idle")))),
-            session("a", "working", repo = "lunamux"),
-        )
-        val child = vm.state.rows.first { it.id == "a" }
-        assertEquals("lunamux", child.where, "the second column names a place on every row")
-        assertEquals("#22", child.pullRequest)
-    }
-
-    @Test
-    fun anAgentMadeTaskHeaderShowsTheRepoItsSessionsShareAndNoneWhenTheyDiffer() {
-        layout("leaf-a", "leaf-b")
-        show(
-            listOf(task(source = "agents", repo = null, members = emptyList())),
-            session("a", "working", taskId = "g1", repo = "lunamux"),
-            session("b", "idle", taskId = "g1", repo = "lunamux"),
-        )
-        assertEquals("lunamux", vm.state.tasks.getValue("g1").repo)
-        assertEquals("lunamux", vm.state.rows.first { it.kind == RowKind.TASK }.repo)
-
-        show(
-            listOf(task(source = "agents", repo = null, members = emptyList())),
-            session("a", "working", taskId = "g1", repo = "lunamux"),
-            session("b", "idle", taskId = "g1", repo = "other"),
-        )
-        assertNull(vm.state.tasks.getValue("g1").repo)
-
-        show(
-            listOf(task(source = "file", repo = "named", members = emptyList())),
-            session("a", "working", taskId = "g1", repo = "lunamux"),
-            session("b", "idle", taskId = "g1", repo = "lunamux"),
-        )
-        assertEquals("named", vm.state.tasks.getValue("g1").repo, "the file's repository wins")
-    }
-
-    @Test
-    fun aTaskWithAnOpenActionStillRunsItFromItsOwnControlWhileASessionIsLive() = runNow {
-        layout("leaf-r1")
-        show(
-            listOf(task(hasOpen = true, members = listOf(member("a", "working", recordId = "r1"), member("b", "idle")))),
-            session("r1", "working"),
-        )
-        val header = vm.state.rows.first { it.kind == RowKind.TASK }
-        assertEquals("jump", header.actionLabel, "↵ goes to the live session")
-        assertTrue(vm.state.tasks.getValue("g1").hasOpen, "the header still offers the open control")
-        vm.openTask(header)
+    fun aTaskWithNoSessionsAndAnOpenActionIsOneRowThatOpens() = runNow {
+        show(listOf(task(hasOpen = true, members = emptyList())))
+        val r = vm.state.rows.single()
+        assertEquals("task:g1", r.id)
+        assertEquals(Enter.OPEN, r.enter)
+        assertEquals("", r.detail)
+        vm.activate(r)
         assertEquals(listOf<WindowCommand>(WindowCommand.OpenTask("g1")), sent)
     }
 
     @Test
-    fun aTaskTheServerKnowsWithOneHostedSessionIsThatSessionsPlainRow() {
-        layout("leaf-a")
-        show(listOf(task(source = "agents", members = emptyList())), session("a", "working", taskId = "g1"))
-        assertEquals(listOf("a"), vm.state.rows.map { it.id })
-        assertTrue(vm.state.tasks.isEmpty())
-    }
-
-    @Test
-    fun aTaskOfIdleHostedSessionsStaysInNowForTheGraceAndThenMovesToEarlierLikeASingleSession() {
-        val grace = AgentsOverviewBackingViewModel.IDLE_GRACE_MS
-        layout("leaf-a", "leaf-b")
+    fun hostedSessionsThatCarryATaskIdFormATaskRowWithoutAnyTaskFile() {
+        layout("leaf-a", "leaf-b", "leaf-loner")
         show(
-            listOf(task(source = "agents", members = emptyList())),
-            session("a", "idle", taskId = "g1", since = now - grace - 5_000, lastActivityAt = now - grace + 1),
-            session("b", "idle", taskId = "g1", since = now - grace - 9_000),
+            listOf(hostedTask()),
+            session("a", "working", taskId = "g1", nowLine = "Edit a.kt", lastActivityAt = now - 1_000),
+            session("b", "needs_you", since = 2_000, taskId = "g1", question = "Which branch?"),
+            session("loner", "working", since = 99_999),
         )
-        assertEquals(listOf("task:g1"), vm.state.now.map { it.id }, "one millisecond short of the grace")
-        assertTrue(vm.state.earlier.isEmpty())
-
-        now += 1
-        vm.tick()
-        assertTrue(vm.state.now.isEmpty(), "the grace is over ten minutes after the last activity of any session")
-        assertEquals(listOf("task:g1"), vm.state.earlier.map { it.id })
-    }
-
-    @Test
-    fun aTaskFileKeepsItsTaskInNowWhileNothingIsRunningAndWorkIsQueued() {
-        show(listOf(task(members = listOf(member("a", "idle", label = "queued", recordId = "a"), member("b", "idle", label = "queued")))), session("a", "idle"))
-        now += 10 * AgentsOverviewBackingViewModel.IDLE_GRACE_MS
-        vm.tick()
-        assertEquals(listOf("task:g1"), vm.state.now.map { it.id })
+        // b needs you but began after a, so the task keeps the place of its first session.
+        assertEquals(listOf("task:g1", "loner"), vm.state.now.map { it.id })
+        val r = row("task:g1")
+        assertEquals("needs you", r.stateWord)
+        assertEquals("\"Which branch?\"", r.detail)
+        assertEquals(1, vm.state.needYouCount)
     }
 
     @Test
@@ -659,338 +1074,145 @@ class AgentsOverviewTasksViewModelTest {
             session("r1", "working"),
             session("x", "needs_you", taskId = "g1"),
         )
-        // The file's own members come first, then a session only Lunamux knows about.
-        assertEquals(listOf("task:g1", "r1", "x"), vm.state.rows.map { it.id })
+        assertEquals(listOf("task:g1"), vm.state.rows.map { it.id })
+        assertEquals("needs you", row("task:g1").stateWord, "a session only Lunamux knows about counts with the task")
     }
 
     @Test
-    fun twoMembersThatShareASessionIdGetDistinctRowsAndDistinctOpenKeys() = runNow {
-        show(listOf(task(members = listOf(
-            member("first", "needs_you", since = 1_000, sessionId = "s1", key = "s1"),
-            member("second", "needs_you", since = 2_000, sessionId = "s1", key = "s1#2"),
-        ))))
-        assertEquals(listOf("task:g1", "member:g1:s1", "member:g1:s1#2"), vm.state.rows.map { it.id })
-        vm.select("member:g1:s1#2")
-        vm.activateSelected()
-        assertEquals(listOf<WindowCommand>(WindowCommand.OpenTaskMember("g1", "s1#2")), sent)
+    fun aTaskTheServerKnowsWithOneHostedSessionIsOneRowThatCanBeClosed() {
+        layout("leaf-a")
+        show(listOf(hostedTask()), session("a", "working", taskId = "g1"))
+        assertEquals(listOf("task:g1"), vm.state.rows.map { it.id })
+        assertTrue(row("task:g1").canClose)
     }
 
     @Test
-    fun returnOnAHeaderJumpsToTheSessionThatHasWaitedLongestForThePerson() = runNow {
-        layout("leaf-r1", "leaf-r2", "leaf-r3")
+    fun withNoTasksEveryRowIsAnOrdinarySessionWithTheSessionsIdAndNoTask() {
+        show(emptyList(), session("a", "working"), session("b", "idle"))
+        assertEquals(setOf("a", "b"), vm.state.rows.map { it.id }.toSet())
+        assertTrue(vm.state.rows.all { it.taskId == null })
+    }
+
+    @Test
+    fun aTaskRowShowsTheRepositoryItsSessionsShareElseTheirFolderAndNoneWhenTheyDiffer() {
+        layout("leaf-a", "leaf-b")
         show(
-            listOf(task(members = listOf(
-                member("late", "needs_you", since = 2_000, recordId = "r1"),
-                member("early", "needs_you", since = 1_000, recordId = "r2"),
-                member("busy", "working", recordId = "r3"),
-            ))),
-            session("r1", "needs_you"), session("r2", "needs_you"), session("r3", "working", lastActivityAt = 9_000),
+            listOf(task(source = "agents", repo = null, members = emptyList())),
+            session("a", "working", taskId = "g1", repo = "lunamux"),
+            session("b", "idle", taskId = "g1", repo = "lunamux"),
         )
-        val header = vm.state.rows.first { it.kind == RowKind.TASK }
-        assertEquals("jump", header.actionLabel)
-        assertEquals("r2", vm.state.tasks.getValue("g1").jumpRecordId)
-        vm.activate(header)
-        assertEquals(listOf(WindowCommand.SetActiveTab("tab-1"), WindowCommand.SetFocusedPane("tab-1", "leaf-r2")), sent)
-    }
+        assertEquals("lunamux", row("task:g1").where)
 
-    @Test
-    fun returnOnAHeaderWithNobodyWaitingJumpsToTheWorkingSessionWithTheFreshestSignOfLife() = runNow {
-        layout("leaf-r1", "leaf-r2")
         show(
-            listOf(task(members = listOf(
-                member("older", "working", recordId = "r1"), member("fresher", "working", recordId = "r2"),
-            ))),
-            session("r1", "working", lastActivityAt = 7_000), session("r2", "working", lastActivityAt = 9_000),
+            listOf(task(source = "agents", repo = null, members = emptyList())),
+            session("a", "working", taskId = "g1", repo = null, cwd = "/work/notes"),
+            session("b", "idle", taskId = "g1", repo = null, cwd = "/work/notes/"),
         )
-        vm.activate(vm.state.rows.first { it.kind == RowKind.TASK })
-        assertEquals(listOf(WindowCommand.SetActiveTab("tab-1"), WindowCommand.SetFocusedPane("tab-1", "leaf-r2")), sent)
-    }
+        assertEquals("notes", row("task:g1").where)
 
-    @Test
-    fun returnOnAHeaderWithNoOpenSessionRunsTheOpenActionWhenTheTaskHasOne() = runNow {
-        layout("leaf-other")
         show(
-            listOf(task(hasOpen = true, members = listOf(member("a", "working", recordId = "r1"), member("b", "idle")))),
-            session("r1", "working"),
+            listOf(task(source = "agents", repo = null, members = emptyList())),
+            session("a", "working", taskId = "g1", repo = "lunamux"),
+            session("b", "idle", taskId = "g1", repo = "other", cwd = "/work/other"),
         )
-        val header = vm.state.rows.first { it.kind == RowKind.TASK }
-        assertEquals("open", header.actionLabel, "a session whose pane is not in the layout is not open")
-        vm.activate(header)
-        assertEquals(listOf<WindowCommand>(WindowCommand.OpenTask("g1")), sent)
-    }
+        assertNull(row("task:g1").where)
 
-    @Test
-    fun returnOnAHeaderWithNothingToJumpToOrOpenExpandsAndCollapsesIt() = runNow {
-        show(listOf(task(members = listOf(member("a", "idle", label = "queued"), member("b", "idle", label = "queued")))))
-        val header = vm.state.rows.first { it.kind == RowKind.TASK }
-        assertEquals("", header.actionLabel)
-        vm.activate(header)
-        assertTrue(sent.isEmpty())
-        assertTrue(vm.state.tasks.getValue("g1").expanded)
-        vm.activate(vm.state.rows.first { it.kind == RowKind.TASK })
-        assertFalse(vm.state.tasks.getValue("g1").expanded)
-    }
-
-    @Test
-    fun anEndedSessionIsNeverTheJumpTarget() = runNow {
-        layout("leaf-w")
         show(
-            listOf(task(hasOpen = true, members = listOf(member("gone", "ended", recordId = "r1"), member("w", "working", recordId = "w")))),
-            session("r1", "ended", endedAt = 5_000),
-            session("w", "working"),
+            listOf(task(source = "file", repo = "named", members = emptyList())),
+            session("a", "working", taskId = "g1", repo = "lunamux"),
+            session("b", "idle", taskId = "g1", repo = "lunamux"),
         )
-        assertEquals("w", vm.state.tasks.getValue("g1").jumpRecordId)
+        assertEquals("named", row("task:g1").where, "the file's repository wins")
     }
 
     @Test
-    fun rightOnAHeaderWithAnOpenSessionPeeksAtTheSessionReturnWouldJumpTo() = runNow {
-        layout("leaf-r1")
+    fun sessionsWithTheSameTitleAndNoRepositoryEachShowTheFolderTheyRunIn() {
+        layout("leaf-a", "leaf-b", "leaf-c")
         show(
-            listOf(task(members = listOf(member("a", "needs_you", recordId = "r1"), member("b", "idle")))),
-            session("r1", "needs_you"),
+            emptyList(),
+            session("a", "idle", title = "Counting to 10", repo = "proj"),
+            session("b", "idle", title = "Counting to 10", repo = null, cwd = "/Users/me/notes/"),
+            session("c", "idle", title = "Something else", repo = null, cwd = "/Users/me/other"),
         )
+        assertEquals(mapOf("a" to "proj", "b" to "notes", "c" to "other"), vm.state.rows.associate { it.id to it.where })
+    }
+
+    @Test
+    fun aRowOutsideARepositoryShowsItsFolderAndHomeAsATilde() {
+        layout("leaf-home", "leaf-scratch", "leaf-repo")
+        show(
+            emptyList(),
+            session("home", "working", title = "Chat at home", repo = null, cwd = "/Users/someone", cwdHome = true),
+            session("scratch", "working", title = "Notes", repo = null, cwd = "/work/scratch/"),
+            session("repo", "working", title = "In a repo", repo = "proj", cwd = "/work/proj"),
+        )
+        val rows = vm.state.rows.associateBy { it.id }
+        assertEquals("~", rows.getValue("home").where)
+        assertEquals("scratch", rows.getValue("scratch").where)
+        assertEquals("proj", rows.getValue("repo").where)
+    }
+
+    // ---- search ----
+
+    /** Answers the search for [query] with [matches]. */
+    private fun answer(query: String, vararg matches: AgentSessionMatch) {
+        vm.setQuery(query)
+        windowState.updateAgentMatches(WindowEnvelope.AgentSessionMatches(query, matches.toList()))
+    }
+
+    @Test
+    fun aSearchFoldsTwoMatchedSessionsOfOneTaskIntoOneRowThatNamesWhereAndWhichSessionMatched() {
+        layout("leaf-a", "leaf-b")
+        val writer = session("a", "idle", taskId = "g1", title = "Writer")
+        val reviewer = session("b", "idle", taskId = "g1", title = "Reviewer")
+        show(listOf(hostedTask(status = "drafting")), writer, reviewer)
         vm.open()
-        vm.select("task:g1")
-        vm.peek()
-        assertEquals(listOf<WindowCommand>(WindowCommand.InspectAgentSession("r1")), sent)
-    }
-
-    @Test
-    fun aWorkingSessionOnlyTheFileVouchesForKeepsItsLabelAndAHostedOneDropsIt() {
-        layout("leaf-h")
-        show(
-            listOf(task(members = listOf(
-                member("file only", "working", label = "coding", line = "Edit a.kt"),
-                member("bare", "working", since = 2_000, label = "fixing"),
-                member("hosted", "working", since = 3_000, label = "queued", recordId = "h", line = "Edit b.kt"),
-            ))),
-            session("h", "working"),
+        answer(
+            "needle",
+            AgentSessionMatch(reviewer, "transcript", "…a needle here…", 3, 6, null),
+            AgentSessionMatch(writer, "transcript", "…another needle…", 8, 6, null),
         )
-        vm.toggleTask("g1")
-        val rows = vm.state.rows.associateBy { it.title }
-        assertEquals("coding", rows.getValue("file only").label)
-        assertEquals("Edit a.kt", rows.getValue("file only").status)
-        assertEquals("fixing", rows.getValue("bare").label)
-        assertEquals("", rows.getValue("bare").status)
-        assertNull(rows.getValue("hosted").label)
+        val matches = vm.state.matches
+        assertEquals(1, matches.size, "two sessions of one task are one result")
+        val r = matches.single()
+        assertEquals("task:g1", r.id)
+        assertEquals("b", r.recordId, "the best match stands for the task and ↵ opens its session")
+        assertEquals("transcript", r.field)
+        assertEquals("in transcript of Reviewer · tab 1", r.extra)
+        assertEquals("…a needle here…", r.detail)
+        assertEquals("1 MATCH", vm.state.matchHeading)
     }
 
     @Test
-    fun aSessionWithAnIdOpensWithClaudeAttachAndOneWithoutHasNothingToOpen() = runNow {
-        show(listOf(task(members = listOf(
-            member("attachable", "needs_you", sessionId = "ab12cd"),
-            member("nothing", "needs_you", since = 2_000),
-        ))))
-        val rows = vm.state.rows.associateBy { it.title }
-        assertTrue(rows.getValue("attachable").unhosted)
-        assertEquals("ab12cd", rows.getValue("attachable").sessionId)
-
-        vm.select(rows.getValue("attachable").id)
-        assertEquals(Footer.RUN_ATTACH, vm.state.footer)
-        vm.activateSelected()
-        assertEquals(listOf<WindowCommand>(WindowCommand.OpenTaskMember("g1", "ab12cd")), sent)
-
-        sent.clear()
-        vm.select(rows.getValue("nothing").id)
-        assertEquals(Footer.NO_SESSION, vm.state.footer)
-        vm.activateSelected()
-        assertTrue(sent.isEmpty())
-    }
-
-    @Test
-    fun theOverlayStaysOpenAfterAnAttachUntilTheNewTabIsActive() = runNow {
-        layout("leaf-other")
-        show(listOf(task(members = listOf(member("a", "needs_you", sessionId = "ab12cd")))))
+    fun aSearchResultForALoneSessionIsItsOwnRowAndAMatchOnTheTitleNeedsNoSessionName() {
+        layout("leaf-a")
+        val a = session("a", "idle", title = "alpha")
+        show(emptyList(), a, session("old", "ended", endedAt = now - HOUR, title = "alpine"))
         vm.open()
-        vm.activate(vm.state.rows.last())
-        assertTrue(vm.state.open)
-        windowState.updateConfig(windowState.config.value!!.copy(activeTabId = "new-tab"))
-        assertFalse(vm.state.open)
+        answer("al", AgentSessionMatch(a, "title", null, 0, 2, null))
+        val r = vm.state.matches.single()
+        assertEquals("a", r.id)
+        assertTrue(r.matchInTitle)
+        assertEquals("in title · tab 1", r.extra)
     }
 
     @Test
-    fun aSessionIsJumpWhenItsPaneIsOpenAndResumeWhenItEndedOrOnlyAClaudeAttachCanReachIt() {
-        layout("leaf-live")
-        show(
-            listOf(task(members = listOf(
-                member("live one", "working", recordId = "live"),
-                member("done one", "idle", recordId = "done"),
-                member("nobody's", "idle"),
-                member("attachable", "idle", sessionId = "xy9"),
-            ))),
-            session("live", "working"),
-            session("done", "ended", endedAt = 5_000),
-        )
-        vm.toggleTask("g1")
-        val labels = vm.state.rows.filter { it.taskId == "g1" && it.kind == RowKind.SESSION }.associate { it.title to it.actionLabel }
-        assertEquals(mapOf("live one" to "jump", "done one" to "resume", "nobody's" to "", "attachable" to "resume"), labels)
+    fun aSearchResultOpensTheSessionThatMatchedEvenWhenThatIsNotTheOneEnterOpensForTheTask() = runNow {
+        layout("leaf-lead", "leaf-m")
+        val lead = session("lead", "idle", taskId = "g1", title = "Lead")
+        val m = session("m", "idle", taskId = "g1", title = "Mate")
+        show(listOf(hostedTask(lead = "lead")), lead, m)
+        vm.open()
+        answer("mate", AgentSessionMatch(m, "title", null, 0, 4, null))
+        assertEquals("m", vm.state.matches.single().recordId)
+        vm.activateSelected()
+        assertEquals(jumpTo("leaf-m"), sent)
     }
 
-    @Test
-    fun aTaskSessionShowsOnlyTheLinksTheFileGivesNotOnesReadFromItsBranch() {
-        layout("leaf-r1")
-        show(
-            listOf(task(members = listOf(member("a", "working", recordId = "r1"), member("b", "idle", recordId = "r2", links = listOf("ABC-2"))))),
-            session("r1", "working", links = listOf("ABC-1")),
-            session("r2", "idle", links = listOf("ABC-9")),
-        )
-        vm.toggleTask("g1")
-        val links = vm.state.rows.filter { it.kind == RowKind.SESSION }.associate { it.title to it.links }
-        assertEquals(mapOf("a" to emptyList(), "b" to listOf("ABC-2")), links)
-    }
+    // ---- selection ----
 
     @Test
-    fun theGlyphOfASessionFollowsItsStateAndLabel() {
-        show(listOf(task(members = listOf(
-            member("n", "needs_you"), member("w", "working"), member("r", "idle", label = "in review"),
-            member("q", "idle", label = "queued"), member("p", "idle", label = "held up"), member("d", "idle", label = "done"),
-            member("e", "ended"), member("i", "idle"), member("x", "idle", label = "unknown"),
-        ))))
-        vm.toggleTask("g1")
-        val glyphs = vm.state.rows.filter { it.kind == RowKind.SESSION }.associate { it.title to it.glyph }
-        assertEquals(
-            mapOf(
-                "n" to Glyph.NEEDS_YOU, "w" to Glyph.WORKING, "r" to Glyph.WAITING, "q" to Glyph.WAITING,
-                "p" to Glyph.WAITING, "d" to Glyph.DONE, "e" to Glyph.DONE, "i" to Glyph.WAITING, "x" to Glyph.WAITING,
-            ),
-            glyphs,
-        )
-    }
-
-    @Test
-    fun aPausedSessionHasItsOwnGlyphAndNeverCountsAsNeedingYou() {
-        show(listOf(task(members = listOf(
-            member("d", "idle", label = "done"), member("p", "idle", label = "paused: waiting for the release"),
-            member("o", "idle", label = "odd"), member("w", "working", recordId = "w"),
-        ))), session("w", "working", lastActivityAt = now - 1_000))
-        vm.toggleTask("g1")
-        val sessions = vm.state.rows.filter { it.kind == RowKind.SESSION }
-        assertEquals(listOf("d", "p", "o", "w"), sessions.map { it.title }, "the file's order, whatever the labels")
-        assertEquals(Glyph.PAUSED, sessions.first { it.title == "p" }.glyph)
-        assertEquals(0, vm.state.needYouCount)
-        assertEquals(1, vm.state.workingCount)
-    }
-
-    @Test
-    fun theStatusOfATaskSessionIsNeverBlankUnlessItsLabelSaysIt() {
-        layout("leaf-w", "leaf-i")
-        show(
-            listOf(task(members = listOf(
-                member("needs", "needs_you"),
-                member("unhosted work", "working"),
-                member("hosted work", "working", recordId = "w"),
-                member("hosted idle", "idle", recordId = "i"),
-                member("review", "idle", label = "in review · round 2"),
-                member("finished", "idle", label = "done", links = listOf("#22"), line = "#22"),
-                member("finished too", "idle", label = "done", line = "Merged and deployed"),
-            ))),
-            session("w", "working", firstPrompt = "Fix the thing"),
-            session("i", "idle", lastSaid = "All green.", firstPrompt = "Fix the thing"),
-        )
-        vm.toggleTask("g1")
-        val byTitle = vm.state.rows.filter { it.kind == RowKind.SESSION }.associateBy { it.title }
-        assertEquals("waiting at a prompt", byTitle.getValue("needs").status)
-        assertEquals("—", byTitle.getValue("unhosted work").status)
-        assertEquals("❯ Fix the thing", byTitle.getValue("hosted work").status)
-        assertEquals("All green.", byTitle.getValue("hosted idle").status)
-        assertEquals("", byTitle.getValue("review").status, "the label is the whole status")
-        assertEquals("in review · round 2", byTitle.getValue("review").label)
-        assertEquals("", byTitle.getValue("finished").status, "a line that only repeats the PR is dropped")
-        assertEquals("#22", byTitle.getValue("finished").pullRequest)
-        assertEquals("done", byTitle.getValue("finished").label)
-        assertEquals("Merged and deployed", byTitle.getValue("finished too").status)
-    }
-
-    @Test
-    fun aLabelIsShownOnIdleAndEndedSessionsAndNotOnAHostedWorkingOne() {
-        layout("leaf-w")
-        show(
-            listOf(task(members = listOf(member("w", "working", label = "in review", recordId = "w"), member("i", "idle", label = "in review")))),
-            session("w", "working"),
-        )
-        vm.toggleTask("g1")
-        val labels = vm.state.rows.filter { it.kind == RowKind.SESSION }.associate { it.title to it.label }
-        assertEquals(mapOf("w" to null, "i" to "in review"), labels)
-    }
-
-    @Test
-    fun aWorkingSessionOutsideLunamuxIsLiveWhileItsFileIsFreshAndGoesQuietWhenItStopsBeingRefreshed() {
-        val refreshed = 1_000_000L
-        show(listOf(task(refreshedAtMillis = refreshed, members = listOf(member("unhosted", "working", line = "Doing a thing"), member("other", "idle")))))
-        vm.toggleTask("g1")
-        val row = vm.state.rows.single { it.id == "member:g1:#1" }
-        assertEquals(refreshed, row.activityMillis)
-        assertEquals(refreshed, row.fileRefreshedMillis)
-        assertEquals(refreshed, vm.state.tasks.getValue("g1").activityMillis)
-        val at = { minutes: Long -> refreshed + minutes * 60_000L }
-        assertTrue(AgentsOverviewBackingViewModel.isWorkingLive(row.activityMillis, at(4)))
-        assertFalse(AgentsOverviewBackingViewModel.isWorkingLive(row.activityMillis, at(5)))
-        assertFalse(AgentsOverviewBackingViewModel.isWorkingLive(null, at(0)))
-        assertEquals("", AgentsOverviewBackingViewModel.agePrefix(row, at(4)))
-        assertEquals("quiet 6m · ", AgentsOverviewBackingViewModel.agePrefix(row, at(6)))
-        assertEquals("stale 25m · ", AgentsOverviewBackingViewModel.agePrefix(row, at(25)))
-    }
-
-    @Test
-    fun aWorkingSessionWithoutAFileTimeHasNoSignOfLife() {
-        show(listOf(task(members = listOf(member("unhosted", "working"), member("other", "idle")))))
-        vm.toggleTask("g1")
-        assertNull(vm.state.rows.single { it.id == "member:g1:#1" }.activityMillis)
-        assertNull(vm.state.tasks.getValue("g1").activityMillis)
-    }
-
-    @Test
-    fun aFileMemberMatchedToAnIdleSessionIsAsOldAsThatSessionsLastActivityNotItsFilesTime() {
-        layout("leaf-w1")
-        val quietSince = now - 3 * HOUR
-        show(
-            listOf(task(members = listOf(
-                member("one", "idle", recordId = "w1", since = now - MINUTE),
-                member("two", "working", since = now - 1_000),
-            ))),
-            session("w1", "idle", since = now - MINUTE, lastActivityAt = quietSince),
-        )
-        vm.toggleTask("g1")
-        assertEquals(quietSince, vm.state.rows.first { it.id == "w1" }.sinceMillis)
-    }
-
-    @Test
-    fun aHostedWorkingSessionTakesTheNewerOfItsSessionAndItsFile() {
-        layout("leaf-w1", "leaf-w2")
-        show(
-            listOf(task(refreshedAtMillis = 8_000, members = listOf(
-                member("one", "working", recordId = "w1"),
-                member("two", "working", recordId = "w2"),
-            ))),
-            session("w1", "working", lastActivityAt = 7_000),
-            session("w2", "working", lastActivityAt = 9_000),
-        )
-        vm.toggleTask("g1")
-        val byId = vm.state.rows.associateBy { it.id }
-        assertEquals(8_000L, byId.getValue("w1").activityMillis)
-        assertEquals(9_000L, byId.getValue("w2").activityMillis)
-        assertNull(byId.getValue("w1").fileRefreshedMillis, "a session with a record follows the session for staleness")
-        assertEquals(9_000L, vm.state.tasks.getValue("g1").activityMillis)
-    }
-
-    @Test
-    fun aTaskFileIsStaleTwentyMinutesAfterItWasLastRefreshed() {
-        val limit = AgentsOverviewBackingViewModel.STALE_AFTER_MS
-        assertEquals(20 * 60_000L, limit)
-        assertFalse(AgentsOverviewBackingViewModel.isStale(10_000, 10_000 + limit - 1))
-        assertTrue(AgentsOverviewBackingViewModel.isStale(10_000, 10_000 + limit))
-    }
-
-    @Test
-    fun aWorkingSessionGoesQuietAfterFiveMinutesWithoutASignOfLife() {
-        val q = AgentsOverviewBackingViewModel.QUIET_AFTER_MS
-        assertEquals(5 * 60_000L, q)
-        assertFalse(AgentsOverviewBackingViewModel.isQuiet(10_000, 10_000 + q - 1))
-        assertTrue(AgentsOverviewBackingViewModel.isQuiet(10_000, 10_000 + q))
-    }
-
-    @Test
-    fun theOverlayOpensOnTheDiamondThatHasWaitedLongest() {
+    fun theOverlayOpensOnTheTaskThatNeedsYouFirstInListOrder() {
         show(
             listOf(task(members = listOf(member("g-run", "needs_you", since = 1_500)))),
             session("w", "working", since = 1),
@@ -998,40 +1220,8 @@ class AgentsOverviewTasksViewModelTest {
             session("early", "needs_you", since = 2_000),
         )
         vm.open()
-        assertEquals("member:g1:#1", vm.state.selectedId)
-        assertEquals(Footer.NO_SESSION, vm.state.footer)
-    }
-
-    @Test
-    fun whenTheRowTheOverlayOpenedOnDisappearsTheRowNowInItsPlaceIsSelected() {
-        val a = member("a", "needs_you", since = 1_500)
-        show(
-            listOf(task(members = listOf(a, member("b", "idle")))),
-            session("w", "working", since = 1),
-            session("late", "needs_you", since = 3_000),
-        )
-        vm.open()
-        val index = vm.state.selected
-        assertTrue(index > 0)
-        // The session answers and goes idle: its row is hidden under the collapsed panel.
-        show(
-            listOf(task(members = listOf(a.copy(state = "idle"), member("b", "idle")))),
-            session("w", "working", since = 1),
-            session("late", "needs_you", since = 3_000),
-        )
-        assertEquals(vm.state.rows[index.coerceAtMost(vm.state.rows.lastIndex)].id, vm.state.selectedId)
-    }
-
-    @Test
-    fun aSessionTheFileGivesAnIdKeepsItsRowIdWhenTheWriterReordersTheMembers() {
-        val a = member("a", "needs_you", since = 1_000, sessionId = "aaa")
-        val b = member("b", "needs_you", since = 2_000, sessionId = "bbb")
-        show(listOf(task(members = listOf(a, b))))
-        vm.open()
-        vm.select("member:g1:bbb")
-        show(listOf(task(members = listOf(member("new", "needs_you", since = 500, sessionId = "ccc"), a, b))))
-        assertEquals("member:g1:bbb", vm.state.selectedId)
-        assertEquals("b", vm.state.rows.single { it.id == vm.state.selectedId }.title)
+        assertEquals("task:g1", vm.state.selectedId)
+        assertEquals("◆", vm.state.selectedRow?.marker)
     }
 
     @Test
@@ -1071,106 +1261,16 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun theSelectionFollowsATaskAsItsSessionsAreExpandedAboveIt() {
-        show(
-            listOf(task(members = listOf(member("a", "working", recordId = "a"), member("b", "idle")))),
-            session("a", "working"),
-            session("s", "working", since = 99_999),
-        )
-        vm.open()
-        vm.moveSelection(2)
-        assertEquals("s", vm.state.selectedId)
-        vm.toggleTask("g1")
-        assertEquals("task:g1", vm.state.selectedId, "toggling selects the header it belongs to")
-    }
-
-    @Test
-    fun rightExpandsAHeaderThenEntersItsSessionsAndLeftGoesBackUpAndThenCollapses() = runNow {
-        show(listOf(task(members = listOf(member("a", "working"), member("b", "idle")))))
-        vm.open()
-        assertEquals(Footer.TASK_COLLAPSED, vm.state.footer)
-        vm.stepIn()
-        assertTrue(vm.state.tasks.getValue("g1").expanded)
-        assertEquals(Footer.TASK_EXPANDED, vm.state.footer)
-        assertEquals("task:g1", vm.state.selectedId)
-        vm.stepIn()
-        assertEquals("member:g1:#1", vm.state.selectedId)
-        vm.stepOut()
-        assertEquals("task:g1", vm.state.selectedId)
-        assertTrue(vm.state.tasks.getValue("g1").expanded)
-        vm.stepOut()
-        assertFalse(vm.state.tasks.getValue("g1").expanded)
-        assertEquals("task:g1", vm.state.selectedId)
-    }
-
-    @Test
-    fun spaceTogglesAHeaderOnlyWhileTheQueryIsEmpty() = runNow {
-        show(listOf(task(members = listOf(member("a", "working"), member("b", "idle")))))
-        vm.open()
-        vm.toggleSelected()
-        assertTrue(vm.state.tasks.getValue("g1").expanded)
-        vm.toggleSelected()
-        assertFalse(vm.state.tasks.getValue("g1").expanded)
-        vm.setQuery("x")
-        vm.toggleSelected()
-        assertFalse(vm.state.tasks.getValue("g1").expanded)
-    }
-
-    @Test
-    fun rightOnASessionPeeksAndLeftClosesThePeek() = runNow {
-        layout("leaf-a")
-        show(emptyList(), session("a", "working"))
-        vm.open()
-        vm.stepIn()
-        assertTrue(vm.state.peek != null)
-        vm.stepOut()
-        assertNull(vm.state.peek)
-    }
-
-    @Test
-    fun footerFollowsTheSelectedRow() {
-        layout("leaf-live")
-        show(emptyList(), session("live", "working"), session("closed", "ended", endedAt = 5_000))
-        vm.open()
-        assertEquals(Footer.LIVE, vm.state.footer)
-        vm.select("closed")
-        assertEquals(Footer.CLOSED, vm.state.footer)
-        show(emptyList())
-        assertEquals(Footer.NONE, vm.state.footer)
-    }
-
-    @Test
-    fun sessionsWithTheSameTitleAndNoRepositoryEachShowTheFolderTheyRunIn() {
-        layout("leaf-a", "leaf-b", "leaf-c")
-        show(
-            emptyList(),
-            session("a", "idle", title = "Counting to 10", repo = "proj"),
-            session("b", "idle", title = "Counting to 10", repo = null, cwd = "/Users/me/notes/"),
-            session("c", "idle", title = "Something else", repo = null, cwd = "/Users/me/other"),
-        )
-        val repos = vm.state.rows.associate { it.id to it.where }
-        assertEquals(mapOf("a" to "proj", "b" to "notes", "c" to "other"), repos)
-    }
-
-    @Test
-    fun peekAndCloseOnlyApplyToRowsWithAnOpenRecord() = runNow {
+    fun peekAndCloseOnlyApplyToRowsWithASessionLunamuxHosts() = runNow {
         show(listOf(task(members = listOf(member("a", "needs_you"), member("b", "needs_you")))))
         vm.open()
         vm.select("task:g1")
         vm.peek()
-        assertTrue(sent.isEmpty(), "a header with no open session has nothing to peek")
-        vm.select("member:g1:#1")
-        vm.peek()
-        assertTrue(sent.isEmpty(), "a session Lunamux does not host has nothing to peek")
+        assertTrue(sent.isEmpty(), "a task with no session Lunamux hosts has nothing to peek")
         assertFalse(vm.state.rows.any { it.canClose })
     }
 
-    @Test
-    fun withNoTasksEveryRowIsAnOrdinarySession() {
-        show(emptyList(), session("a", "working"), session("b", "idle"))
-        assertTrue(vm.state.rows.all { it.kind == RowKind.SESSION && !it.unhosted })
-        assertTrue(vm.state.tasks.isEmpty())
-    }
+    // ---- idle grace ----
 
     @Test
     fun anIdleSessionStaysInNowForTenMinutesAfterItsLastActivityAndThenMovesToEarlier() {
@@ -1180,12 +1280,13 @@ class AgentsOverviewTasksViewModelTest {
         show(emptyList(), session("chat", "idle", since = now - grace - 5_000, lastActivityAt = now - grace + 1))
         assertEquals(listOf("chat"), vm.state.now.map { it.id }, "one millisecond short of the grace")
         assertTrue(vm.state.earlier.isEmpty())
-        assertEquals(Glyph.WAITING, vm.state.now.single().glyph, "idle, never a diamond")
+        assertEquals("done", vm.state.now.single().stateWord, "idle, never a diamond")
 
         now += 1
         vm.tick()
         assertTrue(vm.state.now.isEmpty(), "the grace is over exactly ten minutes after the activity")
         assertEquals(listOf("chat"), vm.state.earlier.map { it.id })
+        assertEquals("finished", vm.state.earlier.single().stateWord)
     }
 
     @Test
@@ -1211,73 +1312,38 @@ class AgentsOverviewTasksViewModelTest {
             session("closed", "ended", since = now - 2_000, endedAt = now - 1_000),
             session("longClosed", "ended", since = now - 3_600_000, endedAt = now - 3_600_000),
         )
-        assertEquals(setOf("graced", "closed"), vm.state.now.map { it.id }.filter { it == "graced" || it == "closed" }.toSet())
         assertEquals(listOf("task:g1", "need", "work", "closed", "graced"), vm.state.now.map { it.id })
         assertEquals(listOf("longClosed"), vm.state.earlier.map { it.id })
         assertEquals(1, vm.state.needYouCount)
     }
 
     @Test
-    fun anEmptyOrBlankLineRendersAsNothingForATaskSessionAndNeverLeavesASeparatorOrAnEmptyStatus() {
+    fun aTaskOfIdleHostedSessionsStaysInNowForTheGraceAndThenMovesToEarlierLikeASingleSession() {
+        val grace = AgentsOverviewBackingViewModel.IDLE_GRACE_MS
+        layout("leaf-a", "leaf-b")
         show(
-            listOf(task(members = listOf(
-                member("needs", "needs_you", line = "   "),
-                member("working", "working", line = ""),
-                member("review", "idle", label = "in review · round 2", line = "  "),
-                member("idle", "idle", line = " "),
-            ))),
+            listOf(hostedTask()),
+            session("a", "idle", taskId = "g1", since = now - grace - 5_000, lastActivityAt = now - grace + 1),
+            session("b", "idle", taskId = "g1", since = now - grace - 9_000),
         )
-        vm.toggleTask("g1")
-        val byTitle = vm.state.rows.filter { it.kind == RowKind.SESSION }.associateBy { it.title }
-        assertEquals("waiting at a prompt", byTitle.getValue("needs").status)
-        assertNull(byTitle.getValue("needs").question)
-        assertEquals("—", byTitle.getValue("working").status)
-        assertNull(byTitle.getValue("working").nowLine)
-        assertEquals("", byTitle.getValue("review").status)
-        assertEquals("in review · round 2", byTitle.getValue("review").label)
-        assertEquals("—", byTitle.getValue("idle").status)
-        assertTrue(byTitle.values.none { it.status.isBlank() && it.label == null && it.glyph != Glyph.DONE })
+        assertEquals(listOf("task:g1"), vm.state.now.map { it.id }, "one millisecond short of the grace")
+        assertTrue(vm.state.earlier.isEmpty())
+
+        now += 1
+        vm.tick()
+        assertTrue(vm.state.now.isEmpty(), "the grace is over ten minutes after the last activity of any session")
+        assertEquals(listOf("task:g1"), vm.state.earlier.map { it.id })
     }
 
     @Test
-    fun aBlankLineOnASessionFallsBackToItsFirstPromptAndTheTaskHeaderStaysCountsOnly() {
-        layout("leaf-w")
-        show(
-            listOf(task(members = listOf(member("hosted", "working", recordId = "w", line = "  "), member("finished", "ended")))),
-            session("w", "working", nowLine = "   ", firstPrompt = "Fix the thing", lastActivityAt = now - 1_000),
-            session("single", "working", nowLine = "  ", question = " "),
-        )
-        vm.toggleTask("g1")
-        val rows = vm.state.rows.associateBy { it.id }
-        assertEquals("❯ Fix the thing", rows.getValue("w").status)
-        assertEquals("—", rows.getValue("single").status)
-        assertNull(rows.getValue("single").nowLine)
-        val header = rows.getValue("task:g1")
-        assertEquals("", header.status)
-        assertEquals("1 working · 1 done", vm.state.tasks.getValue("g1").summary)
+    fun aTaskFileKeepsItsTaskInNowWhileNothingIsRunningAndWorkIsQueued() {
+        show(listOf(task(members = listOf(member("a", "idle", label = "queued", recordId = "a"), member("b", "idle", label = "queued")))), session("a", "idle"))
+        now += 10 * AgentsOverviewBackingViewModel.IDLE_GRACE_MS
+        vm.tick()
+        assertEquals(listOf("task:g1"), vm.state.now.map { it.id })
     }
 
-    @Test
-    fun aRowOutsideARepositoryShowsItsFolderAndHomeAsATilde() {
-        layout("leaf-home", "leaf-scratch", "leaf-repo")
-        show(
-            emptyList(),
-            session("home", "working", title = "Chat at home", repo = null, cwd = "/Users/someone", cwdHome = true),
-            session("scratch", "working", title = "Notes", repo = null, cwd = "/work/scratch/"),
-            session("repo", "working", title = "In a repo", repo = "proj", cwd = "/work/proj"),
-        )
-        val rows = vm.state.rows.associateBy { it.id }
-        assertEquals("~", rows.getValue("home").where)
-        assertEquals("scratch", rows.getValue("scratch").where)
-        assertEquals("proj", rows.getValue("repo").where)
-    }
-
-    private companion object {
-        const val EARLIER_LIMIT = AgentsOverviewBackingViewModel.EARLIER_LIMIT
-        const val MINUTE = 60_000L
-        const val HOUR = 60L * 60_000L
-        const val DAY = 24L * 60 * 60_000L
-    }
+    // ---- tabs ----
 
     @Test
     fun aFileTaskWithNoSessionInAnOpenTabIsInEarlierNotNowEvenWithWorkQueued() {
@@ -1288,19 +1354,6 @@ class AgentsOverviewTasksViewModelTest {
         assertTrue(vm.state.now.isEmpty())
         assertEquals("task:g1", vm.state.earlier.first().id)
         assertEquals(0, vm.state.workingCount)
-    }
-
-    @Test
-    fun anEarlierTaskWithWorkingSessionsOutsideEveryTabIsOnlyItsIdleHeaderUntilExpanded() {
-        showAway(
-            listOf(task(members = listOf(member("a", "working", recordId = "a"), member("b", "working")))),
-            session("a", "working", lastActivityAt = now - 1_000),
-        )
-        assertTrue(vm.state.now.isEmpty())
-        assertEquals(listOf("task:g1"), vm.state.earlier.map { it.id })
-        assertEquals("idle", vm.state.earlier.first().state)
-        vm.toggleTask("g1")
-        assertTrue(vm.state.earlier.size > 1, "expanding still lists the members")
     }
 
     @Test
@@ -1325,30 +1378,16 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aTaskKeepsAllItsMembersInNowWhenOnlyOneOfThemIsInAnOpenTab() {
+    fun aTaskKeepsAllItsSessionsInNowWhenOnlyOneOfThemIsInAnOpenTab() {
         layout("leaf-a")
         show(
             listOf(task(members = listOf(member("a", "working", recordId = "a"), member("b", "working", recordId = "b")))),
             session("a", "working", lastActivityAt = now - 1_000),
             session("b", "working", lastActivityAt = now - 1_000),
         )
-        assertEquals(listOf("task:g1", "a", "b"), vm.state.now.map { it.id }.sortedBy { if (it.startsWith("task")) 0 else 1 })
+        assertEquals(listOf("task:g1"), vm.state.now.map { it.id })
+        assertEquals("2 working", row("task:g1").stateWord)
         assertEquals(2, vm.state.workingCount, "the task is the unit: its out-of-tab member counts with the task")
-    }
-
-    /** Lays out [normal] panes in the one listed tab and [background] panes in a background tab of their own. */
-    private fun layoutWithBackground(normal: List<String>, background: List<String>) {
-        laidOut = true
-        fun panes(ids: List<String>) = ids.map { Pane(LeafNode(id = it, sessionId = "s-$it", title = it), 0.0, 0.0, 1.0, 1.0, 0) }
-        windowState.updateConfig(
-            WindowConfig(
-                tabs = listOf(
-                    TabConfig(id = "tab-1", title = "one", panes = panes(normal)),
-                    TabConfig(id = "tab-bg", title = "agents", panes = panes(background), isBackground = true),
-                ),
-                activeTabId = "tab-1",
-            ),
-        )
     }
 
     @Test
@@ -1364,8 +1403,8 @@ class AgentsOverviewTasksViewModelTest {
         assertEquals(1, vm.state.needYouCount, "a background session that needs the person is in the chip")
         assertEquals(2, vm.state.workingCount)
         assertTrue(vm.state.chipVisible)
-        assertTrue(vm.state.now.first { it.id == "bg-ask" }.background)
-        assertFalse(vm.state.now.first { it.id == "n" }.background)
+        assertTrue(row("bg-ask").background)
+        assertFalse(row("n").background)
     }
 
     @Test
@@ -1374,8 +1413,7 @@ class AgentsOverviewTasksViewModelTest {
         show(emptyList(), session("n", "working", lastActivityAt = now - 1_000), session("bg", "needs_you", background = true, since = 2_000))
         vm.open()
         vm.select("bg")
-        assertEquals(Footer.BACKGROUND, vm.state.footer)
-        assertEquals("peek", vm.state.selectedRow?.actionLabel)
+        assertEquals(Enter.PEEK, vm.state.selectedRow?.enter)
         vm.activateSelected()
         assertTrue(sent.none { it is WindowCommand.SetActiveTab || it is WindowCommand.SetFocusedPane || it is WindowCommand.TakeOverTab }, "peeking moves nothing")
         assertTrue(vm.state.peek != null && vm.state.peek!!.background, "the peek knows it can take the tab over")
@@ -1399,113 +1437,7 @@ class AgentsOverviewTasksViewModelTest {
         assertTrue(vm.state.open)
     }
 
-    @Test
-    fun closingABackgroundRowAsksTheSameQuestionAsAnyOtherSession() = runNow {
-        layoutWithBackground(listOf("leaf-n"), listOf("leaf-bg"))
-        show(emptyList(), session("n", "working"), session("bg", "working", since = 2_000, background = true))
-        vm.open()
-        vm.select("bg")
-        vm.requestClose()
-        assertEquals("bg", vm.state.confirm?.rowId)
-        assertTrue(sent.none { it is WindowCommand.CloseSession }, "nothing closes before the person confirms")
-        vm.confirmClose()
-        assertEquals(listOf<WindowCommand>(WindowCommand.CloseSession("s-leaf-bg")), sent.filterIsInstance<WindowCommand.CloseSession>())
-    }
-
-    // ---- the task's own session ----
-
-    private fun leadTask(lead: String?, hasOpen: Boolean = false) = task(
-        source = "agents", members = emptyList(), hasOpen = hasOpen, leadRecordId = lead,
-    )
-
-    @Test
-    fun enterOnATaskWhoseOwnSessionIsLiveJumpsToItsPane() = runNow {
-        layoutWithBackground(listOf("leaf-lead", "leaf-m"), emptyList())
-        show(
-            listOf(leadTask("lead")),
-            session("lead", "idle", taskId = "g1", since = 1_000),
-            session("m", "needs_you", taskId = "g1", since = 2_000),
-        )
-        vm.open()
-        vm.select("task:g1")
-        vm.activateSelected()
-        assertEquals(listOf<WindowCommand>(WindowCommand.SetActiveTab("tab-1"), WindowCommand.SetFocusedPane("tab-1", "leaf-lead")), sent)
-    }
-
-    @Test
-    fun enterOnATaskWhoseOwnSessionRunsInTheBackgroundPeeksIt() = runNow {
-        layoutWithBackground(listOf("leaf-m"), listOf("leaf-lead"))
-        show(
-            listOf(leadTask("lead")),
-            session("m", "working", taskId = "g1", since = 500, lastActivityAt = now - 1_000),
-            session("lead", "working", taskId = "g1", since = 1_000, background = true, lastActivityAt = now - 1_000),
-        )
-        vm.open()
-        vm.select("task:g1")
-        assertEquals("peek", vm.state.selectedRow?.actionLabel)
-        vm.activateSelected()
-        assertTrue(sent.none { it is WindowCommand.SetActiveTab || it is WindowCommand.SetFocusedPane }, "peeking moves nothing")
-        assertTrue(vm.state.peek?.background == true)
-        assertEquals("task:g1", vm.state.selectedId, "the header keeps the highlight while its session is peeked")
-    }
-
-    @Test
-    fun enterOnATaskWhoseOwnSessionIsGoneRunsOpenWhenTheTaskHasOpenWork() = runNow {
-        layoutWithBackground(listOf("leaf-m"), emptyList())
-        show(
-            listOf(leadTask("lead", hasOpen = true)),
-            session("lead", "ended", taskId = "g1", since = 500, endedAt = now - 5_000),
-            session("m", "needs_you", taskId = "g1", since = 2_000),
-        )
-        vm.open()
-        vm.select("task:g1")
-        val header = vm.state.rows.first { it.id == "task:g1" }
-        assertEquals("open", header.actionLabel, "the label says what ↵ does, not jump")
-        assertFalse(header.isLive)
-        vm.activateSelected()
-        assertEquals(listOf<WindowCommand>(WindowCommand.OpenTask("g1")), sent)
-    }
-
-    @Test
-    fun enterOnATaskWhoseOwnSessionIsGoneResumesItWhenThereIsNothingToOpen() = runNow {
-        layoutWithBackground(listOf("leaf-m"), emptyList())
-        show(
-            listOf(leadTask("lead")),
-            session("lead", "ended", taskId = "g1", since = 500, endedAt = now - 5_000),
-            session("m", "needs_you", taskId = "g1", since = 2_000),
-        )
-        vm.open()
-        vm.select("task:g1")
-        val header = vm.state.rows.first { it.id == "task:g1" }
-        assertEquals("resume", header.actionLabel, "the label says what ↵ does, not jump")
-        assertFalse(header.isLive)
-        assertEquals("lead", vm.state.tasks.getValue("g1").leadRecordId)
-        assertEquals(null, vm.state.tasks.getValue("g1").jumpRecordId)
-        vm.activateSelected()
-        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("lead")), sent)
-    }
-
-    @Test
-    fun aTaskWithNoOwnSessionKeepsTheOldEnter() = runNow {
-        layoutWithBackground(listOf("leaf-m"), emptyList())
-        show(listOf(leadTask(null)), session("m", "needs_you", taskId = "g1", since = 2_000))
-        vm.open()
-        vm.select("task:g1")
-        vm.activateSelected()
-        assertEquals(listOf<WindowCommand>(WindowCommand.SetActiveTab("tab-1"), WindowCommand.SetFocusedPane("tab-1", "leaf-m")), sent)
-    }
-
-    // ---- status and order ----
-
-    @Test
-    fun aTaskHeaderShowsItsOneLineStatus() {
-        val members = listOf(member("a", "working", recordId = "a"), member("b", "working", recordId = "b"))
-        val sessions = arrayOf(session("a", "working", lastActivityAt = now - 1_000), session("b", "working", lastActivityAt = now - 1_000))
-        show(listOf(task(status = "waiting on the schema review", members = members)), *sessions)
-        assertEquals("waiting on the schema review", vm.state.rows.first { it.id == "task:g1" }.status)
-        show(listOf(task(members = members)), *sessions)
-        assertEquals("", vm.state.rows.first { it.id == "task:g1" }.status)
-    }
+    // ---- order ----
 
     @Test
     fun nowKeepsItsOrderWhenStatesFlipAndWhenTheSameFactsArriveAgainAfterARestart() {
@@ -1520,7 +1452,7 @@ class AgentsOverviewTasksViewModelTest {
         val tasks = listOf(task(source = "agents", startedAt = 2_500, members = emptyList()))
         showAway(tasks, *facts("working", "working"))
         val before = vm.state.now.map { it.id }
-        assertEquals(listOf("a", "b", "task:g1", "t1", "t2", "c"), before)
+        assertEquals(listOf("a", "b", "task:g1", "c"), before)
         showAway(tasks, *facts("needs_you", "working"))
         assertEquals(before, vm.state.now.map { it.id })
         showAway(tasks, *facts("working", "needs_you"))
@@ -1530,5 +1462,30 @@ class AgentsOverviewTasksViewModelTest {
         windowState.updateAgentTasks(emptyList())
         showAway(tasks, *facts("needs_you", "needs_you"))
         assertEquals(before, vm.state.now.map { it.id })
+    }
+
+    // ---- moving, quiet and stale ----
+
+    @Test
+    fun aTaskFileIsStaleTwentyMinutesAfterItWasLastRefreshed() {
+        val limit = AgentsOverviewBackingViewModel.STALE_AFTER_MS
+        assertEquals(20 * 60_000L, limit)
+        assertFalse(AgentsOverviewBackingViewModel.isStale(10_000, 10_000 + limit - 1))
+        assertTrue(AgentsOverviewBackingViewModel.isStale(10_000, 10_000 + limit))
+    }
+
+    @Test
+    fun aWorkingSessionGoesQuietAfterFiveMinutesWithoutASignOfLife() {
+        val q = AgentsOverviewBackingViewModel.QUIET_AFTER_MS
+        assertEquals(5 * 60_000L, q)
+        assertFalse(AgentsOverviewBackingViewModel.isQuiet(10_000, 10_000 + q - 1))
+        assertTrue(AgentsOverviewBackingViewModel.isQuiet(10_000, 10_000 + q))
+    }
+
+    private companion object {
+        const val EARLIER_LIMIT = AgentsOverviewBackingViewModel.EARLIER_LIMIT
+        const val MINUTE = 60_000L
+        const val HOUR = 60L * 60_000L
+        const val DAY = 24L * 60 * 60_000L
     }
 }

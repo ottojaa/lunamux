@@ -122,11 +122,12 @@ class AgentSessionTracker(
     private val awaitScreenClear = HashSet<String>()
 
     /**
-     * Ids of open records whose last `PreToolUse` has not been followed by its `PostToolUse` yet.
-     * A prompt that arrives while one is in flight is about that tool call; one that arrives with
-     * none in flight is about something else, so the row must not name the stale last tool line.
+     * Open records whose last `PreToolUse` has not been followed by its `PostToolUse` yet, each
+     * with that call's [rawToolLine] (the actual command, file or pattern). A prompt that arrives
+     * while one is in flight is about that tool call, and names it exactly; one that arrives with
+     * none in flight is about something else, so the row must not name a stale tool call.
      */
-    private val toolInFlight = HashSet<String>()
+    private val toolInFlight = HashMap<String, String?>()
 
     /** Ids of hook-fed `needs_you` records whose pane screen has been seen showing the prompt. */
     private val promptSeen = HashSet<String>()
@@ -303,7 +304,7 @@ class AgentSessionTracker(
                 if (rec.title == null) rec = rec.copy(title = cleanTitle(pane.programTitle))
             }
             "PreToolUse" -> {
-                toolInFlight.add(rec.id)
+                toolInFlight[rec.id] = rawToolLine(event)
                 set(WORKING, nowLine = toolLine(event))
             }
             "PostToolUse" -> {
@@ -320,7 +321,7 @@ class AgentSessionTracker(
                 ) return@synchronized
                 // The hook text is generic ("Claude needs your permission"). The tool call the prompt
                 // is about arrived with the PreToolUse just before, so say what is being asked instead.
-                set(NEEDS_YOU, nowLine = null, question = pendingQuestionOf(rec.nowLine.takeIf { rec.id in toolInFlight }, message, type)?.take(QUESTION_MAX))
+                set(NEEDS_YOU, nowLine = null, question = pendingQuestionOf(toolInFlight[rec.id], message, type)?.take(QUESTION_MAX))
             }
             "Stop" -> {
                 toolInFlight.remove(rec.id)
@@ -789,29 +790,155 @@ internal fun cleanTitle(raw: String?): String? {
 }
 
 /**
- * One line describing a tool call: the tool name and its main argument.
+ * One line saying in words what a tool call does, for the row of a working session.
  *
- * Only the command, file path or pattern is read; the rest of `tool_input`
- * (which can hold a whole file) is never kept. A question put to the person
- * through `AskUserQuestion` is kept as `Asks: <question>` instead, so the row
- * shows what is asked; like any line it is cut at [TOOL_LINE_MAX], which is
- * ample for a row.
+ * The row is read at a glance across many terminals, so it never shows a raw command, a long
+ * path or a whole `tool_input`. Each kind of tool gets a short phrase instead:
+ * - `Bash` uses the `description` Claude Code sends with the call, or `Running <first word of the
+ *   command>` when there is none;
+ * - the file tools name the file only (`Editing card-check`, `Reading tick.py`, `Writing notes.md`);
+ * - searches name their pattern (`Searching for "fun toolLine"`), web fetches the host
+ *   (`Fetching example.com`);
+ * - an MCP tool is `<server>: <tool name in words>` (`lunamux: list tasks`);
+ * - an agent is `Running an agent: <its description>`, and the other tools Claude Code ships get
+ *   a plain verb phrase (`Stopping a background task`, `Updating the task list`);
+ * - a tool this code does not know is `Using <its name>`, never its arguments.
+ *
+ * A question put to the person through `AskUserQuestion` is kept as `Asks: <question>`, so the row
+ * shows what is asked. Every line is cut at [TOOL_LINE_MAX], which is ample for a row.
+ *
+ * Called from the tracker's `PreToolUse` handling.
  *
  * @param event a PreToolUse hook payload.
- * @return for example `Bash ./gradlew test`, or null without a tool name.
+ * @return for example `Running the server tests`, or null without a tool name.
+ * @see rawToolLine for the exact call, which a permission prompt names
  */
 internal fun toolLine(event: JsonObject): String? {
     val tool = event.str("tool_name") ?: return null
     val input = event["tool_input"] as? JsonObject
-    if (tool == ASK_TOOL) {
-        val asked = ((input?.get("questions") as? JsonArray)?.firstOrNull() as? JsonObject)?.str("question")
-        if (!asked.isNullOrBlank()) return (ASK_PREFIX + asked.trim()).take(TOOL_LINE_MAX)
-    }
+    askedLine(tool, input)?.let { return it }
+    return wordsFor(tool, input).take(TOOL_LINE_MAX)
+}
+
+/**
+ * The tool call as Claude Code made it: the tool name and its main argument (the command, file
+ * path, pattern, URL or query), which is what a permission prompt asks the person to allow.
+ *
+ * Only that one argument is read; the rest of `tool_input` (which can hold a whole file) is never
+ * kept. A question put to the person is `Asks: <question>`, as in [toolLine]. Cut at
+ * [TOOL_LINE_MAX].
+ *
+ * Called from the tracker's `PreToolUse` handling, which keeps it while the call is in flight.
+ *
+ * @param event a PreToolUse hook payload.
+ * @return for example `Bash ./gradlew test`, or null without a tool name.
+ * @see toolLine for the wording a row shows
+ */
+internal fun rawToolLine(event: JsonObject): String? {
+    val tool = event.str("tool_name") ?: return null
+    val input = event["tool_input"] as? JsonObject
+    askedLine(tool, input)?.let { return it }
     val arg = listOf("command", "file_path", "pattern", "path", "url", "query")
         .firstNotNullOfOrNull { input?.str(it) }
-        ?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim()
+        ?.let(::firstLine)
     return (if (arg == null) tool else "$tool $arg").take(TOOL_LINE_MAX)
 }
+
+/** The `Asks: <question>` line for an `AskUserQuestion` call that carries a question, else null. */
+private fun askedLine(tool: String, input: JsonObject?): String? {
+    if (tool != ASK_TOOL) return null
+    val asked = ((input?.get("questions") as? JsonArray)?.firstOrNull() as? JsonObject)?.str("question")
+    return if (asked.isNullOrBlank()) null else (ASK_PREFIX + asked.trim()).take(TOOL_LINE_MAX)
+}
+
+/** The first non-blank line of [text], trimmed, or null when it has none. */
+private fun firstLine(text: String): String? =
+    text.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }
+
+/** The last path segment of [path], so a row names the file and not where it lives. */
+private fun fileNameOf(path: String): String =
+    path.trimEnd('/', '\\').substringAfterLast('/').substringAfterLast('\\')
+
+/**
+ * The words for one tool call, before the length cut.
+ *
+ * @param tool the tool name from the hook payload.
+ * @param input the call's `tool_input`, or null.
+ * @return the phrase described at [toolLine].
+ */
+private fun wordsFor(tool: String, input: JsonObject?): String {
+    fun arg(vararg keys: String): String? =
+        keys.firstNotNullOfOrNull { input?.str(it)?.let(::firstLine) }
+    fun file(vararg keys: String): String? = arg(*keys)?.let(::fileNameOf)?.takeIf { it.isNotEmpty() }
+    return when (tool) {
+        "Bash" -> arg("description") ?: "Running ${commandWordOf(input?.str("command"))}"
+        "Edit", "MultiEdit" -> "Editing " + (file("file_path") ?: "a file")
+        "NotebookEdit" -> "Editing " + (file("notebook_path", "file_path") ?: "a notebook")
+        "Write" -> "Writing " + (file("file_path") ?: "a file")
+        "Read" -> "Reading " + (file("file_path") ?: "a file")
+        "Grep" -> arg("pattern")?.let { "Searching for \"$it\"" } ?: "Searching the code"
+        "Glob" -> arg("pattern")?.let { "Finding files matching \"$it\"" } ?: "Finding files"
+        "LS" -> "Listing " + (file("path") ?: "a folder")
+        "WebSearch" -> arg("query")?.let { "Searching the web for \"$it\"" } ?: "Searching the web"
+        "WebFetch" -> "Fetching " + (arg("url")?.let(::hostOf) ?: "a web page")
+        "Task", "Agent" -> arg("description")?.let { "Running an agent: $it" } ?: "Running an agent"
+        "TaskStop", "KillShell", "KillBash" -> "Stopping a background task"
+        "TaskOutput", "BashOutput" -> "Checking a background task"
+        "TodoWrite" -> "Updating the task list"
+        "Skill" -> arg("skill", "name")?.let { "Using the $it skill" } ?: "Using a skill"
+        "EnterPlanMode" -> "Entering plan mode"
+        "ExitPlanMode" -> "Presenting a plan"
+        "ToolSearch" -> "Looking up tools"
+        ASK_TOOL -> "Asking a question"
+        else -> mcpWords(tool) ?: "Using ${wordsOf(tool)}"
+    }
+}
+
+/** Runs of whitespace, for splitting a command into words. */
+private val WHITESPACE = Regex("""\s+""")
+
+/** A `NAME=value` word that sets an environment variable in front of a command. */
+private val ENV_ASSIGNMENT = Regex("""[A-Za-z_][A-Za-z0-9_]*=.*""")
+
+/**
+ * The program a shell command starts, for `Running <program>` when Claude Code sent no description:
+ * its first word without any leading `NAME=value` assignments, redirections or folder.
+ *
+ * @param command the `command` argument of a Bash call, or null.
+ * @return the program's name, or `a command` when there is none to name.
+ */
+private fun commandWordOf(command: String?): String {
+    val word = command?.let(::firstLine)?.split(WHITESPACE)
+        ?.firstOrNull { it.isNotEmpty() && !ENV_ASSIGNMENT.matches(it) }
+        ?.let(::fileNameOf)
+    return word?.takeIf { it.isNotEmpty() } ?: "a command"
+}
+
+/** The host of [url] (`example.com` for `https://example.com/a?b`), or the url itself when it has none. */
+private fun hostOf(url: String): String =
+    url.substringAfter("://").substringBefore('/').substringBefore('?').substringBefore('#')
+        .substringAfter('@').ifEmpty { url }
+
+/**
+ * `<server>: <tool in words>` for an MCP tool named `mcp__<server>__<tool>`, else null.
+ *
+ * A connector's own `claude_ai_` prefix is dropped and underscores become spaces, so
+ * `mcp__lunamux__list_tasks` reads `lunamux: list tasks`.
+ *
+ * @param tool the tool name from the hook payload.
+ * @return the phrase, or null when [tool] is not an MCP tool name.
+ */
+private fun mcpWords(tool: String): String? {
+    if (!tool.startsWith("mcp__")) return null
+    val rest = tool.removePrefix("mcp__")
+    val server = rest.substringBefore("__").removePrefix("claude_ai_")
+    val name = rest.substringAfter("__", "")
+    if (server.isEmpty() || name.isEmpty()) return null
+    return "${wordsOf(server)}: ${wordsOf(name)}"
+}
+
+/** [name] with underscores read as spaces (`list_tasks` is `list tasks`). */
+private fun wordsOf(name: String): String = name.replace('_', ' ').trim()
 
 /** The tool Claude Code uses to put a question to the person, whose text [toolLine] keeps. */
 private const val ASK_TOOL = "AskUserQuestion"
@@ -829,13 +956,13 @@ private const val ASK_PREFIX = "Asks: "
  *
  * Called from the tracker's `Notification` hook handling.
  *
- * @param pending the tool line of the PreToolUse that preceded the prompt, or null.
+ * @param pending the [rawToolLine] of the PreToolUse that preceded the prompt, or null.
  * @param message the hook's own text, used when no tool call is pending or the prompt is not a
  *   permission prompt.
  * @param type the hook's `notification_type`, or null from a version that omits it (taken as a
  *   permission prompt).
  * @return the line to show, or null when there is neither.
- * @see toolLine
+ * @see rawToolLine
  */
 internal fun pendingQuestionOf(pending: String?, message: String?, type: String? = null): String? = when {
     pending == null -> message

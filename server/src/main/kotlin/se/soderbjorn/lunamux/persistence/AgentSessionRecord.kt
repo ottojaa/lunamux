@@ -38,7 +38,7 @@ package se.soderbjorn.lunamux.persistence
  * @property links ticket keys (`ABC-12`) found in the branch name or title.
  * @property state `needs_you`, `working`, `idle` or `ended`.
  * @property stateSince epoch millis when [state] last changed.
- * @property nowLine the last tool line ("Bash ./gradlew test"), or null.
+ * @property nowLine what the last tool call does in words ("Running the server tests"), or null.
  * @property question what the agent is asking when [state] is `needs_you`.
  * @property lastScreen the last 200 plain-text screen lines, written when the record ends.
  * @property createdAt epoch millis when the record opened.
