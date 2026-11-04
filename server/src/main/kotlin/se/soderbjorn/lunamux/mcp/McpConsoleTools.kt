@@ -38,6 +38,7 @@ import kotlinx.serialization.json.put
 import se.soderbjorn.lunamux.AgentSession
 import se.soderbjorn.lunamux.TerminalSessions
 import se.soderbjorn.lunamux.WindowState
+import se.soderbjorn.lunamux.isListed
 
 /** Grid bounds accepted by open_console / screen_config. */
 private const val MIN_COLS = 4
@@ -182,7 +183,7 @@ fun registerMcpConsoleTools() {
         val title = args.optString("title") ?: "Agent console"
         val cfg = WindowState.config.value
         val tabId = args.optString("tabId")
-            ?: cfg.activeTabId ?: cfg.tabs.firstOrNull()?.id
+            ?: cfg.activeTabId ?: cfg.tabs.firstOrNull { it.isListed }?.id
             ?: throw McpArgumentException("No tabs exist")
 
         val session = AgentSession(

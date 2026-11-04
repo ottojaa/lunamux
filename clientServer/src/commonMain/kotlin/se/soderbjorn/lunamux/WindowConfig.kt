@@ -100,6 +100,36 @@ val WindowConfig.effectiveTabs: List<TabConfig>
     get() = activeWorldOrNull()?.tabs ?: tabs
 
 /**
+ * The tabs a person is shown and can switch to: [effectiveTabs] without the background tabs an
+ * agent opened to work out of sight.
+ *
+ * Called by every place that draws or cycles tabs (the tab strip, the sidebar, the 3D overview,
+ * keyboard tab switching, the overview's tab list). Code that only looks a pane or tab up by id
+ * must keep reading [effectiveTabs], so a background pane is still found.
+ *
+ * Android's tab screens read the same tab list; they should read this one too once they draw
+ * background work.
+ *
+ * @return the active world's tabs that are not [TabConfig.isBackground].
+ * @see TabConfig.isListed
+ * @see effectiveTabs
+ */
+val WindowConfig.listedTabs: List<TabConfig>
+    get() = effectiveTabs.filter { it.isListed }
+
+/**
+ * Whether a person can see and switch to this tab: it is not a background tab.
+ *
+ * This is separate from [TabConfig.isHidden], which is the person's own choice and still shows
+ * the tab in the tab bar's overflow menu.
+ *
+ * @return true for every tab except a background one.
+ * @see listedTabs
+ */
+val TabConfig.isListed: Boolean
+    get() = !isBackground
+
+/**
  * The active tab id within [effectiveTabs]: the active world's `activeTabId`
  * for world-aware configs, else the legacy flat [WindowConfig.activeTabId].
  * May be `null` (or an id not present in [effectiveTabs]) — callers default to
@@ -219,6 +249,20 @@ data class TabConfig(
      * dropdown. Drives `WindowState.activeLayoutByTab`.
      */
     val layoutPreset: String? = null,
+    /**
+     * Whether an agent opened this tab to work out of sight. A background tab exists with all
+     * its panes and sessions, but it appears in no tab strip, sidebar, overflow menu, 3D
+     * overview or keyboard tab cycle, and it is never the active tab. Its sessions still count
+     * as members of their task and can still ask for the person. Only an agent sets it (through
+     * the MCP tools); [WindowCommand.TakeOverTab] clears it. Defaults to `false` so persisted
+     * configs round-trip unchanged.
+     *
+     * Orthogonal to [isHidden], which is the person's own choice and keeps the tab reachable.
+     *
+     * @see listedTabs
+     * @see WindowCommand.TakeOverTab
+     */
+    val isBackground: Boolean = false,
 )
 
 /**

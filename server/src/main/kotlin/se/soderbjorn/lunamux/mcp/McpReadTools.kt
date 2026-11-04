@@ -227,7 +227,9 @@ fun registerMcpReadTools(settingsRepo: SettingsRepository, usageMonitor: ClaudeU
         description = "The full window layout across every world: each tab (annotated with its " +
             "worldId/worldName) and its windows (panes), each window's kind " +
             "(terminal/fileBrowser/git/agent), geometry (fractions of the tab area), stacking, " +
-            "focus, and backing sessionId. Use list_worlds for a worlds-only summary.",
+            "focus, and backing sessionId. A tab with background: true is one an agent runs out of " +
+            "sight; the person does not see it until they take it over. Use list_worlds for a " +
+            "worlds-only summary.",
         inputSchema = schemaObject(),
     ) { _, _ ->
         val cfg = WindowState.config.value
@@ -248,6 +250,7 @@ fun registerMcpReadTools(settingsRepo: SettingsRepository, usageMonitor: ClaudeU
                         put("worldName", world.name)
                         put("title", tab.title)
                         put("hidden", tab.isHidden)
+                        put("background", tab.isBackground)
                         put("layoutPreset", tab.layoutPreset)
                         put("focusedWindowId", tab.focusedPaneId)
                         put("windows", buildJsonArray {

@@ -366,6 +366,11 @@ sealed class WindowEnvelope {
  * @param taskId the id of the [AgentTask] this session belongs to, or null when it is a task of
  *   its own. Decided by the server's task index (an agent's explicit choice, then a task file's
  *   match); a client never works it out itself.
+ * @param startedAt epoch millis the record opened. Never changes, so the overview keeps sessions in
+ *   the order they started; null from servers that do not send it.
+ * @param background whether the session runs in a background tab an agent opened, out of sight.
+ *   It is still a member of its task and still counted; the overview shows it as a member row
+ *   that opens a read-only peek instead of jumping to a tab, and search never finds it.
  */
 @Serializable
 data class AgentSessionSummary(
@@ -387,6 +392,8 @@ data class AgentSessionSummary(
     val lastActivityAt: Long? = null,
     val firstPrompt: String? = null,
     val taskId: String? = null,
+    val background: Boolean = false,
+    val startedAt: Long? = null,
 )
 
 /**
@@ -588,6 +595,17 @@ enum class DiffLineType {
  * @param refreshedAtMillis epoch millis the task file was last written or touched (its modification
  *   time), or null when no file declares the task. A file nobody has refreshed for a while no longer
  *   says anything about its members; the overview marks such rows stale from this alone.
+ * @param leadRecordId the id of the session record that speaks for the task (the agent that made it,
+ *   or the one an agent named with `set_task_lead`), resolved to the record running in the pane that
+ *   session ran in (the pane, not its terminal id, which is renumbered at every start), else to the
+ *   newest ended record that ran in that pane; null when the task has none or no record exists yet.
+ *   The task follows its session's Claude conversation to the pane it is resumed in. The overview
+ *   opens it on ↵.
+ * @param status the one-line status a member set through `set_task_status`, shown on the task's
+ *   row; null when none was set or it was cleared.
+ * @param statusAtMillis epoch millis the status was set, or null with no status.
+ * @param startedAtMillis epoch millis the server first saw the task, stamped once and never
+ *   changed; the overview keeps rows in this order. Null only for a task not yet stamped.
  */
 @Serializable
 data class AgentTask(
@@ -598,6 +616,10 @@ data class AgentTask(
     val hasOpen: Boolean = false,
     val members: List<AgentTaskMember> = emptyList(),
     val refreshedAtMillis: Long? = null,
+    val leadRecordId: String? = null,
+    val status: String? = null,
+    val statusAtMillis: Long? = null,
+    val startedAtMillis: Long? = null,
 )
 
 /**

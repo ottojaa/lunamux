@@ -66,6 +66,37 @@ object WindowState {
     }
 
     private fun newNodeId(): String = mintId("n", nodeIdCounter)
+
+    /**
+     * The number in a pane (layout leaf) id: `n7-ab12` and the older `n7` both give 7. Null for an id
+     * of any other shape.
+     *
+     * Called by [rehydrate] for every leaf id it meets and by [seedNodeIdsFromRecords]; the counter
+     * that [newNodeId] counts from must start above every number returned here.
+     *
+     * @param id a layout leaf id.
+     * @return the counter value the id was minted from, or null.
+     * @see newNodeId
+     */
+    internal fun nodeIdNumber(id: String): Long? = id.removePrefix("n").substringBefore('-').toLongOrNull()
+
+    /**
+     * Make [newNodeId] skip every pane id an agent session record remembers.
+     *
+     * A pane that was closed leaves no trace in the layout, but the sessions that ran in it are still
+     * on record under its id, and a task remembers its own session's pane by that id. A new pane that
+     * was handed the same id would put the task on an unrelated pane. [rehydrate] does this as part of
+     * rebuilding the layout; [initialize] calls it before [buildDefault] on the paths where the layout
+     * is not rebuilt (nothing persisted, or the persisted layout failed to load).
+     *
+     * @param repo the settings database whose agent session records are read.
+     * @see SettingsRepository.allAgentSessionLeafIds
+     */
+    private fun seedNodeIdsFromRecords(repo: SettingsRepository) {
+        val highest = runCatching { repo.allAgentSessionLeafIds() }.getOrDefault(emptyList())
+            .mapNotNull(::nodeIdNumber).maxOrNull() ?: return
+        nodeIdCounter.updateAndGet { maxOf(it, highest) }
+    }
     private fun newTabId(): String = mintId("t", tabIdCounter)
     private fun newWorldId(): String = mintId("w", worldIdCounter)
 
@@ -274,9 +305,11 @@ object WindowState {
                 rehydrate(loaded, repo)
             } catch (t: Throwable) {
                 log.warn("Failed to rehydrate persisted window config; using default", t)
+                seedNodeIdsFromRecords(repo)
                 buildDefault()
             }
         } else {
+            seedNodeIdsFromRecords(repo)
             buildDefault()
         }
         _config.value = cfg
@@ -324,8 +357,7 @@ object WindowState {
             // Ids may carry a `-nonce` suffix (post-#86 shape) — the counter
             // lives in the numeric portion before the dash. Legacy ids have
             // no dash, so substringBefore returns the whole remainder.
-            id.removePrefix("n").substringBefore('-').toLongOrNull()
-                ?.let { if (it > maxNodeId) maxNodeId = it }
+            nodeIdNumber(id)?.let { if (it > maxNodeId) maxNodeId = it }
         }
 
         fun rebuildLeaf(leaf: LeafNode): LeafNode? {
@@ -354,10 +386,14 @@ object WindowState {
             }
         }
 
-        fun rebuildTab(tab: TabConfig): TabConfig {
+        fun trackTabId(tab: TabConfig) {
             // Same nonce-aware numeric extraction as [trackNodeId].
             tab.id.removePrefix("t").substringBefore('-').toLongOrNull()
                 ?.let { if (it > maxTabId) maxTabId = it }
+        }
+
+        fun rebuildTab(tab: TabConfig): TabConfig {
+            trackTabId(tab)
             val rebuiltPanes = tab.panes.mapNotNull { p ->
                 val rebuilt = rebuildLeaf(p.leaf) ?: return@mapNotNull null
                 val box = PaneGeometry.normalize(p.x, p.y, p.width, p.height)
@@ -376,13 +412,27 @@ object WindowState {
         val rebuiltWorlds = loaded.worlds.map { world ->
             world.id.removePrefix("w").substringBefore('-').toLongOrNull()
                 ?.let { if (it > maxWorldId) maxWorldId = it }
-            val rebuiltTabs = world.tabs.map { rebuildTab(it) }
+            // A background tab exists for the agent that opened it, and that agent died with the old
+            // process. Rebuilt, it would be a shell nobody can see or close, so it is dropped; its
+            // ids are still counted so none is handed out again.
+            val rebuiltTabs = world.tabs.mapNotNull { tab ->
+                if (tab.isBackground) {
+                    trackTabId(tab)
+                    tab.panes.forEach { trackNodeId(it.leaf.id) }
+                    null
+                } else rebuildTab(tab)
+            }
             val tabIdSet = rebuiltTabs.mapTo(HashSet()) { it.id }
             world.copy(
                 tabs = rebuiltTabs,
-                activeTabId = world.activeTabId?.takeIf { it in tabIdSet },
+                activeTabId = world.activeTabId?.takeIf { id -> id in tabIdSet },
             )
         }
+
+        // A pane that was closed leaves no trace in the layout, but the sessions that ran in it are
+        // still on record under its id. Counting those ids keeps a new pane from being handed one,
+        // which would put a task's remembered pane on an unrelated one.
+        runCatching { repo.allAgentSessionLeafIds() }.getOrDefault(emptyList()).forEach(::trackNodeId)
 
         nodeIdCounter.set(maxNodeId)
         tabIdCounter.set(maxTabId)
@@ -454,10 +504,16 @@ object WindowState {
      *
      *  @param worldId the world to add the tab to, or null for the active world.
      *  @param initialCwd folder the tab's shell starts in, or null for the home folder.
+     *  @param background true to open the tab as a background tab: it is not made the active tab
+     *    and appears in no tab list (see [TabConfig.isBackground]).
      *  @return the newly minted tab id (used by the MCP `create_tab` tool
      *    to report the created tab; the `/window` command path ignores it).
      */
-    fun addTab(worldId: String? = null, initialCwd: String? = null): String = synchronized(this) {
+    fun addTab(
+        worldId: String? = null,
+        initialCwd: String? = null,
+        background: Boolean = false,
+    ): String = synchronized(this) {
         // Bootstrap a default world if the config is world-less (the
         // pre-[initialize] path some unit tests exercise). Production always
         // has at least the cold-start "Home" world from [buildDefault].
@@ -475,6 +531,7 @@ object WindowState {
             newTabId = tabId,
             newNodeId = nodeId,
             sessionId = sessionId,
+            background = background,
         )
         _config.value = writeBackWorld(cfg, wid, newView)
         // Register the auto preset in the live map so pane add/remove/focus
@@ -500,12 +557,68 @@ object WindowState {
         commitWithSessionGc(cfg, writeBackWorld(cfg, world.id, newView))
     }
 
-    /** Mark [tabId] as the currently-selected tab (within its own world). */
+    /**
+     * Mark [tabId] as the currently-selected tab (within its own world). A background tab is
+     * refused: only [takeOverTab] makes one active.
+     */
     fun setActiveTab(tabId: String) = synchronized(this) {
         val cfg = _config.value
         val world = worldOfTab(cfg, tabId) ?: return@synchronized
         val newView = TabManager.setActiveTab(viewOf(world), tabId) ?: return@synchronized
         _config.value = writeBackWorld(cfg, world.id, newView)
+    }
+
+    /**
+     * Turn a background tab into a normal tab and make it the active tab of its world, switching
+     * to that world when it is another one. Called by the `TakeOverTab` window command.
+     *
+     * @param tabId the tab to take over; unknown ids are ignored.
+     * @return true when the tab exists (whether or not it was a background tab).
+     * @see TabConfig.isBackground
+     */
+    fun takeOverTab(tabId: String): Boolean = synchronized(this) {
+        val cfg = _config.value
+        val world = worldOfTab(cfg, tabId) ?: return@synchronized false
+        val newView = TabManager.takeOverTab(viewOf(world), tabId)
+        val withTab = if (newView != null) writeBackWorld(cfg, world.id, newView) else cfg
+        _config.value = if (withTab.activeWorldId != world.id) {
+            syncLegacyMirror(withTab.copy(activeWorldId = world.id))
+        } else withTab
+        true
+    }
+
+    /**
+     * Whether [tabId] is a background tab.
+     *
+     * @param tabId the tab to look up.
+     * @return true when the tab exists and is a background tab.
+     */
+    fun isBackgroundTab(tabId: String): Boolean = synchronized(this) {
+        allTabs(_config.value).any { it.id == tabId && it.isBackground }
+    }
+
+    /**
+     * Whether the pane showing terminal session [sessionId] sits in a background tab.
+     *
+     * Called by [livePaneSnapshot] so a new agent record knows whether it runs out of sight.
+     *
+     * @param sessionId a terminal session id.
+     * @return true for a pane in a background tab; false for any other pane or an unknown session.
+     */
+    fun isBackgroundSession(sessionId: String): Boolean = synchronized(this) {
+        allTabs(_config.value).any { tab -> tab.isBackground && tab.panes.any { it.leaf.sessionId == sessionId } }
+    }
+
+    /**
+     * The layout leaf ids of every pane in [tabId].
+     *
+     * Called by the `TakeOverTab` handler to tell the agent tracker which records to make ordinary.
+     *
+     * @param tabId the tab to look up.
+     * @return the leaf ids, or an empty list for an unknown tab.
+     */
+    fun leafIdsOfTab(tabId: String): List<String> = synchronized(this) {
+        allTabs(_config.value).firstOrNull { it.id == tabId }?.panes?.map { it.leaf.id } ?: emptyList()
     }
 
     /** Record the user's focus on [paneId] in [tabId]. */
@@ -670,7 +783,9 @@ object WindowState {
         if (src.tabs.size <= 1) return@synchronized // don't strand the source world empty
         val moving = src.tabs.first { it.id == tabId }
         val srcRemaining = src.tabs.filterNot { it.id == tabId }
-        val srcActive = if (src.activeTabId == tabId) srcRemaining.first().id else src.activeTabId
+        // A world must keep a tab a person can see.
+        if (srcRemaining.none { it.isListed }) return@synchronized
+        val srcActive = if (src.activeTabId == tabId) srcRemaining.first { it.isListed }.id else src.activeTabId
         val newWorlds = cfg.worlds.map { w ->
             when (w.id) {
                 src.id -> w.copy(tabs = srcRemaining, activeTabId = srcActive)
@@ -723,6 +838,22 @@ object WindowState {
      */
     fun customNameOfSession(sessionId: String): String? = synchronized(this) {
         findLeafBySession(_config.value, sessionId)?.customName
+    }
+
+    /**
+     * The terminal session id of the pane with layout leaf id [leafId], the reverse of [leafIdOfSession].
+     *
+     * Called by `TaskIndex` to tell an agent which session id names a task's own pane now, because
+     * the task remembers the pane by its leaf id and the session id changes with every restart.
+     *
+     * @param leafId a layout leaf id.
+     * @return the pane's terminal session id, or null when no pane has that id or the pane has no
+     *   terminal session (a file browser, say).
+     * @see leafIdOfSession
+     */
+    fun sessionIdOfLeaf(leafId: String): String? = synchronized(this) {
+        allTabs(_config.value).firstNotNullOfOrNull { tab -> tab.panes.firstOrNull { it.leaf.id == leafId } }
+            ?.leaf?.sessionId?.takeIf { it.isNotEmpty() }
     }
 
     private fun findLeafBySession(cfg: WindowConfig, sessionId: String): LeafNode? {

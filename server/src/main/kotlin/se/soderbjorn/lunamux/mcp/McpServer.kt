@@ -235,10 +235,14 @@ class McpToolResult(val content: JsonArray, val isError: Boolean = false) {
  *   tools that vary behaviour by scope).
  * @property session the caller's [McpSession], or null when the client
  *   never initialized a session (tolerated for stateless calls).
+ * @property callerSessionId the terminal session id (`LUNAMUX_SESSION_ID`) of the pane the calling
+ *   agent runs in, read from the `X-Lunamux-Session` request header; null when the client sends
+ *   none. Unchecked: a tool that relies on it must check the pane exists.
  */
 class McpCallContext(
     val scope: McpScope,
     val session: McpSession?,
+    val callerSessionId: String? = null,
 )
 
 /**
@@ -406,9 +410,15 @@ object McpServer {
      * @param raw the request body (one JSON-RPC message).
      * @param scope the authenticated token's scope.
      * @param session the caller's session (null before `initialize`).
+     * @param callerSessionId the pane the caller says it runs in (the `X-Lunamux-Session` header), or null.
      * @return what the route layer should send back.
      */
-    suspend fun handleMessage(raw: String, scope: McpScope, session: McpSession?): McpHandled {
+    suspend fun handleMessage(
+        raw: String,
+        scope: McpScope,
+        session: McpSession?,
+        callerSessionId: String? = null,
+    ): McpHandled {
         val element = runCatching { mcpJson.parseToJsonElement(raw) }.getOrNull()
             ?: return McpHandled(errorResponse(JsonNull, PARSE_ERROR, "Parse error"))
         if (element is JsonArray) {
@@ -436,7 +446,7 @@ object McpServer {
             "initialize" -> handleInitialize(id, params)
             "ping" -> McpHandled(resultResponse(id, JsonObject(emptyMap())))
             "tools/list" -> McpHandled(resultResponse(id, buildToolsList()))
-            "tools/call" -> McpHandled(handleToolsCall(id, params, scope, session))
+            "tools/call" -> McpHandled(handleToolsCall(id, params, scope, session, callerSessionId))
             else -> McpHandled(errorResponse(id, METHOD_NOT_FOUND, "Method not found: $method"))
         }
     }
@@ -486,7 +496,15 @@ object McpServer {
                     "add_to_task joins a session to a task that exists. When you continue earlier work, " +
                     "call list_tasks first and join the task that is already there instead of " +
                     "creating another. A session you never group is " +
-                    "a task of its own, which is right for work that stands alone.",
+                    "a task of its own, which is right for work that stands alone. " +
+                    "A task has one session that speaks for it, the one that made it (set_task_lead " +
+                    "names another), and a one-line status the person sees on its row: keep it " +
+                    "current with set_task_status when something worth knowing changes. " +
+                    "Work the person need not watch can run in the background: create_tab, " +
+                    "create_window and run_command take background: true, which opens it out of " +
+                    "sight (later windows join it by its tabId). Background sessions are still " +
+                    "counted and can still ask for the person; the person takes a tab over from " +
+                    "the overview.",
             )
         }
         return McpHandled(resultResponse(id, result), newSessionId = session.id)
@@ -511,6 +529,7 @@ object McpServer {
         params: JsonObject,
         scope: McpScope,
         session: McpSession?,
+        callerSessionId: String?,
     ): String {
         val name = (params["name"] as? JsonPrimitive)?.contentOrNull
             ?: return errorResponse(id, INVALID_PARAMS, "tools/call requires 'name'")
@@ -528,7 +547,7 @@ object McpServer {
         }
         val args = params["arguments"] as? JsonObject ?: JsonObject(emptyMap())
         val result = try {
-            tool.handler(McpCallContext(scope, session), args)
+            tool.handler(McpCallContext(scope, session, callerSessionId), args)
         } catch (e: McpArgumentException) {
             McpToolResult.error(e.message ?: "Invalid arguments")
         } catch (e: kotlinx.coroutines.CancellationException) {

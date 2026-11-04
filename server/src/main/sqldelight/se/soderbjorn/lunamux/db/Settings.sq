@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
     repo_root           TEXT,
     search_text         TEXT,
     last_said           TEXT,
-    task_id             TEXT
+    task_id             TEXT,
+    background          INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS agent_tasks (
@@ -44,6 +45,25 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
     title      TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
+);
+
+-- What the server keeps about a task besides its name, for any task id (an agent-made task or a
+-- task file's): when the server first saw it, the pane whose session speaks for it, and its
+-- one-line status. A row is made on first sight of the task and never replaces another.
+-- lead_leaf is the pane's layout leaf id, which survives a restart; lead_session is the terminal
+-- session id the pane had when it was named, which does not (ids are handed out again from s1),
+-- and is the only thing an older row has. lead_agent_session is the agent's own conversation id of
+-- the session last seen in that pane, so the task can follow the conversation when it is reopened
+-- in another pane.
+CREATE TABLE IF NOT EXISTS task_meta (
+    task_id      TEXT NOT NULL PRIMARY KEY,
+    started_at   INTEGER NOT NULL,
+    lead_session TEXT,
+    status       TEXT,
+    status_by    TEXT,
+    status_at    INTEGER,
+    lead_leaf    TEXT,
+    lead_agent_session TEXT
 );
 
 selectByKey:
@@ -73,40 +93,44 @@ upsertAgentSession:
 INSERT OR REPLACE INTO agent_sessions(
     id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
     worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at, repo_root, search_text, last_said, task_id
+    question, last_screen, created_at, ended_at, repo_root, search_text, last_said, task_id, background
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-    (SELECT search_text FROM agent_sessions WHERE id = ?), ?, ?);
+    (SELECT search_text FROM agent_sessions WHERE id = ?), ?, ?, ?);
 
 -- The hot reads below name their columns so the long search_text never rides
 -- along; imported history (source = 'import') is only ever found by search.
 selectRecentEndedAgentSessions:
 SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
     worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at, repo_root, last_said, task_id
+    question, last_screen, created_at, ended_at, repo_root, last_said, task_id, background
 FROM agent_sessions WHERE state = 'ended' AND source != 'import' AND ended_at >= ?
 ORDER BY ended_at DESC LIMIT ?;
 
 selectAgentSessionByAgentId:
 SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
     worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at, repo_root, last_said, task_id
+    question, last_screen, created_at, ended_at, repo_root, last_said, task_id, background
 FROM agent_sessions WHERE agent = ? AND agent_session_id = ? ORDER BY created_at DESC LIMIT 1;
 
 selectAgentSessionById:
 SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
     worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at, repo_root, last_said, task_id
+    question, last_screen, created_at, ended_at, repo_root, last_said, task_id, background
 FROM agent_sessions WHERE id = ?;
 
 selectOpenAgentSessions:
 SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
     worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at, repo_root, last_said, task_id
+    question, last_screen, created_at, ended_at, repo_root, last_said, task_id, background
 FROM agent_sessions WHERE state != 'ended';
 
 -- Close one record at the time it was last known to be alive, not at the time it was found closed.
 endAgentSessionAt:
 UPDATE agent_sessions SET state = 'ended', ended_at = :endedAt, state_since = :endedAt WHERE id = :id;
+
+-- Taking a background tab over makes its sessions ordinary again, closed ones included.
+clearAgentSessionBackgroundByLeaf:
+UPDATE agent_sessions SET background = 0 WHERE leaf_id = ?;
 
 setAgentSessionSearchText:
 UPDATE agent_sessions SET search_text = ? WHERE id = ?;
@@ -118,21 +142,23 @@ WHERE state = 'ended' AND transcript_path IS NOT NULL AND search_text IS NULL;
 -- Every record whose title, first prompt, branch, links, transcript text or last
 -- screen contains :raw (LIKE, with :pattern already escaped by the caller).
 -- The two big columns come back only as a short window around the first match.
+-- A background session (one an agent runs out of sight) is never found, live or closed.
 searchAgentSessions:
 SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
     worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, created_at, ended_at, repo_root, last_said, task_id,
+    question, created_at, ended_at, repo_root, last_said, task_id, background,
     CASE WHEN search_text LIKE :pattern ESCAPE '\'
         THEN substr(search_text, max(1, instr(lower(search_text), lower(:raw)) - 80), 240) END AS transcript_window,
     CASE WHEN last_screen LIKE :pattern ESCAPE '\'
         THEN substr(last_screen, max(1, instr(lower(last_screen), lower(:raw)) - 80), 240) END AS screen_window
 FROM agent_sessions
-WHERE title LIKE :pattern ESCAPE '\'
+WHERE background = 0 AND (
+    title LIKE :pattern ESCAPE '\'
     OR first_prompt LIKE :pattern ESCAPE '\'
     OR branch LIKE :pattern ESCAPE '\'
     OR links LIKE :pattern ESCAPE '\'
     OR search_text LIKE :pattern ESCAPE '\'
-    OR last_screen LIKE :pattern ESCAPE '\'
+    OR last_screen LIKE :pattern ESCAPE '\')
 ORDER BY COALESCE(ended_at, state_since) DESC
 LIMIT 200;
 
@@ -141,8 +167,8 @@ LIMIT 200;
 selectAgentSessionsByTaskIds:
 SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
     worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at, repo_root, last_said, task_id
-FROM agent_sessions WHERE task_id IN :taskIds
+    question, last_screen, created_at, ended_at, repo_root, last_said, task_id, background
+FROM agent_sessions WHERE background = 0 AND task_id IN :taskIds
 ORDER BY COALESCE(ended_at, state_since) DESC
 LIMIT 200;
 
@@ -153,3 +179,31 @@ SELECT id, title, created_at, updated_at FROM agent_tasks ORDER BY created_at, i
 
 upsertAgentTask:
 INSERT OR REPLACE INTO agent_tasks(id, title, created_at, updated_at) VALUES (?, ?, ?, ?);
+
+selectTaskMeta:
+SELECT task_id, started_at, lead_session, status, status_by, status_at, lead_leaf, lead_agent_session FROM task_meta;
+
+-- The first stamp wins: a task's place in the overview must not move once it has one.
+stampTaskStart:
+INSERT OR IGNORE INTO task_meta(task_id, started_at) VALUES (?, ?);
+
+setTaskLead:
+UPDATE task_meta SET lead_session = ?, lead_leaf = ?, lead_agent_session = NULL WHERE task_id = ?;
+
+-- Moves the task to the pane its own conversation was reopened in; the conversation stays.
+moveTaskLead:
+UPDATE task_meta SET lead_session = ?, lead_leaf = ? WHERE task_id = ?;
+
+setTaskLeadAgentSession:
+UPDATE task_meta SET lead_agent_session = ? WHERE task_id = ?;
+
+-- Fills in the pane of a row that only knows a terminal session id.
+setTaskLeadLeaf:
+UPDATE task_meta SET lead_leaf = ? WHERE task_id = ?;
+
+-- Every pane an agent session ever ran in, so a leaf id is never handed out twice.
+selectAgentSessionLeafIds:
+SELECT DISTINCT leaf_id FROM agent_sessions WHERE leaf_id IS NOT NULL;
+
+setTaskStatus:
+UPDATE task_meta SET status = ?, status_by = ?, status_at = ? WHERE task_id = ?;

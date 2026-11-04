@@ -76,7 +76,7 @@ class AgentsOverviewBackingViewModelTest {
     private fun hosted(vararg ids: String) = layout(*ids.map { leaf("leaf-$it") }.toTypedArray())
 
     @Test
-    fun nowListsNeedsYouFirstThenWorkingLongestWaitingFirst() {
+    fun nowKeepsTheOrderSessionsStartedInWhateverTheirStatesAre() {
         hosted("w-new", "n-new", "w-old", "n-old")
         windowState.updateAgentSessions(
             listOf(
@@ -87,7 +87,43 @@ class AgentsOverviewBackingViewModelTest {
             ),
             claudeConnected = true,
         )
-        assertEquals(listOf("n-old", "n-new", "w-old", "w-new"), vm.state.now.map { it.id })
+        assertEquals(listOf("w-old", "n-old", "n-new", "w-new"), vm.state.now.map { it.id })
+    }
+
+    @Test
+    fun aRowDoesNotMoveWhenItsStateFlips() {
+        hosted("a", "b", "c")
+        fun show(aState: String, bState: String) = windowState.updateAgentSessions(
+            listOf(
+                session("a", aState, since = 1_000).copy(startedAt = 1_000),
+                session("b", bState, since = 2_000).copy(startedAt = 2_000),
+                session("c", "working", since = 3_000).copy(startedAt = 3_000),
+            ),
+            claudeConnected = true,
+        )
+        show("working", "working")
+        val before = vm.state.now.map { it.id }
+        // b starts asking and a goes idle later than everyone: neither changes the order.
+        show("working", "needs_you")
+        assertEquals(before, vm.state.now.map { it.id })
+        show("needs_you", "working")
+        assertEquals(before, vm.state.now.map { it.id })
+        assertEquals(listOf("a", "b", "c"), before)
+    }
+
+    @Test
+    fun theOverlayOpensOnTheFirstRowThatNeedsYouInListOrder() {
+        hosted("w", "n-late", "n-early")
+        windowState.updateAgentSessions(
+            listOf(
+                session("w", "working", since = 1_000).copy(startedAt = 1_000),
+                session("n-late", "needs_you", since = 2_000).copy(startedAt = 9_000),
+                session("n-early", "needs_you", since = 9_000).copy(startedAt = 3_000),
+            ),
+            claudeConnected = true,
+        )
+        vm.open()
+        assertEquals("n-early", vm.state.selectedId)
     }
 
     @Test

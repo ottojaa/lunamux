@@ -216,8 +216,12 @@ suspend fun renameTab(socket: WindowSocket, tabId: String, title: String) {
  * [WindowCommand.CloseTab]; the server refuses to close the last remaining
  * tab, so callers should disable the affordance when only one tab exists.
  *
+ * This closes at once. A screen that closes a tab for a person and has no question of its own
+ * should use [closeTabAsking], which first asks when an agent is working in the tab.
+ *
  * @param socket the live window WebSocket connection.
  * @param tabId  the tab to close.
+ * @see closeTabAsking
  */
 @Throws(CancellationException::class, Exception::class)
 suspend fun closeTab(socket: WindowSocket, tabId: String) {

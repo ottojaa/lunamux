@@ -30,17 +30,45 @@ idle, **‖** paused, **✓** done.
 - **Every session shows where it runs.** A session's column after the title is its repo (or its
   folder when it has none), the same as a plain row; a pull request the task file gives for it
   replaces that.
-- **Collapsed**, a panel shows the sessions that need the person (longest waiting first) and the
-  ones that are working. **Expanded** (click on the header, →, or space; ← collapses) it shows
-  every session, most urgent first: needs you, working, in review, queued, other labels, paused,
-  done. There is no "N more" line. An expansion survives closing and reopening the overview.
+- **Collapsed**, a panel shows the sessions that need the person and the ones that are working,
+  in the order its sessions are listed. **Expanded** (click on the header, →, or space; ← collapses)
+  it shows every session. In NOW the sessions keep the order they are listed in: the task file's
+  order for the members the file names, then the sessions only Lunamux knows by when they started,
+  so a session that changes state does not jump. A task in EARLIER, once expanded, reads by state:
+  needs you, working, in review, queued, other labels, paused, done. There is no "N more" line. An
+  expansion survives closing and reopening the overview.
 - **A session's status is its live line**: the question for one that needs the person, what it
   is doing for one that works, and for a finished one the word `done` plus its pull request
   (`done · #22`). An empty line shows as nothing, never as a bare separator.
-- **↵ on the header goes where the person is needed.** It jumps to the open session that most
-  needs them: the ◆ that has waited longest, else the working session with the freshest sign of
-  life. With no open session it runs the task's `open` action, if the task has one. With neither
-  it expands or collapses the panel. A task has no "lead" session.
+- **↵ on the header goes to the task's own session.** Every task can have one session that
+  speaks for it: the one that made the task, or the one an agent names with `set_task_lead`.
+  ↵ on the header jumps to its pane. When that session runs in a background tab (see below) ↵
+  opens its read-only peek instead. When it has ended, ↵ runs the task's `open` action if the task
+  has one and otherwise resumes the session. A task with no such session keeps the older
+  behaviour: ↵ jumps to the open session that most needs the person (the ◆ that has waited
+  longest, else the working session with the freshest sign of life); with no open session it runs
+  the task's `open` action, if it has one; with neither it expands or collapses the panel. The
+  session is remembered by the pane it ran in (the pane's layout id, which a restart keeps; the
+  terminal session id is renumbered at every start and would name a different pane). It is looked
+  up as the session running in that pane now; only when none is running does it stand for the
+  newest ended session that ran in that pane, never another pane's. A server restart keeps it:
+  the session is then an ended one and ↵ resumes it. A resume opens a tab of its own, so the task
+  also remembers the Claude conversation of its session, and when that conversation runs in
+  another pane while nothing runs in the remembered one, the task moves to that pane. It does so
+  once the conversation is known there (a resumed session is named by its first hook, a moment
+  after it starts). A new agent started in the remembered pane takes the task's place there
+  instead; the old conversation resumed elsewhere afterwards does not take it back. ↵ on a task
+  whose `open` action starts a new conversation does not move the task, since that conversation is
+  not the one it remembers. The own session is lost when the pane is closed and that session is
+  older than the history the overview loads (14 days, or beyond the newest 300 sessions); the task
+  then has no own session until an agent names one again with `set_task_lead`. `list_tasks`
+  reports the terminal session id the pane has now as `ownSession`, and null while the pane is
+  closed. A task made before panes were remembered is looked up by its terminal session id, and
+  the first running session found on that id fixes the pane. This is a guess: ids are handed out
+  again at every start, so it can be a pane the task never had, and `set_task_lead` corrects it.
+- **A task has a one-line status.** An agent sets it with `set_task_status` and the header shows it
+  after the counts (`1 needs you · Notes drafted, waiting on the changelog check`). Line breaks
+  become spaces, the ends are trimmed, and at most 120 characters are kept. An empty text clears it.
 - **↵ on a session** jumps to its pane, or resumes it when it has ended. A session Lunamux does
   not host and that has a `sessionId` opens in a new tab with `claude attach <session id>`.
 - **NOW is the open tabs.** A session is in NOW only while its pane is in a tab that is open,
@@ -53,11 +81,27 @@ idle, **‖** paused, **✓** done.
   wherever they run. When neither holds, the task goes to EARLIER. The chip counts what NOW shows,
   so a working session of a task that is in EARLIER is not counted as working. A tab counts as
   open whatever the tab strip shows of it.
+- **Agents can work out of sight.** An agent opens a **background tab** with `create_tab`,
+  `create_window` or `run_command` and `background: true`. The tab is not in the tab strip or the
+  tab list, never becomes the active tab and is never where the layout lands on its own. Its
+  sessions are still sessions: they are in NOW (a background pane counts as open), they count in
+  the topbar chip and a ◆ in one still asks for the person. ↵ on such a row opens the read-only
+  peek of its screen, and **⌘↵ takes the tab over**: it becomes an ordinary tab, the app switches to
+  it and the session is searchable again. The footer reads "↵ peek · ⌘↵ take over". × closes it
+  with the same confirmation as any session. A search never finds a background session while it is
+  out of sight, live or closed. A background tab is in no tab list, so the agent that opened it
+  closes it with `close_tab` when its work is done; a server restart closes every background tab,
+  as the agents in them ended with the old process.
 - **A session or task that has just ended stays in NOW for ten minutes.** With the ◆ above, this
   is the other thing in NOW that is in no tab: a session that has ended less than ten minutes ago,
   and a task that has just finished, so a row never reads "now" under a heading that says days.
   After the ten minutes it goes to EARLIER by its age. A session that is still running but idle,
   in no tab, gets no such grace.
+- **NOW keeps its order.** Rows are in the order their work started, ascending, a task at the
+  start of its first session, ties by id. The state never moves a row: a session that starts
+  needing the person stays where it was, and the overlay opens with the selection on the first row in
+  list order that needs the person. A task's start is stamped the first time the server sees it
+  and never changes, so the order survives a restart. EARLIER is newest first as before.
 - **Inside NOW, a task stays while it has work.** A task stays in NOW while a session needs the
   person or works. A task that a task file declares also stays there while it has open work, such
   as a session in review or queued, even when nothing is running at the moment, so it does not
@@ -90,6 +134,15 @@ idle, **‖** paused, **✓** done.
 - Sessions count in the topbar chip next to ordinary ones: `◆ 2 need you · 1 working`,
   `3 working`, or `agents idle`. Paused sessions never count as needing the person.
 
+## Closing a tab that is working
+
+Closing a tab whose session is working asks first, whichever way the person closes it (the × on the
+tab, the tab list). The question names the tab, says the agent stops, and when the tab holds a
+task's own session it lists the agents that task has in background tabs, which keep running, and how
+to pick up the conversation: open the agents overview and choose the task. Cancel has the focus, Esc
+cancels and ↵ acts on the focused button. A tab with nothing working in it closes at once, closing a
+single pane is not asked about, and an agent's `close_tab` never asks.
+
 Sessions of Claude Code report their state through hooks. For Codex and Gemini the state comes
 from reading the screen, so it is a best guess and lags a little.
 
@@ -107,15 +160,15 @@ words only.
 ## Trying it out
 
 `scripts/seed-agents-overview.sh <db file> <tasks folder>` fills a scratch database and folder
-with about twenty ended sessions (last active today, 1, 2, 6, 12 and 30 days ago), five
-agent-made tasks and five task files. Seed while the scratch server is stopped, then start it on
+with about twenty ended sessions (last active today, 1, 2, 6, 12 and 30 days ago), six
+agent-made tasks (one with its own session, a status and two background members) and six task files. Seed while the scratch server is stopped, then start it on
 its own port with `-Dlunamux.dbPath`, `-Dlunamux.tasksDir`, `-Dlunamux.agentGroupsDir` and
 `-Dlunamux.claudeProjects` pointing at scratch paths (`./gradlew :server:run` forwards all four).
 The script's header lists what to look at, and the cases that need a running agent.
 
 ## Grouping sessions from an agent
 
-Five MCP tools are registered. The first four change tasks and need a `read+write` token;
+Seven MCP tools are registered. All but `list_tasks` change tasks and need a `read+write` token;
 `list_tasks` needs only `read`. A session that never calls them is simply a task of its own.
 
 | Tool | Arguments | What it does |
@@ -124,7 +177,9 @@ Five MCP tools are registered. The first four change tasks and need a `read+writ
 | `add_to_task` | `taskId`, `sessionIds` | Moves sessions into a task. The id can name a task file's task: the session is then in that task. |
 | `remove_from_task` | `sessionIds` | Takes sessions out, so each is a task of its own again. Returns where each one ended up; a session that a task file still matches stays in that file's task. |
 | `rename_task` | `taskId`, `title` | Renames a task made through the tools. A file's task is named by its file, so renaming it is refused with that reason. |
-| `list_tasks` | none | Lists every task with its sessions and their states, including a task nothing is in yet. |
+| `set_task_lead` | `taskId`, `sessionId` | Names the session that speaks for the task: the pane's `$LUNAMUX_SESSION_ID`. Refused for an unknown task or pane. `create_task` already sets it to the session that made the task (the pane named in the `X-Lunamux-Session` header, else the first one in `sessionIds`). |
+| `set_task_status` | `taskId`, `text` | Sets the task's one-line status; empty clears it. Newlines become spaces, the ends are trimmed, at most 120 characters. |
+| `list_tasks` | none | Lists every task with its sessions and their states, including a task nothing is in yet, with each task's own session, status and start. |
 
 `sessionIds` are terminal session ids: the `$LUNAMUX_SESSION_ID` of the pane a session runs in.
 An agent's own id is in its environment, and `list_sessions` shows the others. `create_window`
@@ -215,7 +270,7 @@ One object per file.
 | `open` | no | The task's optional **open** action, see below. |
 | `open.command` | if `open` | Typed into a new shell (followed by ↵) when the header's ↵ has no open session to jump to. |
 | `open.folder` | if `open` | Absolute path, or one starting with `~/`. The new tab opens here. |
-| `lead` | no | The older spelling of `open`, read as `open` when `open` is absent. Its `sessionId` is ignored: a task has no lead. |
+| `lead` | no | The older spelling of `open`, read as `open` when `open` is absent. Its `sessionId` is ignored: a file cannot name the task's own session, an agent does that with `set_task_lead`. |
 | `tag`, `link`, `updatedAt` | no | Accepted and ignored. |
 | `members[]` | no | The task's sessions that tools outside Lunamux run, shown in the order listed. |
 | `members[].title` | yes | What the member is called. A matched session keeps this title. |

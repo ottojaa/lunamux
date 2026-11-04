@@ -192,6 +192,23 @@ class SettingsRepository(
             """.trimIndent(),
             parameters = 0,
         )
+        // The per-task facts (first seen, the session that speaks for it, status).
+        driver.execute(
+            identifier = null,
+            sql = """
+                CREATE TABLE IF NOT EXISTS task_meta (
+                    task_id      TEXT NOT NULL PRIMARY KEY,
+                    started_at   INTEGER NOT NULL,
+                    lead_session TEXT,
+                    status       TEXT,
+                    status_by    TEXT,
+                    status_at    INTEGER,
+                    lead_leaf    TEXT,
+                    lead_agent_session TEXT
+                )
+            """.trimIndent(),
+            parameters = 0,
+        )
         // Same no-.sqm story for columns added to an existing table: bring
         // pre-existing DBs up to the current shape. SQLite has no
         // ADD COLUMN IF NOT EXISTS, so the "duplicate column name" error on
@@ -205,6 +222,12 @@ class SettingsRepository(
         // Appended in the same order as the CREATE TABLE above, so an upgraded
         // database and a fresh one have identical column positions.
         runCatching {
+            driver.execute(null, "ALTER TABLE task_meta ADD COLUMN lead_leaf TEXT", 0)
+        }
+        runCatching {
+            driver.execute(null, "ALTER TABLE task_meta ADD COLUMN lead_agent_session TEXT", 0)
+        }
+        runCatching {
             driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN repo_root TEXT", 0)
         }
         runCatching {
@@ -215,6 +238,9 @@ class SettingsRepository(
         }
         runCatching {
             driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN task_id TEXT", 0)
+        }
+        runCatching {
+            driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN background INTEGER NOT NULL DEFAULT 0", 0)
         }
     }
 
@@ -489,6 +515,18 @@ class SettingsRepository(
         database.settingsQueries.selectAllScrollbackLeafIds().executeAsList().toSet()
 
     /**
+     * Make every record that ran in layout leaf [leafId] an ordinary (not background) session.
+     *
+     * Called by [se.soderbjorn.lunamux.AgentSessionTracker.clearBackground] when a person takes a
+     * background tab over, so records already dropped from memory become searchable too.
+     *
+     * @param leafId the pane's layout leaf id.
+     */
+    fun clearAgentSessionBackgroundByLeaf(leafId: String) {
+        database.settingsQueries.clearAgentSessionBackgroundByLeaf(leafId)
+    }
+
+    /**
      * Insert or replace one agent-session record.
      *
      * Called by [se.soderbjorn.lunamux.AgentSessionTracker] whenever a record
@@ -502,6 +540,7 @@ class SettingsRepository(
             r.repo, r.branch, r.worktreePath, r.title, r.firstPrompt, r.transcriptPath,
             r.links.joinToString(","), r.state, r.stateSince, r.nowLine, r.question,
             r.lastScreen, r.createdAt, r.endedAt, r.repoRoot, r.id, r.lastSaid, r.taskId,
+            if (r.background) 1L else 0L,
         )
     }
 
@@ -570,12 +609,12 @@ class SettingsRepository(
         worktreePath: String?, title: String?, firstPrompt: String?, transcriptPath: String?,
         links: String, state: String, stateSince: Long, nowLine: String?, question: String?,
         lastScreen: String?, createdAt: Long, endedAt: Long?, repoRoot: String?,
-        lastSaid: String?, taskId: String?,
+        lastSaid: String?, taskId: String?, background: Long,
     ) = AgentSessionRecord(
         id, agent, agentSessionId, source, leafId, terminalSessionId, cwd, repo, branch,
         worktreePath, title, firstPrompt, transcriptPath,
         links.split(',').filter { it.isNotEmpty() }, state, stateSince, nowLine, question,
-        lastScreen, createdAt, endedAt, repoRoot, lastSaid, taskId,
+        lastScreen, createdAt, endedAt, repoRoot, lastSaid, taskId, background != 0L,
     )
 
     /**
@@ -611,6 +650,136 @@ class SettingsRepository(
         database.settingsQueries.selectAgentTasks { id, title, createdAt, updatedAt ->
             AgentTaskRow(id, title, createdAt, updatedAt)
         }.executeAsList()
+
+    /**
+     * What is kept about one task besides its name.
+     *
+     * @property taskId the task's id, an agent-made task's or a task file's.
+     * @property startedAt epoch millis the server first saw the task; never changes.
+     * @property leadSession the terminal session id the pane had when it was named, or null. Terminal
+     *   ids are handed out again from `s1` on every start, so this only identifies the pane while the
+     *   server that stored it runs; a row written before [leadLeaf] existed has nothing else.
+     * @property leadLeaf the layout leaf id of the pane whose session speaks for the task, or null for
+     *   a row that has not been given one yet. It is stored with the layout, so it names the same pane
+     *   after a restart.
+     * @property leadAgentSession the agent's own conversation id of the session last seen in that pane,
+     *   or null when none was seen yet. The task follows this conversation when it is reopened in
+     *   another pane.
+     * @property status the task's one-line status, or null.
+     * @property statusBy the terminal session id of the pane that set the status, or null.
+     * @property statusAt epoch millis the status was set, or null with no status.
+     */
+    data class TaskMetaRow(
+        val taskId: String,
+        val startedAt: Long,
+        val leadSession: String? = null,
+        val status: String? = null,
+        val statusBy: String? = null,
+        val statusAt: Long? = null,
+        val leadLeaf: String? = null,
+        val leadAgentSession: String? = null,
+    )
+
+    /**
+     * Every task's stored facts.
+     *
+     * Called by [se.soderbjorn.lunamux.TaskIndex] when it starts; it keeps the rows in memory after that
+     * and writes through the methods below, so it is the only owner of this table.
+     *
+     * @return one row per task the server has seen.
+     */
+    fun loadTaskMeta(): List<TaskMetaRow> =
+        database.settingsQueries.selectTaskMeta { id, startedAt, lead, status, by, at, leaf, conversation ->
+            TaskMetaRow(id, startedAt, lead, status, by, at, leaf, conversation)
+        }.executeAsList()
+
+    /**
+     * Record when the server first saw a task, unless it already has a row.
+     *
+     * @param taskId the task's id.
+     * @param startedAt epoch millis to store when the task has no row yet.
+     */
+    fun stampTaskStart(taskId: String, startedAt: Long) {
+        database.settingsQueries.stampTaskStart(taskId, startedAt)
+    }
+
+    /**
+     * Name the pane whose session speaks for a task; the task needs a row (see [stampTaskStart]).
+     *
+     * Called by [se.soderbjorn.lunamux.TaskIndex] when a task is made or its own session changes.
+     *
+     * @param taskId the task's id.
+     * @param leadSession the terminal session id the pane has now, or null to clear it.
+     * @param leadLeaf the pane's layout leaf id, or null to clear it.
+     * @see setTaskLeadLeaf
+     * @see moveTaskLead
+     */
+    fun setTaskLead(taskId: String, leadSession: String?, leadLeaf: String?) {
+        database.settingsQueries.setTaskLead(leadSession, leadLeaf, taskId)
+    }
+
+    /**
+     * Fill in the pane of a task that only has a terminal session id (a row from before the leaf
+     * was stored), leaving the terminal session id as it is.
+     *
+     * Called by [se.soderbjorn.lunamux.TaskIndex] once that id is seen on a running session.
+     *
+     * @param taskId the task's id; it needs a row.
+     * @param leadLeaf the layout leaf id of the pane.
+     */
+    fun setTaskLeadLeaf(taskId: String, leadLeaf: String) {
+        database.settingsQueries.setTaskLeadLeaf(leadLeaf, taskId)
+    }
+
+    /**
+     * Move a task to the pane its own conversation was reopened in, keeping the conversation id.
+     *
+     * Called by [se.soderbjorn.lunamux.TaskIndex] when the conversation the task remembers runs in
+     * another pane than the one stored.
+     *
+     * @param taskId the task's id; it needs a row.
+     * @param leadSession the terminal session id the new pane has now.
+     * @param leadLeaf the new pane's layout leaf id.
+     * @see setTaskLead
+     */
+    fun moveTaskLead(taskId: String, leadSession: String?, leadLeaf: String) {
+        database.settingsQueries.moveTaskLead(leadSession, leadLeaf, taskId)
+    }
+
+    /**
+     * Remember the agent's own conversation id of the session last seen in the task's pane.
+     *
+     * Called by [se.soderbjorn.lunamux.TaskIndex] whenever that session changes.
+     *
+     * @param taskId the task's id; it needs a row.
+     * @param agentSession the conversation id.
+     */
+    fun setTaskLeadAgentSession(taskId: String, agentSession: String) {
+        database.settingsQueries.setTaskLeadAgentSession(agentSession, taskId)
+    }
+
+    /**
+     * Every layout leaf id any agent session has run in, ended sessions included.
+     *
+     * Called by `WindowState` when it restores the layout, so a pane made afterwards never gets
+     * the id of a pane that has gone but whose sessions are still on record.
+     *
+     * @return the distinct leaf ids.
+     */
+    fun allAgentSessionLeafIds(): List<String> =
+        database.settingsQueries.selectAgentSessionLeafIds().executeAsList().mapNotNull { it }
+
+    /**
+     * Store a task's status line; the task needs a row (see [stampTaskStart]).
+     *
+     * @param taskId the task's id.
+     * @param status the cleaned text, or null to clear the status.
+     * @param by the terminal session id of the pane that set it, or null.
+     * @param at epoch millis it was set.
+     */
+    fun setTaskStatus(taskId: String, status: String?, by: String?, at: Long) {
+        database.settingsQueries.setTaskStatus(status, if (status == null) null else by, if (status == null) null else at, taskId)
+    }
 
     /**
      * Store the searchable conversation text of one record.
@@ -672,13 +841,13 @@ class SettingsRepository(
         return database.settingsQueries.searchAgentSessions(pattern, query) {
                 id, agent, agentSessionId, source, leafId, terminalSessionId, cwd, repo, branch,
                 worktreePath, title, firstPrompt, transcriptPath, links, state, stateSince, nowLine,
-                question, createdAt, endedAt, repoRoot, lastSaid, taskId, transcriptWindow, screenWindow,
+                question, createdAt, endedAt, repoRoot, lastSaid, taskId, background, transcriptWindow, screenWindow,
             ->
             AgentSessionHit(
                 toAgentSessionRecord(
                     id, agent, agentSessionId, source, leafId, terminalSessionId, cwd, repo, branch,
                     worktreePath, title, firstPrompt, transcriptPath, links, state, stateSince,
-                    nowLine, question, null, createdAt, endedAt, repoRoot, lastSaid, taskId,
+                    nowLine, question, null, createdAt, endedAt, repoRoot, lastSaid, taskId, background,
                 ),
                 transcriptWindow,
                 screenWindow,

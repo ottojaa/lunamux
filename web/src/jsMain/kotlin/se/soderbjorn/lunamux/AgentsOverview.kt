@@ -309,7 +309,7 @@ private fun onListClick(target: HTMLElement?) {
 /**
  * Do what a footer segment's key does, when the segment is clicked.
  *
- * @param key the segment's key as drawn (`→`, `←`, `space`, `⌘⌫` or `esc`); the others do nothing.
+ * @param key the segment's key as drawn (`→`, `←`, `space`, `↵`, `⌘↵`, `⌘⌫` or `esc`); the others do nothing.
  */
 private fun onFooterKey(key: String) {
     when (key) {
@@ -317,6 +317,8 @@ private fun onFooterKey(key: String) {
         "←" -> agentsOverview.stepOut()
         "space" -> launchAgentsOverview { agentsOverview.toggleSelected() }
         "⌘⌫" -> launchAgentsOverview { agentsOverview.requestClose() }
+        "↵" -> launchAgentsOverview { agentsOverview.activateSelected() }
+        "⌘↵" -> launchAgentsOverview { agentsOverview.takeOverSelected() }
         "esc" -> agentsOverview.back()
     }
 }
@@ -328,7 +330,8 @@ private fun onFooterKey(key: String) {
  * caret is at the end of the text: it unfolds a task, enters it, or peeks at a session. ←
  * steps out while the box is empty or a peek is open, and space folds or unfolds a task
  * while the box is empty. ⌘⌫ asks to close the selected session (only while the box is empty),
- * and esc steps back one level.
+ * ⌘↵ takes the selected session's background tab over (in the list and in its peek), and esc
+ * steps back one level.
  *
  * @param e the key press in the search box.
  */
@@ -338,6 +341,7 @@ private fun onSearchKey(e: KeyboardEvent) {
     when {
         e.key == "ArrowDown" -> { e.preventDefault(); agentsOverview.moveSelection(1) }
         e.key == "ArrowUp" -> { e.preventDefault(); agentsOverview.moveSelection(-1) }
+        e.key == "Enter" && (e.metaKey || e.ctrlKey) -> { e.preventDefault(); launchAgentsOverview { agentsOverview.takeOverSelected() } }
         e.key == "Enter" -> { e.preventDefault(); launchAgentsOverview { agentsOverview.activateSelected() } }
         e.key == "Escape" -> { e.preventDefault(); agentsOverview.back() }
         state.confirm != null && (e.key == "ArrowLeft" || e.key == "ArrowRight" || e.key == "Tab") -> {
@@ -556,12 +560,13 @@ private fun statusCell(row: Row, now: Long): HTMLElement {
 
 /**
  * The count line of a task header: "1 needs you" in the warning colour, then the dim counts,
- * joined by faint dots.
+ * joined by faint dots, then the task's one-line status when it has one.
  *
  * @param task the header's data, or null if it vanished since the row was built.
+ * @param status the task's one-line status, or empty.
  * @return the cell.
  */
-private fun countsCell(task: AgentsOverviewBackingViewModel.Task?): HTMLElement {
+private fun countsCell(task: AgentsOverviewBackingViewModel.Task?, status: String): HTMLElement {
     val cell = span("ao-n", "")
     if (task == null) return cell
     val parts = task.summary.split(" · ").filter { it.isNotEmpty() }
@@ -569,6 +574,11 @@ private fun countsCell(task: AgentsOverviewBackingViewModel.Task?): HTMLElement 
     parts.forEachIndexed { i, part ->
         if (i > 0 || task.needYouCount > 0) cell.appendChild(span("ao-n-faint", " · "))
         cell.appendChild(document.createTextNode(part))
+    }
+    // The task's own one-line status closes the line, so the counts that need the person come first.
+    if (status.isNotEmpty()) {
+        if (cell.hasChildNodes()) cell.appendChild(span("ao-n-faint", " · "))
+        cell.appendChild(document.createTextNode(status))
     }
     return cell
 }
@@ -645,11 +655,11 @@ private fun buildRow(
     el.appendChild(title)
 
     el.appendChild(span("ao-w", if (isHead) task?.repo ?: "" else row.where ?: ""))
-    el.appendChild(if (isHead) countsCell(task) else statusCell(row, now))
+    el.appendChild(if (isHead) countsCell(task, row.status) else statusCell(row, now))
     // A header in NOW has no age; one in EARLIER shows how long ago its newest session was active.
     // When ↵ on a header jumps to a live session but its task also has an `open` action, that
     // column holds the `open` control so the action stays reachable.
-    if (isHead && task?.hasOpen == true && row.actionLabel == "jump") {
+    if (isHead && task?.hasOpen == true && (row.actionLabel == "jump" || row.actionLabel == "peek")) {
         el.appendChild(span("ao-a ao-open", "open"))
     } else {
         val age = if (isHead) task?.ageMillis else row.sinceMillis
@@ -702,7 +712,13 @@ private fun buildMoreLine(hidden: Int): HTMLElement {
     return el
 }
 
-/** The popover under the selected row: a heading and the last lines of the session's screen. */
+/**
+ * The popover under the selected row: a heading and the last lines of the session's screen, and,
+ * for a session in a background tab, a line saying ⌘↵ takes the tab over.
+ *
+ * @param peek the peek's data from the view model.
+ * @return the popover element.
+ */
 private fun buildPeek(peek: AgentsOverviewBackingViewModel.Peek): HTMLElement {
     val box = div("ao-peek")
     box.addEventListener("click", { e: Event -> e.stopPropagation() })
@@ -714,6 +730,10 @@ private fun buildPeek(peek: AgentsOverviewBackingViewModel.Peek): HTMLElement {
         peek.loading -> box.appendChild(div("ao-peek-line").also { it.textContent = "…" })
         peek.emptyText != null -> box.appendChild(div("ao-peek-line").also { it.textContent = peek.emptyText })
         else -> peek.lines.forEach { line -> box.appendChild(div("ao-peek-line").also { it.textContent = line }) }
+    }
+    if (peek.background) {
+        // The screen is read-only: the way to type into it is to take its tab over.
+        box.appendChild(div("ao-peek-hint").also { it.textContent = "⌘↵ take over this tab to work in it" })
     }
     return box
 }

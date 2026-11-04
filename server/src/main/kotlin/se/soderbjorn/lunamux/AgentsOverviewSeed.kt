@@ -7,7 +7,8 @@
  * task files whose members are live. It also seeds the awkward rows a real installation produces:
  * sessions that say nothing about what the work is (a home folder, a branch named after a run, a
  * detached HEAD), previews written in markdown, a bare code fence, and sessions a server restart
- * ends. It turns the scratch server's MCP endpoint on and adds a read+write MCP token
+ * ends. It also seeds one agent-made task, "Release 4.2 notes", with its own session, a one-line status
+ * and two members that ran out of sight in background tabs (their records stay out of search). It turns the scratch server's MCP endpoint on and adds a read+write MCP token
  * ([MCP_TOKEN]), so `scripts/seed-agents-overview-live.sh` can open tabs and windows and a script
  * can post hook events from panes. It is run by the Gradle task `seedAgentsOverview` (through
  * `scripts/seed-agents-overview.sh`) while the scratch server is stopped, and by a test.
@@ -118,7 +119,18 @@ object AgentsOverviewSeed {
         SeededTask("seed-task-invoice", "Invoice export migration", 32 * DAY),
         // One session from yesterday and one from ten days ago: the task is as recent as its newest.
         SeededTask("seed-task-token", "Auth token refresh", 11 * DAY),
+        // The task's own session plus two members that ran in background tabs, all ended.
+        SeededTask("seed-task-notes", "Release 4.2 notes", 3 * HOUR),
     )
+
+    /** The terminal session id the seeded "Release 4.2 notes" task names as its own session's pane. */
+    private const val NOTES_OWN_PANE = "seed-pty-notes"
+
+    /** The layout leaf the own session of the "Release 4.2 notes" task ran in, which is what the task remembers. */
+    private const val NOTES_OWN_LEAF = "seed-leaf-notes"
+
+    /** The one-line status the seeded "Release 4.2 notes" task carries. */
+    private const val NOTES_STATUS = "Notes drafted, waiting on the changelog check"
 
     private val sessions = listOf(
         // Tasks of their own.
@@ -220,6 +232,7 @@ object AgentsOverviewSeed {
                 ),
             )
         }
+        seedReleaseNotes(repo, workdir, now)
         val home = System.getProperty("user.home")
         for (c in cases) {
             val at = now - c.ago
@@ -245,7 +258,56 @@ object AgentsOverviewSeed {
             )
         }
         val files = writeTaskFiles(tasksDir, workdir, now)
-        return Summary(sessions.size + cases.size, tasks.size, files)
+        return Summary(sessions.size + cases.size + NOTES_SESSIONS, tasks.size, files)
+    }
+
+    /** How many session records [seedReleaseNotes] writes: the task's own session and two background ones. */
+    private const val NOTES_SESSIONS = 3
+
+    /**
+     * Write the "Release 4.2 notes" task: an own session, a status line and two background members.
+     *
+     * Called by [seed]. The own session is an ordinary ended record; the two members ran in
+     * background tabs, so they are marked as background and search never finds them. The task's
+     * own pane and status are stored the way the MCP tools store them.
+     *
+     * @param repo the scratch database.
+     * @param workdir an absolute folder for the records' working folder.
+     * @param now the time the ages are counted back from.
+     */
+    private fun seedReleaseNotes(repo: SettingsRepository, workdir: String, now: Long) {
+        fun record(n: Int, title: String, prompt: String, agoEnded: Long, pane: String?, background: Boolean) {
+            val ended = now - agoEnded
+            repo.saveAgentSession(
+                AgentSessionRecord(
+                    id = "seed-notes-$n",
+                    agent = "claude",
+                    agentSessionId = "5eed0002-0000-4000-8000-%012d".format(n),
+                    source = "hooks",
+                    leafId = pane?.let { NOTES_OWN_LEAF },
+                    terminalSessionId = pane,
+                    cwd = workdir,
+                    repo = "lunamux",
+                    branch = "docs/release-notes",
+                    title = title,
+                    firstPrompt = prompt,
+                    state = "ended",
+                    stateSince = ended,
+                    createdAt = ended - 90 * MINUTE,
+                    endedAt = ended,
+                    repoRoot = workdir,
+                    lastSaid = "Done.",
+                    taskId = "seed-task-notes",
+                    background = background,
+                ),
+            )
+        }
+        record(1, "Release 4.2 notes", "Write the release notes for 4.2 and split the checks between two agents", 2 * HOUR, NOTES_OWN_PANE, background = false)
+        record(2, "Changelog check", "Check every changelog entry against the merged pull requests", 2 * HOUR + 10 * MINUTE, null, background = true)
+        record(3, "Screenshot refresh", "Retake the screenshots the notes link to", 2 * HOUR + 20 * MINUTE, null, background = true)
+        repo.stampTaskStart("seed-task-notes", now - 3 * HOUR)
+        repo.setTaskLead("seed-task-notes", NOTES_OWN_PANE, NOTES_OWN_LEAF)
+        repo.setTaskStatus("seed-task-notes", NOTES_STATUS, NOTES_OWN_PANE, now - 2 * HOUR)
     }
 
     /**

@@ -511,6 +511,8 @@ class DemoServer internal constructor(
             is WindowCommand.SetTabHiddenFromSidebar ->
                 updateTab(command.tabId) { it.copy(isHiddenFromSidebar = command.hidden) }
             is WindowCommand.SetActiveTab -> publish(config.copy(activeTabId = command.tabId))
+            // The demo has no background tabs, so taking one over is just opening the tab.
+            is WindowCommand.TakeOverTab -> publish(config.copy(activeTabId = command.tabId))
 
             // --- worlds ---
             is WindowCommand.SetActiveWorld -> {

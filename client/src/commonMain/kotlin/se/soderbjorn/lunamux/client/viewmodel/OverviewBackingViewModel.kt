@@ -49,6 +49,7 @@ import se.soderbjorn.lunamux.client.ToolkitPaneGeometry
 import se.soderbjorn.lunamux.client.WindowLayoutState
 import se.soderbjorn.lunamux.client.WindowSocket
 import se.soderbjorn.lunamux.client.addPaneToTab
+import se.soderbjorn.lunamux.listedTabs
 
 /**
  * ViewModel backing the overview screen.
@@ -624,7 +625,7 @@ class OverviewBackingViewModel(
         // the overview stuck on that world after a world switch. `effectiveTabs`
         // / `effectiveActiveTabId` fall back to the flat fields for pre-1.9
         // world-unaware configs.
-        val worldTabs = config.effectiveTabs
+        val worldTabs = config.listedTabs
         // A hidden ("unlisted") tab is surfaced in the strip only while it is
         // the active tab — so the user can always see and act on the tab they
         // are actually looking at. It drops back out of the strip once another

@@ -23,6 +23,7 @@ import kotlinx.coroutines.launch
 import se.soderbjorn.lunamux.persistence.AgentSessionRecord
 import se.soderbjorn.lunamux.persistence.SettingsRepository
 import se.soderbjorn.lunamux.persistence.SettingsRepository.AgentTaskRow
+import se.soderbjorn.lunamux.persistence.SettingsRepository.TaskMetaRow
 import java.util.UUID
 
 /**
@@ -61,8 +62,19 @@ data class TaskListMember(val sessionId: String?, val title: String, val state: 
  * @property title the task's name.
  * @property source `file` when a task file declares it, else `agents`.
  * @property members its sessions and file members.
+ * @property ownSessionId the terminal session id (`LUNAMUX_SESSION_ID`) the pane whose session speaks for
+ *   the task has now, or null when none was named or that pane is gone. The task remembers the pane,
+ *   not this id, so the id is current even after a restart gave the pane a new one.
+ * @property status the task's one-line status, or null.
  */
-data class TaskListing(val id: String, val title: String, val source: String, val members: List<TaskListMember>)
+data class TaskListing(
+    val id: String,
+    val title: String,
+    val source: String,
+    val members: List<TaskListMember>,
+    val ownSessionId: String? = null,
+    val status: String? = null,
+)
 
 /**
  * Decides each session's task and carries the operations that change it.
@@ -82,6 +94,8 @@ data class TaskListing(val id: String, val title: String, val source: String, va
  * @param files the parsed task files, usually [TaskFilesWatcher.files].
  * @param leafOfSession maps a pane's `LUNAMUX_SESSION_ID` to its layout leaf id, or null for a pane
  *   that does not exist; replaced in tests.
+ * @param sessionOfLeaf the reverse: a layout leaf id to the `LUNAMUX_SESSION_ID` of the terminal in it
+ *   now, or null when the pane is gone or has no terminal; replaced in tests.
  * @param clock epoch-millis time source; replaced in tests.
  * @param newSuffix mints the short random suffix of a new task id; replaced in tests.
  * @see TaskSnapshot
@@ -93,9 +107,12 @@ class TaskIndex(
     private val leafOfSession: (String) -> String?,
     private val clock: () -> Long = System::currentTimeMillis,
     private val newSuffix: () -> String = { UUID.randomUUID().toString().take(SUFFIX_LENGTH) },
+    private val sessionOfLeaf: (String) -> String? = { null },
 ) {
     private val lock = Any()
     private var rows: List<AgentTaskRow> = runCatching { repo.loadAgentTasks() }.getOrDefault(emptyList())
+    private var meta: Map<String, TaskMetaRow> =
+        runCatching { repo.loadTaskMeta() }.getOrDefault(emptyList()).associateBy { it.taskId }
     private val _state = MutableStateFlow(TaskSnapshot())
 
     /** The current tasks and assignment; collected per window socket by `WindowRoutes`. */
@@ -172,7 +189,80 @@ class TaskIndex(
      * record change; called by [start]'s collector and by every mutating method.
      */
     fun recompute() {
-        synchronized(lock) { _state.value = resolve(tracker.snapshot(), files.value, rows) }
+        synchronized(lock) {
+            val records = tracker.snapshot()
+            followOwnSessions(records)
+            val snapshot = resolve(records, files.value, rows, meta)
+            val fresh = snapshot.tasks.filter { it.id !in meta }
+            if (fresh.isNotEmpty()) {
+                // A task's start is fixed the first time it is seen, so its place in the overview
+                // never moves when its sessions come and go afterwards.
+                for (t in fresh) t.startedAtMillis?.let { repo.stampTaskStart(t.id, it) }
+                meta = meta + fresh.mapNotNull { t -> t.startedAtMillis?.let { t.id to TaskMetaRow(t.id, it) } }
+            }
+            _state.value = snapshot
+        }
+    }
+
+    /**
+     * Keep each task's own session where the conversation is: give a row stored the old way a pane
+     * to guess, then move a row to the pane its conversation was reopened in.
+     *
+     * A task named before layout leaf ids were stored remembers its own session only as a terminal
+     * session id, which each start hands to whatever pane comes that many places in. When a
+     * session that is not ended runs on that id, its pane is taken as the pane, as a best guess:
+     * the id may name another pane than it did when the task was named, and the guess is stored, so
+     * `set_task_lead` is the way to correct it. An ended session proves nothing (right after a
+     * start every record is ended, and the newest on the id may have run in another pane), so it is
+     * never used; the task keeps resolving by terminal id until a running session shows up.
+     *
+     * A resume always opens a new pane, and the tracker then either moves the ended record to that
+     * pane's leaf or starts a record there that takes over the conversation id. So that the task
+     * does not stay with the old pane (and offer "resume" for a conversation that is running), each
+     * row remembers the agent's conversation id of the session last seen in its pane. When nothing
+     * runs in the pane any more and that conversation runs in another pane, the row moves there.
+     * A new agent that starts in the old pane takes the remembered conversation over instead, so
+     * the pane keeps speaking for the task.
+     *
+     * Called by [recompute] with [lock] held, before it resolves.
+     *
+     * @param records every record the tracker holds.
+     */
+    private fun followOwnSessions(records: List<AgentSessionRecord>) {
+        for ((taskId, row) in meta.toList()) {
+            var current = row
+            val terminalId = current.leadSession
+            if (current.leadLeaf == null && terminalId != null) {
+                val leaf = records.filter { it.terminalSessionId == terminalId && it.state != ENDED }
+                    .maxByOrNull { it.createdAt }?.leafId
+                if (leaf != null) {
+                    repo.setTaskLeadLeaf(taskId, leaf)
+                    current = current.copy(leadLeaf = leaf)
+                }
+            }
+            if (current.leadLeaf == null) {
+                if (current !== row) meta = meta + (taskId to current)
+                continue
+            }
+            val here = recordBoundTo(records, current)
+            val conversation = current.leadAgentSession
+            if ((here == null || here.state == ENDED) && conversation != null) {
+                val moved = records.filter {
+                    it.agentSessionId == conversation && it.state != ENDED && it.leafId != null && it.leafId != current.leadLeaf
+                }.maxByOrNull { it.createdAt }
+                if (moved != null) {
+                    repo.moveTaskLead(taskId, moved.terminalSessionId, moved.leafId!!)
+                    meta = meta + (taskId to current.copy(leadSession = moved.terminalSessionId, leadLeaf = moved.leafId))
+                    continue
+                }
+            }
+            val seen = here?.agentSessionId
+            if (seen != null && seen != conversation) {
+                repo.setTaskLeadAgentSession(taskId, seen)
+                current = current.copy(leadAgentSession = seen)
+            }
+            if (current !== row) meta = meta + (taskId to current)
+        }
     }
 
     /**
@@ -180,14 +270,19 @@ class TaskIndex(
      *
      * Called by the MCP `create_task` tool.
      *
+     * The task's own session is the caller's pane when the caller is a known pane, else the first
+     * of [sessionIds], else none. The task remembers the pane by its layout leaf id.
+     *
      * @param title the task's name; blank is refused.
      * @param sessionIds panes (`LUNAMUX_SESSION_ID` values) to put in it straight away.
+     * @param callerSessionId the pane the calling agent runs in, when the request says so.
      * @return the new task's id.
      * @throws TaskException when the title is blank or a session id names no pane.
      */
-    fun createTask(title: String, sessionIds: List<String>): String {
+    fun createTask(title: String, sessionIds: List<String>, callerSessionId: String? = null): String {
         val clean = cleanTitle(title)
         val targets = sessionIds.map(::targetOf)
+        val own = callerSessionId?.takeIf(::isKnownPane) ?: sessionIds.firstOrNull()
         val id = synchronized(lock) {
             val known = rows.map { it.id }.toSet() + files.value.map { it.id }
             var candidate: String
@@ -201,8 +296,80 @@ class TaskIndex(
         recompute()
         targets.forEach { apply(it, id) }
         recompute()
+        if (own != null) storeOwnSession(id, own)
         return id
     }
+
+    /**
+     * Name the session that speaks for a task.
+     *
+     * Called by the MCP `set_task_lead` tool. The pane is looked up the way `add_to_task` looks up
+     * its panes, so the same mistake gets the same error. It is not moved into the task. The task
+     * remembers the pane by its layout leaf id, so it stays with the pane when a restart gives it
+     * another terminal session id.
+     *
+     * @param taskId an agent-made task or a task file's id.
+     * @param sessionId the pane (`LUNAMUX_SESSION_ID` value) whose session speaks for the task.
+     * @throws TaskException when the task is unknown or the id names no pane.
+     */
+    fun setOwnSession(taskId: String, sessionId: String) {
+        requireTask(taskId)
+        targetOf(sessionId)
+        storeOwnSession(taskId, sessionId)
+    }
+
+    /**
+     * Set or clear a task's one-line status.
+     *
+     * Called by the MCP `set_task_status` tool. Line breaks become single spaces, the ends are
+     * trimmed and the text is cut at [STATUS_MAX] characters; nothing left clears the status.
+     *
+     * @param taskId an agent-made task or a task file's id.
+     * @param text what the work is doing now.
+     * @param by the pane that reports it, when the request says so.
+     * @return the stored status, or null when it was cleared.
+     * @throws TaskException when the task is unknown.
+     */
+    fun setStatus(taskId: String, text: String, by: String?): String? {
+        requireTask(taskId)
+        val clean = text.replace(Regex("\\s*[\\r\\n]+\\s*"), " ").trim().take(STATUS_MAX).trim().ifEmpty { null }
+        synchronized(lock) {
+            val now = clock()
+            ensureMeta(taskId)
+            repo.setTaskStatus(taskId, clean, by, now)
+            meta = meta + (taskId to meta.getValue(taskId).copy(
+                status = clean, statusBy = clean?.let { by }, statusAt = clean?.let { now },
+            ))
+        }
+        recompute()
+        return clean
+    }
+
+    /**
+     * Store the pane that speaks for a task: its layout leaf id, and the terminal session id it has
+     * now. A pane with neither an open record nor a leaf (it cannot be told apart from a pane that
+     * is gone) is stored by terminal session id alone and picked up again by [followOwnSessions].
+     */
+    private fun storeOwnSession(taskId: String, sessionId: String) {
+        val leaf = tracker.openRecordOf(sessionId)?.leafId ?: leafOfSession(sessionId)
+        synchronized(lock) {
+            ensureMeta(taskId)
+            repo.setTaskLead(taskId, sessionId, leaf)
+            meta = meta + (taskId to meta.getValue(taskId).copy(leadSession = sessionId, leadLeaf = leaf, leadAgentSession = null))
+        }
+        recompute()
+    }
+
+    /** Make sure the task has a stored row to write to; call with [lock] held. */
+    private fun ensureMeta(taskId: String) {
+        if (taskId in meta) return
+        val at = _state.value.tasks.firstOrNull { it.id == taskId }?.startedAtMillis ?: clock()
+        repo.stampTaskStart(taskId, at)
+        meta = meta + (taskId to TaskMetaRow(taskId, at))
+    }
+
+    private fun isKnownPane(sessionId: String): Boolean =
+        tracker.openRecordOf(sessionId) != null || leafOfSession(sessionId) != null
 
     /**
      * Move sessions into a task, out of whatever task they were in.
@@ -291,13 +458,27 @@ class TaskIndex(
                 val rec = m.recordId?.let { id -> records.firstOrNull { it.id == id } }
                 TaskListMember(rec?.terminalSessionId?.takeIf { rec.state != ENDED }, m.title, m.state)
             }
-            TaskListing(f.id, f.title, "file", declared + sessionsOf(f.id, claimed))
+            TaskListing(f.id, f.title, "file", declared + sessionsOf(f.id, claimed), ownSessionOf(f.id), statusOf(f.id))
         }
         val fileIds = files.value.map { it.id }.toSet()
         val agentListings = rows.filter { it.id !in fileIds }.sortedBy { it.id }
-            .map { TaskListing(it.id, it.title, "agents", sessionsOf(it.id, emptySet())) }
+            .map { TaskListing(it.id, it.title, "agents", sessionsOf(it.id, emptySet()), ownSessionOf(it.id), statusOf(it.id)) }
         return fileListings + agentListings
     }
+
+    /**
+     * The terminal session id of the pane that speaks for a task, as it is now.
+     *
+     * A task that remembers a layout leaf gets the id of the terminal in that leaf, or null when
+     * the pane is gone. A task stored the old way has only the terminal session id it was given, and
+     * that is what it reports.
+     */
+    private fun ownSessionOf(taskId: String): String? = synchronized(lock) {
+        val row = meta[taskId] ?: return@synchronized null
+        row.leadLeaf?.let(sessionOfLeaf) ?: row.leadSession.takeIf { row.leadLeaf == null }
+    }
+
+    private fun statusOf(taskId: String): String? = synchronized(lock) { meta[taskId]?.status }
 
     /** A pane or a record an operation applies to: the open record when an agent runs, else the pane's leaf. */
     private class Target(val recordId: String?, val leafId: String?)
@@ -364,6 +545,7 @@ class TaskIndex(
         private const val TITLE_MAX = 120
         private const val SLUG_MAX = 40
         private const val SUFFIX_LENGTH = 4
+        const val STATUS_MAX = 120
 
         /**
          * Work out the tasks and every record's task from the three inputs. Pure, so tests and
@@ -372,9 +554,15 @@ class TaskIndex(
          * @param records the session records in memory.
          * @param files the parsed task files.
          * @param rows the agent-made tasks.
+         * @param meta what is stored per task (start, own session, status), by task id.
          * @return the tasks to push and the assignment of records to them.
          */
-        fun resolve(records: List<AgentSessionRecord>, files: List<TaskFile>, rows: List<AgentTaskRow>): TaskSnapshot {
+        fun resolve(
+            records: List<AgentSessionRecord>,
+            files: List<TaskFile>,
+            rows: List<AgentTaskRow>,
+            meta: Map<String, TaskMetaRow> = emptyMap(),
+        ): TaskSnapshot {
             val fileIds = files.map { it.id }.toSet()
             val known = fileIds + rows.map { it.id }
             val assignment = LinkedHashMap<String, String>()
@@ -414,7 +602,54 @@ class TaskIndex(
             val used = assignment.values.toSet()
             val agentTasks = rows.filter { it.id !in fileIds && it.id in used }
                 .map { AgentTask(id = it.id, title = it.title, source = "agents") }
-            return TaskSnapshot((fileTasks + agentTasks).sortedBy { it.id }, assignment)
+            val recordsByTask = records.filter { it.id in assignment }.groupBy { assignment.getValue(it.id) }
+            val tasks = (fileTasks + agentTasks).map { t ->
+                val m = meta[t.id]
+                val firstSeen = recordsByTask[t.id].orEmpty().map { it.createdAt }.filter { it > 0 }.minOrNull()
+                    ?: t.members.map { it.sinceMillis }.filter { it > 0 }.minOrNull()
+                    ?: t.refreshedAtMillis
+                    ?: rows.firstOrNull { it.id == t.id }?.createdAt
+                t.copy(
+                    leadRecordId = m?.let { recordBoundTo(records, it)?.id },
+                    status = m?.status,
+                    statusAtMillis = m?.statusAt,
+                    startedAtMillis = m?.startedAt ?: firstSeen,
+                )
+            }
+            return TaskSnapshot(tasks.sortedBy { it.id }, assignment)
+        }
+
+        /**
+         * The record that speaks for a task, from the pane it remembers.
+         *
+         * A task remembers its own session as the layout leaf id of its pane, which is stored with
+         * the layout and so names the same pane after a restart. The terminal session id does not:
+         * it is handed out again from `s1` on every start, so afterwards the same id names another
+         * pane. Among the records that ran in that leaf, the one that is not ended is the one
+         * running there now (the rule [AgentSessionTracker.openRecordOf] uses); when every one has
+         * ended, the newest by start is the task's latest run, which Enter can resume. A pane that
+         * has gone leaves only ended records, so the task points at its own latest run and never
+         * at whatever pane holds its old terminal id.
+         *
+         * A task stored before leaf ids were kept has only the terminal session id. It is
+         * resolved the same way over the records on that id, until [TaskIndex] has seen a running
+         * session on it and stored the pane.
+         *
+         * Called by [resolve] for each task that has an own session.
+         *
+         * @param records every record the tracker holds.
+         * @param row the task's stored facts.
+         * @return the running record in the pane, else the newest record in it, else null (also when
+         *   the task has no own session).
+         * @see AgentSessionTracker.openRecordOf
+         */
+        internal fun recordBoundTo(records: List<AgentSessionRecord>, row: TaskMetaRow): AgentSessionRecord? {
+            val there = when {
+                row.leadLeaf != null -> records.filter { it.leafId == row.leadLeaf }
+                row.leadSession != null -> records.filter { it.terminalSessionId == row.leadSession }
+                else -> return null
+            }
+            return there.filter { it.state != ENDED }.maxByOrNull { it.createdAt } ?: there.maxByOrNull { it.createdAt }
         }
 
         private fun isOpen(r: AgentSessionRecord) = r.state != ENDED && r.leafId != null

@@ -37,12 +37,18 @@ internal object TabManager {
      * the case at tab-creation time — so a cascading random origin here
      * showed the first pane as a small floating window instead of the
      * full-screen tile the Auto preset promises (issue #86, follow-up).
+     *
+     * A [background] tab is created with [TabConfig.isBackground] set and leaves the active tab
+     * alone, so an agent can open work the person is not looking at without moving them.
+     *
+     * @param background true to open the tab as a background tab that is never activated.
      */
     fun addTab(
         cfg: WindowConfig,
         newTabId: String,
         newNodeId: String,
         sessionId: String,
+        background: Boolean = false,
     ): WindowConfig {
         val nextNumber = cfg.tabs.size + 1
         val leaf = LeafNode(
@@ -75,17 +81,23 @@ internal object TabManager {
             focusedPaneId = newNodeId,
             // Default every new tab to auto-tiling (issue #86).
             layoutPreset = LayoutPreset.Auto.key,
+            isBackground = background,
         )
-        return cfg.copy(tabs = cfg.tabs + newTab, activeTabId = newTabId)
+        return cfg.copy(
+            tabs = cfg.tabs + newTab,
+            activeTabId = if (background) cfg.activeTabId else newTabId,
+        )
     }
 
     /**
      * Close [tabId]. Returns `null` when the tab is unknown or it would
-     * leave the user with zero tabs.
+     * leave the user with zero tabs, or with only background tabs (a person
+     * must always have a tab to look at).
      *
      * When the closed tab was the active one, the replacement is chosen
      * among the surviving tabs with a preference for **listed** tabs, i.e.
      * those not hidden from the tab strip ([TabConfig.isHidden] `false`) —
+     * and never a background tab, which is never the active tab —
      * activating an unlisted tab would leave the user staring at content
      * whose tab has no visible strip entry (issue #88). The search starts
      * at the slot the closed tab occupied and scans forward, then backward,
@@ -97,6 +109,7 @@ internal object TabManager {
         if (cfg.tabs.size <= 1) return null
         if (cfg.tabs.none { it.id == tabId }) return null
         val newTabs = cfg.tabs.filterNot { it.id == tabId }
+        if (newTabs.none { it.isListed }) return null
         val newActive = if (cfg.activeTabId == tabId) {
             val oldIdx = cfg.tabs.indexOfFirst { it.id == tabId }
             // Index in `newTabs` of the tab that slid into the closed tab's
@@ -106,20 +119,43 @@ internal object TabManager {
             // nearest before it, mirroring how browsers pick a close
             // successor. Fall back to the positional pick (possibly an
             // unlisted tab) only when no listed tab survives.
-            val listed = newTabs.drop(slotIdx).firstOrNull { !it.isHidden }
-                ?: newTabs.take(slotIdx).lastOrNull { !it.isHidden }
-            (listed ?: newTabs.getOrNull(slotIdx))?.id
+            val shown = newTabs.drop(slotIdx).firstOrNull { it.isListed && !it.isHidden }
+                ?: newTabs.take(slotIdx).lastOrNull { it.isListed && !it.isHidden }
+            val positional = newTabs.drop(slotIdx).firstOrNull { it.isListed }
+                ?: newTabs.take(slotIdx).lastOrNull { it.isListed }
+            (shown ?: positional)?.id
         } else {
             cfg.activeTabId
         }
         return cfg.copy(tabs = newTabs, activeTabId = newActive)
     }
 
-    /** Mark [tabId] as the currently-selected tab. */
+    /**
+     * Mark [tabId] as the currently-selected tab. A background tab is refused (`null`): it can
+     * only become active by [takeOverTab].
+     */
     fun setActiveTab(cfg: WindowConfig, tabId: String): WindowConfig? {
         if (cfg.activeTabId == tabId) return null
-        if (cfg.tabs.none { it.id == tabId }) return null
+        val tab = cfg.tabs.firstOrNull { it.id == tabId } ?: return null
+        if (!tab.isListed) return null
         return cfg.copy(activeTabId = tabId)
+    }
+
+    /**
+     * Turn a background tab into a normal one and make it the active tab.
+     *
+     * @param cfg the world view holding the tab.
+     * @param tabId the tab the person takes over.
+     * @return the new config, or `null` when the tab is unknown.
+     */
+    fun takeOverTab(cfg: WindowConfig, tabId: String): WindowConfig? {
+        val idx = cfg.tabs.indexOfFirst { it.id == tabId }
+        if (idx < 0) return null
+        val tab = cfg.tabs[idx]
+        if (!tab.isBackground && cfg.activeTabId == tabId) return null
+        val newTabs = cfg.tabs.toMutableList()
+        newTabs[idx] = tab.copy(isBackground = false)
+        return cfg.copy(tabs = newTabs, activeTabId = tabId)
     }
 
     /**

@@ -47,6 +47,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
 import se.soderbjorn.lunamux.ClaudeUsageMonitor
+import se.soderbjorn.lunamux.EVENTS_SESSION_HEADER
 import se.soderbjorn.lunamux.TaskIndex
 import se.soderbjorn.lunamux.auth.DeviceAuth
 import se.soderbjorn.lunamux.persistence.SettingsRepository
@@ -125,6 +126,8 @@ fun Route.mcpRoutes(
     post("/mcp") {
         val scope = call.mcpAuthorize(settingsRepo) ?: return@post
         val session = McpSessions.touch(call.request.header(SESSION_HEADER))
+        // The agent's own pane, when its .mcp.json sends it (see the Settings snippet); unchecked here.
+        val callerSessionId = call.request.header(EVENTS_SESSION_HEADER)?.trim()?.takeIf { it.isNotEmpty() }
         val body = call.receiveText()
         val acceptsSse = call.request.header(HttpHeaders.Accept)
             ?.contains("text/event-stream", ignoreCase = true) == true
@@ -137,7 +140,7 @@ fun Route.mcpRoutes(
         if (acceptsSse && isToolCall) {
             call.respondTextWriter(ContentType.Text.EventStream) {
                 coroutineScope {
-                    val pending = async { McpServer.handleMessage(body, scope, session) }
+                    val pending = async { McpServer.handleMessage(body, scope, session, callerSessionId) }
                     // Flush one keepalive up front so the response headers and
                     // a first byte reach the client immediately. Without this
                     // the whole SSE_KEEPALIVE_MS window elapses before anything
@@ -161,7 +164,7 @@ fun Route.mcpRoutes(
                 }
             }
         } else {
-            val handled = McpServer.handleMessage(body, scope, session)
+            val handled = McpServer.handleMessage(body, scope, session, callerSessionId)
             handled.newSessionId?.let { call.response.header(SESSION_HEADER, it) }
             if (handled.body == null) {
                 call.respond(HttpStatusCode.Accepted)

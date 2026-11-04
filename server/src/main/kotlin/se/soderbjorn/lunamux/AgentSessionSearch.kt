@@ -80,12 +80,12 @@ object AgentSessionSearch {
         val seen = hits.mapTo(HashSet()) { it.record.id }
         val viaTask = if (tasks == null || matchingTasks.isEmpty()) emptyList() else {
             val stored = repo.loadAgentSessionsOfTasks(matchingTasks)
-            val live = tracker?.snapshot().orEmpty().filter { tasks.taskIdOf(it) in matchingTasks }
+            val live = tracker?.snapshot().orEmpty().filter { tasks.taskIdOf(it) in matchingTasks && !it.background }
             (stored + live).distinctBy { it.id }.filter { seen.add(it.id) }.map { AgentSessionHit(it, null, null) }
         }
         return (hits + viaTask)
             .mapNotNull { hit ->
-                val rec = tracker?.cached(hit.record.id) ?: hit.record
+                val rec = (tracker?.cached(hit.record.id) ?: hit.record).takeUnless { it.background } ?: return@mapNotNull null
                 val taskTitle = tasks?.taskIdOf(rec)?.let(tasks::titleOf)
                 val found = bestField(rec, taskTitle, hit.transcriptWindow, hit.screenWindow, q) ?: return@mapNotNull null
                 Triple(rec, found, taskTitle)

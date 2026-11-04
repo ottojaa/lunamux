@@ -655,7 +655,10 @@ object SettingsDialog {
                 "lunamux": {
                   "type": "http",
                   "url": "https://localhost:$port/mcp",
-                  "headers": { "X-Termtastic-Auth": "$rawToken" }
+                  "headers": {
+                    "X-Termtastic-Auth": "$rawToken",
+                    "X-Lunamux-Session": "${'$'}{LUNAMUX_SESSION_ID}"
+                  }
                 }
               }
             }

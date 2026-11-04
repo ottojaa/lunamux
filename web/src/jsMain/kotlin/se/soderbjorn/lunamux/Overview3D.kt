@@ -95,6 +95,7 @@ import kotlin.js.json
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
+import se.soderbjorn.lunamux.listedTabs
 
 /* ---------------------------------------------------------------------- */
 /* Module state. The renderer / scene / camera / overlay are app-lifetime  */
@@ -377,7 +378,7 @@ internal fun openOverview3d() {
     // [effectiveTabs], never the flat `cfg.tabs`: that field is a legacy mirror the server pins to
     // `worlds.first()` for pre-1.9 clients and does NOT track the active world, so the switcher
     // showed the DEFAULT world's tabs whichever world you were actually in. @see effectiveTabs
-    val tabs = cfg.effectiveTabs.filter { !it.isHidden }
+    val tabs = cfg.listedTabs.filter { !it.isHidden }
 
     ovOpen = true
     ovDiveStart = Double.NaN
