@@ -3530,11 +3530,13 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 
 /* ── Agents overview (AgentsOverview.kt) ──
    Topbar chip plus the ⌘⇧A overlay, drawn as a terminal table: one row per task, every row the same
-   six-column grid (marker, title, where, state word, detail, age). There are no glyphs and no bands.
-   Colour says state and nothing else: amber is "needs you", the accent is "working" and the selected
-   row, red a failed open; every other text is a shade of the theme's text colour, and a finished row
-   recedes. Lifted above the pane modals so it opens over whatever is on screen. The colours below
-   follow the active theme and fall back to the dark teal defaults. */
+   six-column grid (marker, title, where, state word, detail, age). Brightness and colour follow the
+   state: a working or needs-you row (`.ao-live`) has a bright title, a done row (`.ao-done`) a
+   mid-grey one, and a finished one (`.ao-old`) in EARLIER is dim all over. The state word is coloured
+   by state: the accent for "working" (with the working glyph), amber for "needs you", a muted green
+   for "done"; the accent also marks the selected row, red a failed open. Every other text is a shade
+   of the theme's text colour. Lifted above the pane modals so it opens over whatever is on screen.
+   The colours below follow the active theme and fall back to the dark teal defaults. */
 .ao-chip, .ao-panel {
     --ao-surface: var(--dt-window-bg, var(--t-surface, #0c1a1e));
     --ao-text: var(--t-text, #cfe3e2);
@@ -3543,6 +3545,8 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     --ao-faint: color-mix(in srgb, var(--ao-dim) 52%, var(--ao-surface));
     --ao-line: var(--t-border, #1b3136);
     --ao-sel: color-mix(in srgb, var(--t-accent, #5fd4d0) 14%, var(--ao-surface));
+    --ao-hover: color-mix(in srgb, var(--t-accent, #5fd4d0) 5%, var(--ao-surface));
+    --ao-done: color-mix(in srgb, var(--t-add, #86c9a0) 78%, var(--ao-surface));
     --ao-accent: var(--t-accent, #5fd4d0);
     --ao-warn: var(--t-warn, #f2c14e);
     --ao-error: var(--t-danger, #ff7b72);
@@ -3630,10 +3634,13 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-sec::after { content: ""; flex: 1; height: 1px; background: var(--ao-line); }
 .ao-empty { padding: 24px 14px; color: var(--ao-dim); }
 
-/* The one grid every row uses: marker, title, where, state word, detail, age. */
+/* The one grid every row uses: marker, title, where, state word, detail, age. The title and the
+   detail share the flexible width two to three, the title never narrower than 20 characters; the
+   folder (room for "lunamux-fork"), the state (room for "⠆ 2 working") and the age are fixed, so the
+   columns line up in every row. */
 .ao-row {
     display: grid;
-    grid-template-columns: 14px minmax(0, 250px) 90px 10ch minmax(0, 1fr) 36px;
+    grid-template-columns: 14px minmax(20ch, 2fr) 16ch 14ch minmax(0, 3fr) 36px;
     gap: 0 12px;
     align-items: start;
     padding: 3px 14px;
@@ -3642,17 +3649,22 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     cursor: pointer;
 }
 .ao-row > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.ao-row:hover { background: color-mix(in srgb, var(--ao-sel) 55%, transparent); }
+/* The pointer's row is a faint tint; only the selected row has the strong fill and the accent bar. */
+.ao-row:hover { background: var(--ao-hover); }
 .ao-row.ao-sel { background: var(--ao-sel); box-shadow: inset 2px 0 0 var(--ao-accent); }
 
 .ao-m { color: var(--ao-accent); user-select: none; }
 .ao-m-need { color: var(--ao-warn); }
-.ao-t { color: var(--ao-text); }
+/* Brightness by state: live rows bright, done rows mid-grey, EARLIER rows dim. */
+.ao-live .ao-t { color: var(--ao-text); font-weight: 600; }
+.ao-live .ao-w, .ao-live .ao-n { color: var(--ao-muted); }
+.ao-done .ao-t { color: var(--ao-muted); }
+.ao-done .ao-w, .ao-done .ao-n { color: var(--ao-dim); }
 .ao-row.ao-sel .ao-t { color: var(--ao-accent); font-weight: 600; }
-.ao-w, .ao-n { color: var(--ao-muted); }
-.ao-sw { color: var(--ao-muted); }
-.ao-sw-work { color: var(--ao-accent); }
-.ao-sw-need { color: var(--ao-warn); }
+.ao-sw { color: var(--ao-dim); }
+.ao-sw-work { color: var(--ao-accent); font-weight: 600; }
+.ao-sw-need { color: var(--ao-warn); font-weight: 600; }
+.ao-sw-done { color: var(--ao-done); }
 .ao-age { text-align: right; color: var(--ao-dim); }
 .ao-n-error { color: var(--ao-error); }
 .ao-tab { color: var(--ao-dim); }
@@ -3667,9 +3679,28 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 }
 
 /* Earlier and finished rows recede. */
-.ao-old .ao-t, .ao-old .ao-w, .ao-old .ao-n, .ao-old .ao-sw { color: var(--ao-dim); }
+.ao-old .ao-t { color: var(--ao-dim); }
+.ao-old .ao-w, .ao-old .ao-n, .ao-old .ao-sw { color: var(--ao-faint); }
 .ao-row.ao-sel.ao-old .ao-t { color: var(--ao-accent); }
 .ao-more { cursor: pointer; }
+
+/* The working glyph (WorkingGlyph.kt): two layers stacked in one box and cross-faded by the script,
+   in the accent with a soft glow. The box is as high as a row's line so it does not grow the row, and
+   the cell it sits in lets the glow spill past its edge. */
+.ao-row > .ao-sw { overflow: visible; }
+.ao-work {
+    position: relative;
+    display: inline-block;
+    width: 2ch;
+    height: 20px;
+    font-size: 19px;
+    line-height: 20px;
+    vertical-align: top;
+    text-align: center;
+    color: var(--ao-accent);
+    text-shadow: 0 0 8px color-mix(in srgb, var(--ao-accent) 55%, transparent);
+}
+.ao-work-layer { position: absolute; inset: 0; opacity: 0; }
 .ao-more .ao-t { color: var(--ao-dim); }
 
 /* Footer: the same three keys for every selection; keys in the text colour, words dim. */
@@ -3691,7 +3722,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 
 /* Narrow panels: the folder and the detail give way, the extra line then carries the detail. */
 @container ao (max-width: 700px) {
-    .ao-row { grid-template-columns: 14px minmax(0, 1fr) 10ch 36px; }
+    .ao-row { grid-template-columns: 14px minmax(0, 1fr) 14ch 36px; }
     .ao-row > .ao-w, .ao-row > .ao-n { display: none; }
     .ao-focus { grid-column: 2 / -1; }
 }

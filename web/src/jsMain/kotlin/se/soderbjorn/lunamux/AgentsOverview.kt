@@ -5,12 +5,16 @@
  * "last two weeks" (a heading with nothing under it is not drawn).
  *
  * Every row is the same six-column grid: a marker (◆ when the task needs the person, ▸ on the
- * selected row), the title, where it runs, one state word, a detail line and the age. The row has no
- * glyphs and no band; "needs you" is the only coloured word. The selected row carries one more line
- * under it with the full text and the tab its session sits in. ↵ opens the row, ⌘↵ takes a
+ * selected row), the title, where it runs, one state word, a detail line and the age. Brightness
+ * and colour follow the state: a working or needs-you row has a bright title, a done one a
+ * mid-grey title, an EARLIER one a dim row. The state word is cyan with the app's working glyph in
+ * front while an agent moves ([workingGlyph]), yellow when the task needs the person, a muted
+ * green when it is done. The selected row carries one more line under it with the full text and
+ * the tab its session sits in, and none when there is nothing to put on it. ↵ opens the row, ⌘↵ takes a
  * background tab over, → peeks at the session ↵ would open, and ⌘⌫ closes a live one after an
  * inline confirmation. Typing two or more characters swaps the lists for search results over every
- * task ever run, one row per task. The footer is the same for every selection.
+ * task ever run, one row per task. EARLIER shows its newest five rows and a "+ N more" line for
+ * the rest. The footer is the same for every selection.
  *
  * All state and behaviour live in the shared [AgentsOverviewBackingViewModel]; this file only
  * draws its state as plain DOM and turns key presses and clicks into calls on it. Rows are found
@@ -19,6 +23,7 @@
  * their counts always agree.
  *
  * @see AgentsOverviewBackingViewModel
+ * @see workingGlyph
  * @see registerAgentsOverviewHotkey
  * @see buildAgentsOverviewTopbarAction
  */
@@ -382,8 +387,9 @@ private fun renderList(state: AgentsOverviewBackingViewModel.State) {
         if (state.fortnight.isNotEmpty()) {
             list.appendChild(div("ao-sec").also { it.textContent = "EARLIER · LAST TWO WEEKS" })
             add(state.fortnight)
-            if (state.earlierHidden > 0) list.appendChild(buildMoreLine(state.earlierHidden))
         }
+        // The line closes EARLIER whichever band the last shown row is in.
+        if (state.earlierHidden > 0) list.appendChild(buildMoreLine(state.earlierHidden))
     }
     (list.querySelector(".ao-sel") as? HTMLElement)?.asDynamic().scrollIntoView(js("({block: 'nearest'})"))
 }
@@ -416,9 +422,13 @@ private fun highlighted(text: String, start: Int, length: Int): org.w3c.dom.Docu
  * One row of the table in the six-column grid: marker, title, where, state word, detail, age.
  *
  * The marker is ◆ for a task that needs the person and ▸ on the selected row (which wins over
- * ◆). Only "needs you" and "working" are coloured; a finished row is dimmed. The selected row has
+ * ◆). The row's class says how bright it is: `ao-live` for a task that works or needs the person,
+ * `ao-done` for one that is done in NOW, `ao-old` for one that finished and sits in EARLIER; a
+ * working row in EARLIER is live, because the state wins over the band. The state word carries
+ * the state's colour, and "working" has the working glyph in front. The selected row has
  * one more line under it, spanning the columns after the marker, with the full text and the tab
- * ↵ opens; a failed resume or open shows in the error colour inside it. An open peek follows.
+ * ↵ opens, when there is any; a failed resume or open shows in the error colour inside it. An open
+ * peek follows.
  *
  * @param row the row to draw.
  * @param state the view model's state, for the open peek.
@@ -428,7 +438,11 @@ private fun highlighted(text: String, start: Int, length: Int): org.w3c.dom.Docu
 private fun buildRow(row: Row, state: AgentsOverviewBackingViewModel.State, selected: Boolean): HTMLElement {
     val classes = mutableListOf("ao-row")
     if (selected) classes += "ao-sel"
-    if (row.finished) classes += "ao-old"
+    classes += when {
+        row.finished -> "ao-old"
+        row.working || row.needsYou -> "ao-live"
+        else -> "ao-done"
+    }
     val el = div(classes.joinToString(" "))
     el.setAttribute("data-id", row.id)
 
@@ -440,7 +454,7 @@ private fun buildRow(row: Row, state: AgentsOverviewBackingViewModel.State, sele
     el.appendChild(title)
 
     el.appendChild(span("ao-w", row.where ?: ""))
-    el.appendChild(span("ao-sw" + if (row.needsYou) " ao-sw-need" else if (row.working) " ao-sw-work" else "", row.stateWord))
+    el.appendChild(buildState(row))
 
     val detail = span("ao-n", "")
     if (row.matchInSnippet) detail.appendChild(highlighted(row.detail, row.matchStart, row.matchLength))
@@ -449,9 +463,38 @@ private fun buildRow(row: Row, state: AgentsOverviewBackingViewModel.State, sele
 
     el.appendChild(span("ao-age", if (row.sinceMillis <= 0) "" else formatAge(row.sinceMillis)))
 
-    if (selected) el.appendChild(buildFocus(row))
+    if (selected) buildFocus(row)?.let { el.appendChild(it) }
     state.peek?.takeIf { selected }?.let { el.appendChild(buildPeek(it)) }
     return el
+}
+
+/**
+ * The state cell: the state word in the colour of its state, and for a working row the working
+ * glyph in front of it.
+ *
+ * Called by [buildRow] for every row.
+ *
+ * @param row the row to draw.
+ * @return the cell, whose class says which colour the word takes.
+ * @see workingGlyph
+ */
+private fun buildState(row: Row): HTMLElement {
+    val cell = span(
+        "ao-sw" + when {
+            row.needsYou -> " ao-sw-need"
+            row.working -> " ao-sw-work"
+            !row.finished -> " ao-sw-done"
+            else -> ""
+        },
+        "",
+    )
+    if (row.working) {
+        cell.appendChild(workingGlyph())
+        cell.appendChild(document.createTextNode(" ${row.stateWord}"))
+    } else {
+        cell.textContent = row.stateWord
+    }
+    return cell
 }
 
 /**
@@ -460,11 +503,13 @@ private fun buildRow(row: Row, state: AgentsOverviewBackingViewModel.State, sele
  * colour, never dimmed.
  *
  * @param row the selected row.
- * @return the line, spanning every column after the marker.
+ * @return the line, spanning every column after the marker; null when the row has nothing for it,
+ *   so the selected row never carries an empty line.
  * @see Row.tab
  * @see Row.error
  */
-private fun buildFocus(row: Row): HTMLElement {
+private fun buildFocus(row: Row): HTMLElement? {
+    if (row.extra.isBlank()) return null
     val focus = div("ao-focus")
     val tab = row.tab
     // The tab note is the last part of the extra line; what it is joined to by " · " belongs to the dim part.
