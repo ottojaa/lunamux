@@ -633,8 +633,8 @@ private fun buildPeek(peek: AgentsOverviewBackingViewModel.Peek): HTMLElement {
         else -> peek.lines.forEach { line -> box.appendChild(div("ao-peek-line").also { it.textContent = line }) }
     }
     if (peek.background) {
-        // The screen is read-only: the way to type into it is to take its tab over.
-        box.appendChild(div("ao-peek-hint").also { it.textContent = "⌘↵ take over this tab to work in it" })
+        // The screen is read-only: the way to type into it is to show its tab.
+        box.appendChild(div("ao-peek-hint").also { it.textContent = "⌘↵ show as tab" })
     }
     return box
 }
