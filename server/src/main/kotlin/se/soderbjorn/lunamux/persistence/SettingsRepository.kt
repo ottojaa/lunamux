@@ -202,7 +202,8 @@ class SettingsRepository(
                     lead_session TEXT,
                     status       TEXT,
                     status_by    TEXT,
-                    status_at    INTEGER
+                    status_at    INTEGER,
+                    lead_leaf    TEXT
                 )
             """.trimIndent(),
             parameters = 0,
@@ -237,6 +238,9 @@ class SettingsRepository(
         }
         // Appended in the same order as the CREATE TABLE above, so an upgraded
         // database and a fresh one have identical column positions.
+        runCatching {
+            driver.execute(null, "ALTER TABLE task_meta ADD COLUMN lead_leaf TEXT", 0)
+        }
         runCatching {
             driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN repo_root TEXT", 0)
         }
@@ -666,7 +670,12 @@ class SettingsRepository(
      *
      * @property taskId the task's id, an agent-made task's or a task file's.
      * @property startedAt epoch millis the server first saw the task; never changes.
-     * @property leadSession the terminal session id of the pane whose session speaks for the task, or null.
+     * @property leadSession the terminal session id the pane had when it was named, or null. Terminal
+     *   ids are handed out again from `s1` on every start, so this only identifies the pane while the
+     *   server that stored it runs; a row written before [leadLeaf] existed has nothing else.
+     * @property leadLeaf the layout leaf id of the pane whose session speaks for the task, or null for
+     *   a row that has not been given one yet. It is stored with the layout, so it names the same pane
+     *   after a restart.
      * @property status the task's one-line status, or null.
      * @property statusBy the terminal session id of the pane that set the status, or null.
      * @property statusAt epoch millis the status was set, or null with no status.
@@ -678,6 +687,7 @@ class SettingsRepository(
         val status: String? = null,
         val statusBy: String? = null,
         val statusAt: Long? = null,
+        val leadLeaf: String? = null,
     )
 
     /**
@@ -689,8 +699,8 @@ class SettingsRepository(
      * @return one row per task the server has seen.
      */
     fun loadTaskMeta(): List<TaskMetaRow> =
-        database.settingsQueries.selectTaskMeta { id, startedAt, lead, status, by, at ->
-            TaskMetaRow(id, startedAt, lead, status, by, at)
+        database.settingsQueries.selectTaskMeta { id, startedAt, lead, status, by, at, leaf ->
+            TaskMetaRow(id, startedAt, lead, status, by, at, leaf)
         }.executeAsList()
 
     /**
@@ -704,14 +714,42 @@ class SettingsRepository(
     }
 
     /**
-     * Name the session that speaks for a task; the task needs a row (see [stampTaskStart]).
+     * Name the pane whose session speaks for a task; the task needs a row (see [stampTaskStart]).
+     *
+     * Called by [se.soderbjorn.lunamux.TaskIndex] when a task is made or its own session changes.
      *
      * @param taskId the task's id.
-     * @param leadSession the terminal session id of the pane, or null to clear it.
+     * @param leadSession the terminal session id the pane has now, or null to clear it.
+     * @param leadLeaf the pane's layout leaf id, or null to clear it.
+     * @see setTaskLeadLeaf
      */
-    fun setTaskLead(taskId: String, leadSession: String?) {
-        database.settingsQueries.setTaskLead(leadSession, taskId)
+    fun setTaskLead(taskId: String, leadSession: String?, leadLeaf: String?) {
+        database.settingsQueries.setTaskLead(leadSession, leadLeaf, taskId)
     }
+
+    /**
+     * Fill in the pane of a task that only has a terminal session id (a row from before the leaf
+     * was stored), leaving the terminal session id as it is.
+     *
+     * Called by [se.soderbjorn.lunamux.TaskIndex] once that id is seen on a running session.
+     *
+     * @param taskId the task's id; it needs a row.
+     * @param leadLeaf the layout leaf id of the pane.
+     */
+    fun setTaskLeadLeaf(taskId: String, leadLeaf: String) {
+        database.settingsQueries.setTaskLeadLeaf(leadLeaf, taskId)
+    }
+
+    /**
+     * Every layout leaf id any agent session has run in, ended sessions included.
+     *
+     * Called by `WindowState` when it restores the layout, so a pane made afterwards never gets
+     * the id of a pane that has gone but whose sessions are still on record.
+     *
+     * @return the distinct leaf ids.
+     */
+    fun allAgentSessionLeafIds(): List<String> =
+        database.settingsQueries.selectAgentSessionLeafIds().executeAsList().mapNotNull { it }
 
     /**
      * Store a task's status line; the task needs a row (see [stampTaskStart]).

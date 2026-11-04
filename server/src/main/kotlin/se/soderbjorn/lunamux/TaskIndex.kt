@@ -62,7 +62,9 @@ data class TaskListMember(val sessionId: String?, val title: String, val state: 
  * @property title the task's name.
  * @property source `file` when a task file declares it, else `agents`.
  * @property members its sessions and file members.
- * @property ownSessionId the pane whose session speaks for the task, or null when none was named.
+ * @property ownSessionId the terminal session id (`LUNAMUX_SESSION_ID`) the pane whose session speaks for
+ *   the task has now, or null when none was named or that pane is gone. The task remembers the pane,
+ *   not this id, so the id is current even after a restart gave the pane a new one.
  * @property status the task's one-line status, or null.
  */
 data class TaskListing(
@@ -92,6 +94,8 @@ data class TaskListing(
  * @param files the parsed task files, usually [TaskFilesWatcher.files].
  * @param leafOfSession maps a pane's `LUNAMUX_SESSION_ID` to its layout leaf id, or null for a pane
  *   that does not exist; replaced in tests.
+ * @param sessionOfLeaf the reverse: a layout leaf id to the `LUNAMUX_SESSION_ID` of the terminal in it
+ *   now, or null when the pane is gone or has no terminal; replaced in tests.
  * @param clock epoch-millis time source; replaced in tests.
  * @param newSuffix mints the short random suffix of a new task id; replaced in tests.
  * @see TaskSnapshot
@@ -103,6 +107,7 @@ class TaskIndex(
     private val leafOfSession: (String) -> String?,
     private val clock: () -> Long = System::currentTimeMillis,
     private val newSuffix: () -> String = { UUID.randomUUID().toString().take(SUFFIX_LENGTH) },
+    private val sessionOfLeaf: (String) -> String? = { null },
 ) {
     private val lock = Any()
     private var rows: List<AgentTaskRow> = runCatching { repo.loadAgentTasks() }.getOrDefault(emptyList())
@@ -185,7 +190,9 @@ class TaskIndex(
      */
     fun recompute() {
         synchronized(lock) {
-            val snapshot = resolve(tracker.snapshot(), files.value, rows, meta)
+            val records = tracker.snapshot()
+            adoptRunningPanes(records)
+            val snapshot = resolve(records, files.value, rows, meta)
             val fresh = snapshot.tasks.filter { it.id !in meta }
             if (fresh.isNotEmpty()) {
                 // A task's start is fixed the first time it is seen, so its place in the overview
@@ -198,12 +205,37 @@ class TaskIndex(
     }
 
     /**
+     * Give a task stored the old way a pane to follow.
+     *
+     * A task named before layout leaf ids were stored remembers its own session only as a terminal
+     * session id, which the next start hands to whatever pane comes that many places in. Once a
+     * session that is not ended runs on that id, its pane is the best answer there is, and it is
+     * stored so the task stays with it from then on. An ended session proves nothing (right after
+     * a start every record is ended, and the newest on the id may have run in another pane), so it
+     * is never used; the task keeps resolving by terminal id until a running session shows up.
+     *
+     * Called by [recompute] with [lock] held, before it resolves.
+     *
+     * @param records every record the tracker holds.
+     */
+    private fun adoptRunningPanes(records: List<AgentSessionRecord>) {
+        for ((taskId, row) in meta.toList()) {
+            val terminalId = row.leadSession
+            if (row.leadLeaf != null || terminalId == null) continue
+            val leaf = records.filter { it.terminalSessionId == terminalId && it.state != ENDED }
+                .maxByOrNull { it.createdAt }?.leafId ?: continue
+            repo.setTaskLeadLeaf(taskId, leaf)
+            meta = meta + (taskId to row.copy(leadLeaf = leaf))
+        }
+    }
+
+    /**
      * Make a new task.
      *
      * Called by the MCP `create_task` tool.
      *
      * The task's own session is the caller's pane when the caller is a known pane, else the first
-     * of [sessionIds], else none.
+     * of [sessionIds], else none. The task remembers the pane by its layout leaf id.
      *
      * @param title the task's name; blank is refused.
      * @param sessionIds panes (`LUNAMUX_SESSION_ID` values) to put in it straight away.
@@ -236,7 +268,9 @@ class TaskIndex(
      * Name the session that speaks for a task.
      *
      * Called by the MCP `set_task_lead` tool. The pane is looked up the way `add_to_task` looks up
-     * its panes, so the same mistake gets the same error. It is not moved into the task.
+     * its panes, so the same mistake gets the same error. It is not moved into the task. The task
+     * remembers the pane by its layout leaf id, so it stays with the pane when a restart gives it
+     * another terminal session id.
      *
      * @param taskId an agent-made task or a task file's id.
      * @param sessionId the pane (`LUNAMUX_SESSION_ID` value) whose session speaks for the task.
@@ -275,11 +309,17 @@ class TaskIndex(
         return clean
     }
 
+    /**
+     * Store the pane that speaks for a task: its layout leaf id, and the terminal session id it has
+     * now. A pane with neither an open record nor a leaf (it cannot be told apart from a pane that
+     * is gone) is stored by terminal session id alone and picked up again by [adoptRunningPanes].
+     */
     private fun storeOwnSession(taskId: String, sessionId: String) {
+        val leaf = tracker.openRecordOf(sessionId)?.leafId ?: leafOfSession(sessionId)
         synchronized(lock) {
             ensureMeta(taskId)
-            repo.setTaskLead(taskId, sessionId)
-            meta = meta + (taskId to meta.getValue(taskId).copy(leadSession = sessionId))
+            repo.setTaskLead(taskId, sessionId, leaf)
+            meta = meta + (taskId to meta.getValue(taskId).copy(leadSession = sessionId, leadLeaf = leaf))
         }
         recompute()
     }
@@ -391,15 +431,23 @@ class TaskIndex(
     }
 
     /**
-     * The pane whose session speaks for a task.
+     * The terminal session id of the pane that speaks for a task, as it is now.
+     *
+     * A task that remembers a layout leaf gets the id of the terminal in that leaf, or null when
+     * the pane is gone. A task stored the old way has only the terminal session id it was given, and
+     * that is what it reports.
      *
      * Called by the task panel's button handler to find where a button's text is typed, and by
      * [listing] for `list_tasks`.
      *
      * @param taskId the task's id.
-     * @return the terminal session id of the task's own session, or null when none was named.
+     * @return the terminal session id of the task's own session, or null when none was named or
+     *   its pane is gone.
      */
-    fun ownSessionOf(taskId: String): String? = synchronized(lock) { meta[taskId]?.leadSession }
+    fun ownSessionOf(taskId: String): String? = synchronized(lock) {
+        val row = meta[taskId] ?: return@synchronized null
+        row.leadLeaf?.let(sessionOfLeaf) ?: row.leadSession.takeIf { row.leadLeaf == null }
+    }
 
     private fun statusOf(taskId: String): String? = synchronized(lock) { meta[taskId]?.status }
 
@@ -533,7 +581,7 @@ class TaskIndex(
                     ?: t.refreshedAtMillis
                     ?: rows.firstOrNull { it.id == t.id }?.createdAt
                 t.copy(
-                    leadRecordId = m?.leadSession?.let { sid -> newestWithTerminal(records, sid)?.id },
+                    leadRecordId = m?.let { recordBoundTo(records, it)?.id },
                     status = m?.status,
                     statusAtMillis = m?.statusAt,
                     startedAtMillis = m?.startedAt ?: firstSeen,
@@ -542,8 +590,38 @@ class TaskIndex(
             return TaskSnapshot(tasks.sortedBy { it.id }, assignment)
         }
 
-        private fun newestWithTerminal(records: List<AgentSessionRecord>, terminalId: String): AgentSessionRecord? =
-            records.filter { it.terminalSessionId == terminalId }.maxByOrNull { it.createdAt }
+        /**
+         * The record that speaks for a task, from the pane it remembers.
+         *
+         * A task remembers its own session as the layout leaf id of its pane, which is stored with
+         * the layout and so names the same pane after a restart. The terminal session id does not:
+         * it is handed out again from `s1` on every start, so afterwards the same id names another
+         * pane. Among the records that ran in that leaf, the one that is not ended is the one
+         * running there now (the rule [AgentSessionTracker.openRecordOf] uses); when every one has
+         * ended, the newest by start is the task's latest run, which Enter can resume. A pane that
+         * has gone leaves only ended records, so the task points at its own latest run and never
+         * at whatever pane holds its old terminal id.
+         *
+         * A task stored before leaf ids were kept has only the terminal session id. It is
+         * resolved the same way over the records on that id, until [TaskIndex] has seen a running
+         * session on it and stored the pane.
+         *
+         * Called by [resolve] for each task that has an own session.
+         *
+         * @param records every record the tracker holds.
+         * @param row the task's stored facts.
+         * @return the running record in the pane, else the newest record in it, else null (also when
+         *   the task has no own session).
+         * @see AgentSessionTracker.openRecordOf
+         */
+        internal fun recordBoundTo(records: List<AgentSessionRecord>, row: TaskMetaRow): AgentSessionRecord? {
+            val there = when {
+                row.leadLeaf != null -> records.filter { it.leafId == row.leadLeaf }
+                row.leadSession != null -> records.filter { it.terminalSessionId == row.leadSession }
+                else -> return null
+            }
+            return there.filter { it.state != ENDED }.maxByOrNull { it.createdAt } ?: there.maxByOrNull { it.createdAt }
+        }
 
         private fun isOpen(r: AgentSessionRecord) = r.state != ENDED && r.leafId != null
     }

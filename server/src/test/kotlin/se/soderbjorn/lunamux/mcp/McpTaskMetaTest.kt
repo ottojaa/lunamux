@@ -45,6 +45,7 @@ class McpTaskMetaTest {
     private val index = TaskIndex(
         repo, tracker, files, leafOfSession = { if (it in panes) "leaf-$it" else WindowState.leafIdOfSession(it) },
         clock = { now },
+        sessionOfLeaf = { leaf -> panes.firstOrNull { "leaf-$it" == leaf } ?: WindowState.sessionIdOfLeaf(leaf) },
     )
 
     init {
@@ -100,7 +101,7 @@ class McpTaskMetaTest {
     }
 
     @Test
-    fun `set_task_lead names a pane, answers with it and resolves to the pane's newest record`() {
+    fun `set_task_lead names a pane, answers with it and resolves to the record running in that pane`() {
         session("a"); session("b")
         val id = create("Work", """["a"]""")["taskId"]!!.jsonPrimitive.content
         val first = taskInState(id).leadRecordId
@@ -219,7 +220,7 @@ class McpTaskMetaTest {
         val reopened = TaskIndex(repo, restarted, files, leafOfSession = { null }, clock = { now })
 
         val after = reopened.state.value.tasks.single { it.id == id }
-        assertEquals(record, after.leadRecordId, "the ended record is found by the pane id the task remembers")
+        assertEquals(record, after.leadRecordId, "the ended record is found by the pane the task remembers")
         assertEquals("ended", restarted.snapshot().single { it.id == record }.state)
     }
 

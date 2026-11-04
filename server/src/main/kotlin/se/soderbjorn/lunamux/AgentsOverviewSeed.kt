@@ -126,6 +126,9 @@ object AgentsOverviewSeed {
     /** The terminal session id the seeded "Release 4.2 notes" task names as its own session's pane. */
     private const val NOTES_OWN_PANE = "seed-pty-notes"
 
+    /** The layout leaf the own session of the "Release 4.2 notes" task ran in, which is what the task remembers. */
+    private const val NOTES_OWN_LEAF = "seed-leaf-notes"
+
     /** The one-line status the seeded "Release 4.2 notes" task carries. */
     private const val NOTES_STATUS = "Notes drafted, waiting on the changelog check"
 
@@ -281,6 +284,7 @@ object AgentsOverviewSeed {
                     agent = "claude",
                     agentSessionId = "5eed0002-0000-4000-8000-%012d".format(n),
                     source = "hooks",
+                    leafId = pane?.let { NOTES_OWN_LEAF },
                     terminalSessionId = pane,
                     cwd = workdir,
                     repo = "lunamux",
@@ -302,7 +306,7 @@ object AgentsOverviewSeed {
         record(2, "Changelog check", "Check every changelog entry against the merged pull requests", 2 * HOUR + 10 * MINUTE, null, background = true)
         record(3, "Screenshot refresh", "Retake the screenshots the notes link to", 2 * HOUR + 20 * MINUTE, null, background = true)
         repo.stampTaskStart("seed-task-notes", now - 3 * HOUR)
-        repo.setTaskLead("seed-task-notes", NOTES_OWN_PANE)
+        repo.setTaskLead("seed-task-notes", NOTES_OWN_PANE, NOTES_OWN_LEAF)
         repo.setTaskStatus("seed-task-notes", NOTES_STATUS, NOTES_OWN_PANE, now - 2 * HOUR)
         seedReleaseNotesPanel(repo, now)
     }

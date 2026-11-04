@@ -206,7 +206,8 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
             name = "list_tasks",
             description = "List the tasks there are and the sessions in each, so you can join one " +
                 "instead of making a duplicate. Call this before create_task when you may be continuing " +
-                "work that already has a task.",
+                "work that already has a task. ownSession is the session id of the task's own pane " +
+                "as it is now, or null while that pane is closed.",
             inputSchema = schemaObject(),
             requiresWrite = false,
         ) { _, _ ->
