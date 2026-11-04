@@ -48,7 +48,9 @@ idle, **‖** paused, **✓** done.
   behaviour: ↵ jumps to the open session that most needs the person (the ◆ that has waited
   longest, else the working session with the freshest sign of life); with no open session it runs
   the task's `open` action, if it has one; with neither it expands or collapses the panel. The
-  session is remembered by the pane it ran in. A server restart keeps it: the session is then an
+  session is remembered by the pane it ran in, and that pane's id is reused after a restart, so
+  it is looked up as the session running in that pane now; only when none is running does it
+  stand for the pane's newest ended session. A server restart keeps it: the session is then an
   ended one and ↵ resumes it. It is lost only once that session is older than the history the
   overview loads (14 days, or beyond the newest 300 sessions); the task then has no own session
   until an agent names one again.

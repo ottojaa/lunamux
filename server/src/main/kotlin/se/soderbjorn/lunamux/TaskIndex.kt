@@ -524,7 +524,7 @@ class TaskIndex(
                     ?: t.refreshedAtMillis
                     ?: rows.firstOrNull { it.id == t.id }?.createdAt
                 t.copy(
-                    leadRecordId = m?.leadSession?.let { sid -> newestWithTerminal(records, sid)?.id },
+                    leadRecordId = m?.leadSession?.let { sid -> recordBoundTo(records, sid)?.id },
                     status = m?.status,
                     statusAtMillis = m?.statusAt,
                     startedAtMillis = m?.startedAt ?: firstSeen,
@@ -533,8 +533,30 @@ class TaskIndex(
             return TaskSnapshot(tasks.sortedBy { it.id }, assignment)
         }
 
-        private fun newestWithTerminal(records: List<AgentSessionRecord>, terminalId: String): AgentSessionRecord? =
-            records.filter { it.terminalSessionId == terminalId }.maxByOrNull { it.createdAt }
+        /**
+         * The record a terminal session id stands for now.
+         *
+         * A task remembers its own session as a terminal id, and a terminal id is reused: after
+         * a restart the same id names a different pane, so several records (ended runs in panes
+         * that are gone, and the one running now) carry it. The record bound to the pane that
+         * holds the id now is the one that is not ended; the newest record by start is only the
+         * answer when every one of them has ended, so a task whose session is over still points
+         * at its latest run, which Enter can resume.
+         *
+         * Called by [resolve] for each task that has an own session. The other lookups by
+         * terminal id ([AgentSessionTracker.openRecordOf] and its poll) only ever consider open
+         * records, so this is the one place that has to choose between an open record and
+         * ended ones.
+         *
+         * @param records every record the tracker holds.
+         * @param terminalId the terminal session id the task remembers.
+         * @return the open record on that terminal, else the newest record on it, else null.
+         * @see AgentSessionTracker.openRecordOf
+         */
+        internal fun recordBoundTo(records: List<AgentSessionRecord>, terminalId: String): AgentSessionRecord? {
+            val onTerminal = records.filter { it.terminalSessionId == terminalId }
+            return onTerminal.filter(::isOpen).maxByOrNull { it.createdAt } ?: onTerminal.maxByOrNull { it.createdAt }
+        }
 
         private fun isOpen(r: AgentSessionRecord) = r.state != ENDED && r.leafId != null
     }

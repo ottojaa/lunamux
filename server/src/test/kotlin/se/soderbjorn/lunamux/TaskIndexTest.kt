@@ -2,7 +2,8 @@
  * Tests for [TaskIndex] and the task support in [AgentSessionTracker]: which task each session
  * belongs to (explicit join, file match by session id, file match by folder, none), how a
  * resumed conversation keeps its task, how a task promised to a pane with no agent yet is handed
- * to the session that starts there, and the operations behind the MCP task tools.
+ * to the session that starts there, which record stands for a task's own session when a terminal
+ * id has been reused, and the operations behind the MCP task tools.
  *
  * Runs against a real SQLite database with fake git, clock, ids and pane lookup, so no terminal
  * is needed.
@@ -237,6 +238,77 @@ class TaskIndexTest {
     fun `a task is marked as having an open action only when its file declares one`() {
         val snap = resolve(emptyList(), listOf(file("a", open = TaskOpen("claude", "/tmp")), file("b")))
         assertEquals(listOf(true, false), snap.tasks.map { it.hasOpen })
+    }
+
+    // ── The task's own session, when terminal ids are reused ───────────────────────────
+
+    private fun onTerminal(id: String, terminal: String, createdAt: Long, state: String = "ended", leafId: String? = "leaf-$id") =
+        rec(id, state = state, createdAt = createdAt, leafId = leafId).copy(terminalSessionId = terminal)
+
+    private fun ownSessionOf(records: List<AgentSessionRecord>, terminal: String): String? =
+        TaskIndex.resolve(
+            records, emptyList(), listOf(SettingsRepository.AgentTaskRow("t", "T", 1, 1)),
+            mapOf("t" to SettingsRepository.TaskMetaRow("t", 1, leadSession = terminal)),
+        ).tasks.single().leadRecordId
+
+    @Test
+    fun `a reused terminal id resolves to the record running there now, not the newest ended one`() {
+        // The shape of a long-lived install: one terminal id, an old ended run, the live record
+        // (started earlier than the last ended run, in the pane that holds the id now) and a
+        // newer ended run from a pane that is gone.
+        val records = listOf(
+            onTerminal("old-ended", "s10", createdAt = 2),
+            onTerminal("live", "s10", createdAt = 5, state = "idle", leafId = "leaf-now"),
+            onTerminal("newer-ended", "s10", createdAt = 9),
+            onTerminal("elsewhere", "s11", createdAt = 99, state = "working"),
+        ).map { it.copy(taskId = "t") }
+        assertEquals("live", ownSessionOf(records, "s10"))
+    }
+
+    @Test
+    fun `with no record running on a reused terminal id the newest ended one stands for it`() {
+        val records = listOf(
+            onTerminal("old-ended", "s10", createdAt = 2),
+            onTerminal("newer-ended", "s10", createdAt = 9),
+            onTerminal("middle-ended", "s10", createdAt = 5),
+        ).map { it.copy(taskId = "t") }
+        assertEquals("newer-ended", ownSessionOf(records, "s10"))
+    }
+
+    @Test
+    fun `a record on the terminal that is not ended wins even when it is the oldest`() {
+        val records = listOf(
+            onTerminal("live-oldest", "s10", createdAt = 1, state = "working"),
+            onTerminal("ended-newest", "s10", createdAt = 50),
+        ).map { it.copy(taskId = "t") }
+        assertEquals("live-oldest", ownSessionOf(records, "s10"))
+    }
+
+    @Test
+    fun `a task whose terminal id no record carries has no own record`() {
+        assertNull(ownSessionOf(listOf(onTerminal("a", "s1", 1).copy(taskId = "t")), "s10"))
+    }
+
+    @Test
+    fun `an index loading a reused terminal id points the task at the live session after a restart`() {
+        // A previous run left an ended record, created later than the session that is live now,
+        // on the same terminal id: loaded from the database, it must not take the task's place.
+        repo.saveAgentSession(
+            onTerminal("gone", "s1", createdAt = 900_000, leafId = "leaf-gone").copy(endedAt = 950_000),
+        )
+        val restarted = AgentSessionTracker(
+            repo, gitInfo = { GitInfo() }, clock = { now }, newId = { "r${++nextId}" },
+        ).also { it.start() }
+        restarted.onHook(pane("s1"), event("SessionStart", "a-live"))
+        val live = restarted.openRecordOf("s1")!!
+        val reopened = TaskIndex(
+            repo, restarted, files, leafOfSession = { if (it in knownPanes) "leaf-$it" else null },
+            clock = { now }, newSuffix = { suffixes.next() },
+        )
+        val id = reopened.createTask("Plan", listOf("s1"))
+
+        assertEquals(live.id, reopened.state.value.tasks.single { it.id == id }.leadRecordId)
+        assertTrue(restarted.snapshot().any { it.id == "gone" }, "the ended record is still loaded")
     }
 
     // ── Resume and the pending pane assignment ──────────────────────────────────────────

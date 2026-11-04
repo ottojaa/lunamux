@@ -100,7 +100,7 @@ class McpTaskMetaTest {
     }
 
     @Test
-    fun `set_task_lead names a pane, answers with it and resolves to the pane's newest record`() {
+    fun `set_task_lead names a pane, answers with it and resolves to the record running in that pane`() {
         session("a"); session("b")
         val id = create("Work", """["a"]""")["taskId"]!!.jsonPrimitive.content
         val first = taskInState(id).leadRecordId
