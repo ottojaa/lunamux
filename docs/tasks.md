@@ -17,7 +17,9 @@ There are two ways a session gets into a task, and they can be mixed:
 The overview is one aligned list with **one row per task**. A session that is in no task is a task
 of one, so it is a row too; a session that belongs to a task is never a row of its own, whether it
 runs in a tab or in the background. A row has no mark but one: **◆** at the start of a task that
-needs the person (the selected row shows **▸** there instead).
+needs the person (the selected row shows **▸** there instead). Rows are told apart by brightness
+and by the colour of the state word: a task that works or needs the person has a bright title, a
+done one a mid-grey title, and everything in EARLIER a dim one.
 
 A row reads, left to right: the **title**, **where** (the task's repo, else the folder the session
 runs in, home as `~`), one **state word**, a **detail** and the **age**. The state word is one of:
@@ -25,10 +27,13 @@ runs in, home as `~`), one **state word**, a **detail** and the **age**. The sta
 | Word | When |
 |---|---|
 | **needs you** (yellow) | any session of the task waits for the person |
-| **N working** | two or more sessions are moving, background ones counted |
-| **working** | one session is moving |
-| **done** | the task is in NOW and nothing is moving or waiting |
-| **finished** | the task is in EARLIER and nothing is moving or waiting |
+| **N working** (cyan, with the moving braille glyph before it) | two or more sessions are moving, background ones counted |
+| **working** (cyan, with the glyph) | one session is moving |
+| **done** (muted green) | the task is in NOW and nothing is moving or waiting |
+| **finished** (dim) | the task is in EARLIER and nothing is moving or waiting |
+
+The glyph is the app's own working mark: four braille frames that cross-fade
+about three times a second. With reduced motion it is a still frame.
 
 A session is *moving* while it works and has shown a sign of life in the last five minutes (for a
 session Lunamux does not host: while its file was refreshed in the last twenty). One that works but
@@ -44,7 +49,7 @@ the panel is narrower than 700px.
   session ↵ opens in the tab strip, **· tab 2 in Work** when it is in another world). A session in
   a background tab has no tab number, so that part is left out. The line also carries the resume
   note, "nothing to jump to: this session is not in a Lunamux pane", and the message of a resume
-  that failed.
+  that failed. A row that has nothing to put there has no second line, never an empty one.
 - **↵ opens the task's own session.** Every task can have one session that speaks for it: the one
   that made the task, or the one an agent names with `set_task_lead`. ↵ jumps to its pane. When it
   runs in a background tab (see below) ↵ opens its read-only peek instead. When it is gone, ↵ runs
@@ -108,9 +113,10 @@ the panel is narrower than 700px.
   and then moves to EARLIER. A task whose sessions have all ended is in EARLIER after the same
   ten minutes.
 - **EARLIER is two bands, newest first, dimmed.** **LAST FEW DAYS** holds the rows last active
-  within three days, all of them. **LAST TWO WEEKS** holds those between three and fourteen days
-  old; it shows the first five and a **+ N more** line (a click on it shows the rest). A band
-  with nothing in it has no heading. Older rows are not listed, but search still finds them.
+  within three days. **LAST TWO WEEKS** holds those between three and fourteen days old. Together
+  they show the newest five rows, then one **+ N more** line (a click on it, or ↓ on the last row,
+  shows the rest). A band with nothing to show has no heading. Older rows are not listed, but
+  search still finds them, and search is never cut.
   - A task's age is its newest session's: a task with a session from yesterday and one from ten
     days ago is in the first band. A single session is a task of its own.
   - Both edges are inclusive on the older side: exactly three days old is still in the first band,

@@ -31,13 +31,15 @@
 #                    "Billing cleanup" (a session in review, one queued) have no session in an open tab,
 #                    so they are in the first EARLIER band. Run scripts/seed-agents-overview-live.sh to
 #                    put live sessions in the tabs and see them in NOW.
-#   LAST FEW DAYS    everything finished within 3 days, all listed, newest first: "Release train",
+#   LAST FEW DAYS    everything finished within 3 days, newest first: "Release train",
 #                    a file task whose three sessions are all done but none has ended; today's two
 #                    sessions, "Rate limiter rewrite" and "Auth token refresh" (a session from
 #                    yesterday and one from 10 days ago: the task is as recent as its newest),
 #                    "Release 4.2" and the 2-day-old session.
-#   LAST TWO WEEKS   3 to 14 days: five units and "+ 2 more" ("Flaky checkout tests", the 6- and
-#                    12-day sessions, "Onboarding emails", "Docs sweep"). Click the more line to see all.
+#   EARLIER's cut    only the newest five EARLIER rows show, whichever band they are in, then one
+#                    "+ N more" line. Click it, or press ↓ on the last row, to see the rest, among
+#                    them the LAST TWO WEEKS band (3 to 14 days: "Flaky checkout tests", the 6- and
+#                    12-day sessions, "Onboarding emails", "Docs sweep"). Search is never cut.
 #   An EARLIER task  one dimmed row reading "finished" (title, repo, age), however many sessions it
 #                    holds; ↵ resumes its own session, or its newest when it has none.
 #   Awkward rows     "seed-home" (run from the home folder), "seed-branch-only" (only a run-named
