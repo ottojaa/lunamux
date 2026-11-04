@@ -599,7 +599,8 @@ enum class DiffLineType {
  *   or the one an agent named with `set_task_lead`), resolved to the record running in the pane that
  *   session ran in (the pane, not its terminal id, which is renumbered at every start), else to the
  *   newest ended record that ran in that pane; null when the task has none or no record exists yet.
- *   The overview opens it on ↵.
+ *   The task follows its session's Claude conversation to the pane it is resumed in. The overview
+ *   opens it on ↵.
  * @param status the one-line status a member set through `set_task_status`, shown on the task's
  *   row; null when none was set or it was cleared.
  * @param statusAtMillis epoch millis the status was set, or null with no status.
