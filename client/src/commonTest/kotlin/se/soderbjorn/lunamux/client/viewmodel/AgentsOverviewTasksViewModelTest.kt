@@ -282,7 +282,7 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aTaskIsOneUnitInTheSecondBandsLimit() {
+    fun aTaskIsOneUnitInTheEarlierLimit() {
         now = 30 * DAY // the bands are days wide; the usual clock is only hours in
         val tasks = (1..6).map {
             task(id = "g$it", members = listOf(member("m", "ended", since = now - 5 * DAY + it), member("n", "ended", since = now - 5 * DAY + it)))
@@ -327,17 +327,26 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun moreAppearsOnlyForTheSecondBand() {
+    fun theEarlierLimitCountsRowsAcrossBothBandsAndMoreRevealsTheRest() {
         now = 30 * DAY // the bands are days wide; the usual clock is only hours in
-        val recent = (1..8).map { session("r$it", "ended", endedAt = now - HOUR - it * 1_000L) }
+        val recent = (1..3).map { session("r$it", "ended", endedAt = now - HOUR - it * 1_000L) }
         val older = (1..7).map { session("o$it", "ended", endedAt = now - 5 * DAY - it) }
         show(emptyList(), *(recent + older).toTypedArray())
-        assertEquals(8, vm.state.recent.size, "the first band is never cut")
-        assertEquals(EARLIER_LIMIT, vm.state.fortnight.size)
-        assertEquals(2, vm.state.earlierHidden)
+        assertEquals(3, vm.state.recent.size, "the newest rows come first, so the first band is whole here")
+        assertEquals(EARLIER_LIMIT - 3, vm.state.fortnight.size, "the second band takes what is left of the five")
+        assertEquals(5, vm.state.earlierHidden)
         vm.showMoreEarlier()
         assertEquals(7, vm.state.fortnight.size)
         assertEquals(0, vm.state.earlierHidden)
+    }
+
+    @Test
+    fun aFirstBandLongerThanTheLimitIsCutToo() {
+        now = 30 * DAY // the bands are days wide; the usual clock is only hours in
+        show(emptyList(), *(1..8).map { session("r$it", "ended", endedAt = now - HOUR - it * 1_000L) }.toTypedArray())
+        assertEquals(EARLIER_LIMIT, vm.state.recent.size)
+        assertTrue(vm.state.fortnight.isEmpty())
+        assertEquals(3, vm.state.earlierHidden)
     }
 
     @Test
@@ -620,6 +629,16 @@ class AgentsOverviewTasksViewModelTest {
         assertEquals(Enter.NONE, r.enter)
         assertEquals("Doing a thing · nothing to jump to: this session is not in a Lunamux pane", r.extra)
         assertEquals("", r.tab)
+    }
+
+    @Test
+    fun aSessionWithNoDetailAndNoTabHasNoExtraLineAtAll() {
+        layoutWithBackground(listOf("leaf-m"), listOf("leaf-quiet"))
+        show(emptyList(), session("quiet", "working", background = true, lastActivityAt = now - 1_000))
+        val r = row("quiet")
+        assertEquals("", r.detail)
+        assertEquals("", r.tab)
+        assertEquals("", r.extra, "the view draws no line for an empty extra, so the selected row has no blank second line")
     }
 
     // ---- what ↵ opens ----

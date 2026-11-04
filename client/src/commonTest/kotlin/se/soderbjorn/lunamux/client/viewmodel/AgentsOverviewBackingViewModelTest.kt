@@ -127,12 +127,29 @@ class AgentsOverviewBackingViewModelTest {
     }
 
     @Test
-    fun earlierListsOpenIdleAndClosedSessionsTogetherNewestFirstAndCutsOnlyTheSecondBand() {
+    fun earlierListsOpenIdleAndClosedSessionsTogetherNewestFirstAndCutsAfterTheNewestFive() {
         val rows = (1..7).map { session("e$it", if (it % 2 == 0) "idle" else "ended", since = it * 1_000L, endedAt = it * 1_000L) }
         windowState.updateAgentSessions(rows, false)
-        assertEquals(listOf("e7", "e6", "e5", "e4", "e3", "e2", "e1"), vm.state.recent.map { it.id }, "all of the first band shows")
+        assertEquals(listOf("e7", "e6", "e5", "e4", "e3"), vm.state.recent.map { it.id }, "the newest five show")
         assertTrue(vm.state.fortnight.isEmpty())
+        assertEquals(2, vm.state.earlierHidden)
+        vm.showMoreEarlier()
+        assertEquals(listOf("e7", "e6", "e5", "e4", "e3", "e2", "e1"), vm.state.recent.map { it.id })
         assertEquals(0, vm.state.earlierHidden)
+    }
+
+    @Test
+    fun theDownArrowPastTheLastRowRevealsTheHiddenEarlierRowsAndLandsOnTheFirstOfThem() {
+        val rows = (1..7).map { session("e$it", "ended", since = it * 1_000L, endedAt = it * 1_000L) }
+        windowState.updateAgentSessions(rows, false)
+        vm.select("e3")
+        assertEquals(2, vm.state.earlierHidden)
+        vm.moveSelection(1)
+        assertEquals("e2", vm.state.selectedId, "the first row that was hidden")
+        assertEquals(0, vm.state.earlierHidden)
+        vm.moveSelection(1)
+        vm.moveSelection(1)
+        assertEquals("e1", vm.state.selectedId, "↓ on the very last row stays there")
     }
 
     @Test

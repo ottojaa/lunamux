@@ -17,7 +17,8 @@
  * row counts them in its state word ("needs you", "2 working", "working", "done" or
  * "finished") and shows the task's status as its detail. The selected row has one more line,
  * which carries the full text and the places that matter for opening it, such as the tab the
- * session sits in.
+ * session sits in; a row with nothing to add has an empty [AgentsOverviewBackingViewModel.Row.extra]
+ * and the view draws no line. EARLIER lists its newest five rows and a "+ N more" line for the rest.
  *
  * What ↵ opens follows one order. A task with an own session opens that session: its pane, or a
  * read-only peek when the pane is in a background tab; once the session is gone the task's
@@ -159,7 +160,8 @@ class AgentsOverviewBackingViewModel(
      *   apply, what Resume will do when it is not the plain case ("2 uncommitted changes · 1
      *   unpushed commit"), a note that there is nothing to jump to, the error of the last failed
      *   resume or open, where a search matched ("in transcript of Reviewer"), and the tab the
-     *   session [enter] opens sits in ("tab 2", or "tab 2 in Work" in another world).
+     *   session [enter] opens sits in ("tab 2", or "tab 2 in Work" in another world). Empty when
+     *   the row has none of these, and the view then draws no line at all.
      * @property tab that last part of [extra] on its own ("tab 2", "tab 2 in Work"), empty when the
      *   extra has none, so the view can draw it dimmer than the text before it.
      * @property sinceMillis epoch millis the row's age counts from: the time the task entered its
@@ -271,11 +273,12 @@ class AgentsOverviewBackingViewModel(
      * @property searching true while a [matchMode] answer for the current query is still on its way.
      * @property now the rows in NOW, in the order their work started.
      * @property recent EARLIER's first band, "Last few days": rows whose newest activity is at
-     *   most [RECENT_MS] old, newest first, all shown.
+     *   most [RECENT_MS] old, newest first.
      * @property fortnight EARLIER's second band, "Last two weeks": rows between [RECENT_MS] and
-     *   [WINDOW_MS] old, newest first, cut to [EARLIER_LIMIT] rows until "More" is pressed.
-     *   Nothing older is listed; search finds it.
-     * @property earlierHidden how many rows of [fortnight] "More" would reveal.
+     *   [WINDOW_MS] old, newest first. Nothing older is listed; search finds it.
+     *   [recent] and [fortnight] together hold only the newest [EARLIER_LIMIT] rows of EARLIER
+     *   until "+ N more" is pressed, so the second band may be empty or cut short.
+     * @property earlierHidden how many EARLIER rows "+ N more" would reveal.
      * @property needYouCount sessions asking for the user; the chip's first number.
      * @property workingCount sessions that work and are moving (neither quiet nor stale, see
      *   [isMoving]); the chip's second number.
@@ -507,7 +510,9 @@ class AgentsOverviewBackingViewModel(
     }
 
     /**
-     * Move the highlight, stopping at the first and last row.
+     * Move the highlight, stopping at the first and last row. ↓ on the last row while EARLIER
+     * hides rows ("+ N more") shows them and moves onto the first of them, so the keyboard reaches
+     * what a click on that line reveals.
      *
      * @param delta `-1` for ↑, `1` for ↓.
      */
@@ -515,7 +520,15 @@ class AgentsOverviewBackingViewModel(
         val current = state
         val rows = current.rows
         if (rows.isEmpty()) return
-        val next = (maxOf(current.selected, 0) + delta).coerceIn(0, rows.lastIndex)
+        val at = maxOf(current.selected, 0)
+        if (delta > 0 && at == rows.lastIndex && !current.matchMode && current.earlierHidden > 0) {
+            showMoreEarlier()
+            val revealed = state.rows
+            val onto = (at + 1).coerceAtMost(revealed.lastIndex)
+            ui.update { it.copy(selectedId = revealed[onto].id, selectedHint = onto, peekOpen = false, confirmRowId = null) }
+            return
+        }
+        val next = (at + delta).coerceIn(0, rows.lastIndex)
         ui.update { it.copy(selectedId = rows[next].id, selectedHint = next, peekOpen = false, confirmRowId = null) }
     }
 
@@ -532,7 +545,7 @@ class AgentsOverviewBackingViewModel(
         if (index >= 0) ui.update { it.copy(selectedId = rowId, selectedHint = index, peekOpen = false, confirmRowId = null) }
     }
 
-    /** Reveal the second band's rows beyond the first [EARLIER_LIMIT]. Called by the "+ N more" line. */
+    /** Reveal the EARLIER rows beyond the newest [EARLIER_LIMIT]. Called by the "+ N more" line and by ↓ past the last row. */
     fun showMoreEarlier() = ui.update { it.copy(showAllEarlier = true) }
 
     /**
@@ -907,11 +920,10 @@ class AgentsOverviewBackingViewModel(
                 units.filter { it.inEarlier }.map { Earlier(it.recency, taskRow(it, c)) }
             ).filter { inWindow(it.recency, nowMillis) }
             .sortedByDescending { it.recency }
-        val recentUnits = earlierUnits.filter { inRecent(it.recency, nowMillis) }
-        val fortnightUnits = earlierUnits.filter { !inRecent(it.recency, nowMillis) }
-        val shownFortnight = if (ui.showAllEarlier) fortnightUnits else fortnightUnits.take(EARLIER_LIMIT)
-        val recent = recentUnits.map { it.row }
-        val fortnight = shownFortnight.map { it.row }
+        // The newest EARLIER_LIMIT rows show, whichever band they are in; "+ N more" reveals the rest.
+        val shownEarlier = if (ui.showAllEarlier) earlierUnits else earlierUnits.take(EARLIER_LIMIT)
+        val recent = shownEarlier.filter { inRecent(it.recency, nowMillis) }.map { it.row }
+        val fortnight = shownEarlier.filter { !inRecent(it.recency, nowMillis) }.map { it.row }
 
         val listed = if (matchMode) matchRows else now + recent + fortnight
         // The selection is the row with the remembered id; when that row is gone, the row now in its place.
@@ -966,7 +978,7 @@ class AgentsOverviewBackingViewModel(
             now = if (matchMode) emptyList() else now,
             recent = if (matchMode) emptyList() else recent,
             fortnight = if (matchMode) emptyList() else fortnight,
-            earlierHidden = fortnightUnits.size - shownFortnight.size,
+            earlierHidden = earlierUnits.size - shownEarlier.size,
             needYouCount = singles.count { it.state == NEEDS_YOU } + taskNeeds,
             workingCount = nowSingles.count { isMoving(it.state == WORKING, null, it.lastActivityAt ?: it.stateSince, nowMillis) } + taskWorking,
             selectedId = selectedId,
@@ -1521,7 +1533,7 @@ class AgentsOverviewBackingViewModel(
          */
         fun inGrace(activityMillis: Long, nowMillis: Long): Boolean = nowMillis - activityMillis < IDLE_GRACE_MS
 
-        /** How many rows of EARLIER's second band show before "More". */
+        /** How many of the newest EARLIER rows show before "+ N more". */
         const val EARLIER_LIMIT = 5
 
         /** How old a row's newest activity may be and still sit in EARLIER's first band, "Last few days": 3 days. */
