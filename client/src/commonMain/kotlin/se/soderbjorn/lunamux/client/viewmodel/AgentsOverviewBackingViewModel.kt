@@ -1000,7 +1000,7 @@ class AgentsOverviewBackingViewModel(
      * @param s the session.
      * @return epoch millis.
      */
-    private fun startedOf(s: AgentSessionSummary): Long = s.startedAt ?: s.stateSince
+    private fun startedOf(s: AgentSessionSummary): Long = TaskMembers.startedOf(s)
 
     /**
      * The time a lone session's row age counts from: the time it entered its state while it needs
@@ -1037,10 +1037,7 @@ class AgentsOverviewBackingViewModel(
         nowMillis: Long,
     ): TaskUnit? {
         val fileRuns = t.members.map { m -> Run(m, m.recordId?.let(byId::get)) }
-        val matched = fileRuns.mapNotNullTo(HashSet()) { it.session?.id }
-        val extraRuns = hosted.filter { it.id !in matched }
-            .sortedWith(compareBy({ startedOf(it) }, { it.id }))
-            .map { s -> Run(memberOf(s), s) }
+        val extraRuns = TaskMembers.unlistedSessions(t, byId, hosted).map { s -> Run(memberOf(s), s) }
         val runs = fileRuns + extraRuns
         if (runs.isEmpty() && !t.hasOpen) return null
         val ended = runs.all { it.member.state == ENDED }
@@ -1194,15 +1191,7 @@ class AgentsOverviewBackingViewModel(
      * @param s the hosted session.
      * @return the member, keyed by the record id.
      */
-    private fun memberOf(s: AgentSessionSummary) = AgentTaskMember(
-        key = s.id,
-        title = titleOf(s),
-        links = s.links,
-        state = s.state,
-        line = if (s.state == NEEDS_YOU) s.question ?: s.nowLine else s.nowLine,
-        sinceMillis = s.stateSince,
-        recordId = s.id,
-    )
+    private fun memberOf(s: AgentSessionSummary) = TaskMembers.memberOf(s)
 
     /**
      * What a member is saying right now: the question a member that waits on the person asks, or
@@ -1463,11 +1452,7 @@ class AgentsOverviewBackingViewModel(
      * @see AgentSessionText.isMeaningfulTitle
      * @see AgentSessionText.titleFromPrompt
      */
-    private fun titleOf(s: AgentSessionSummary): String {
-        s.title?.trim()?.takeIf { AgentSessionText.isMeaningfulTitle(it, s.branch, s.repo, folderOf(s)) }?.let { return it }
-        return AgentSessionText.titleFromPrompt(s.firstPrompt)
-            ?: "${s.agent.replaceFirstChar { it.uppercase() }} session"
-    }
+    private fun titleOf(s: AgentSessionSummary): String = TaskMembers.titleOf(s)
 
     /**
      * The folder a session runs in, as the overview's folder column shows it when there is no
@@ -1479,9 +1464,7 @@ class AgentsOverviewBackingViewModel(
      * @param s the session.
      * @return the label, or null when the session has no folder.
      */
-    private fun folderOf(s: AgentSessionSummary): String? =
-        if (s.cwdHome) "~"
-        else s.cwd?.trimEnd('/')?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+    private fun folderOf(s: AgentSessionSummary): String? = TaskMembers.folderOf(s)
 
     private fun paneLocations(config: WindowConfig): Map<String?, PaneLocation> {
         val out = HashMap<String?, PaneLocation>()

@@ -125,6 +125,9 @@ private fun hotkeyGroups(): List<HotkeyGroupModel> = listOf(
             // Opens the agents overview (every Claude Code / Codex / Gemini
             // session). Default ⌘⇧A; see [AGENTS_OVERVIEW_HOTKEY_ACTION_ID].
             actionRow("Agents overview", AGENTS_OVERVIEW_HOTKEY_ACTION_ID),
+            // Shows or hides the task panel beside a task's own session.
+            // Default ⌘I; see [TASK_PANEL_HOTKEY_ACTION_ID].
+            actionRow("Task panel", TASK_PANEL_HOTKEY_ACTION_ID),
         ),
     ),
     HotkeyGroupModel(

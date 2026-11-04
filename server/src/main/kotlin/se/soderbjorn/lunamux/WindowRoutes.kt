@@ -312,6 +312,8 @@ internal class WindowConnectionContext(
     val claudeHooks: ClaudeHooks? = null,
     /** Which task each agent session belongs to, behind the overview's task rows; null where tasks are not wired up. */
     val taskIndex: TaskIndex? = null,
+    /** The blocks agents write into task panels, behind button presses; null where panels are not wired up. */
+    val taskPanelStore: TaskPanelStore? = null,
 ) {
     private val gitWatchers = ConcurrentHashMap<String, GitWatchHandle>()
 
@@ -381,6 +383,7 @@ internal fun Route.windowRoutes(
     agentTracker: AgentSessionTracker,
     claudeHooks: ClaudeHooks,
     taskIndex: TaskIndex? = null,
+    taskPanelStore: TaskPanelStore? = null,
 ) {
     webSocket("/window") {
         val token = call.readAuthToken()
@@ -471,6 +474,28 @@ internal fun Route.windowRoutes(
             }
         }
 
+        // Task panels: every task that has blocks is sent on connect, then each task whose blocks
+        // changed. A task that lost its last block is sent once with an empty list so the window
+        // drops it.
+        val taskPanelPushJob = taskPanelStore?.let { store ->
+            launch {
+                var sent: Map<String, List<TaskPanelBlock>> = emptyMap()
+                store.state.collect { now ->
+                    for ((taskId, blocks) in now) {
+                        if (sent[taskId] != blocks) {
+                            send(Frame.Text(windowJson.encodeToString<WindowEnvelope>(WindowEnvelope.TaskPanel(taskId, blocks))))
+                        }
+                    }
+                    for (taskId in sent.keys) {
+                        if (taskId !in now) {
+                            send(Frame.Text(windowJson.encodeToString<WindowEnvelope>(WindowEnvelope.TaskPanel(taskId, emptyList()))))
+                        }
+                    }
+                    sent = now
+                }
+            }
+        }
+
         val usagePushJob = launch {
             usageMonitor.usageData.collect { data ->
                 val payload = windowJson.encodeToString<WindowEnvelope>(WindowEnvelope.ClaudeUsage(data))
@@ -508,6 +533,7 @@ internal fun Route.windowRoutes(
             agentTracker = agentTracker,
             claudeHooks = claudeHooks,
             taskIndex = taskIndex,
+            taskPanelStore = taskPanelStore,
         )
 
         try {
@@ -519,6 +545,7 @@ internal fun Route.windowRoutes(
             pushJob.cancel()
             statePushJob.cancel()
             agentSessionsPushJob.cancel()
+            taskPanelPushJob?.cancel()
             usagePushJob.cancel()
             agentNoticePushJob?.cancel()
             uiSettingsPushJob.cancel()
@@ -790,6 +817,19 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
         is WindowCommand.ResumeAgentSession -> resumeAgentSession(cmd.recordId, ctx)
         is WindowCommand.OpenTask -> openTask(cmd.taskId, ctx)
         is WindowCommand.OpenTaskMember -> openTaskMember(cmd.taskId, cmd.memberKey, ctx)
+        is WindowCommand.PressTaskButton -> {
+            val store = ctx.taskPanelStore
+            val index = ctx.taskIndex
+            val tracker = ctx.agentTracker
+            if (store != null && index != null && tracker != null) {
+                pressTaskButton(store, index, tracker, cmd.taskId, cmd.blockId, cmd.buttonId) { sessionId, bytes ->
+                    // A person's press is not an agent acting, so the pane gets no agent badge.
+                    val session = TerminalSessions.get(sessionId) ?: return@pressTaskButton false
+                    session.write(bytes)
+                    true
+                }
+            }
+        }
         is WindowCommand.SearchAgentSessions -> ctx.scope.launch {
             // Off the socket's loop: the query reads SQLite and may run git for resume notes.
             runCatching {

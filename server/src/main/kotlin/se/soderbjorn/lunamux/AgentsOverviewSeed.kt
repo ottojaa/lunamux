@@ -308,6 +308,55 @@ object AgentsOverviewSeed {
         repo.stampTaskStart("seed-task-notes", now - 3 * HOUR)
         repo.setTaskLead("seed-task-notes", NOTES_OWN_PANE, NOTES_OWN_LEAF)
         repo.setTaskStatus("seed-task-notes", NOTES_STATUS, NOTES_OWN_PANE, now - 2 * HOUR)
+        seedReleaseNotesPanel(repo, now)
+    }
+
+    /** Who the seeded panel blocks say wrote them. */
+    private const val NOTES_WRITER = "release notes agent"
+
+    /**
+     * Give the "Release 4.2 notes" task a panel of agent-written blocks: a status, a count of
+     * checks, a timeline, links, a line with markup that must stay text, and two buttons.
+     *
+     * Called by [seedReleaseNotes]. The blocks are stored the way the panel store stores them, so
+     * a server that starts on the seeded database shows them as soon as the task's own session is
+     * in a tab. (The static seed has no such session; `scripts/seed-agents-overview-live.sh`
+     * writes the same kinds of block over MCP for the live one.)
+     *
+     * @param repo the scratch database.
+     * @param now the time the ages are counted back from.
+     */
+    private fun seedReleaseNotesPanel(repo: SettingsRepository, now: Long) {
+        val blocks = listOf(
+            Triple("status", "Status", TaskBlockContent.Text("**Drafted**, waiting on the changelog check.\n\n- 14 entries checked\n- 2 still to match")),
+            Triple("checks", "Checks", TaskBlockContent.Progress(done = 3, total = 5, label = "changelog entries")),
+            Triple(
+                "history", "Timeline",
+                TaskBlockContent.Timeline(
+                    listOf(
+                        TaskTimelineItem(now - 5 * MINUTE, "Changelog check found two gaps"),
+                        TaskTimelineItem(now - 40 * MINUTE, "Draft written"),
+                        TaskTimelineItem(now - 2 * HOUR, "Branch cut"),
+                    ),
+                ),
+            ),
+            Triple("links", "Links", TaskBlockContent.Links(listOf(TaskLink("Draft notes", "https://example.com/notes/4.2"), TaskLink("Changelog", "https://example.com/changelog")))),
+            Triple("literal", "Pasted from a log", TaskBlockContent.Text("Kept as text: <img src=x onerror=alert(1)>")),
+            Triple(
+                "actions", "Actions",
+                TaskBlockContent.Actions(listOf(TaskButton("status", "Ask for status", "What is left to do?"), TaskButton("ship", "Ship it", "Publish the notes"))),
+            ),
+        )
+        repo.replaceTaskPanel(
+            "seed-task-notes",
+            blocks.mapIndexed { i, (id, title, content) ->
+                SettingsRepository.TaskPanelRow(
+                    taskId = "seed-task-notes", blockId = id, position = i, kind = content.kindName, title = title,
+                    body = windowJson.encodeToString(TaskBlockContent.serializer(), content),
+                    writtenBy = NOTES_WRITER, writtenAt = now - (6 - i) * MINUTE,
+                )
+            },
+        )
     }
 
     /**

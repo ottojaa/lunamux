@@ -208,6 +208,24 @@ class SettingsRepository(
             """.trimIndent(),
             parameters = 0,
         )
+        // The blocks agents write into a task's panel.
+        driver.execute(
+            identifier = null,
+            sql = """
+                CREATE TABLE IF NOT EXISTS task_panel_blocks (
+                    task_id    TEXT NOT NULL,
+                    block_id   TEXT NOT NULL,
+                    position   INTEGER NOT NULL,
+                    kind       TEXT NOT NULL,
+                    title      TEXT,
+                    body       TEXT NOT NULL,
+                    written_by TEXT,
+                    written_at INTEGER NOT NULL,
+                    PRIMARY KEY (task_id, block_id)
+                )
+            """.trimIndent(),
+            parameters = 0,
+        )
         // Same no-.sqm story for columns added to an existing table: bring
         // pre-existing DBs up to the current shape. SQLite has no
         // ADD COLUMN IF NOT EXISTS, so the "duplicate column name" error on
@@ -743,6 +761,88 @@ class SettingsRepository(
      */
     fun setTaskStatus(taskId: String, status: String?, by: String?, at: Long) {
         database.settingsQueries.setTaskStatus(status, if (status == null) null else by, if (status == null) null else at, taskId)
+    }
+
+    /**
+     * One stored block of a task's panel, as the table holds it.
+     *
+     * @property taskId the task the block belongs to.
+     * @property blockId the writer's id for the block, unique within the task.
+     * @property position the block's place in the task's drawing order, counted from 0.
+     * @property kind the content's type name (`text`, `facts`, ...).
+     * @property title the block's heading, or null.
+     * @property body the block's content as JSON.
+     * @property writtenBy who wrote it, or null.
+     * @property writtenAt epoch millis the server stored it.
+     */
+    data class TaskPanelRow(
+        val taskId: String,
+        val blockId: String,
+        val position: Int,
+        val kind: String,
+        val title: String?,
+        val body: String,
+        val writtenBy: String?,
+        val writtenAt: Long,
+    )
+
+    /**
+     * Every stored panel block of every task, in drawing order within each task.
+     *
+     * Called by [se.soderbjorn.lunamux.TaskPanelStore] when it starts; it keeps the blocks in
+     * memory after that and writes through the methods below, so it is the only owner of this table.
+     *
+     * @return one row per block.
+     */
+    fun loadTaskPanelRows(): List<TaskPanelRow> =
+        database.settingsQueries.selectTaskPanelBlocks { taskId, blockId, position, kind, title, body, by, at ->
+            TaskPanelRow(taskId, blockId, position.toInt(), kind, title, body, by, at)
+        }.executeAsList()
+
+    /**
+     * Store one panel block, replacing the block with the same task and id.
+     *
+     * @param row the block to store.
+     */
+    fun saveTaskPanelRow(row: TaskPanelRow) {
+        database.settingsQueries.upsertTaskPanelBlock(
+            row.taskId, row.blockId, row.position.toLong(), row.kind, row.title, row.body, row.writtenBy, row.writtenAt,
+        )
+    }
+
+    /**
+     * Replace a task's whole panel in one step: its stored blocks are removed and [rows] stored.
+     *
+     * Called by the panel store for `set_task_panel`, so a crash cannot leave half of the old
+     * panel and half of the new one.
+     *
+     * @param taskId the task whose panel is replaced.
+     * @param rows the blocks to store, already numbered by position.
+     */
+    fun replaceTaskPanel(taskId: String, rows: List<TaskPanelRow>) {
+        database.transaction {
+            database.settingsQueries.deleteTaskPanel(taskId)
+            rows.forEach { saveTaskPanelRow(it) }
+        }
+    }
+
+    /**
+     * Remove one panel block; an unknown block is ignored.
+     *
+     * @param taskId the task the block belongs to.
+     * @param blockId the block's id.
+     */
+    fun deleteTaskPanelRow(taskId: String, blockId: String) {
+        database.settingsQueries.deleteTaskPanelBlock(taskId, blockId)
+    }
+
+    /**
+     * Remove every panel block of a task.
+     *
+     * @param taskId the task whose panel is emptied.
+     */
+    fun deleteTaskPanel(taskId: String) {
+        database.settingsQueries.deleteTaskPanel(taskId)
     }
 
     /**

@@ -115,6 +115,7 @@ fun main() {
     val persistenceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     taskFiles.start(persistenceScope)
     taskIndex.start(persistenceScope)
+    val taskPanelStore = TaskPanelStore(repo, taskIndex)
 
     // Claude Code's own transcript history is imported (for search only) whenever
     // Claude Code is connected: at start if it already is, and when the user connects it.
@@ -196,7 +197,7 @@ fun main() {
                 this.port = port
             }
         },
-        module = { module(repo, sessionStates, usageMonitor, scrollbackSaver, agentTracker, claudeHooks, taskIndex) }
+        module = { module(repo, sessionStates, usageMonitor, scrollbackSaver, agentTracker, claudeHooks, taskIndex, taskPanelStore) }
     )
 
     if (java.awt.GraphicsEnvironment.isHeadless()) {
@@ -233,6 +234,8 @@ fun main() {
  * @param claudeHooks     the Claude Code settings editor behind the Connect/Disconnect row
  * @param taskIndex       decides which task each agent session belongs to; pushed to clients and
  *                        behind the MCP task tools
+ * @param taskPanelStore  the blocks agents write into each task's panel; pushed to clients and
+ *                        behind the MCP panel tools
  */
 fun Application.module(
     settingsRepo: SettingsRepository,
@@ -242,6 +245,7 @@ fun Application.module(
     agentTracker: AgentSessionTracker,
     claudeHooks: ClaudeHooks,
     taskIndex: TaskIndex? = null,
+    taskPanelStore: TaskPanelStore? = null,
 ) {
     install(ContentNegotiation) { json() }
     install(WebSockets) {
@@ -274,10 +278,10 @@ fun Application.module(
         uiSettingsRoutes(settingsRepo)
         ptyRoutes(settingsRepo)
         agentRoutes(settingsRepo)
-        windowRoutes(settingsRepo, sessionStates, usageMonitor, agentTracker, claudeHooks, taskIndex)
+        windowRoutes(settingsRepo, sessionStates, usageMonitor, agentTracker, claudeHooks, taskIndex, taskPanelStore)
         agentEventRoutes(agentTracker)
         adminRoutes(settingsRepo, scrollbackSaver)
         // MCP endpoint (localhost-only, MCP-token gated) — see mcp/McpRoutes.kt.
-        mcpRoutes(settingsRepo, usageMonitor, taskIndex)
+        mcpRoutes(settingsRepo, usageMonitor, taskIndex, taskPanelStore, agentTracker)
     }
 }

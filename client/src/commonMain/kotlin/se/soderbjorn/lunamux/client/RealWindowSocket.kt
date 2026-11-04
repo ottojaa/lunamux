@@ -147,6 +147,9 @@ class RealWindowSocket internal constructor(
                     val session = client.httpClient.webSocketSession(url)
                     println("WindowSocket: handshake complete for $safeUrl")
                     _activeSession.value = session
+                    // The server re-sends every task panel that has blocks right after this;
+                    // anything it does not send was emptied while we were away.
+                    client.windowState.clearTaskPanels()
                     _connected.value = true
                     lastTrafficAtMillis = Clock.System.now().toEpochMilliseconds()
                     if (!sessionReady.isCompleted) sessionReady.complete(session)
@@ -182,6 +185,7 @@ class RealWindowSocket internal constructor(
                             is WindowEnvelope.AgentSessions ->
                                 client.windowState.updateAgentSessions(envelope.sessions, envelope.claudeConnected)
                             is WindowEnvelope.AgentTasks -> client.windowState.updateAgentTasks(envelope.tasks)
+                            is WindowEnvelope.TaskPanel -> client.windowState.updateTaskPanel(envelope.taskId, envelope.blocks)
                             is WindowEnvelope.AgentSessionError -> client.windowState.setAgentSessionError(envelope.message)
                             is WindowEnvelope.AgentSessionMatches -> client.windowState.updateAgentMatches(envelope)
                             is WindowEnvelope.AgentSessionInspection -> client.windowState.updateAgentInspection(envelope)

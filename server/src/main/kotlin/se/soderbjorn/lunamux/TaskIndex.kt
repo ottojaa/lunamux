@@ -436,8 +436,15 @@ class TaskIndex(
      * A task that remembers a layout leaf gets the id of the terminal in that leaf, or null when
      * the pane is gone. A task stored the old way has only the terminal session id it was given, and
      * that is what it reports.
+     *
+     * Called by the task panel's button handler to find where a button's text is typed, and by
+     * [listing] for `list_tasks`.
+     *
+     * @param taskId the task's id.
+     * @return the terminal session id of the task's own session, or null when none was named or
+     *   its pane is gone.
      */
-    private fun ownSessionOf(taskId: String): String? = synchronized(lock) {
+    fun ownSessionOf(taskId: String): String? = synchronized(lock) {
         val row = meta[taskId] ?: return@synchronized null
         row.leadLeaf?.let(sessionOfLeaf) ?: row.leadSession.takeIf { row.leadLeaf == null }
     }

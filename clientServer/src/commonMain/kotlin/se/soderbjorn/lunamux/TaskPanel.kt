@@ -1,0 +1,172 @@
+/**
+ * The shared model of a task's panel: the blocks an agent writes about a task and the content
+ * each block can hold. The server stores and validates these ([TaskPanelBlock] in the
+ * `task_panel_blocks` table), pushes them to every window as [WindowEnvelope.TaskPanel], and
+ * the clients draw them in the panel beside the task's own session.
+ *
+ * Contains [TaskPanelBlock], the sealed [TaskBlockContent] with its six cases, and the small item
+ * types those cases carry. Everything here is plain data; the limits on sizes and counts are
+ * enforced by the server when a block is written, not by these types.
+ *
+ * @see WindowEnvelope.TaskPanel
+ * @see WindowCommand.PressTaskButton
+ */
+package se.soderbjorn.lunamux
+
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+
+/**
+ * One block an agent wrote into a task's panel.
+ *
+ * Stored by the server per task and sent to the windows in the order the agents gave. A writer
+ * names the block with its own [id] so it can replace or remove that block later without
+ * touching the others.
+ *
+ * Built by the server's panel store when an agent calls `set_task_panel` or `upsert_task_block`;
+ * read by the panel's view model, which turns it into a drawn block.
+ *
+ * @property id the writer's name for the block, unique within the task.
+ * @property title a short heading drawn above the block, or null for none.
+ * @property content what the block shows.
+ * @property writtenBy who wrote it, shown as "writer · age": the name the agent gave, else the
+ *   title of the session that called, else null.
+ * @property writtenAtMillis when the server stored it, in epoch milliseconds.
+ * @see TaskBlockContent
+ * @see WindowEnvelope.TaskPanel
+ */
+@Serializable
+data class TaskPanelBlock(
+    val id: String,
+    val title: String? = null,
+    val content: TaskBlockContent,
+    val writtenBy: String? = null,
+    val writtenAtMillis: Long,
+)
+
+/**
+ * What a [TaskPanelBlock] shows. One case per kind of block; the panel draws each in its own way
+ * and treats every text in them as plain text (only [Text] is read as a small markdown subset).
+ *
+ * @see TaskPanelBlock.content
+ */
+@Serializable
+sealed class TaskBlockContent {
+    /** The name stored in the `kind` column and used in the agent-facing `type` field. */
+    abstract val kindName: String
+
+    /**
+     * Free text in a small markdown subset (paragraphs, headings, lists, bold, italic, code and
+     * links); anything else, HTML included, is shown as written.
+     *
+     * @property markdown the text.
+     */
+    @Serializable
+    @SerialName("text")
+    data class Text(val markdown: String) : TaskBlockContent() {
+        override val kindName: String get() = "text"
+    }
+
+    /**
+     * Label and value pairs, one per line.
+     *
+     * @property items the pairs, in order.
+     */
+    @Serializable
+    @SerialName("facts")
+    data class Facts(val items: List<TaskFact>) : TaskBlockContent() {
+        override val kindName: String get() = "facts"
+    }
+
+    /**
+     * Links the person can open.
+     *
+     * @property items the links, in order.
+     */
+    @Serializable
+    @SerialName("links")
+    data class Links(val items: List<TaskLink>) : TaskBlockContent() {
+        override val kindName: String get() = "links"
+    }
+
+    /**
+     * Things that happened, drawn newest first.
+     *
+     * @property items the entries, oldest first as stored.
+     */
+    @Serializable
+    @SerialName("timeline")
+    data class Timeline(val items: List<TaskTimelineItem>) : TaskBlockContent() {
+        override val kindName: String get() = "timeline"
+    }
+
+    /**
+     * How far along the work is: a count of done out of total, or a named phase, with an optional
+     * label.
+     *
+     * @property done how many parts are finished, or null when only a [phase] is given.
+     * @property total how many parts there are, or null.
+     * @property phase the name of the stage the work is in, or null.
+     * @property label a short caption, or null.
+     */
+    @Serializable
+    @SerialName("progress")
+    data class Progress(
+        val done: Int? = null,
+        val total: Int? = null,
+        val phase: String? = null,
+        val label: String? = null,
+    ) : TaskBlockContent() {
+        override val kindName: String get() = "progress"
+    }
+
+    /**
+     * Buttons that type a fixed line into the task's own session when pressed.
+     *
+     * @property buttons the buttons, in order.
+     */
+    @Serializable
+    @SerialName("actions")
+    data class Actions(val buttons: List<TaskButton>) : TaskBlockContent() {
+        override val kindName: String get() = "actions"
+    }
+}
+
+/**
+ * A label and its value in a [TaskBlockContent.Facts] block.
+ *
+ * @property label what the value is.
+ * @property value the value.
+ */
+@Serializable
+data class TaskFact(val label: String, val value: String)
+
+/**
+ * A link in a [TaskBlockContent.Links] block. The server only stores `http`, `https` and `file`
+ * addresses.
+ *
+ * @property label the words shown for the link.
+ * @property url where it goes.
+ */
+@Serializable
+data class TaskLink(val label: String, val url: String)
+
+/**
+ * One entry in a [TaskBlockContent.Timeline] block.
+ *
+ * @property atMillis when it happened, in epoch milliseconds.
+ * @property text what happened.
+ */
+@Serializable
+data class TaskTimelineItem(val atMillis: Long, val text: String)
+
+/**
+ * A button in a [TaskBlockContent.Actions] block. Pressing it types [text] and Enter into the
+ * task's own session; the text lives on the server, so a window can only name the button.
+ *
+ * @property id the writer's name for the button, unique within its block.
+ * @property label the words on the button.
+ * @property text the line typed when it is pressed.
+ */
+@Serializable
+data class TaskButton(val id: String, val label: String, val text: String)

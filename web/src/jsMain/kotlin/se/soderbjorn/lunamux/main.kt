@@ -370,6 +370,8 @@ private fun start() {
             as? kotlinx.serialization.json.JsonPrimitive)
             ?.takeIf { it.isString }?.content
         se.soderbjorn.lunula.web.hotkey.HotkeyBindings.applyCustomBindingsJson(raw)
+        // The task panel's open/closed choice travels with the UI settings too.
+        applyTaskPanelOpenSetting(payload)
     }
 
     // Toolkit-shape persister adapter. Reads serve from the in-memory

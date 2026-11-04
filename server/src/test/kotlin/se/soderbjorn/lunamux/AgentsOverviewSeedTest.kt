@@ -100,6 +100,22 @@ class AgentsOverviewSeedTest {
     }
 
     @Test
+    fun `the seeded task has a panel of every useful kind, all written by one agent, that a restart keeps`() {
+        AgentsOverviewSeed.seed(db, tasksDir, now)
+        val rows = repo().loadTaskPanelRows().filter { it.taskId == "seed-task-notes" }
+        assertEquals(listOf("status", "checks", "history", "links", "literal", "actions"), rows.map { it.blockId })
+        assertEquals(setOf("text", "progress", "timeline", "links", "actions"), rows.map { it.kind }.toSet())
+        assertEquals(setOf("release notes agent"), rows.map { it.writtenBy }.toSet())
+        val literal = rows.single { it.blockId == "literal" }
+        assertTrue("<img src=x onerror=alert(1)>" in literal.body, "markup is stored as the text it is")
+        // Reading it back through the store, as a server start does, gives the same blocks.
+        val index = TaskIndex(repo(), AgentSessionTracker(repo()), MutableStateFlow(emptyList()), { null }, { now })
+        assertEquals(rows.size, TaskPanelStore(repo(), index, { now }).blocksOf("seed-task-notes").size)
+        AgentsOverviewSeed.seed(db, tasksDir, now + day)
+        assertEquals(rows.size, repo().loadTaskPanelRows().count { it.taskId == "seed-task-notes" }, "seeding again replaces, never adds")
+    }
+
+    @Test
     fun `the seed turns mcp on with a read-write token so the live script can drive the scratch server`() {
         AgentsOverviewSeed.seed(db, tasksDir, now)
         val repo = repo()

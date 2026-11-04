@@ -3781,3 +3781,90 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 /* The agents that keep running, listed in the tab-close question (TabCloseDialog.kt). */
 .tab-close-list { margin: 0 0 12px 0; padding-left: 20px; font-size: 13px; line-height: 1.5; opacity: 0.85; }
 #tab-close-dialog { z-index: 100001; }
+
+/* ====================================================================== */
+/*  Task panel (TaskPanel.kt)                                              */
+/* ====================================================================== */
+/* A 320px column at the right edge of .dt-app-frame-body, shown beside a task's own session. The
+   width is set only here: the peek measures the column instead of repeating it. Terminals refit
+   through their own resize observers when it appears. */
+.task-panel {
+    --tp-surface: var(--dt-window-bg, var(--t-surface, #0c1a1e));
+    --tp-text: var(--t-text, #cfe3e2);
+    --tp-dim: var(--t-text-dim, #6f8f92);
+    --tp-line: var(--t-border, #1b3136);
+    --tp-accent: var(--t-accent, #5fd4d0);
+    --tp-warn: var(--t-warn, #f2c14e);
+    --tp-mono: var(--dt-font-mono, 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace);
+    flex: 0 0 320px;
+    width: 320px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    box-sizing: border-box;
+    border-left: 1px solid var(--tp-line);
+    background: var(--tp-surface);
+    color: var(--tp-text);
+    font: 12px/1.45 var(--tp-mono);
+}
+.tp-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--tp-line); }
+.tp-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 13px; }
+.tp-hint { color: var(--tp-dim); font-size: 11px; }
+.tp-close { border: 0; background: transparent; color: var(--tp-dim); font: inherit; font-size: 16px; line-height: 1; cursor: pointer; padding: 2px 4px; }
+.tp-close:hover { color: var(--tp-text); }
+.tp-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 0 12px; }
+.tp-block { padding: 10px 12px; border-bottom: 1px solid var(--tp-line); overflow-wrap: anywhere; }
+/* A block's header is title on the left, byline on the right. When the two do not fit one row (a long
+   title, or a long writer name) the byline drops under the title, right-aligned, so neither is squeezed. */
+.tp-block-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 8px; margin-bottom: 6px; }
+.tp-block-title { flex: 1 1 auto; min-width: 0; color: var(--tp-dim); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; overflow-wrap: anywhere; }
+.tp-byline { flex: 0 1 auto; max-width: 100%; margin-left: auto; text-align: right; color: var(--tp-dim); font-size: 11px; overflow-wrap: anywhere; }
+.tp-muted { color: var(--tp-dim); }
+.tp-empty { padding: 14px 12px; color: var(--tp-dim); }
+
+.tp-agent { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; }
+.tp-agent.tp-dim { opacity: 0.5; }
+.tp-glyph { width: 1.2em; text-align: center; color: var(--tp-dim); flex: none; }
+.tp-state-working .tp-glyph, .tp-agent .tp-glyph.tp-peeked { color: var(--tp-accent); }
+.tp-state-needs_you .tp-glyph { color: var(--tp-warn); }
+.tp-agent-text { flex: 1; min-width: 0; }
+.tp-agent-top { display: flex; justify-content: space-between; gap: 8px; }
+.tp-agent-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-agent-age { flex: none; color: var(--tp-dim); font-size: 11px; }
+.tp-agent-now { color: var(--tp-dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-verb, .tp-action {
+    border: 1px solid var(--tp-line); background: transparent; color: inherit; font: inherit; font-size: 11px;
+    padding: 2px 8px; cursor: pointer;
+}
+.tp-verb:hover, .tp-action:hover:not(:disabled) { border-color: var(--tp-accent); color: var(--tp-accent); }
+.tp-action:disabled { opacity: 0.4; cursor: default; }
+.tp-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* The label column never takes more than 40%, so a long label wraps instead of squeezing the value. */
+.tp-facts { display: grid; grid-template-columns: fit-content(40%) minmax(0, 1fr); gap: 2px 12px; }
+.tp-fact-label, .tp-fact-value { min-width: 0; overflow-wrap: anywhere; }
+.tp-fact-label { color: var(--tp-dim); }
+.tp-link { display: block; color: var(--tp-accent); cursor: pointer; text-decoration: underline; }
+.tp-md .tp-link { display: inline; }
+.tp-tl { display: flex; gap: 10px; padding: 1px 0; }
+.tp-tl-age { flex: none; width: 4ch; color: var(--tp-dim); }
+.tp-bar { height: 6px; background: var(--tp-line); margin-bottom: 6px; }
+.tp-bar-fill { height: 100%; background: var(--tp-accent); }
+
+.tp-md-p { margin: 0 0 6px; }
+.tp-md-h { font-weight: 600; margin: 4px 0; }
+.tp-md-h1 { font-size: 14px; }
+.tp-md-list { margin: 0 0 6px; padding-left: 20px; }
+.tp-md code, .tp-md-code { background: color-mix(in srgb, var(--tp-text) 8%, transparent); padding: 0 3px; }
+.tp-md-code { display: block; margin: 0 0 6px; padding: 6px 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* The read-only live view of a background member, laid over the panes. */
+.tp-peek {
+    position: fixed; z-index: 50; display: flex; flex-direction: column;
+    background: var(--dt-window-bg, var(--t-surface, #0c1a1e)); color: var(--t-text, #cfe3e2);
+    font: 12px/1.4 var(--dt-font-mono, ui-monospace, Menlo, monospace);
+}
+.tp-peek-bar { display: flex; justify-content: space-between; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--t-border, #1b3136); }
+.tp-peek-live { color: var(--t-accent, #5fd4d0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-peek-keys { color: var(--t-text-dim, #6f8f92); white-space: nowrap; }
+.tp-peek-screen { flex: 1; min-height: 0; overflow: hidden; padding: 6px; }

@@ -54,6 +54,9 @@
 #                    changelog check" and two members that ran in background tabs, all ended, so it is
 #                    one "finished" row in the first EARLIER band. Search finds its own session but never the two background
 #                    ones. Run scripts/seed-agents-overview-live.sh for the live version in NOW.
+#                    It also holds a panel of blocks (status, checks, timeline, links, a line of markup that
+#                    stays text, two buttons) written by "release notes agent"; the panel shows once the
+#                    task's own session is in a tab, which the live script arranges for its own task.
 #   Search           type "invoice": three sessions of "Invoice export migration", 30 days old,
 #                    found only through their task's title ("in task Invoice export migration").
 #                    "token" also matches by task; "limiter" matches by title first.
