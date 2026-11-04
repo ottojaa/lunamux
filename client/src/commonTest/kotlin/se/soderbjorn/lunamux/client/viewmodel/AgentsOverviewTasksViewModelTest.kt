@@ -588,15 +588,17 @@ class AgentsOverviewTasksViewModelTest {
     // ---- extra ----
 
     @Test
-    fun theExtraLineHoldsTheFullDetailAndEndsWithTheTabTheSessionEnterOpensSitsIn() {
+    fun theExtraLineEndsWithTheTabTheSessionEnterOpensSitsInAndDoesNotRepeatTheDetail() {
         layoutTwoTabs(listOf("leaf-x"), listOf("leaf-a"))
         show(
             listOf(hostedTask()),
             session("x", "working", nowLine = "Edit x.kt", lastActivityAt = now - 1_000),
             session("a", "needs_you", taskId = "g1", question = "Which branch?"),
         )
-        assertEquals("\"Which branch?\" · tab 2", row("task:g1").extra)
-        assertEquals("Edit x.kt · tab 1", row("x").extra)
+        assertEquals("tab 2", row("task:g1").extra)
+        assertEquals("tab 1", row("x").extra)
+        assertEquals("\"Which branch?\"", row("task:g1").detail, "the detail stays a field of its own; the view repeats it only when it cuts it")
+        assertEquals("Edit x.kt", row("x").detail)
         // The tab is also a field of its own, so the view can draw it dimmer; it is the end of the extra line.
         assertEquals("tab 2", row("task:g1").tab)
         assertEquals("tab 1", row("x").tab)
@@ -608,7 +610,7 @@ class AgentsOverviewTasksViewModelTest {
         show(emptyList(), session("x", "working", lastActivityAt = now - 1_000))
         val r = row("x")
         assertEquals("", r.detail)
-        assertEquals("tab 1", r.extra, "no separator in front of the tab when there is no detail before it")
+        assertEquals("tab 1", r.extra, "no separator in front of the tab when nothing comes before it")
         assertEquals("tab 1", r.tab)
     }
 
@@ -616,7 +618,7 @@ class AgentsOverviewTasksViewModelTest {
     fun theTabOfASessionInAnotherWorldNamesTheWorld() {
         layoutTwoWorlds(listOf("leaf-a"))
         show(emptyList(), session("a", "working", nowLine = "Edit a.kt", lastActivityAt = now - 1_000))
-        assertEquals("Edit a.kt · tab 1 in Work", row("a").extra)
+        assertEquals("tab 1 in Work", row("a").extra)
         assertEquals("tab 1 in Work", row("a").tab)
     }
 
@@ -628,7 +630,8 @@ class AgentsOverviewTasksViewModelTest {
             session("m", "working", taskId = "g1", lastActivityAt = now - 1_000),
             session("lead", "working", taskId = "g1", background = true, lastActivityAt = now - 1_000),
         )
-        assertEquals("Notes drafted", row("task:g1").extra)
+        assertEquals("Notes drafted", row("task:g1").detail)
+        assertEquals("", row("task:g1").extra, "nothing but the detail, which the row shows itself")
         assertEquals("", row("task:g1").tab)
     }
 
@@ -637,7 +640,8 @@ class AgentsOverviewTasksViewModelTest {
         show(listOf(task(members = listOf(member("a", "working", line = "Doing a thing"), member("b", "idle", label = "queued")))))
         val r = row("task:g1")
         assertEquals(Enter.NONE, r.enter)
-        assertEquals("Doing a thing · nothing to jump to: this session is not in a Lunamux pane", r.extra)
+        assertEquals("nothing to jump to: this session is not in a Lunamux pane", r.extra)
+        assertEquals("Doing a thing", r.detail)
         assertEquals("", r.tab)
     }
 
@@ -1174,7 +1178,8 @@ class AgentsOverviewTasksViewModelTest {
         assertEquals("task:g1", r.id)
         assertEquals("b", r.recordId, "the best match stands for the task and ↵ opens its session")
         assertEquals("transcript", r.field)
-        assertEquals("…a needle here… · in transcript of Reviewer · tab 1", r.extra)
+        assertEquals("in transcript of Reviewer · tab 1", r.extra)
+        assertEquals("…a needle here…", r.detail)
         assertEquals("1 MATCH", vm.state.matchHeading)
     }
 

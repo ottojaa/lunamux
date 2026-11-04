@@ -16,9 +16,10 @@
  * of one. The sessions of a task, background ones included, are never rows of their own: the
  * row counts them in its state word ("needs you", "2 working", "working", "done" or
  * "finished") and shows the task's status as its detail. The selected row has one more line,
- * which carries the full text and the places that matter for opening it, such as the tab the
- * session sits in; a row with nothing to add has an empty [AgentsOverviewBackingViewModel.Row.extra]
- * and the view draws no line. EARLIER lists its newest five rows and a "+ N more" line for the rest.
+ * carries the places that matter for opening it, such as the tab the session sits in, but not the
+ * detail (the view puts the detail in front only when the row cut it); a row with nothing to add
+ * has an empty [AgentsOverviewBackingViewModel.Row.extra] and the view draws no line. EARLIER
+ * lists its newest five rows and a "+ N more" line for the rest.
  *
  * What ↵ opens follows one order. A task with an own session opens that session: its pane, or a
  * read-only peek when the pane is in a background tab; once the session is gone the task's
@@ -156,12 +157,14 @@ class AgentsOverviewBackingViewModel(
      * @property detail what the row says after its state word: the task's status; without one the
      *   question a session asks, in quotes, else the line a moving session last reported, else
      *   empty. A lone session has no status. In a search result it is the text around the match.
-     * @property extra the line under the selected row: the full text of [detail], then, as they
-     *   apply, what Resume will do when it is not the plain case ("2 uncommitted changes · 1
-     *   unpushed commit"), a note that there is nothing to jump to, the error of the last failed
-     *   resume or open, where a search matched ("in transcript of Reviewer"), and the tab the
-     *   session [enter] opens sits in ("tab 2", or "tab 2 in Work" in another world). Empty when
-     *   the row has none of these, and the view then draws no line at all.
+     * @property extra the line under the selected row, without [detail]: as they apply, what Resume
+     *   will do when it is not the plain case ("2 uncommitted changes · 1 unpushed commit"), a note
+     *   that there is nothing to jump to, the error of the last failed resume or open, where a
+     *   search matched ("in transcript of Reviewer"), and the tab the session [enter] opens sits in
+     *   ("tab 2", or "tab 2 in Work" in another world). The view puts [detail] in front of it only
+     *   when the row itself cut that text short (or hides it, in a narrow panel), so the same words
+     *   are never shown twice. Empty when the row has none of these; the view then draws a line
+     *   only if it has the detail to repeat, and never an empty one.
      * @property tab that last part of [extra] on its own ("tab 2", "tab 2 in Work"), empty when the
      *   extra has none, so the view can draw it dimmer than the text before it.
      * @property sinceMillis epoch millis the row's age counts from: the time the task entered its
@@ -1252,7 +1255,6 @@ class AgentsOverviewBackingViewModel(
             stateWord = stateWord,
             detail = detail,
             extra = extraOf(
-                detail,
                 c.noteOf(target?.id),
                 NOTHING_TO_JUMP.takeIf { u.enter == Enter.NONE },
                 error,
@@ -1312,7 +1314,7 @@ class AgentsOverviewBackingViewModel(
                 else -> STATE_DONE
             },
             detail = detail,
-            extra = extraOf(detail, c.noteOf(s.id), error, tab),
+            extra = extraOf(c.noteOf(s.id), error, tab),
             tab = tab.orEmpty(),
             sinceMillis = sinceOf(s),
             enter = enter,
@@ -1362,7 +1364,7 @@ class AgentsOverviewBackingViewModel(
         val tab = if (enter == Enter.JUMP) tabNote(c.panes[s.leafId], c.config) else null
         return base.copy(
             detail = snippet ?: base.detail,
-            extra = extraOf(snippet ?: base.detail, note, base.error, where, tab),
+            extra = extraOf(note, base.error, where, tab),
             tab = tab.orEmpty(),
             enter = enter,
             recordId = s.id,

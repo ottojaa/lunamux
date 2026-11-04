@@ -46,9 +46,28 @@ session that waits (in quotes), what a moving session is doing, or nothing. A se
 task of one follows the same order without the status. The folder and the detail are hidden when
 the panel is narrower than 700px.
 
-- **The selected row has a second line** with the whole detail, then **· tab 2** (the place of the
-  session ↵ opens in the tab strip, **· tab 2 in Work** when it is in another world). A session in
-  a background tab has no tab number, so that part is left out. The line also carries the resume
+What a moving session is doing is said **in words, never as the raw command**, because a column of
+shell commands tells nobody anything at a glance. Lunamux words each tool call as it arrives:
+
+| Tool call | The row says |
+|---|---|
+| Bash | the `description` Claude Code sends with the call ("Run the server tests"); without one, "Running" and the program's name ("Running gradlew") |
+| Edit, Write, Read | the file's name only: "Editing card-check", "Writing notes.md", "Reading tick.py" |
+| Grep, Glob, web search | the pattern: `Searching for "fun toolLine"` |
+| Web fetch | the host: "Fetching example.com" |
+| an MCP tool | the server and the tool in words: "lunamux: list tasks" |
+| an agent, stopping a background task, the task list | "Running an agent: <its description>", "Stopping a background task", "Updating the task list" |
+| a tool Lunamux does not know | "Using <its name>", never its arguments |
+| a question put to the person | the question itself ("Asks: …"; a row that needs you shows it in quotes) |
+
+A permission prompt is the exception: "Allow Bash ./gradlew test?" still names the exact command,
+since that is what the person is asked to allow.
+
+- **The selected row has a second line** that says **tab 2** (the place of the session ↵ opens in
+  the tab strip, **tab 2 in Work** when it is in another world). A session in a background tab has
+  no tab number, so that part is left out. The line starts with the whole detail only when the row
+  cut it short (it ends in "…") or hides it in a panel narrower than 700px, so the same words are
+  never shown twice. The line also carries the resume
   note, "nothing to jump to: this session is not in a Lunamux pane", and the message of a resume
   that failed. A row that has nothing to put there has no second line, never an empty one.
 - **↵ opens the task's own session.** Every task can have one session that speaks for it: the one

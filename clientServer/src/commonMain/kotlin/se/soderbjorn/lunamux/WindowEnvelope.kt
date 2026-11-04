@@ -363,7 +363,7 @@ sealed class WindowEnvelope {
  * @param cwd folder the agent ran in.
  * @param cwdHome true when [cwd] is the home folder of the user running the server; the overview
  *   shows such a row's folder as "~" (a client cannot tell, because it does not know the home path).
- * @param nowLine the last tool line ("Bash ./gradlew test"), or null.
+ * @param nowLine what the last tool call does in words ("Running the server tests"), or null.
  * @param question what the agent is asking while [state] is `needs_you`.
  * @param leafId the pane the agent runs in (meaningful while the record is open).
  * @param endedAt epoch millis when the record ended, or null while open.

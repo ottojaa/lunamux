@@ -339,7 +339,7 @@ class AgentsOverviewBackingViewModelTest {
         assertEquals("title", s.rows[0].field)
         assertEquals(0 to 6, s.rows[0].matchStart to s.rows[0].matchLength)
         assertEquals("…a needle here…", s.rows[1].snippet)
-        assertEquals("fix needle · Worktree removed. Resume recreates it from branch x. · in first prompt", s.rows[2].extra)
+        assertEquals("Worktree removed. Resume recreates it from branch x. · in first prompt", s.rows[2].extra)
         assertEquals(AgentsOverviewBackingViewModel.Enter.RESUME, s.rows[2].enter)
     }
 
