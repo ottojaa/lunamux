@@ -92,3 +92,11 @@ android {
         minSdk = libs.versions.android.minSdk.get().toInt()
     }
 }
+
+// WorkingGlyphStyleTest reads the web module's stylesheet; naming it an input makes the test rerun
+// when the stylesheet changes, and hands the test its path instead of relying on the working folder.
+tasks.named<Test>("jvmTest") {
+    val stylesCss = rootProject.layout.projectDirectory.file("web/src/jsMain/resources/styles.css")
+    inputs.file(stylesCss).withPropertyName("stylesCss")
+    systemProperty("lunamux.stylesCss", stylesCss.asFile.absolutePath)
+}
