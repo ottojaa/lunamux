@@ -81,12 +81,18 @@ since that is what the person is asked to allow.
   action; peek a live background session; resume the newest session. A background session is never
   chosen while a session in a listed tab is live, and a row never does nothing unless no session of
   it is known and it has no `open` action. A session that is a task of one jumps, peeks when it is in the
-  background, or resumes. The session is remembered by the pane it ran in, and that pane's id is
-  reused after a restart, so it is looked up as the session running in that pane now; only when
-  none is running does it stand for the pane's newest ended session. A server restart keeps it:
-  the session is then an ended one and ↵ resumes it. It is lost only once that session is older
-  than the history the overview loads (14 days, or beyond the newest 300 sessions); the task then
-  has no own session until an agent names one again.
+  background, or resumes. The session is remembered by the pane it ran in (the pane's layout id,
+  which a restart keeps; the terminal session id is renumbered at every start and would name a
+  different pane). It is looked up as the session running in that pane now; only when none is
+  running does it stand for the newest ended session that ran in that pane, never another pane's.
+  A server restart keeps it: the session is then an ended one and ↵ resumes it. It is lost when
+  the pane is closed and that session is older than the history the overview loads (14 days, or
+  beyond the newest 300 sessions), or when the same conversation is resumed in a different pane
+  (the record then belongs to that pane); the task then has no own session until an agent names
+  one again with `set_task_lead`. `list_tasks` reports the terminal session id the pane has now as
+  `ownSession`, and null while the pane is closed. A task made before panes were remembered is
+  looked up by its terminal session id until a running session on that id shows which pane it is,
+  and keeps that pane from then on.
 - **Three keys are not hinted.** **⌘↵** takes over the background session ↵ would peek: its tab
   becomes an ordinary tab and the app switches to it. **→** at the end of the search text peeks
   the session ↵ would open (**←** or esc goes back). **⌘⌫** asks to close a row that is one

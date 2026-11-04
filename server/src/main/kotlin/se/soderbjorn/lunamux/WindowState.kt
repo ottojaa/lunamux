@@ -397,6 +397,11 @@ object WindowState {
             )
         }
 
+        // A pane that was closed leaves no trace in the layout, but the sessions that ran in it are
+        // still on record under its id. Counting those ids keeps a new pane from being handed one,
+        // which would put a task's remembered pane on an unrelated one.
+        runCatching { repo.allAgentSessionLeafIds() }.getOrDefault(emptyList()).forEach(::trackNodeId)
+
         nodeIdCounter.set(maxNodeId)
         tabIdCounter.set(maxTabId)
         worldIdCounter.set(maxWorldId)
@@ -801,6 +806,22 @@ object WindowState {
      */
     fun customNameOfSession(sessionId: String): String? = synchronized(this) {
         findLeafBySession(_config.value, sessionId)?.customName
+    }
+
+    /**
+     * The terminal session id of the pane with layout leaf id [leafId], the reverse of [leafIdOfSession].
+     *
+     * Called by `TaskIndex` to tell an agent which session id names a task's own pane now, because
+     * the task remembers the pane by its leaf id and the session id changes with every restart.
+     *
+     * @param leafId a layout leaf id.
+     * @return the pane's terminal session id, or null when no pane has that id or the pane has no
+     *   terminal session (a file browser, say).
+     * @see leafIdOfSession
+     */
+    fun sessionIdOfLeaf(leafId: String): String? = synchronized(this) {
+        allTabs(_config.value).firstNotNullOfOrNull { tab -> tab.panes.firstOrNull { it.leaf.id == leafId } }
+            ?.leaf?.sessionId?.takeIf { it.isNotEmpty() }
     }
 
     private fun findLeafBySession(cfg: WindowConfig, sessionId: String): LeafNode? {
