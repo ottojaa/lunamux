@@ -603,6 +603,16 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
+    fun aSessionWithNothingToSayButItsTabHasTheTabAloneAsItsExtraLine() {
+        layoutTwoTabs(listOf("leaf-x"), listOf("leaf-a"))
+        show(emptyList(), session("x", "working", lastActivityAt = now - 1_000))
+        val r = row("x")
+        assertEquals("", r.detail)
+        assertEquals("tab 1", r.extra, "no separator in front of the tab when there is no detail before it")
+        assertEquals("tab 1", r.tab)
+    }
+
+    @Test
     fun theTabOfASessionInAnotherWorldNamesTheWorld() {
         layoutTwoWorlds(listOf("leaf-a"))
         show(emptyList(), session("a", "working", nowLine = "Edit a.kt", lastActivityAt = now - 1_000))
