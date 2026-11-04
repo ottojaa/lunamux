@@ -36,7 +36,7 @@ class TaskPanelStoreTest {
     private var now = 10_000L
     private val tracker = AgentSessionTracker(repo, gitInfo = { GitInfo() }, clock = { now }, newId = { "r${++nextId}" }).also { it.start() }
     private var nextId = 0
-    private val index = TaskIndex(repo, tracker, files, leafOfSession = { "leaf-$it" }, clock = { now })
+    private val index = TaskIndex(repo, tracker, files, leafOfSession = { "leaf-$it" }, clock = { now }, sessionOfLeaf = { it.removePrefix("leaf-") })
     private val store = TaskPanelStore(repo, index, clock = { now })
     private val taskId = index.createTask("Release", emptyList())
 
