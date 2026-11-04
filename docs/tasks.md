@@ -81,8 +81,10 @@ since that is what the person is asked to allow.
   action; peek a live background session; resume the newest session. A background session is never
   chosen while a session in a listed tab is live, and a row never does nothing unless no session of
   it is known and it has no `open` action. A session that is a task of one jumps, peeks when it is in the
-  background, or resumes. The session is remembered by the pane it ran in. A server restart keeps
-  it: the session is then an ended one and ↵ resumes it. It is lost only once that session is older
+  background, or resumes. The session is remembered by the pane it ran in, and that pane's id is
+  reused after a restart, so it is looked up as the session running in that pane now; only when
+  none is running does it stand for the pane's newest ended session. A server restart keeps it:
+  the session is then an ended one and ↵ resumes it. It is lost only once that session is older
   than the history the overview loads (14 days, or beyond the newest 300 sessions); the task then
   has no own session until an agent names one again.
 - **Three keys are not hinted.** **⌘↵** takes over the background session ↵ would peek: its tab

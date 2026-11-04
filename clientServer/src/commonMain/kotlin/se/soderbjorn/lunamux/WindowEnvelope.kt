@@ -596,8 +596,9 @@ enum class DiffLineType {
  *   time), or null when no file declares the task. A file nobody has refreshed for a while no longer
  *   says anything about its members; the overview marks such rows stale from this alone.
  * @param leadRecordId the id of the session record that speaks for the task (the agent that made it,
- *   or the one an agent named with `set_task_lead`), resolved to the newest record of that terminal
- *   session; null when the task has none or no record exists yet. The overview opens it on ↵.
+ *   or the one an agent named with `set_task_lead`), resolved to the record running in that terminal
+ *   session now (terminal ids are reused after a restart, so older ended records can share it), else
+ *   to its newest ended record; null when the task has none or no record exists yet. The overview opens it on ↵.
  * @param status the one-line status a member set through `set_task_status`, shown on the task's
  *   row; null when none was set or it was cleared.
  * @param statusAtMillis epoch millis the status was set, or null with no status.
