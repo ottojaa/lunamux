@@ -37,10 +37,11 @@
 #                    "Nightly sync" and "Billing cleanup" (task files whose members are not in any
 #                    open tab) are in EARLIER, not NOW. "Access control" stays in NOW because one of
 #                    its members needs you, wherever it runs.
-#   Release notes    the selected row's second line ends "· tab n", the tab of the task's own session,
-#                    which ↵ jumps to. Close the "Release notes" tab in the app to see the question that
-#                    lists the two agents that keep running; after that the row still counts them as
-#                    working, and ↵ on it resumes the task's own session.
+#   Release notes    the selected row's second line reads "tab n", the tab of the task's own session,
+#                    which ↵ jumps to (its status fits the row, so it is not repeated). Close
+#                    the "Release notes" tab in the app to see the question that lists the two
+#                    agents that keep running; after that the row still counts them as working,
+#                    and ↵ on it resumes the task's own session.
 #   Close "Docs"     close the tab in the app: its panes close and their sessions end. A session that
 #                    has just ended stays in NOW for ten minutes, so "Docs sweep" and the question are
 #                    still listed (as ended) right after the close and the chip drops by one working and

@@ -16,9 +16,10 @@
  * of one. The sessions of a task, background ones included, are never rows of their own: the
  * row counts them in its state word ("needs you", "2 working", "working", "done" or
  * "finished") and shows the task's status as its detail. The selected row has one more line,
- * which carries the full text and the places that matter for opening it, such as the tab the
- * session sits in; a row with nothing to add has an empty [AgentsOverviewBackingViewModel.Row.extra]
- * and the view draws no line. EARLIER lists its newest five rows and a "+ N more" line for the rest.
+ * carries the places that matter for opening it, such as the tab the session sits in, but not the
+ * detail (the view puts the detail in front only when the row cut it); a row with nothing to add
+ * has an empty [AgentsOverviewBackingViewModel.Row.extra] and the view draws no line. EARLIER
+ * lists its newest five rows and a "+ N more" line for the rest.
  *
  * What ↵ opens follows one order. A task with an own session opens that session: its pane, or a
  * read-only peek when the pane is in a background tab; once the session is gone the task's
