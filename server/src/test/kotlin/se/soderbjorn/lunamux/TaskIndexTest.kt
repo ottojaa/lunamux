@@ -311,6 +311,34 @@ class TaskIndexTest {
         assertTrue(restarted.snapshot().any { it.id == "gone" }, "the ended record is still loaded")
     }
 
+    @Test
+    fun `a started index moves the task onto the live session when an older record is resumed after a restart`() {
+        // The order the owner saw: the task and its own session exist, the server restarts, a
+        // client is already looking, and only then does the old conversation resume. Its record is
+        // older than an ended one on the same terminal id, so only a push after the resume can
+        // move the task onto it.
+        val older = session("s1", "a-old")
+        val task = index.createTask("Plan", listOf("s1"))
+        tracker.onSessionDestroyed("s1", "old screen")
+        repo.saveAgentSession(
+            onTerminal("gone", "s1", createdAt = 900_000, leafId = "leaf-gone").copy(endedAt = 950_000),
+        )
+        val restarted = AgentSessionTracker(
+            repo, gitInfo = { GitInfo() }, clock = { now }, newId = { "r${++nextId}" },
+        ).also { it.start() }
+        val reopened = TaskIndex(
+            repo, restarted, files, leafOfSession = { if (it in knownPanes) "leaf-$it" else null },
+            clock = { now }, newSuffix = { suffixes.next() },
+        )
+        reopened.start(CoroutineScope(Dispatchers.Unconfined))
+        assertEquals("gone", reopened.state.value.tasks.single { it.id == task }.leadRecordId, "nothing is live yet")
+
+        restarted.onHook(pane("s1"), event("SessionStart", "a-old"))
+
+        assertEquals(older.id, restarted.openRecordOf("s1")!!.id, "the old record is the one that reopened")
+        assertEquals(older.id, reopened.state.value.tasks.single { it.id == task }.leadRecordId)
+    }
+
     // ── Resume and the pending pane assignment ──────────────────────────────────────────
 
     @Test
