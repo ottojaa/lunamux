@@ -16,6 +16,7 @@ import se.soderbjorn.lunamux.persistence.SettingsRepository
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -125,19 +126,19 @@ class AgentSessionTrackerTest {
         t.onHook(p, event("PreToolUse", "a-1", "tool_name" to "Bash"))
         var row = t.summaries.value.single()
         assertEquals("working", row.state)
-        assertEquals("Bash", row.nowLine)
+        assertEquals("Running a command", row.nowLine, "a call with no input says what it is, never a bare tool name")
         assertEquals("Refactor tracker", row.title)
         assertEquals("please run the tests", repo.findAgentSessionById(row.id)!!.firstPrompt)
         assertEquals("please run the tests", row.firstPrompt, "the summary carries the first prompt for the overview")
 
-        t.onHook(p, toolEvent("Bash", """{"command":"./gradlew test\nsecond line","description":"x"}"""))
-        assertEquals("Bash ./gradlew test", t.summaries.value.single().nowLine)
+        t.onHook(p, toolEvent("Bash", """{"command":"./gradlew test\nsecond line","description":"Run the server tests"}"""))
+        assertEquals("Run the server tests", t.summaries.value.single().nowLine, "the row says what the call does in words")
 
         now = 3_000
         t.onHook(p, event("Notification", "a-1", "message" to "Claude needs your permission to use Bash"))
         row = t.summaries.value.single()
         assertEquals("needs_you", row.state)
-        assertEquals("Allow Bash ./gradlew test?", row.question, "a permission prompt names the command, not the hook's generic text")
+        assertEquals("Allow Bash ./gradlew test?", row.question, "a permission prompt names the actual command, not the row's words or the hook's generic text")
         assertNull(row.nowLine)
 
         t.onHook(p, event("PostToolUse", "a-1"))
@@ -518,14 +519,120 @@ class AgentSessionTrackerTest {
         assertEquals(now, t.summaries.value.single().endedAt)
     }
 
+    /** Builds a PreToolUse payload for [toolLine] from a tool name and a JSON `tool_input` object. */
+    private fun call(tool: String, input: String = "{}"): JsonObject =
+        Json.parseToJsonElement("""{"tool_name":"$tool","tool_input":$input}""") as JsonObject
+
     @Test
-    fun `tool line keeps only the name and the first line of the main argument`() {
-        val big = "x".repeat(500)
-        val line = toolLine(
-            Json.parseToJsonElement("""{"tool_name":"Write","tool_input":{"file_path":"/a/b.kt","content":"$big"}}""") as JsonObject,
+    fun `a Bash call says what it does with the description Claude Code sent`() {
+        assertEquals(
+            "Run the server tests",
+            toolLine(call("Bash", """{"command":"./gradlew :server:test","description":"Run the server tests"}""")),
         )
+        assertEquals(
+            "Run the server tests",
+            toolLine(call("Bash", """{"command":"x","description":"\n  Run the server tests\nsecond line"}""")),
+            "only the description's first line is kept",
+        )
+    }
+
+    @Test
+    fun `a Bash call without a description says it is running the first word of the command`() {
+        assertEquals("Running cat", toolLine(call("Bash", """{"command":"cat > /tmp/aov45-desc.txt 2>/dev/null; D=/private/x"}""")))
+        assertEquals("Running gradlew", toolLine(call("Bash", """{"command":"./gradlew test\nsecond"}""")))
+        assertEquals("Running git", toolLine(call("Bash", """{"command":"GIT_PAGER=cat LC_ALL=C /usr/bin/git log"}""")))
+        assertEquals("Running a command", toolLine(call("Bash", """{"command":"   "}""")))
+        assertEquals("Running a command", toolLine(call("Bash", """{"description":"  "}""")))
+    }
+
+    @Test
+    fun `a row never shows the command text of a Bash call`() {
+        val line = toolLine(call("Bash", """{"command":"cat > /tmp/aov45-desc.txt 2>/dev/null; D=/private/tmp/very/long/path"}"""))!!
+        assertFalse("/tmp" in line || ">" in line || ";" in line, "got: $line")
+    }
+
+    @Test
+    fun `the file tools name the file and not where it lives`() {
+        assertEquals("Editing card-check", toolLine(call("Edit", """{"file_path":"/Users/o/bin/card-check","old_string":"a","new_string":"b"}""")))
+        assertEquals("Editing card-check", toolLine(call("MultiEdit", """{"file_path":"/Users/o/bin/card-check","edits":[]}""")))
+        assertEquals("Reading tick.py", toolLine(call("Read", """{"file_path":"/work/scripts/tick.py"}""")))
+        assertEquals("Writing notes.md", toolLine(call("Write", """{"file_path":"/a/b/notes.md","content":"${"x".repeat(500)}"}""")))
+        assertEquals("Editing Tab.ipynb", toolLine(call("NotebookEdit", """{"notebook_path":"/a/Tab.ipynb"}""")))
+        assertEquals("Listing src", toolLine(call("LS", """{"path":"/a/b/src/"}""")))
+    }
+
+    @Test
+    fun `a file tool without a path still says what it does`() {
+        assertEquals("Editing a file", toolLine(call("Edit")))
+        assertEquals("Reading a file", toolLine(call("Read", """{"file_path":""}""")))
+        assertEquals("Writing a file", toolLine(call("Write")))
+    }
+
+    @Test
+    fun `searches name their pattern`() {
+        assertEquals("Searching for \"fun toolLine\"", toolLine(call("Grep", """{"pattern":"fun toolLine","path":"/a/b"}""")))
+        assertEquals("Finding files matching \"**/*.kt\"", toolLine(call("Glob", """{"pattern":"**/*.kt"}""")))
+        assertEquals("Searching the web for \"kotlin flow\"", toolLine(call("WebSearch", """{"query":"kotlin flow"}""")))
+        assertEquals("Searching the code", toolLine(call("Grep")))
+        assertEquals("Finding files", toolLine(call("Glob")))
+    }
+
+    @Test
+    fun `a web fetch names the host`() {
+        assertEquals("Fetching example.com", toolLine(call("WebFetch", """{"url":"https://example.com/a/b?c=d","prompt":"x"}""")))
+        assertEquals("Fetching example.com", toolLine(call("WebFetch", """{"url":"https://user@example.com#frag"}""")))
+        assertEquals("Fetching a web page", toolLine(call("WebFetch")))
+    }
+
+    @Test
+    fun `an MCP tool is the server and the tool name in words`() {
+        assertEquals("lunamux: list tasks", toolLine(call("mcp__lunamux__list_tasks", """{"project":"p"}""")))
+        assertEquals("claude-in-chrome: tabs context mcp", toolLine(call("mcp__claude-in-chrome__tabs_context_mcp")))
+        assertEquals("Claude Docs: batch", toolLine(call("mcp__claude_ai_Claude_Docs__batch", """{"batch":[]}""")))
+        assertEquals("Using mcp", toolLine(call("mcp__")), "an MCP name without a server and tool falls back to the plain phrase")
+    }
+
+    @Test
+    fun `an agent and the background task tools get a plain verb phrase`() {
+        assertEquals("Running an agent: Review the diff", toolLine(call("Task", """{"description":"Review the diff","prompt":"long"}""")))
+        assertEquals("Running an agent: Review the diff", toolLine(call("Agent", """{"description":"Review the diff"}""")))
+        assertEquals("Running an agent", toolLine(call("Agent")))
+        assertEquals("Stopping a background task", toolLine(call("TaskStop", """{"task_id":"b1"}""")))
+        assertEquals("Stopping a background task", toolLine(call("KillShell", """{"shell_id":"b1"}""")))
+        assertEquals("Checking a background task", toolLine(call("TaskOutput", """{"task_id":"b1"}""")))
+        assertEquals("Updating the task list", toolLine(call("TodoWrite", """{"todos":[{"content":"x"}]}""")))
+        assertEquals("Using the lunamux skill", toolLine(call("Skill", """{"skill":"lunamux"}""")))
+        assertEquals("Presenting a plan", toolLine(call("ExitPlanMode", """{"plan":"x"}""")))
+        assertEquals("Looking up tools", toolLine(call("ToolSearch", """{"query":"select:X"}""")))
+    }
+
+    @Test
+    fun `a tool this code does not know is named without its arguments`() {
+        assertEquals("Using FancyNewTool", toolLine(call("FancyNewTool", """{"command":"rm -rf /","file_path":"/secret/path"}""")))
+    }
+
+    @Test
+    fun `a question put to the person keeps showing the question`() {
+        val asked = call("AskUserQuestion", """{"questions":[{"question":"Which port should it use?","options":[]}]}""")
+        assertEquals("Asks: Which port should it use?", toolLine(asked))
+        assertEquals("Asks: Which port should it use?", rawToolLine(asked))
+        assertEquals("Asking a question", toolLine(call("AskUserQuestion")), "with no question there is nothing to quote")
+    }
+
+    @Test
+    fun `a words line is cut at the row limit`() {
+        val line = toolLine(call("Bash", """{"description":"${"w".repeat(500)}"}"""))!!
+        assertEquals(160, line.length)
+    }
+
+    @Test
+    fun `the raw tool line keeps only the name and the first line of the main argument`() {
+        val big = "x".repeat(500)
+        val line = rawToolLine(call("Write", """{"file_path":"/a/b.kt","content":"$big"}"""))
         assertEquals("Write /a/b.kt", line)
-        assertEquals("Grep todo", toolLine(Json.parseToJsonElement("""{"tool_name":"Grep","tool_input":{"pattern":"todo"}}""") as JsonObject))
+        assertEquals("Grep todo", rawToolLine(call("Grep", """{"pattern":"todo"}""")))
+        assertEquals("Bash ./gradlew test", rawToolLine(call("Bash", """{"command":"./gradlew test\nsecond","description":"x"}""")))
+        assertNull(rawToolLine(Json.parseToJsonElement("""{"x":1}""") as JsonObject))
         assertNull(toolLine(Json.parseToJsonElement("""{"x":1}""") as JsonObject))
     }
 

@@ -9,8 +9,9 @@
  * and colour follow the state: a working or needs-you row has a bright title, a done one a
  * mid-grey title, and a finished one in EARLIER a dim row (a task in EARLIER whose agent still moves stays bright, with the glyph). The state word is cyan with the app's working glyph in
  * front while an agent moves ([workingGlyph]), yellow when the task needs the person, a muted
- * green when it is done. The selected row carries one more line under it with the full text and
- * the tab its session sits in, and none when there is nothing to put on it. ↵ opens the row, ⌘↵ takes a
+ * green when it is done. The selected row carries one more line under it with the tab its session
+ * sits in and the like, and the detail's full text when (and only when) the row cut it short or
+ * hides it in a narrow panel; it has none when there is nothing to put on it. ↵ opens the row, ⌘↵ takes a
  * background tab over, → peeks at the session ↵ would open, and ⌘⌫ closes a live one after an
  * inline confirmation. Typing two or more characters swaps the lists for search results over every
  * task ever run, one row per task. EARLIER shows its newest five rows and a "+ N more" line for
@@ -267,13 +268,18 @@ private fun ensureOverlay(query: String) {
     overlayElement = backdrop
     searchInput = input
     listElement = list
+    kotlinx.browser.window.addEventListener("resize", resizeListener)
     input.focus()
 }
+
+/** Re-checks whether the selected row cuts its detail when the window, and so the panel, changes size. */
+private val resizeListener: (Event) -> Unit = { fitSelectedFocus() }
 
 /** Remove the overlay from the page and forget every element that belonged to it. */
 private fun closeOverlayElement() {
     searchTimer?.let { kotlinx.browser.window.clearTimeout(it) }
     searchTimer = null
+    kotlinx.browser.window.removeEventListener("resize", resizeListener)
     overlayElement?.remove()
     overlayElement = null
     searchInput = null
@@ -391,7 +397,53 @@ private fun renderList(state: AgentsOverviewBackingViewModel.State) {
         // The line closes EARLIER whichever band the last shown row is in.
         if (state.earlierHidden > 0) list.appendChild(buildMoreLine(state.earlierHidden))
     }
+    fitSelectedFocus()
     (list.querySelector(".ao-sel") as? HTMLElement)?.asDynamic().scrollIntoView(js("({block: 'nearest'})"))
+}
+
+/**
+ * Whether the row element [el] cut its detail short: the detail cell is cut off with an ellipsis,
+ * or is not drawn at all (the narrow layout hides it). A row with no detail never cuts anything.
+ *
+ * Reads the layout, so it only means something for an element that is in the page.
+ *
+ * @param el a row element built by [buildRow].
+ * @return true when the whole detail is not visible in the row.
+ */
+private fun detailIsCut(el: HTMLElement): Boolean {
+    val cell = el.querySelector(".ao-n") as? HTMLElement ?: return false
+    if (cell.textContent.isNullOrBlank()) return false
+    if (kotlinx.browser.window.getComputedStyle(cell).display == "none") return true
+    return cell.scrollWidth > cell.clientWidth
+}
+
+/**
+ * Put the detail's full text on the selected row's second line when the row cut it, and take it off
+ * again when it no longer does (a wider panel).
+ *
+ * The row is drawn first without the repeat and measured once it is in the page; only when the
+ * answer differs from what the row shows does its second line change, so the call is cheap and
+ * cannot loop. A selected row whose detail fits keeps a second line only for what the view model
+ * put in [Row.extra], and none when that is empty.
+ *
+ * Called at the end of [renderList] and from the window's resize event.
+ *
+ * @see buildFocus
+ * @see detailIsCut
+ */
+private fun fitSelectedFocus() {
+    val list = listElement ?: return
+    val el = list.querySelector(".ao-sel") as? HTMLElement ?: return
+    if (list.clientWidth == 0) return
+    val row = el.getAttribute("data-id")?.let { shownRows[it] } ?: return
+    val cut = detailIsCut(el)
+    if (cut == el.hasAttribute("data-cut")) return
+    if (cut) el.setAttribute("data-cut", "1") else el.removeAttribute("data-cut")
+    (el.querySelector(".ao-focus") as? HTMLElement)?.remove()
+    buildFocus(row, repeatDetail = cut)?.let { focus ->
+        val peek = el.querySelector(".ao-peek")
+        if (peek != null) el.insertBefore(focus, peek) else el.appendChild(focus)
+    }
 }
 
 /**
@@ -426,8 +478,8 @@ private fun highlighted(text: String, start: Int, length: Int): org.w3c.dom.Docu
  * `ao-done` for one that is done in NOW, `ao-old` for one that finished and sits in EARLIER; a
  * working row in EARLIER is live, because the state wins over the band. The state word carries
  * the state's colour, and "working" has the working glyph in front. The selected row has
- * one more line under it, spanning the columns after the marker, with the full text and the tab
- * ↵ opens, when there is any; a failed resume or open shows in the error colour inside it. An open
+ * one more line under it, spanning the columns after the marker, with the tab ↵ opens and the like
+ * (and the detail's full text when the row cut it, which [fitSelectedFocus] finds out), when there is any; a failed resume or open shows in the error colour inside it. An open
  * peek follows.
  *
  * @param row the row to draw.
@@ -463,7 +515,7 @@ private fun buildRow(row: Row, state: AgentsOverviewBackingViewModel.State, sele
 
     el.appendChild(span("ao-age", if (row.sinceMillis <= 0) "" else formatAge(row.sinceMillis)))
 
-    if (selected) buildFocus(row)?.let { el.appendChild(it) }
+    if (selected) buildFocus(row, repeatDetail = false)?.let { el.appendChild(it) }
     state.peek?.takeIf { selected }?.let { el.appendChild(buildPeek(it)) }
     return el
 }
@@ -498,34 +550,53 @@ private fun buildState(row: Row): HTMLElement {
 }
 
 /**
- * The selected row's extra line: the full text, then where it was found or the tab it sits in. The
- * tab at the end is drawn dimmer than the text before it, and a failed resume or open in the error
- * colour, never dimmed.
+ * The selected row's extra line: the detail's full text when the row cut it, then what the view
+ * model put in [Row.extra] (where a search matched, a resume note), then the tab the session sits
+ * in. The tab at the end is drawn dimmer than the text before it, and a failed resume or open in
+ * the error colour, never dimmed. The parts are joined by " · ".
+ *
+ * Called by [buildRow] without the repeat, and by [fitSelectedFocus] with it once the row is known
+ * to cut its detail.
  *
  * @param row the selected row.
- * @return the line, spanning every column after the marker; null when the row has nothing for it,
- *   so the selected row never carries an empty line.
+ * @param repeatDetail whether to start the line with [Row.detail] (the row's own cell cut it short
+ *   or hides it). A search match in that text keeps its underline.
+ * @return the line, spanning every column after the marker; null when there is nothing to put on
+ *   it, so the selected row never carries an empty line.
  * @see Row.tab
  * @see Row.error
  */
-private fun buildFocus(row: Row): HTMLElement? {
-    if (row.extra.isBlank()) return null
+private fun buildFocus(row: Row, repeatDetail: Boolean): HTMLElement? {
     val focus = div("ao-focus")
+    fun join(node: org.w3c.dom.Node) {
+        if (focus.hasChildNodes()) focus.appendChild(document.createTextNode(" · "))
+        focus.appendChild(node)
+    }
+    if (repeatDetail && row.detail.isNotBlank()) {
+        join(
+            if (row.matchInSnippet) highlighted(row.detail, row.matchStart, row.matchLength)
+            else document.createTextNode(row.detail),
+        )
+    }
     val tab = row.tab
     // The tab note is the last part of the extra line; what it is joined to by " · " belongs to the dim part.
     val tabStart = if (tab.isNotEmpty() && row.extra.endsWith(tab)) row.extra.length - tab.length else -1
     val main = if (tabStart >= 0) row.extra.substring(0, tabStart).removeSuffix(" · ") else row.extra
     val error = row.error
     val at = if (error != null) main.indexOf(error) else -1
-    if (error != null && at >= 0) {
-        focus.appendChild(document.createTextNode(main.substring(0, at)))
-        focus.appendChild(span("ao-n-error", error))
-        focus.appendChild(document.createTextNode(main.substring(at + error.length)))
-    } else {
-        focus.appendChild(document.createTextNode(main))
+    if (main.isNotEmpty()) {
+        val part = document.createDocumentFragment()
+        if (error != null && at >= 0) {
+            part.appendChild(document.createTextNode(main.substring(0, at)))
+            part.appendChild(span("ao-n-error", error))
+            part.appendChild(document.createTextNode(main.substring(at + error.length)))
+        } else {
+            part.appendChild(document.createTextNode(main))
+        }
+        join(part)
     }
-    if (tabStart >= 0) focus.appendChild(span("ao-tab", if (main.isEmpty()) tab else " · $tab"))
-    return focus
+    if (tabStart >= 0) focus.appendChild(span("ao-tab", if (focus.hasChildNodes()) " · $tab" else tab))
+    return if (focus.hasChildNodes()) focus else null
 }
 
 /**

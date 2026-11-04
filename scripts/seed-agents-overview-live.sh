@@ -30,7 +30,10 @@
 #
 #   NOW              "Rate limiter" (the two Checkout sessions, "2 working"), "Release notes" ("2 working":
 #                    its two background agents, with its status as the detail), "Docs sweep" and the ◆
-#                    "needs you" row with its question in quotes.
+#                    "needs you" row with its question in quotes. Each working row says what the tool call
+#                    does in words ("Editing TokenBucket.kt", "Reading CHANGELOG.md"); "Docs sweep" runs a
+#                    shell command and shows the call's description, long enough that the row cuts it, so
+#                    its selected row repeats the whole sentence on the second line.
 #                    "Nightly sync" and "Billing cleanup" (task files whose members are not in any
 #                    open tab) are in EARLIER, not NOW. "Access control" stays in NOW because one of
 #                    its members needs you, wherever it runs.
@@ -115,7 +118,7 @@ LAYOUT="$(call list_layout '{}')"
 SES2="$(field "$LAYOUT" '[w for t in d["tabs"] if t["tabId"]=="'"$TAB2"'" for w in t["windows"]][0]["sessionId"]')"
 title "$SES2" "Docs sweep"
 hook "$SES2" live-docs '{"hook_event_name":"UserPromptSubmit","prompt":"Sweep the docs for stale flags"}'
-hook "$SES2" live-docs '{"hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"docs/tasks.md"}}'
+hook "$SES2" live-docs '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"grep -rhoE -- \"--[a-z][a-z-]+\" docs | sort -u > /tmp/flags.txt; diff /tmp/flags.txt /tmp/known.txt","description":"Compare every flag in the docs against the ones the server reads and list the stale ones"}}'
 ARGS="{\"tabId\":\"$TAB2\"}"
 DOCS_WIN="$(call create_window "$ARGS")"
 SES3="$(field "$DOCS_WIN" 'd["sessionId"]')"
@@ -144,7 +147,7 @@ ARGS="{\"background\":true,\"taskId\":\"$NOTES\",\"title\":\"Screenshot refresh\
 SES7="$(field "$(call create_window "$ARGS")" 'd["sessionId"]')"
 title "$SES7" "Screenshot refresh"
 hook "$SES7" live-screens '{"hook_event_name":"UserPromptSubmit","prompt":"Retake the screenshots the notes link to"}'
-hook "$SES7" live-screens '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"scripts/take-screenshots.sh"}}'
+hook "$SES7" live-screens '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"scripts/take-screenshots.sh","description":"Retake the release screenshots"}}'
 sleep 1
 call set_task_lead "{\"taskId\":\"$NOTES\",\"sessionId\":\"$SES5\"}" >/dev/null
 call set_task_status "{\"taskId\":\"$NOTES\",\"text\":\"Notes drafted, waiting on the changelog check\"}" >/dev/null
