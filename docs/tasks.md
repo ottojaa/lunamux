@@ -85,14 +85,21 @@ since that is what the person is asked to allow.
   which a restart keeps; the terminal session id is renumbered at every start and would name a
   different pane). It is looked up as the session running in that pane now; only when none is
   running does it stand for the newest ended session that ran in that pane, never another pane's.
-  A server restart keeps it: the session is then an ended one and ↵ resumes it. It is lost when
-  the pane is closed and that session is older than the history the overview loads (14 days, or
-  beyond the newest 300 sessions), or when the same conversation is resumed in a different pane
-  (the record then belongs to that pane); the task then has no own session until an agent names
-  one again with `set_task_lead`. `list_tasks` reports the terminal session id the pane has now as
-  `ownSession`, and null while the pane is closed. A task made before panes were remembered is
-  looked up by its terminal session id until a running session on that id shows which pane it is,
-  and keeps that pane from then on.
+  A server restart keeps it: the session is then an ended one and ↵ resumes it. A resume opens a
+  tab of its own, so the task also remembers the Claude conversation of its session, and when
+  that conversation runs in another pane while nothing runs in the remembered one, the task moves
+  to that pane. It does so once the conversation is known there (a resumed session is named by its
+  first hook, a moment after it starts). A new agent started in the remembered pane takes the
+  task's place there instead; the old conversation resumed elsewhere afterwards does not take it
+  back. ↵ on a task whose `open` action starts a new conversation does not move the task, since
+  that conversation is not the one it remembers. The own session is lost when the pane is closed
+  and that session is older than the history the overview loads (14 days, or beyond the newest
+  300 sessions); the task then has no own session until an agent names one again with
+  `set_task_lead`. `list_tasks` reports the terminal session id the pane has now as `ownSession`,
+  and null while the pane is closed. A task made before panes were remembered is looked up by its
+  terminal session id, and the first running session found on that id fixes the pane. This is a
+  guess: ids are handed out again at every start, so it can be a pane the task never had, and
+  `set_task_lead` corrects it.
 - **Three keys are not hinted.** **⌘↵** takes over the background session ↵ would peek: its tab
   becomes an ordinary tab and the app switches to it. **→** at the end of the search text peeks
   the session ↵ would open (**←** or esc goes back). **⌘⌫** asks to close a row that is one

@@ -203,7 +203,8 @@ class SettingsRepository(
                     status       TEXT,
                     status_by    TEXT,
                     status_at    INTEGER,
-                    lead_leaf    TEXT
+                    lead_leaf    TEXT,
+                    lead_agent_session TEXT
                 )
             """.trimIndent(),
             parameters = 0,
@@ -240,6 +241,9 @@ class SettingsRepository(
         // database and a fresh one have identical column positions.
         runCatching {
             driver.execute(null, "ALTER TABLE task_meta ADD COLUMN lead_leaf TEXT", 0)
+        }
+        runCatching {
+            driver.execute(null, "ALTER TABLE task_meta ADD COLUMN lead_agent_session TEXT", 0)
         }
         runCatching {
             driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN repo_root TEXT", 0)
@@ -676,6 +680,9 @@ class SettingsRepository(
      * @property leadLeaf the layout leaf id of the pane whose session speaks for the task, or null for
      *   a row that has not been given one yet. It is stored with the layout, so it names the same pane
      *   after a restart.
+     * @property leadAgentSession the agent's own conversation id of the session last seen in that pane,
+     *   or null when none was seen yet. The task follows this conversation when it is reopened in
+     *   another pane.
      * @property status the task's one-line status, or null.
      * @property statusBy the terminal session id of the pane that set the status, or null.
      * @property statusAt epoch millis the status was set, or null with no status.
@@ -688,6 +695,7 @@ class SettingsRepository(
         val statusBy: String? = null,
         val statusAt: Long? = null,
         val leadLeaf: String? = null,
+        val leadAgentSession: String? = null,
     )
 
     /**
@@ -699,8 +707,8 @@ class SettingsRepository(
      * @return one row per task the server has seen.
      */
     fun loadTaskMeta(): List<TaskMetaRow> =
-        database.settingsQueries.selectTaskMeta { id, startedAt, lead, status, by, at, leaf ->
-            TaskMetaRow(id, startedAt, lead, status, by, at, leaf)
+        database.settingsQueries.selectTaskMeta { id, startedAt, lead, status, by, at, leaf, conversation ->
+            TaskMetaRow(id, startedAt, lead, status, by, at, leaf, conversation)
         }.executeAsList()
 
     /**
@@ -722,6 +730,7 @@ class SettingsRepository(
      * @param leadSession the terminal session id the pane has now, or null to clear it.
      * @param leadLeaf the pane's layout leaf id, or null to clear it.
      * @see setTaskLeadLeaf
+     * @see moveTaskLead
      */
     fun setTaskLead(taskId: String, leadSession: String?, leadLeaf: String?) {
         database.settingsQueries.setTaskLead(leadSession, leadLeaf, taskId)
@@ -738,6 +747,33 @@ class SettingsRepository(
      */
     fun setTaskLeadLeaf(taskId: String, leadLeaf: String) {
         database.settingsQueries.setTaskLeadLeaf(leadLeaf, taskId)
+    }
+
+    /**
+     * Move a task to the pane its own conversation was reopened in, keeping the conversation id.
+     *
+     * Called by [se.soderbjorn.lunamux.TaskIndex] when the conversation the task remembers runs in
+     * another pane than the one stored.
+     *
+     * @param taskId the task's id; it needs a row.
+     * @param leadSession the terminal session id the new pane has now.
+     * @param leadLeaf the new pane's layout leaf id.
+     * @see setTaskLead
+     */
+    fun moveTaskLead(taskId: String, leadSession: String?, leadLeaf: String) {
+        database.settingsQueries.moveTaskLead(leadSession, leadLeaf, taskId)
+    }
+
+    /**
+     * Remember the agent's own conversation id of the session last seen in the task's pane.
+     *
+     * Called by [se.soderbjorn.lunamux.TaskIndex] whenever that session changes.
+     *
+     * @param taskId the task's id; it needs a row.
+     * @param agentSession the conversation id.
+     */
+    fun setTaskLeadAgentSession(taskId: String, agentSession: String) {
+        database.settingsQueries.setTaskLeadAgentSession(agentSession, taskId)
     }
 
     /**
