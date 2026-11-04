@@ -25,8 +25,8 @@
 #
 # Open https://localhost:8471, press ⌘⇧A and look at:
 #
-#   NOW              "Access control" only: one of its members needs you, and a question stays in NOW
-#                    wherever it runs. NOW is the sessions in open tabs, and nothing here is in a tab.
+#   NOW              "Access control" only, as a ◆ row reading "needs you" with the question in quotes: one of
+#                    its members needs you, and a question stays in NOW wherever it runs. NOW is the sessions in open tabs, and nothing here is in a tab.
 #                    "Nightly sync" (its file is 25 minutes old, so its worker reads "stale 25m") and
 #                    "Billing cleanup" (a session in review, one queued) have no session in an open tab,
 #                    so they are in the first EARLIER band. Run scripts/seed-agents-overview-live.sh to
@@ -38,8 +38,8 @@
 #                    "Release 4.2" and the 2-day-old session.
 #   LAST TWO WEEKS   3 to 14 days: five units and "+ 2 more" ("Flaky checkout tests", the 6- and
 #                    12-day sessions, "Onboarding emails", "Docs sweep"). Click the more line to see all.
-#   An EARLIER task  a collapsed panel (title, repo, "3 sessions", age). → expands it; ↵ on a
-#                    session resumes it.
+#   An EARLIER task  one dimmed row reading "finished" (title, repo, age), however many sessions it
+#                    holds; ↵ resumes its own session, or its newest when it has none.
 #   Awkward rows     "seed-home" (run from the home folder), "seed-branch-only" (only a run-named
 #                    branch), "seed-run-id-title" and "seed-folder-title" (a stored title that is a
 #                    run id or a folder name): each is named by its first prompt, never "~", the
@@ -50,7 +50,7 @@
 #                    aged from when they last did anything (2d and 5h), not from the restart.
 #   Release 4.2 notes  an agent-made task with its own session, the status "Notes drafted, waiting on the
 #                    changelog check" and two members that ran in background tabs, all ended, so it is
-#                    in the first EARLIER band. Search finds its own session but never the two background
+#                    one "finished" row in the first EARLIER band. Search finds its own session but never the two background
 #                    ones. Run scripts/seed-agents-overview-live.sh for the live version in NOW.
 #                    It also holds a panel of blocks (status, checks, timeline, links, a line of markup that
 #                    stays text, two buttons) written by "release notes agent"; the panel shows once the
