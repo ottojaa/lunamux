@@ -355,8 +355,9 @@ a terminal reads as Tab; rebind it there if that gets in the way.)
 The column starts with an **Agents** block, marked *live*: every other session of the task with its
 state mark (● working or waiting, ◆ needs you, ○ finished, ◉ the one being peeked), its name, its age
 at the right and, under the name, what it is doing, or its state word when it is not doing anything.
-A finished session is dimmed and reads "exited". A finished member that only the task file lists
-(one Lunamux does not host) adds the file's own label for it when it gives one (for example
+A finished session is dimmed and reads "exited". A member that only the task file lists (one
+Lunamux does not host) shows the file's own label for it when it gives one: in place of the state
+word while it is not finished (for example "reviewing"), and after "exited" once it is (for example
 "exited · merged"). The action on a line is what a click does:
 *peek* for an agent in a background tab, *jump* for one in a tab of the strip, *open* for a member of
 a task file that no pane shows.
