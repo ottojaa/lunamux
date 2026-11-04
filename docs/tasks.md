@@ -34,7 +34,9 @@ runs in, home as `~`), one **state word**, a **detail** and the **age**. The sta
 | **finished** (dim) | the task is in EARLIER and nothing is moving or waiting |
 
 The glyph is the app's own working mark: four braille frames that cross-fade
-about three times a second. With reduced motion it is a still frame.
+about three times a second. With reduced motion it is a still frame. It is always drawn at regular
+weight, not the bold of the word beside it: the system's braille font draws a ring at all six dot
+positions in a bold weight, and the glyph is meant to show two dots turning.
 
 A session is *moving* while it works and has shown a sign of life in the last five minutes (for a
 session Lunamux does not host: while its file was refreshed in the last twenty). One that works but
