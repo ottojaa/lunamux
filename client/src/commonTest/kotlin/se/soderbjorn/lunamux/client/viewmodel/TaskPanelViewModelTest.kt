@@ -156,7 +156,7 @@ class TaskPanelViewModelTest {
                 ),
             ),
             listOf(
-                session("own"), session("bg1", background = true, leaf = "leaf-bg", nowLine = "editing"),
+                session("own"), session("bg1", background = true, leaf = "leaf-bg", nowLine = "Reading CHANGELOG.md"),
                 session("w1", leaf = "leaf-w", state = "needs_you"),
                 session("gone", state = "ended", leaf = null), session("idle1", state = "idle", leaf = null),
             ),
@@ -166,7 +166,7 @@ class TaskPanelViewModelTest {
         assertEquals(listOf("working", "needs you", "exited", "waiting"), lines.map { it.stateWord })
         assertEquals(listOf(false, false, true, false), lines.map { it.dimmed })
         assertEquals("1h", lines[0].age)
-        assertEquals("editing", lines[0].nowLine)
+        assertEquals("Reading CHANGELOG.md", lines[0].nowLine)
         assertNull(lines[1].nowLine)
     }
 
