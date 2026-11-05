@@ -4,7 +4,7 @@
  * open work and goes to EARLIER once every session reads done or ended), the state word of a row
  * ("needs you", "N working", "working", "done", "finished") and the detail and extra line behind
  * it, what ↵ opens in every branch (the task's own session, a live session in a listed tab, the
- * task's `open` action, a peek at a background session, a resume, nothing), ⌘↵ and → on a task,
+ * task's `open` action, a watch of a background session, a resume that asks first, nothing), ⌘↵ and → on a task,
  * which rows ⌘⌫ may close, how a search folds the sessions of one task into one row, the selection
  * staying on its row, the stable order of NOW, and when a working session counts as moving, quiet
  * or stale.
@@ -45,17 +45,18 @@ class AgentsOverviewTasksViewModelTest {
     private val sent = mutableListOf<WindowCommand>()
     private val windowState = WindowStateRepository()
     private var now = 10_000_000L
-    private val vm = AgentsOverviewBackingViewModel(windowState, clock = { now }) { sent += it }
+    private val watched = mutableListOf<String>()
+    private val vm = AgentsOverviewBackingViewModel(windowState, clock = { now }, watch = { watched += it }) { sent += it }
 
     private fun session(
         id: String, state: String, since: Long = 1_000, endedAt: Long? = null, title: String = "session $id",
         repo: String? = "proj", cwd: String = "/work/proj", links: List<String> = emptyList(),
         nowLine: String? = null, question: String? = null, lastActivityAt: Long? = null,
         lastSaid: String? = null, firstPrompt: String? = null, cwdHome: Boolean = false, taskId: String? = null,
-        startedAt: Long? = null, background: Boolean = false,
+        startedAt: Long? = null, background: Boolean = false, cwdShown: String? = null,
     ) = AgentSessionSummary(
         id = id, agent = "claude", state = state, stateSince = since, title = title, links = links,
-        repo = repo, branch = null, cwd = cwd, cwdHome = cwdHome, nowLine = nowLine, question = question,
+        repo = repo, branch = null, cwd = cwd, cwdHome = cwdHome, cwdShown = cwdShown, nowLine = nowLine, question = question,
         leafId = "leaf-$id".takeIf { endedAt == null }, endedAt = endedAt, lastActivityAt = lastActivityAt,
         lastSaid = lastSaid, firstPrompt = firstPrompt, taskId = taskId, startedAt = startedAt, background = background,
     )
@@ -588,42 +589,21 @@ class AgentsOverviewTasksViewModelTest {
     // ---- extra ----
 
     @Test
-    fun theExtraLineEndsWithTheTabTheSessionEnterOpensSitsInAndDoesNotRepeatTheDetail() {
+    fun theExtraLineHasNoTabAndTheDetailStaysAFieldOfItsOwn() {
         layoutTwoTabs(listOf("leaf-x"), listOf("leaf-a"))
         show(
             listOf(hostedTask()),
             session("x", "working", nowLine = "Edit x.kt", lastActivityAt = now - 1_000),
             session("a", "needs_you", taskId = "g1", question = "Which branch?"),
         )
-        assertEquals("tab 2", row("task:g1").extra)
-        assertEquals("tab 1", row("x").extra)
+        assertEquals("", row("task:g1").extra)
+        assertEquals("", row("x").extra)
         assertEquals("\"Which branch?\"", row("task:g1").detail, "the detail stays a field of its own; the view repeats it only when it cuts it")
         assertEquals("Edit x.kt", row("x").detail)
-        // The tab is also a field of its own, so the view can draw it dimmer; it is the end of the extra line.
-        assertEquals("tab 2", row("task:g1").tab)
-        assertEquals("tab 1", row("x").tab)
     }
 
     @Test
-    fun aSessionWithNothingToSayButItsTabHasTheTabAloneAsItsExtraLine() {
-        layoutTwoTabs(listOf("leaf-x"), listOf("leaf-a"))
-        show(emptyList(), session("x", "working", lastActivityAt = now - 1_000))
-        val r = row("x")
-        assertEquals("", r.detail)
-        assertEquals("tab 1", r.extra, "no separator in front of the tab when nothing comes before it")
-        assertEquals("tab 1", r.tab)
-    }
-
-    @Test
-    fun theTabOfASessionInAnotherWorldNamesTheWorld() {
-        layoutTwoWorlds(listOf("leaf-a"))
-        show(emptyList(), session("a", "working", nowLine = "Edit a.kt", lastActivityAt = now - 1_000))
-        assertEquals("tab 1 in Work", row("a").extra)
-        assertEquals("tab 1 in Work", row("a").tab)
-    }
-
-    @Test
-    fun aTaskWhoseOwnSessionRunsInTheBackgroundHasNoTabInItsExtraLine() {
+    fun aTaskWhoseOwnSessionRunsInTheBackgroundHasNothingInItsExtraLineButTheDetail() {
         layoutWithBackground(listOf("leaf-m"), listOf("leaf-lead"))
         show(
             listOf(hostedTask(lead = "lead", status = "Notes drafted")),
@@ -632,7 +612,6 @@ class AgentsOverviewTasksViewModelTest {
         )
         assertEquals("Notes drafted", row("task:g1").detail)
         assertEquals("", row("task:g1").extra, "nothing but the detail, which the row shows itself")
-        assertEquals("", row("task:g1").tab)
     }
 
     @Test
@@ -642,23 +621,21 @@ class AgentsOverviewTasksViewModelTest {
         assertEquals(Enter.NONE, r.enter)
         assertEquals("nothing to jump to: this session is not in a Lunamux pane", r.extra)
         assertEquals("Doing a thing", r.detail)
-        assertEquals("", r.tab)
     }
 
     @Test
-    fun aSessionWithNoDetailAndNoTabHasNoExtraLineAtAll() {
+    fun aSessionWithNoDetailAndNothingToNoteHasNoExtraLineAtAll() {
         layoutWithBackground(listOf("leaf-m"), listOf("leaf-quiet"))
         show(emptyList(), session("quiet", "working", background = true, lastActivityAt = now - 1_000))
         val r = row("quiet")
         assertEquals("", r.detail)
-        assertEquals("", r.tab)
         assertEquals("", r.extra, "the view draws no line for an empty extra, so the selected row has no blank second line")
     }
 
     // ---- what ↵ opens ----
 
     @Test
-    fun aLoneSessionJumpsPeeksWhenInTheBackgroundAndResumesWhenItsPaneIsGone() = runNow {
+    fun aLoneSessionJumpsWatchesWhenInTheBackgroundAndAsksBeforeResumingWhenItsPaneIsGone() = runNow {
         layoutWithBackground(listOf("leaf-n"), listOf("leaf-bg"))
         show(
             emptyList(),
@@ -666,12 +643,19 @@ class AgentsOverviewTasksViewModelTest {
             session("bg", "working", background = true, lastActivityAt = now - 1_000),
             session("gone", "ended", endedAt = now - HOUR),
         )
-        assertEquals(listOf(Enter.JUMP, Enter.PEEK, Enter.RESUME), listOf("n", "bg", "gone").map { row(it).enter })
+        assertEquals(listOf(Enter.JUMP, Enter.WATCH, Enter.RESUME), listOf("n", "bg", "gone").map { row(it).enter })
         vm.open()
         vm.activate(row("n"))
         assertEquals(jumpTo("leaf-n"), sent)
         sent.clear()
         vm.open()
+        vm.activate(row("bg"))
+        assertEquals(listOf("bg"), watched)
+        assertTrue(sent.isEmpty(), "watching moves nothing")
+        assertFalse(vm.state.open, "the overlay would cover the watch")
+        vm.open()
+        vm.activate(row("gone"))
+        assertTrue(sent.isEmpty(), "the first enter only asks")
         vm.activate(row("gone"))
         assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("gone")), sent)
     }
@@ -692,7 +676,7 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun enterOnATaskWhoseOwnSessionRunsInTheBackgroundPeeksIt() = runNow {
+    fun enterOnATaskWhoseOwnSessionRunsInTheBackgroundWatchesIt() = runNow {
         layoutWithBackground(listOf("leaf-m"), listOf("leaf-lead"))
         show(
             listOf(hostedTask(lead = "lead")),
@@ -701,16 +685,17 @@ class AgentsOverviewTasksViewModelTest {
         )
         vm.open()
         vm.select("task:g1")
-        assertEquals(Enter.PEEK, vm.state.selectedRow?.enter)
+        assertEquals(Enter.WATCH, vm.state.selectedRow?.enter)
+        assertEquals("↵ watch", vm.state.footer.first().let { "${it.key} ${it.label}" })
+        sent.clear()
         vm.activateSelected()
-        assertTrue(sent.none { it is WindowCommand.SetActiveTab || it is WindowCommand.SetFocusedPane }, "peeking moves nothing")
-        assertEquals(listOf<WindowCommand>(WindowCommand.InspectAgentSession("lead")), sent)
-        assertTrue(vm.state.peek?.background == true)
-        assertEquals("task:g1", vm.state.selectedId, "the row keeps the highlight while its session is peeked")
+        assertEquals(listOf("lead"), watched)
+        assertTrue(sent.none { it is WindowCommand.SetActiveTab || it is WindowCommand.SetFocusedPane }, "watching moves nothing")
+        assertFalse(vm.state.open)
     }
 
     @Test
-    fun enterOnATaskWhoseOwnSessionIsGoneRunsOpenWhenTheTaskHasOpenWork() = runNow {
+    fun enterOnATaskWhoseOwnSessionIsGoneResumesItEvenWhenTheTaskHasAnOpenAction() = runNow {
         layout("leaf-m")
         show(
             listOf(hostedTask(lead = "lead", hasOpen = true)),
@@ -720,11 +705,12 @@ class AgentsOverviewTasksViewModelTest {
         vm.open()
         vm.select("task:g1")
         val r = row("task:g1")
-        assertEquals(Enter.OPEN, r.enter)
+        assertEquals(Enter.RESUME, r.enter, "the open action starts a conversation; this one exists and is resumed")
         assertFalse(r.isLive)
-        assertNull(r.recordId)
+        assertEquals("lead", r.recordId)
         vm.activateSelected()
-        assertEquals(listOf<WindowCommand>(WindowCommand.OpenTask("g1")), sent)
+        vm.activateSelected()
+        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("lead")), sent)
         assertTrue(vm.state.open, "the overlay waits for the new tab")
     }
 
@@ -742,6 +728,8 @@ class AgentsOverviewTasksViewModelTest {
         assertEquals(Enter.RESUME, r.enter)
         assertFalse(r.isLive)
         assertEquals("lead", r.recordId)
+        vm.activateSelected()
+        assertTrue(sent.isEmpty())
         vm.activateSelected()
         assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("lead")), sent)
     }
@@ -793,7 +781,7 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aTaskWithNoOwnSessionAndNoneInAListedTabRunsOpenBeforePeekingABackgroundSession() = runNow {
+    fun aTaskWithNoOwnSessionAndNoneInAListedTabRunsOpenBeforeWatchingABackgroundSession() = runNow {
         layoutWithBackground(listOf("leaf-other"), listOf("leaf-bg"))
         show(
             listOf(hostedTask(hasOpen = true)),
@@ -801,11 +789,13 @@ class AgentsOverviewTasksViewModelTest {
         )
         assertEquals(Enter.OPEN, row("task:g1").enter)
         vm.activate(row("task:g1"))
+        assertTrue(sent.isEmpty(), "the first enter only asks")
+        vm.activate(row("task:g1"))
         assertEquals(listOf<WindowCommand>(WindowCommand.OpenTask("g1")), sent)
     }
 
     @Test
-    fun aTaskWithNoOwnSessionNoListedOneAndNoOpenActionPeeksALiveBackgroundSession() = runNow {
+    fun aTaskWithNoOwnSessionNoListedOneAndNoOpenActionWatchesALiveBackgroundSession() = runNow {
         layoutWithBackground(listOf("leaf-other"), listOf("leaf-bg"))
         show(
             listOf(hostedTask()),
@@ -813,12 +803,13 @@ class AgentsOverviewTasksViewModelTest {
             session("old", "ended", taskId = "g1", endedAt = now - HOUR),
         )
         val r = row("task:g1")
-        assertEquals(Enter.PEEK, r.enter)
+        assertEquals(Enter.WATCH, r.enter)
         assertEquals("bg", r.recordId)
         assertTrue(r.background)
         vm.open()
         vm.activate(r)
-        assertEquals(listOf<WindowCommand>(WindowCommand.InspectAgentSession("bg")), sent)
+        assertEquals(listOf("bg"), watched)
+        assertTrue(sent.isEmpty())
     }
 
     @Test
@@ -832,6 +823,7 @@ class AgentsOverviewTasksViewModelTest {
         val r = row("task:g1")
         assertEquals(Enter.RESUME, r.enter)
         assertEquals("newer", r.recordId)
+        vm.activate(r)
         vm.activate(r)
         assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("newer")), sent)
     }
@@ -849,6 +841,7 @@ class AgentsOverviewTasksViewModelTest {
         )
         assertEquals("w", row("task:g1").recordId)
         assertEquals(Enter.OPEN, row("task:g2").enter)
+        vm.activate(row("task:g2"))
         vm.activate(row("task:g2"))
         assertEquals(listOf<WindowCommand>(WindowCommand.OpenTask("g2")), sent)
     }
@@ -869,6 +862,7 @@ class AgentsOverviewTasksViewModelTest {
         layout("leaf-other")
         show(listOf(task(hasOpen = true, members = emptyList())))
         vm.open()
+        vm.activate(row("task:g1"))
         vm.activate(row("task:g1"))
         assertTrue(vm.state.open)
         windowState.updateConfig(windowState.config.value!!.copy(activeTabId = "new-tab"))
@@ -1046,6 +1040,7 @@ class AgentsOverviewTasksViewModelTest {
         assertEquals(Enter.OPEN, r.enter)
         assertEquals("", r.detail)
         vm.activate(r)
+        vm.activate(r)
         assertEquals(listOf<WindowCommand>(WindowCommand.OpenTask("g1")), sent)
     }
 
@@ -1178,7 +1173,7 @@ class AgentsOverviewTasksViewModelTest {
         assertEquals("task:g1", r.id)
         assertEquals("b", r.recordId, "the best match stands for the task and ↵ opens its session")
         assertEquals("transcript", r.field)
-        assertEquals("in transcript of Reviewer · tab 1", r.extra)
+        assertEquals("in transcript of Reviewer", r.extra)
         assertEquals("…a needle here…", r.detail)
         assertEquals("1 MATCH", vm.state.matchHeading)
     }
@@ -1193,7 +1188,7 @@ class AgentsOverviewTasksViewModelTest {
         val r = vm.state.matches.single()
         assertEquals("a", r.id)
         assertTrue(r.matchInTitle)
-        assertEquals("in title · tab 1", r.extra)
+        assertEquals("in title", r.extra)
     }
 
     @Test
@@ -1408,15 +1403,16 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun enterOnABackgroundRowPeeksInsteadOfJumpingAndCommandEnterTakesTheTabOver() = runNow {
+    fun enterOnABackgroundRowWatchesInsteadOfJumpingAndCommandEnterTakesTheTabOver() = runNow {
         layoutWithBackground(listOf("leaf-n"), listOf("leaf-bg"))
         show(emptyList(), session("n", "working", lastActivityAt = now - 1_000), session("bg", "needs_you", background = true, since = 2_000))
         vm.open()
         vm.select("bg")
-        assertEquals(Enter.PEEK, vm.state.selectedRow?.enter)
-        vm.activateSelected()
-        assertTrue(sent.none { it is WindowCommand.SetActiveTab || it is WindowCommand.SetFocusedPane || it is WindowCommand.TakeOverTab }, "peeking moves nothing")
-        assertTrue(vm.state.peek != null && vm.state.peek!!.background, "the peek knows it can take the tab over")
+        assertEquals(Enter.WATCH, vm.state.selectedRow?.enter)
+        vm.open()
+        vm.select("bg")
+        vm.peek()
+        assertTrue(vm.state.peek != null && vm.state.peek!!.background, "the peek (→) knows it can take the tab over")
         sent.clear()
         vm.takeOverSelected()
         assertEquals(
@@ -1462,6 +1458,287 @@ class AgentsOverviewTasksViewModelTest {
         windowState.updateAgentTasks(emptyList())
         showAway(tasks, *facts("needs_you", "needs_you"))
         assertEquals(before, vm.state.now.map { it.id })
+    }
+
+    // ---- one row per task, the ask before a resume, the chips ----
+
+    /** Lays out [leaves] in one listed tab named [title]. */
+    private fun layoutNamed(title: String, vararg leaves: String) {
+        laidOut = true
+        windowState.updateConfig(WindowConfig(tabs = listOf(TabConfig(id = "tab-1", title = title, panes = panes(leaves.toList()))), activeTabId = "tab-1"))
+    }
+
+    /** The footer as it reads: each key and its label, joined with " · ". */
+    private fun footerText() = vm.state.footer.joinToString(" · ") { "${it.key} ${it.label}" }
+
+    @Test
+    fun aTasksOwnLiveSessionIsPartOfItsRowAndCountsInTheStateWordWhetherOrNotItCarriesTheTaskId() {
+        layout("leaf-lead", "leaf-a", "leaf-b")
+        show(
+            listOf(hostedTask(lead = "lead")),
+            session("lead", "working", lastActivityAt = now - 1_000),
+            session("a", "working", taskId = "g1", lastActivityAt = now - 1_000),
+            session("b", "working", taskId = "g1", lastActivityAt = now - 1_000),
+        )
+        assertEquals(listOf("task:g1"), vm.state.rows.map { it.id }, "the own session is never a row of its own")
+        assertEquals("3 working", row("task:g1").stateWord)
+
+        show(
+            listOf(hostedTask(lead = "lead")),
+            session("lead", "working", taskId = "g1", lastActivityAt = now - 1_000),
+            session("a", "working", taskId = "g1", lastActivityAt = now - 1_000),
+            session("b", "working", taskId = "g1", lastActivityAt = now - 1_000),
+        )
+        assertEquals(listOf("task:g1"), vm.state.rows.map { it.id })
+        assertEquals("3 working", row("task:g1").stateWord)
+    }
+
+    @Test
+    fun anEndedOwnSessionWithNoTaskIdStaysInTheTasksRunsSoItsResumeIsNeverASecondRow() = runNow {
+        layout("leaf-a")
+        show(
+            listOf(hostedTask(lead = "lead")),
+            session("lead", "ended", endedAt = now - 5_000),
+            session("a", "working", taskId = "g1", lastActivityAt = now - 1_000),
+        )
+        assertEquals(listOf("task:g1"), vm.state.rows.map { it.id })
+        assertEquals("working", row("task:g1").stateWord, "an ended session is not moving")
+        // The resumed conversation comes back as a live session with the same record: still the same row.
+        show(
+            listOf(hostedTask(lead = "lead")),
+            session("lead", "working", lastActivityAt = now - 1_000),
+            session("a", "working", taskId = "g1", lastActivityAt = now - 1_000),
+        )
+        assertEquals(listOf("task:g1"), vm.state.rows.map { it.id })
+        assertEquals("2 working", row("task:g1").stateWord)
+    }
+
+    @Test
+    fun aSessionThatIsNotMovingIsNotCountedAsWorking() {
+        layout("leaf-lead", "leaf-a")
+        show(
+            listOf(hostedTask(lead = "lead")),
+            session("lead", "idle", taskId = "g1"),
+            session("a", "working", taskId = "g1", lastActivityAt = now - 1_000),
+        )
+        assertEquals("working", row("task:g1").stateWord, "the idle own session is not counted")
+
+        show(emptyList(), session("lone", "idle", since = now - 60_000))
+        assertTrue(row("lone").stateWord != "working", "an idle lone session never reads working, it reads ${row("lone").stateWord}")
+    }
+
+    @Test
+    fun theFooterReadsOpenForAPaneThatIsShownAndWatchForOneInTheBackground() = runNow {
+        layoutWithBackground(listOf("leaf-n"), listOf("leaf-bg"))
+        show(
+            emptyList(),
+            session("n", "working", lastActivityAt = now - 1_000),
+            session("bg", "working", background = true, lastActivityAt = now - 1_000),
+        )
+        vm.open()
+        vm.select("n")
+        assertEquals("↵ open · ↑↓ move · esc close", footerText())
+        vm.select("bg")
+        assertEquals("↵ watch · ↑↓ move · esc close", footerText())
+    }
+
+    @Test
+    fun theFirstEnterOnAClosedOwnConversationAsksAndTheSecondResumesItInANewTab() = runNow {
+        layout("leaf-m")
+        show(
+            listOf(hostedTask(lead = "lead")),
+            session("lead", "ended", taskId = "g1", endedAt = now - 5_000),
+            session("m", "working", taskId = "g1", lastActivityAt = now - 1_000),
+        )
+        vm.open()
+        vm.select("task:g1")
+        assertNull(vm.state.ask)
+        assertEquals("↵ open · ↑↓ move · esc close", footerText().replace("↵ resume", "↵ open"), "before the ask the footer is the default one")
+        vm.activateSelected()
+        val ask = vm.state.ask!!
+        assertEquals("task:g1", ask.rowId)
+        assertEquals("conversation closed", ask.tag)
+        assertEquals("Resume it in a new tab?", ask.question)
+        assertEquals("↵ resume · esc cancel", ask.keys.joinToString(" · ") { "${it.key} ${it.label}" })
+        assertEquals("↵ resume · esc cancel", footerText())
+        assertTrue(sent.isEmpty())
+        vm.activateSelected()
+        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("lead")), sent)
+        assertNull(vm.state.ask)
+    }
+
+    @Test
+    fun aClosedLoneSessionAsksWithADifferentTagThatNamesOnlyTheSession() = runNow {
+        layout("leaf-m")
+        show(emptyList(), session("old", "ended", endedAt = now - HOUR), session("m", "working", lastActivityAt = now - 1_000))
+        vm.open()
+        vm.select("old")
+        vm.activateSelected()
+        assertEquals("session closed", vm.state.ask?.tag)
+        assertEquals("Resume it in a new tab?", vm.state.ask?.question)
+        assertTrue(listOf("done", "finished").all { vm.state.ask?.tag?.contains(it) != true }, "the tag never sounds like the whole task's state")
+    }
+
+    @Test
+    fun aTaskWithNothingToResumeAsksToStartOneAndOnlyTheSecondEnterRunsItsOpenAction() = runNow {
+        show(listOf(task(hasOpen = true, members = emptyList())))
+        vm.open()
+        vm.select("task:g1")
+        vm.activateSelected()
+        assertEquals("no conversation", vm.state.ask?.tag)
+        assertEquals("Start one in a new tab?", vm.state.ask?.question)
+        assertEquals("↵ start · esc cancel", footerText())
+        assertTrue(sent.isEmpty())
+        vm.activateSelected()
+        assertEquals(listOf<WindowCommand>(WindowCommand.OpenTask("g1")), sent)
+    }
+
+    @Test
+    fun escapeMovingOrANewQueryCancelsTheAskAndTheNextEnterAsksAgain() = runNow {
+        layout("leaf-m")
+        show(
+            listOf(hostedTask(lead = "lead")),
+            session("lead", "ended", taskId = "g1", endedAt = now - 5_000),
+            session("m", "working", taskId = "g1", lastActivityAt = now - 1_000),
+            session("x", "working", lastActivityAt = now - 2_000),
+        )
+        vm.open()
+        vm.select("task:g1")
+        vm.activateSelected()
+        assertTrue(vm.state.ask != null)
+        vm.back()
+        assertNull(vm.state.ask)
+        assertTrue(vm.state.open, "esc cancelled the ask and left the overlay open")
+
+        vm.activateSelected()
+        vm.moveSelection(1)
+        assertNull(vm.state.ask, "moving cancels it")
+        vm.moveSelection(-1)
+        vm.activateSelected()
+        assertTrue(vm.state.ask != null)
+        vm.setQuery("x")
+        assertNull(vm.state.ask)
+        assertTrue(sent.isEmpty(), "no cancelled ask ever resumed anything")
+    }
+
+    @Test
+    fun aRefreshThatChangesWhatEnterWouldDoCancelsTheAsk() = runNow {
+        layout("leaf-m")
+        show(
+            listOf(hostedTask(lead = "lead")),
+            session("lead", "ended", taskId = "g1", endedAt = now - 5_000),
+            session("m", "working", taskId = "g1", lastActivityAt = now - 1_000),
+        )
+        vm.open()
+        vm.select("task:g1")
+        vm.activateSelected()
+        assertTrue(vm.state.ask != null)
+        // The conversation was resumed elsewhere: ↵ now means "go to it", so the question is void.
+        layout("leaf-m", "leaf-lead")
+        show(
+            listOf(hostedTask(lead = "lead")),
+            session("lead", "working", taskId = "g1", lastActivityAt = now - 1_000),
+            session("m", "working", taskId = "g1", lastActivityAt = now - 1_000),
+        )
+        assertNull(vm.state.ask)
+        assertEquals(Enter.JUMP, row("task:g1").enter)
+        assertEquals("↵ open · ↑↓ move · esc close", footerText())
+    }
+
+    @Test
+    fun theStatusIsRepeatedInFullOnlyForTheSelectedRowWhenItsCellCutIt() {
+        layout("leaf-a", "leaf-b")
+        show(
+            listOf(hostedTask(lead = "lead", status = "A very long status that no cell can hold")),
+            session("lead", "working", taskId = "g1", lastActivityAt = now - 1_000),
+            session("b", "working", lastActivityAt = now - 1_000, nowLine = "Edit b.kt"),
+        )
+        vm.open()
+        vm.select("task:g1")
+        assertNull(row("task:g1").statusFull, "not cut: nothing repeated")
+        vm.setDetailCut("task:g1", true)
+        assertEquals("A very long status that no cell can hold", row("task:g1").statusFull)
+        assertNull(row("b").statusFull, "only the selected row")
+        vm.setDetailCut("b", true)
+        assertNull(row("b").statusFull, "an answer about a row that is not selected is ignored")
+        vm.setDetailCut("task:g1", false)
+        assertNull(row("task:g1").statusFull)
+        vm.setDetailCut("task:g1", true)
+        vm.select("b")
+        vm.setDetailCut("b", false)
+        vm.select("task:g1")
+        assertNull(row("task:g1").statusFull, "the answer is forgotten when the selection moves")
+    }
+
+    @Test
+    fun theFolderChipIsTheFolderOfTheSessionEnterGoesToWithHomeAsTilde() {
+        layout("leaf-lead")
+        show(
+            listOf(hostedTask(lead = "lead")),
+            session("lead", "working", taskId = "g1", lastActivityAt = now - 1_000, cwdShown = "~/code/lunamux"),
+        )
+        assertEquals(listOf(AgentsOverviewBackingViewModel.Chip(AgentsOverviewBackingViewModel.ChipKind.FOLDER, "~/code/lunamux")), row("task:g1").chips.filter { it.kind == AgentsOverviewBackingViewModel.ChipKind.FOLDER })
+
+        show(emptyList(), session("home", "working", lastActivityAt = now - 1_000, cwdShown = "~"))
+        assertEquals("~", row("home").chips.single { it.kind == AgentsOverviewBackingViewModel.ChipKind.FOLDER }.text)
+
+        show(emptyList(), session("nowhere", "working", lastActivityAt = now - 1_000, cwdShown = null))
+        assertTrue(row("nowhere").chips.none { it.kind == AgentsOverviewBackingViewModel.ChipKind.FOLDER })
+    }
+
+    /** The text of the tab chip of the one row, or null when it has none. */
+    private fun tabChip(id: String) = row(id).chips.singleOrNull { it.kind == AgentsOverviewBackingViewModel.ChipKind.TAB }?.text
+
+    @Test
+    fun theTabChipNamesTheTabUnlessItsNameAlreadyHasEveryWordOfTheTitle() {
+        // The task is titled "Release g1".
+        fun withTab(name: String): String? {
+            layoutNamed(name, "leaf-lead")
+            show(listOf(hostedTask(lead = "lead")), session("lead", "working", taskId = "g1", lastActivityAt = now - 1_000))
+            return tabChip("task:g1")
+        }
+        assertEquals("notes", withTab("notes"), "a tab that says something else is named")
+        assertNull(withTab("Release g1"), "the same words")
+        assertNull(withTab("RELEASE: g1!"), "case and punctuation are ignored")
+        assertNull(withTab("g1 and the release notes"), "every word, in any order and with more around")
+        assertEquals("release", withTab("release"), "one word missing is a different tab")
+        assertEquals("releases g1", withTab("releases g1"), "a word matches whole, never as a prefix or a fuzzy likeness")
+        assertEquals("xrelease g1", withTab("xrelease g1"), "nor as a substring")
+    }
+
+    @Test
+    fun aTitleWithNoWordsIsNeverContainedSoItsTabIsStillNamed() {
+        layoutNamed("notes", "leaf-a")
+        show(emptyList(), session("a", "working", title = "—·—", lastActivityAt = now - 1_000))
+        assertEquals("notes", tabChip("a"))
+    }
+
+    @Test
+    fun wordsWithLettersFromOtherAlphabetsAreComparedWithoutCase() {
+        layoutNamed("ÅÄÖ-projektet", "leaf-a")
+        show(emptyList(), session("a", "working", title = "åäö Projektet", lastActivityAt = now - 1_000))
+        assertNull(tabChip("a"))
+    }
+
+    @Test
+    fun aTabInAnotherWorldIsNamedWithTheWorldAndASessionInABackgroundTabHasNoTabChip() {
+        layoutTwoWorlds(inWork = listOf("leaf-w"))
+        show(emptyList(), session("w", "working", title = "build", lastActivityAt = now - 1_000))
+        assertEquals("t1 · Work", tabChip("w"))
+
+        layoutWithBackground(listOf("leaf-n"), listOf("leaf-bg"))
+        show(emptyList(), session("bg", "working", title = "build", background = true, lastActivityAt = now - 1_000))
+        assertNull(tabChip("bg"), "a background tab is not a place a person can find it")
+    }
+
+    @Test
+    fun aRowHasNoChipsButTheFolderAndTheTab() {
+        layoutNamed("notes", "leaf-a")
+        show(emptyList(), session("a", "working", title = "build", lastActivityAt = now - 1_000, cwdShown = "~/x", repo = "proj"))
+        assertEquals(
+            listOf(AgentsOverviewBackingViewModel.ChipKind.FOLDER, AgentsOverviewBackingViewModel.ChipKind.TAB),
+            row("a").chips.map { it.kind },
+        )
     }
 
     // ---- moving, quiet and stale ----

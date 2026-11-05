@@ -7,7 +7,8 @@
  * back to Apple Braille, and inheriting the bold weight of the word beside it (the state cell of a
  * working row is bold) picks that font's outlined six-dot face, which draws a ring at every dot
  * the pair leaves unlit. These tests fail when the `.ao-work` rule stops saying its own weight or
- * stops being the box it was first drawn in, kept inside the height of its row.
+ * stops being the box it was first drawn in, kept inside the height of its row. The frames
+ * themselves are read out of `WorkingGlyph.kt` and pinned too: four frames of two lit dots each.
  *
  * @see se.soderbjorn.lunamux.WorkingGlyphSpec
  */
@@ -73,5 +74,25 @@ class WorkingGlyphStyleTest {
         val row = Regex("""(?m)^\.ao-row\s*\{([^}]*)}""").find(css)?.groupValues?.get(1)
         assertTrue(row != null && Regex("""line-height:\s*20px""").containsMatchIn(row), "`.ao-row` line is not 20px")
         assertTrue(Regex("""padding:\s*3px 14px""").containsMatchIn(row), "`.ao-row` padding is not 3px 14px")
+    }
+
+    /** The text of the web module's `WorkingGlyph.kt`, read from the path in `lunamux.workingGlyphSource`. */
+    private fun glyphSource(): String = File(System.getProperty("lunamux.workingGlyphSource")).readText()
+
+    /**
+     * The glyph turns two braille dots through the middle rows in four frames, every frame lighting
+     * exactly two of the six dots, 300 ms apart and fading over 400 ms. A change of the frames, or of
+     * the timing, makes the working glyph look different and fails here.
+     */
+    @Test
+    fun spinnerIsFourFramesOfTwoLitDotsEach() {
+        val spec = Regex("""BRAILLE_PAIR_TURN\s*=\s*WorkingGlyphSpec\(frames = listOf\(([^)]*)\),\s*stepMs = (\d+),\s*fadeMs = (\d+)\)""")
+            .find(glyphSource())
+        assertTrue(spec != null, "WorkingGlyph.kt has no BRAILLE_PAIR_TURN spec")
+        val frames = Regex(""""(.)"""").findAll(spec.groupValues[1]).map { it.groupValues[1] }.toList()
+        assertEquals(listOf("⠆", "⠒", "⠰", "⠤"), frames)
+        assertEquals(listOf(2, 2, 2, 2), frames.map { Integer.bitCount(it[0].code - 0x2800) }, "two lit dots per frame")
+        assertEquals("300", spec.groupValues[2])
+        assertEquals("400", spec.groupValues[3])
     }
 }

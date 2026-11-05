@@ -8,26 +8,29 @@
  * days and the last two weeks), the chip counts and the keyboard selection. Typing two or more
  * characters switches the overlay to the server's search over every session ever recorded
  * (titles, first prompts, branches, links and transcripts). The ViewModel carries out what a
- * row offers: jump to its pane, peek at its screen, take a background tab over, resume it in a
- * new tab, and close it after a confirmation that names what would be lost. The view only
- * renders [AgentsOverviewBackingViewModel.State] and forwards key presses.
+ * row offers: jump to its pane, watch a background session, take a background tab over, resume it
+ * in a new tab (after asking), and close it after a confirmation that names what would be lost.
+ * The view only renders [AgentsOverviewBackingViewModel.State] and forwards key presses.
  *
  * Every row is one task, drawn as one aligned line. A session that belongs to no task is a task
  * of one. The sessions of a task, background ones included, are never rows of their own: the
  * row counts them in its state word ("needs you", "2 working", "working", "done" or
  * "finished") and shows the task's status as its detail. The selected row has one more line,
  * carries the places that matter for opening it, such as the tab the session sits in, but not the
- * detail (the view puts the detail in front only when the row cut it); a row with nothing to add
- * has an empty [AgentsOverviewBackingViewModel.Row.extra] and the view draws no line. EARLIER
- * lists its newest five rows and a "+ N more" line for the rest.
+ * detail (the view puts the status in full in front only when the row cut it, see
+ * [AgentsOverviewBackingViewModel.Row.statusFull]) and shows chips for the folder and the tab of
+ * the session ↵ opens; a row with nothing to add has an empty
+ * [AgentsOverviewBackingViewModel.Row.extra], no chips and no line. EARLIER lists its newest five
+ * rows and a "+ N more" line for the rest.
  *
  * What ↵ opens follows one order. A task with an own session opens that session: its pane, or a
- * read-only peek when the pane is in a background tab; once the session is gone the task's
- * `open` action runs when the task file gives one, else the conversation is resumed. A task
- * with no own session jumps to a live session in a listed tab, else runs its `open` action,
- * else peeks at a live session in a background tab, else resumes its newest session; a
- * background session is never chosen while a listed one is live. A session in no task jumps,
- * peeks when it is in a background tab, or resumes.
+ * read-only watch when the pane is in a background tab; once the session is not running the
+ * conversation is resumed. A task with no own session jumps to a live session in a listed tab,
+ * else runs its `open` action, else watches a live session in a background tab, else resumes its
+ * newest session; a background session is never chosen while a listed one is live. A session in
+ * no task jumps, watches when it is in a background tab, or resumes. Nothing is started or
+ * resumed by the first ↵: it asks first ([AgentsOverviewBackingViewModel.Ask]) and the second ↵
+ * does it.
  *
  * NOW is the open tabs: a session is in it only while its pane is in a tab that is open, and a
  * task only while one of its sessions is. There are two exceptions. A session that needs the
@@ -83,6 +86,7 @@ import se.soderbjorn.lunamux.client.WindowStateRepository
  * @property worldId the world holding the tab, or null when worlds are not in use.
  * @property worldName that world's name, or null when worlds are not in use.
  * @property tabId the tab holding the pane.
+ * @property tabTitle the tab's name.
  * @property tabNumber the tab's 1-based place among the listed tabs of its world, or null for a
  *   background tab, which no tab bar lists.
  * @property leaf the pane's leaf, used for its custom name.
@@ -91,6 +95,7 @@ private data class PaneLocation(
     val worldId: String?,
     val worldName: String?,
     val tabId: String,
+    val tabTitle: String,
     val tabNumber: Int?,
     val leaf: LeafNode,
 )
@@ -109,12 +114,15 @@ private data class PaneLocation(
  *   so a `send` that returns at once is observable immediately.
  * @param clock the current epoch millis, read whenever the state is built; it decides which
  *   idle and just-ended sessions are still inside their [IDLE_GRACE_MS]. Tests pass a fixed one.
+ * @param watch opens the read-only watch of a background session's record id, normally
+ *   [WatchViewModel.watch]; ↵ on a row that is watched calls it and closes the overlay.
  * @param send sends a command to the server, normally `windowSocket::send`.
  */
 class AgentsOverviewBackingViewModel(
     private val windowState: WindowStateRepository,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
     private val clock: () -> Long = { Clock.System.now().toEpochMilliseconds() },
+    private val watch: (recordId: String) -> Unit = {},
     private val send: suspend (WindowCommand) -> Unit,
 ) {
     /** What ↵ does on a [Row]. */
@@ -122,13 +130,13 @@ class AgentsOverviewBackingViewModel(
         /** Switch to the pane of [Row.recordId] and focus it. */
         JUMP,
 
-        /** Show a read-only peek of the background session [Row.recordId]. */
-        PEEK,
+        /** Watch the background session [Row.recordId]: a read-only live copy of its screen. */
+        WATCH,
 
-        /** Run the task's `open` action: a new tab in the task's folder. */
+        /** Run the task's `open` action: a new tab in the task's folder. Asks first. */
         OPEN,
 
-        /** Resume the conversation of [Row.recordId] in a new tab. */
+        /** Resume the conversation of [Row.recordId] in a new tab. Asks first. */
         RESUME,
 
         /** Nothing: the row has no session Lunamux can open and no `open` action. */
@@ -157,21 +165,22 @@ class AgentsOverviewBackingViewModel(
      * @property detail what the row says after its state word: the task's status; without one the
      *   question a session asks, in quotes, else the line a moving session last reported, else
      *   empty. A lone session has no status. In a search result it is the text around the match.
-     * @property extra the line under the selected row, without [detail]: as they apply, what Resume
-     *   will do when it is not the plain case ("2 uncommitted changes · 1 unpushed commit"), a note
-     *   that there is nothing to jump to, the error of the last failed resume or open, where a
-     *   search matched ("in transcript of Reviewer"), and the tab the session [enter] opens sits in
-     *   ("tab 2", or "tab 2 in Work" in another world). The view puts [detail] in front of it only
-     *   when the row itself cut that text short (or hides it, in a narrow panel), so the same words
-     *   are never shown twice. Empty when the row has none of these; the view then draws a line
-     *   only if it has the detail to repeat, and never an empty one.
-     * @property tab that last part of [extra] on its own ("tab 2", "tab 2 in Work"), empty when the
-     *   extra has none, so the view can draw it dimmer than the text before it.
+     * @property extra the text lines under the selected row, without [detail]: as they apply, what
+     *   Resume will do when it is not the plain case ("2 uncommitted changes · 1 unpushed commit"),
+     *   a note that there is nothing to jump to, the error of the last failed resume or open, and
+     *   where a search matched ("in transcript of Reviewer"). Empty when the row has none of these.
+     * @property statusFull the status in full ([detail]) while the view has told the model that the
+     *   row's cell cut it short (see [setDetailCut]); null otherwise, so the selected row never
+     *   repeats words that are already on its line.
+     * @property chips the folder and tab of the session [enter] opens, in that order; see [Chip].
+     *   Empty when there is no such session or nothing to say about it.
+     * @property ask what the first ↵ asks before [enter] starts or resumes anything, or null when
+     *   ↵ acts at once.
      * @property sinceMillis epoch millis the row's age counts from: the time the task entered its
      *   current state for a task in NOW, its newest session's activity (when it ended, for an
      *   ended one) for a task in EARLIER; the view turns it into an age.
      * @property enter what ↵ does.
-     * @property recordId the session ↵, → and ⌘↵ act on: the one [enter] jumps to, peeks at or
+     * @property recordId the session ↵, → and ⌘↵ act on: the one [enter] jumps to, watches or
      *   resumes, and what a peek and the inspection ask the server about. Null when [enter] is
      *   [Enter.OPEN] or [Enter.NONE]. For a search result it is the session that matched.
      * @property isLive whether [recordId]'s pane is open.
@@ -196,7 +205,9 @@ class AgentsOverviewBackingViewModel(
         val stateWord: String,
         val detail: String,
         val extra: String,
-        val tab: String = "",
+        val statusFull: String? = null,
+        val chips: List<Chip> = emptyList(),
+        val ask: Ask? = null,
         val sinceMillis: Long,
         val enter: Enter,
         val recordId: String?,
@@ -224,6 +235,44 @@ class AgentsOverviewBackingViewModel(
         /** Whether the search match is inside [snippet]. */
         val matchInSnippet: Boolean get() = matchLength > 0 && snippet != null
     }
+
+    /**
+     * One of the facts shown as a chip under the selected row.
+     *
+     * @property kind which fact it is, so the view can tell them apart.
+     * @property text what the chip says.
+     */
+    data class Chip(val kind: ChipKind, val text: String)
+
+    /** What a [Chip] tells about the session ↵ opens. */
+    enum class ChipKind {
+        /** The folder the session works in, with the home folder written `~`. */
+        FOLDER,
+
+        /** The tab the session sits in, with the world's name after it for a tab in another world. */
+        TAB,
+    }
+
+    /**
+     * One key of the footer, drawn as the key and the words after it.
+     *
+     * @property key the key as it is drawn ("↵", "↑↓", "esc").
+     * @property label what it does ("open", "move", "close").
+     */
+    data class FooterKey(val key: String, val label: String)
+
+    /**
+     * The question the first ↵ asks before a conversation is resumed or a task is opened. The
+     * selected row's expanded part shows it in place of the status and the text lines; the chips
+     * stay, so the person sees where the answer will land.
+     *
+     * @property rowId the row it is about.
+     * @property tag the dim tag that names what is missing ("conversation closed"), never a state
+     *   that would sound like the whole task's.
+     * @property question the question ("Resume it in a new tab?").
+     * @property keys the keys that answer it, which are also the footer while it shows.
+     */
+    data class Ask(val rowId: String, val tag: String, val question: String, val keys: List<FooterKey>)
 
     /**
      * The peek popover beside the selected row.
@@ -290,6 +339,9 @@ class AgentsOverviewBackingViewModel(
      * @property selectedId the id of the highlighted row, or null when there are no rows.
      * @property peek the screen popover, or null while it is closed.
      * @property confirm the close confirmation, or null while none is asked.
+     * @property ask the question the first ↵ asked on the selected row, or null while none is open.
+     * @property footer the keys the footer shows: the selected row's ↵, ↑↓ and esc, or only the
+     *   answers to [ask] while one is open.
      * @property hasSessions whether any agent session or task has ever been recorded, which is
      *   when the toolbar chip shows.
      */
@@ -308,6 +360,8 @@ class AgentsOverviewBackingViewModel(
         val selectedId: String? = null,
         val peek: Peek? = null,
         val confirm: Confirm? = null,
+        val ask: Ask? = null,
+        val footer: List<FooterKey> = defaultFooter(Enter.JUMP),
         val hasSessions: Boolean = false,
     ) {
         /** Every EARLIER row: [recent] then [fortnight]. */
@@ -369,6 +423,10 @@ class AgentsOverviewBackingViewModel(
         val peekOpen: Boolean = false,
         val confirmRowId: String? = null,
         val confirmOnClose: Boolean = false,
+        val askRowId: String? = null,
+        val askRecordId: String? = null,
+        val askEnter: Enter? = null,
+        val cutRowId: String? = null,
     )
 
     /** Everything [build] reads, taken from [windowState] and [ui] in one go. */
@@ -430,6 +488,7 @@ class AgentsOverviewBackingViewModel(
         )
     }.onEach {
         settleResume()
+        settleAsk(it)
         if (it.open) scope.launch { inspectSelected() }
     }
 
@@ -437,7 +496,7 @@ class AgentsOverviewBackingViewModel(
     val state: State
         get() {
             settleResume()
-            return build(inputs())
+            return build(inputs()).also(::settleAsk)
         }
 
     private fun inputs() = Inputs(
@@ -465,6 +524,19 @@ class AgentsOverviewBackingViewModel(
     }
 
     /**
+     * Forget an ask that no longer shows, so it cannot come back to life later: when a refresh
+     * changed what ↵ would act on, the person's answer was meant for something else.
+     *
+     * @param built the state just built.
+     */
+    private fun settleAsk(built: State) {
+        val current = ui.value
+        if (current.askRowId != null && built.ask == null) {
+            ui.update { it.copy(askRowId = null, askRecordId = null, askEnter = null) }
+        }
+    }
+
+    /**
      * Show the overlay with an empty search and the first ◆ row in list order selected (the
      * first row when nothing needs the user). Called by ⌘⇧A and the chip.
      */
@@ -488,7 +560,7 @@ class AgentsOverviewBackingViewModel(
 
     /**
      * Change the search text and select the first row (the longest-waiting ◆ when the query is
-     * empty). Closes the peek and any confirmation, which belonged to the old selection.
+     * empty). Closes the peek, any question and any confirmation, which belonged to the old selection.
      *
      * With two or more characters the overlay switches to search results; the
      * view then calls [search] once typing pauses.
@@ -497,7 +569,7 @@ class AgentsOverviewBackingViewModel(
      */
     fun setQuery(query: String) {
         windowState.clearAgentSessionError()
-        ui.update { it.copy(query = query, selectedId = null, selectedHint = 0, peekOpen = false, confirmRowId = null) }
+        ui.update { it.withoutAsk().copy(query = query, selectedId = null, selectedHint = 0, peekOpen = false, confirmRowId = null, cutRowId = null) }
     }
 
     /**
@@ -512,6 +584,29 @@ class AgentsOverviewBackingViewModel(
     suspend fun search() {
         val query = ui.value.query.trim()
         if (query.length >= MIN_QUERY) send(WindowCommand.SearchAgentSessions(query))
+    }
+
+    /** This input with no question asked; every change of the selection starts from here. */
+    private fun Ui.withoutAsk() = copy(askRowId = null, askRecordId = null, askEnter = null)
+
+    /**
+     * Tell the model whether the selected row's cell cut its status short (or hides it, as a narrow
+     * window does), which decides whether [Row.statusFull] is set. The view measures the cell, so
+     * only it can know; it calls this after every draw of the selected row. An unchanged answer
+     * changes nothing, so the draw settles. The answer is forgotten when the selection moves.
+     *
+     * @param rowId the selected row the answer is about; an id that is not selected is ignored.
+     * @param cut true when the cell cut the status or hides it.
+     */
+    fun setDetailCut(rowId: String, cut: Boolean) {
+        val selected = state.selectedId
+        ui.update {
+            when {
+                cut && selected == rowId -> it.copy(cutRowId = rowId)
+                !cut && it.cutRowId == rowId -> it.copy(cutRowId = null)
+                else -> it
+            }
+        }
     }
 
     /**
@@ -530,11 +625,11 @@ class AgentsOverviewBackingViewModel(
             showMoreEarlier()
             val revealed = state.rows
             val onto = (at + 1).coerceAtMost(revealed.lastIndex)
-            ui.update { it.copy(selectedId = revealed[onto].id, selectedHint = onto, peekOpen = false, confirmRowId = null) }
+            ui.update { it.withoutAsk().copy(selectedId = revealed[onto].id, selectedHint = onto, peekOpen = false, confirmRowId = null, cutRowId = null) }
             return
         }
         val next = (at + delta).coerceIn(0, rows.lastIndex)
-        ui.update { it.copy(selectedId = rows[next].id, selectedHint = next, peekOpen = false, confirmRowId = null) }
+        ui.update { it.withoutAsk().copy(selectedId = rows[next].id, selectedHint = next, peekOpen = false, confirmRowId = null, cutRowId = null) }
     }
 
     /**
@@ -547,7 +642,7 @@ class AgentsOverviewBackingViewModel(
     fun select(rowId: String) {
         val rows = state.rows
         val index = rows.indexOfFirst { it.id == rowId }
-        if (index >= 0) ui.update { it.copy(selectedId = rowId, selectedHint = index, peekOpen = false, confirmRowId = null) }
+        if (index >= 0) ui.update { it.withoutAsk().copy(selectedId = rowId, selectedHint = index, peekOpen = false, confirmRowId = null, cutRowId = null) }
     }
 
     /** Reveal the EARLIER rows beyond the newest [EARLIER_LIMIT]. Called by the "+ N more" line and by ↓ past the last row. */
@@ -595,7 +690,7 @@ class AgentsOverviewBackingViewModel(
      */
     suspend fun peek() {
         if (state.selectedRow?.recordId == null) return
-        ui.update { it.copy(peekOpen = true) }
+        ui.update { it.withoutAsk().copy(peekOpen = true) }
         inspectSelected(force = true)
     }
 
@@ -611,12 +706,13 @@ class AgentsOverviewBackingViewModel(
     fun closePeek() = ui.update { it.copy(peekOpen = false) }
 
     /**
-     * Step back one level: cancel a close confirmation, else close the peek, else close the
-     * overlay. Called for esc.
+     * Step back one level: cancel a question, else a close confirmation, else close the peek, else
+     * close the overlay. Called for esc.
      */
     fun back() {
         val current = state
         when {
+            current.ask != null -> ui.update { it.withoutAsk() }
             current.confirm != null -> cancelClose()
             current.peek != null -> closePeek()
             else -> close()
@@ -636,7 +732,7 @@ class AgentsOverviewBackingViewModel(
         val current = state
         if (fromKeyboard && current.query.isNotEmpty()) return
         val row = current.selectedRow?.takeIf { it.canClose } ?: return
-        ui.update { it.copy(confirmRowId = row.id, confirmOnClose = false, peekOpen = false) }
+        ui.update { it.withoutAsk().copy(confirmRowId = row.id, confirmOnClose = false, peekOpen = false) }
         inspectSelected(force = true)
     }
 
@@ -662,8 +758,9 @@ class AgentsOverviewBackingViewModel(
     }
 
     /**
-     * Open [row] the way [Row.enter] says: jump to its pane, peek at a background session,
-     * run the task's `open` action, or resume the conversation. Does nothing for [Enter.NONE].
+     * Open [row] the way [Row.enter] says: jump to its pane, watch a background session, or, for a
+     * conversation to resume or a task to open, ask first and do it on the second call while the
+     * question is still showing. Does nothing for [Enter.NONE].
      *
      * Called when a row is clicked and for ↵ (through [activateSelected]).
      *
@@ -673,11 +770,49 @@ class AgentsOverviewBackingViewModel(
         val recordId = row.recordId
         when (row.enter) {
             Enter.JUMP -> recordId?.let { jumpToRecord(it) }
-            Enter.PEEK -> { select(row.id); peek() }
-            Enter.OPEN -> openTask(row)
-            Enter.RESUME -> recordId?.let { resumeRecord(row.id, it) }
+            Enter.WATCH -> recordId?.let { watchRecord(it) }
+            Enter.OPEN, Enter.RESUME -> if (state.ask?.rowId == row.id) answerAsk(row) else askAbout(row)
             Enter.NONE -> Unit
         }
+    }
+
+    /**
+     * Select [row] and raise its question, remembering which session ↵ would act on so a refresh
+     * that changes it cancels the question instead of answering for something else.
+     *
+     * @param row a row with [Row.ask].
+     */
+    private fun askAbout(row: Row) {
+        if (row.ask == null) return
+        select(row.id)
+        if (state.selectedId != row.id) return
+        ui.update { it.copy(askRowId = row.id, askRecordId = row.recordId, askEnter = row.enter) }
+    }
+
+    /**
+     * Do what the question asked: resume the row's conversation, or open its task when there is
+     * none to resume.
+     *
+     * @param row the row the question is about.
+     */
+    private suspend fun answerAsk(row: Row) {
+        ui.update { it.withoutAsk() }
+        val recordId = row.recordId
+        when (row.enter) {
+            Enter.RESUME -> recordId?.let { resumeRecord(row.id, it) }
+            Enter.OPEN -> openTask(row)
+            else -> Unit
+        }
+    }
+
+    /**
+     * Open the read-only watch of a background session and leave the overlay, which would cover it.
+     *
+     * @param recordId the session to watch.
+     */
+    private fun watchRecord(recordId: String) {
+        watch(recordId)
+        close()
     }
 
     /**
@@ -882,7 +1017,7 @@ class AgentsOverviewBackingViewModel(
                     // A task older than the pushed list is still one row, named by the title the search found.
                     else -> sessionRow(s, earlier = s.state == ENDED || !c.live(s), c = c, taskTitle = if (s.taskId != null) m.taskTitle ?: titleOf(s) else null)
                 }
-                matchRow(base, m, s, c)
+                matchRow(base, m, s, c, unit?.task?.leadRecordId)
             }
 
         // A session a task unit holds is drawn inside it, not again as a lone session.
@@ -940,6 +1075,8 @@ class AgentsOverviewBackingViewModel(
             else -> listed.firstOrNull { it.needsYou }?.id ?: listed.first().id
         }
         val selectedRow = listed.firstOrNull { it.id == selectedId }
+        // The view measured whether the selected row's cell cut its status; only then does the row carry it in full.
+        fun Row.measured(): Row = if (id == selectedId && id == ui.cutRowId && detail.isNotEmpty()) copy(statusFull = detail) else this
 
         val peek = if (ui.peekOpen && selectedRow?.recordId != null) {
             val session = byId[selectedRow.recordId]
@@ -958,6 +1095,11 @@ class AgentsOverviewBackingViewModel(
         } else null
 
         val confirmRow = ui.confirmRowId?.let { id -> listed.firstOrNull { it.id == id } }
+        // A question stands only while ↵ would still act on what it was asked about.
+        val ask = selectedRow?.takeIf {
+            it.id == ui.askRowId && it.enter == ui.askEnter && it.recordId == ui.askRecordId
+        }?.ask
+        val footer = ask?.keys ?: defaultFooter(selectedRow?.enter)
         val confirm = confirmRow?.let { row ->
             Confirm(
                 rowId = row.id,
@@ -978,17 +1120,19 @@ class AgentsOverviewBackingViewModel(
             open = ui.open && !resumed,
             query = ui.query,
             matchMode = matchMode,
-            matches = if (matchMode) matchRows else emptyList(),
+            matches = if (matchMode) matchRows.map { it.measured() } else emptyList(),
             searching = matchMode && answer == null,
-            now = if (matchMode) emptyList() else now,
-            recent = if (matchMode) emptyList() else recent,
-            fortnight = if (matchMode) emptyList() else fortnight,
+            now = if (matchMode) emptyList() else now.map { it.measured() },
+            recent = if (matchMode) emptyList() else recent.map { it.measured() },
+            fortnight = if (matchMode) emptyList() else fortnight.map { it.measured() },
             earlierHidden = earlierUnits.size - shownEarlier.size,
             needYouCount = singles.count { it.state == NEEDS_YOU } + taskNeeds,
             workingCount = nowSingles.count { isMoving(it.state == WORKING, null, it.lastActivityAt ?: it.stateSince, nowMillis) } + taskWorking,
             selectedId = selectedId,
             peek = peek,
             confirm = confirm,
+            ask = ask,
+            footer = footer,
             hasSessions = sessions.isNotEmpty() || taskList.any { it.members.isNotEmpty() },
         )
     }
@@ -1018,7 +1162,7 @@ class AgentsOverviewBackingViewModel(
      * what ↵ on its row opens.
      *
      * The task's sessions are the members its file lists plus every hosted session that carries
-     * its id and no member of the file claimed. A task without sessions and without an `open`
+     * its id and no member of the file claimed, and its own session when neither holds it. A task without sessions and without an `open`
      * action has no unit and no row.
      *
      * @param t the task.
@@ -1038,7 +1182,11 @@ class AgentsOverviewBackingViewModel(
     ): TaskUnit? {
         val fileRuns = t.members.map { m -> Run(m, m.recordId?.let(byId::get)) }
         val extraRuns = TaskMembers.unlistedSessions(t, byId, hosted).map { s -> Run(memberOf(s), s) }
-        val runs = fileRuns + extraRuns
+        // The task's own session is one of its sessions even when it carries no task id and no file
+        // member names it: it counts in the state word and is never a row of its own.
+        val held = (fileRuns + extraRuns).mapNotNullTo(HashSet()) { it.session?.id }
+        val ownRuns = listOfNotNull(t.leadRecordId?.let(byId::get)?.takeIf { it.id !in held }).map { s -> Run(memberOf(s), s) }
+        val runs = fileRuns + extraRuns + ownRuns
         if (runs.isEmpty() && !t.hasOpen) return null
         val ended = runs.all { it.member.state == ENDED }
         val urgentRank = when {
@@ -1079,10 +1227,11 @@ class AgentsOverviewBackingViewModel(
     /**
      * What ↵ does on a task's row, and on which session.
      *
-     * A task with an own session opens that session: its pane, or a peek when the pane is in a
-     * background tab; once the session is gone the task's `open` action, else a resume. A task
+     * A task with an own session opens that session: its pane, or a watch when the pane is in a
+     * background tab; once the session is not running, a resume of its conversation (the task's
+     * `open` action is for a task with no own session to resume). A task
      * without one jumps to a live session in a listed tab (the one waiting longest on the person,
-     * else the busiest), else runs its `open` action, else peeks at a live background session,
+     * else the busiest), else runs its `open` action, else watches a live background session,
      * else resumes the newest session it has a record of, else offers nothing. A background
      * session is never chosen while a listed one is live.
      *
@@ -1102,9 +1251,8 @@ class AgentsOverviewBackingViewModel(
         if (own != null) {
             val ownOpen = open.any { it.session?.id == own.id }
             return when {
-                ownOpen && own.background -> Enter.PEEK to own
+                ownOpen && own.background -> Enter.WATCH to own
                 ownOpen -> Enter.JUMP to own
-                t.hasOpen -> Enter.OPEN to null
                 else -> Enter.RESUME to own
             }
         }
@@ -1120,7 +1268,7 @@ class AgentsOverviewBackingViewModel(
         return when {
             listed != null -> Enter.JUMP to listed.session
             t.hasOpen -> Enter.OPEN to null
-            hidden != null -> Enter.PEEK to hidden.session
+            hidden != null -> Enter.WATCH to hidden.session
             newest != null -> Enter.RESUME to newest
             else -> Enter.NONE to null
         }
@@ -1245,7 +1393,6 @@ class AgentsOverviewBackingViewModel(
         val single = u.runs.singleOrNull()?.session
         val folder = u.runs.mapNotNull { it.session }.map(::folderOf).distinct().singleOrNull()
         val error = c.errorOf(id)
-        val tab = if (u.enter == Enter.JUMP) tabNote(c.panes[target?.leafId], c.config) else null
         return Row(
             id = id,
             taskId = t.id,
@@ -1258,9 +1405,9 @@ class AgentsOverviewBackingViewModel(
                 c.noteOf(target?.id),
                 NOTHING_TO_JUMP.takeIf { u.enter == Enter.NONE },
                 error,
-                tab,
             ),
-            tab = tab.orEmpty(),
+            chips = chipsOf(t.title, target, c),
+            ask = askOf(id, u.enter, own = target != null && target.id == t.leadRecordId),
             sinceMillis = if (u.inEarlier) u.recency else u.since,
             enter = u.enter,
             recordId = target?.id,
@@ -1295,16 +1442,16 @@ class AgentsOverviewBackingViewModel(
             else -> ""
         }
         val enter = when {
-            live && s.background -> Enter.PEEK
+            live && s.background -> Enter.WATCH
             live -> Enter.JUMP
             else -> Enter.RESUME
         }
         val error = c.errorOf(id)
-        val tab = if (enter == Enter.JUMP) tabNote(c.panes[s.leafId], c.config) else null
+        val title = taskTitle ?: titleOf(s)
         return Row(
             id = id,
             taskId = s.taskId.takeIf { taskTitle != null },
-            title = taskTitle ?: titleOf(s),
+            title = title,
             where = s.repo ?: folderOf(s),
             marker = if (needs) MARKER else "",
             stateWord = when {
@@ -1314,8 +1461,9 @@ class AgentsOverviewBackingViewModel(
                 else -> STATE_DONE
             },
             detail = detail,
-            extra = extraOf(c.noteOf(s.id), error, tab),
-            tab = tab.orEmpty(),
+            extra = extraOf(c.noteOf(s.id), error),
+            chips = chipsOf(title, s, c),
+            ask = askOf(id, enter, own = false),
             sinceMillis = sinceOf(s),
             enter = enter,
             recordId = s.id,
@@ -1336,12 +1484,13 @@ class AgentsOverviewBackingViewModel(
      * @param m the server's match.
      * @param s the matched session, as the layout knows it now.
      * @param c the layout, the clock and the last answers of the server.
+     * @param ownId the record id of the own session of the task the row stands for, or null.
      * @return the search result row.
      */
-    private fun matchRow(base: Row, m: AgentSessionMatch, s: AgentSessionSummary, c: Context): Row {
+    private fun matchRow(base: Row, m: AgentSessionMatch, s: AgentSessionSummary, c: Context, ownId: String?): Row {
         val live = c.live(s)
         val enter = when {
-            live && s.background -> Enter.PEEK
+            live && s.background -> Enter.WATCH
             live -> Enter.JUMP
             else -> Enter.RESUME
         }
@@ -1361,11 +1510,11 @@ class AgentsOverviewBackingViewModel(
         val highlight = titleCurrent && (inTitle || snippet != null)
         val where = "in ${fieldLabel(m.field)}" + if (sessionTitle != base.title && m.field != "task") " of $sessionTitle" else ""
         val note = m.resumeNote ?: c.noteOf(s.id)
-        val tab = if (enter == Enter.JUMP) tabNote(c.panes[s.leafId], c.config) else null
         return base.copy(
             detail = snippet ?: base.detail,
-            extra = extraOf(note, base.error, where, tab),
-            tab = tab.orEmpty(),
+            extra = extraOf(note, base.error, where),
+            chips = chipsOf(base.title, s, c),
+            ask = askOf(base.id, enter, own = s.id == ownId),
             enter = enter,
             recordId = s.id,
             isLive = live,
@@ -1402,18 +1551,87 @@ class AgentsOverviewBackingViewModel(
     private fun quoted(text: String): String = "\"$text\""
 
     /**
-     * The words that say which tab a session sits in, for the end of the selected row's extra line:
-     * "tab 2", or "tab 2 in Work" when the tab is in another world than the one showing. A
-     * session in a background tab sits in no listed tab and gets none.
+     * The chips under the selected row: the folder the session ↵ opens works in, and the tab it sits
+     * in. Both describe that one session, so a task with several shows the one ↵ goes to.
      *
-     * @param where the session's pane location, or null when it has none.
-     * @param config the layout.
-     * @return the words, or null.
+     * The folder is written as the server prettifies it (home as `~`) and is left out when the
+     * server did not send it. The tab chip is the tab's own name, with the world's name after it
+     * for a tab in another world; it is left out for a session in a background tab or in no pane,
+     * and when the tab's name already contains every word of the row's title, because the row
+     * would then say the same thing twice (see [containsEveryWord]).
+     *
+     * @param title the row's title.
+     * @param target the session ↵ opens, or null when it opens none.
+     * @param c the layout.
+     * @return the chips, folder first; empty when there is nothing to say.
      */
-    private fun tabNote(where: PaneLocation?, config: WindowConfig?): String? {
-        val number = where?.tabNumber ?: return null
-        val shown = config?.activeWorldOrNull()?.id
-        return if (where.worldId != null && where.worldId != shown) "tab $number in ${where.worldName}" else "tab $number"
+    private fun chipsOf(title: String, target: AgentSessionSummary?, c: Context): List<Chip> {
+        if (target == null) return emptyList()
+        val folder = target.cwdShown?.takeIf { it.isNotBlank() }?.let { Chip(ChipKind.FOLDER, it) }
+        val where = c.panes[target.leafId]?.takeIf { it.tabNumber != null && c.live(target) }
+        val tab = where?.takeIf { it.tabTitle.isNotBlank() && !containsEveryWord(it.tabTitle, title) }?.let {
+            val shown = c.config?.activeWorldOrNull()?.id
+            val world = it.worldName?.takeIf { _ -> it.worldId != null && it.worldId != shown }
+            Chip(ChipKind.TAB, if (world != null) "${it.tabTitle} · $world" else it.tabTitle)
+        }
+        return listOfNotNull(folder, tab)
+    }
+
+    /**
+     * Whether [text] contains every word of [title]. A word is a run of letters and digits; case
+     * and punctuation are ignored, and a word must match whole: "rel" is not "release". A title
+     * with no words is contained by nothing, so a tab is still named for it.
+     *
+     * @param text the tab's name.
+     * @param title the row's title.
+     * @return true when no word of [title] is missing from [text].
+     */
+    private fun containsEveryWord(text: String, title: String): Boolean {
+        val wanted = wordsOf(title)
+        return wanted.isNotEmpty() && wordsOf(text).containsAll(wanted)
+    }
+
+    /** The lower-cased words of [text]: its runs of letters and digits. */
+    private fun wordsOf(text: String): Set<String> = buildSet {
+        val word = StringBuilder()
+        for (ch in text.lowercase()) {
+            if (ch.isLetterOrDigit()) {
+                word.append(ch)
+            } else if (word.isNotEmpty()) {
+                add(word.toString())
+                word.clear()
+            }
+        }
+        if (word.isNotEmpty()) add(word.toString())
+    }
+
+    /**
+     * What the first ↵ asks on a row whose [enter] would resume or start something.
+     *
+     * The tag names what is missing, never the state of the whole task: "conversation closed" when
+     * the task's own session is the one that is not running, "session closed" for any other
+     * session that has ended, and "no conversation" when there is nothing to resume and ↵ would
+     * start the task's `open` action.
+     *
+     * @param rowId the row.
+     * @param enter what ↵ does on it.
+     * @param own whether the session to resume is the task's own.
+     * @return the question, or null when ↵ acts at once.
+     */
+    private fun askOf(rowId: String, enter: Enter, own: Boolean): Ask? = when (enter) {
+        Enter.RESUME -> Ask(
+            rowId,
+            if (own) "conversation closed" else "session closed",
+            "Resume it in a new tab?",
+            listOf(FooterKey("↵", "resume"), FooterKey("esc", "cancel")),
+        )
+        Enter.OPEN -> Ask(
+            rowId,
+            "no conversation",
+            "Start one in a new tab?",
+            listOf(FooterKey("↵", "start"), FooterKey("esc", "cancel")),
+        )
+        else -> null
     }
 
     /** What closing [s] would interrupt or leave behind, one sentence each. */
@@ -1472,7 +1690,7 @@ class AgentsOverviewBackingViewModel(
             var listed = 0
             tabs.forEach { tab ->
                 val number = if (tab.isListed) ++listed else null
-                tab.panes.forEach { out[it.leaf.id] = PaneLocation(worldId, worldName, tab.id, number, it.leaf) }
+                tab.panes.forEach { out[it.leaf.id] = PaneLocation(worldId, worldName, tab.id, tab.title, number, it.leaf) }
             }
         }
         if (config.worlds.isEmpty()) add(null, null, config.tabs) else config.worlds.forEach { add(it.id, it.name, it.tabs) }
@@ -1482,6 +1700,18 @@ class AgentsOverviewBackingViewModel(
     private fun locate(config: WindowConfig, leafId: String): PaneLocation? = paneLocations(config)[leafId]
 
     companion object {
+        /**
+         * The footer while no question is open: what ↵ does on the selected row, then ↑↓ and esc.
+         *
+         * @param enter what ↵ does on the selected row, or null when no row is selected.
+         * @return the keys, ↵ first.
+         */
+        fun defaultFooter(enter: Enter?): List<FooterKey> = listOf(
+            FooterKey("↵", if (enter == Enter.WATCH) "watch" else "open"),
+            FooterKey("↑↓", "move"),
+            FooterKey("esc", "close"),
+        )
+
         /** The state word of a task that has a session waiting on the person. */
         const val STATE_NEEDS_YOU = "needs you"
 
