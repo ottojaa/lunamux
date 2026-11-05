@@ -75,7 +75,7 @@ internal data class MatchJson(val agentSessionId: String? = null, val folder: St
  * @property title the member's name.
  * @property links ticket keys or other short labels.
  * @property match how to find the member's session, if Lunamux hosts it.
- * @property state `needs_you`, `working`, `idle` or `ended`.
+ * @property state `needs_you`, `working`, `done` or `ended`; `idle`, the older spelling of `done`, is read as `done`.
  * @property label a state word for the summary line, such as "in review".
  * @property line one line about what the member is doing.
  * @property since ISO-8601 time the member entered [state].
@@ -241,7 +241,7 @@ class TaskFilesWatcher(
         val usedKeys = HashSet<String>()
         for ((i, m) in file.members.withIndex()) {
             val state = m.state
-            if (state !in STATES) return bad("member ${i + 1} has state '$state'; use needs_you, working, idle or ended")
+            if (state !in STATES) return bad("member ${i + 1} has state '$state'; use needs_you, working, done or ended")
             val mTitle = m.title?.takeIf { it.isNotBlank() } ?: return bad("member ${i + 1} has no title")
             val folder = m.match?.folder?.let { absolute(it) ?: return bad("member ${i + 1} match.folder must be an absolute path") }
             val sessionId = m.sessionId?.trim()?.takeIf { it.isNotEmpty() }
@@ -254,7 +254,7 @@ class TaskFilesWatcher(
             }
             members += TaskFileMember(
                 member = AgentTaskMember(
-                    key = key, title = mTitle, links = m.links, state = state!!,
+                    key = key, title = mTitle, links = m.links, state = if (state == "idle") "done" else state!!,
                     label = m.label?.takeIf { it.isNotBlank() }, line = m.line?.takeIf { it.isNotBlank() },
                     sinceMillis = instant(m.since) ?: modified, sessionId = sessionId,
                 ),
@@ -276,7 +276,7 @@ class TaskFilesWatcher(
 
     private companion object {
         const val POLL_MS = 3_000L
-        val STATES = setOf("needs_you", "working", "idle", "ended")
+        val STATES = setOf("needs_you", "working", "done", "idle", "ended")
         val fileJson = Json { ignoreUnknownKeys = true; isLenient = true }
     }
 }

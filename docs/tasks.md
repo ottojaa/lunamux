@@ -303,7 +303,7 @@ One object per file.
     },
     {
       "title": "Permissions page",
-      "state": "idle",
+      "state": "done",
       "label": "in review",
       "links": ["#212"],
       "since": "2026-11-01T08:10:00Z",
@@ -326,7 +326,7 @@ One object per file.
 | `tag`, `link`, `updatedAt` | no | Accepted and ignored. |
 | `members[]` | no | The task's sessions that tools outside Lunamux run, shown in the order listed. |
 | `members[].title` | yes | What the member is called. A matched session keeps this title. |
-| `members[].state` | yes | `needs_you`, `working`, `idle` or `ended`. |
+| `members[].state` | yes | `needs_you`, `working`, `done` or `ended`. `idle`, the older spelling of `done`, is still read as `done`. |
 | `members[].label` | no | A short status word shown in front of the line and used in the counts ("1 in review"). `in review`, `queued`, `waiting`, `paused` and `done` (or `ready`) have a glyph and a place in the order; any other label, `held` included, counts as given. Use plain statuses, not ticket keys. |
 | `members[].line` | no | One line of detail: the question for `needs_you`, otherwise what it is doing. Blank means none. |
 | `members[].sessionId` | no | The id `claude attach` takes for the member's background session. Gives the member a **resume** action when Lunamux hosts no session for it. Only letters, digits, `-` and `_` are accepted; anything else is never typed into a shell. |

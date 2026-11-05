@@ -38,7 +38,7 @@ class TaskFilesWatcherTest {
 
     private fun open(folder: String = folder("open")) = """{"command":"claude 'go'","folder":"$folder"}"""
 
-    private fun member(title: String, state: String = "idle", match: String = "", extra: String = "") =
+    private fun member(title: String, state: String = "done", match: String = "", extra: String = "") =
         """{"title":"$title","state":"$state","since":"2026-11-01T11:41:43Z" ${if (match.isEmpty()) "" else ""","match":$match"""} $extra}"""
 
     @Test
@@ -95,6 +95,13 @@ class TaskFilesWatcherTest {
         File(dir, "t1.json").setLastModified(1_700_000_600_000)
         watcher.reload()
         assertEquals(1_700_000_600_000, watcher.files.value.single().modified)
+    }
+
+    @Test
+    fun `done is a member state and the older idle is read as done`() {
+        write("t1.json", taskJson(members = member("A", "done") + "," + member("B", "idle")))
+        watcher.reload()
+        assertEquals(listOf("done", "done"), watcher.files.value.single().members.map { it.member.state })
     }
 
     @Test
