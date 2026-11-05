@@ -950,7 +950,8 @@ class AgentsOverviewBackingViewModel(
      * @property started epoch millis the task started, which fixes its place in NOW.
      * @property enter what ↵ does on the task's row.
      * @property target the session [enter] acts on, or null for [Enter.OPEN] and [Enter.NONE].
-     * @property ownId the record id of the task's own session, or null when it has none (see [ownOf]).
+     * @property ownId the record id of the session that made the task (see [leadOf]), or null when
+     *   Lunamux does not list it. ↵ goes to it whichever task hosts it.
      */
     private class TaskUnit(
         val task: AgentTask,
@@ -1125,10 +1126,13 @@ class AgentsOverviewBackingViewModel(
         // Once a resume has switched to the new tab the overlay has done its job;
         // settleResume then resets the inputs so it stays closed.
         val resumed = ui.resumingId != null && config?.effectiveActiveTabId != ui.resumeFromTab
-        val taskNeeds = units.sumOf { u -> u.runs.count { it.member.state == NEEDS_YOU } }
+        // A session two tasks both list (a creator that made two tasks and sits in neither) is one
+        // session: the chip counts it once, though each row's state word still names it.
+        fun countedRuns(of: List<TaskUnit>) = of.flatMap { u -> u.runs.map { u to it } }.distinctBy { (_, r) -> r.session?.id ?: r }
+        val taskNeeds = countedRuns(units).count { (_, r) -> r.member.state == NEEDS_YOU }
         // The chip counts what NOW shows: a task that is not in NOW adds nothing, so a working session
         // outside every open tab is counted only as a member of a task that a question keeps in NOW.
-        val taskWorking = units.filter { !it.inEarlier }.sumOf { u -> u.runs.count { runMoving(it, u.task.refreshedAtMillis, nowMillis) } }
+        val taskWorking = countedRuns(units.filter { !it.inEarlier }).count { (u, r) -> runMoving(r, u.task.refreshedAtMillis, nowMillis) }
         return State(
             open = ui.open && !resumed,
             query = ui.query,
@@ -1171,21 +1175,36 @@ class AgentsOverviewBackingViewModel(
         if (s.state == ENDED || s.state == IDLE) activityOf(s) else s.stateSince
 
     /**
-     * The session that speaks for a task: the record its `leadRecordId` names, when Lunamux lists it
-     * and it does not belong to another task.
+     * The session that made a task: the record its `leadRecordId` names, when Lunamux lists it.
      *
-     * A record hosted under a different task's id is one of that task's sessions; counting it here
-     * as well would show it in two rows' state words and count it twice as working.
+     * ↵ on the task's row goes to it whichever task hosts the record, so a task whose creator was
+     * assigned to another task still opens its creator.
      *
-     * Called by [unitOf] for the task's runs and its ↵ target, and by the search for the row a
-     * match on that session belongs to.
+     * Called by [unitOf] for the row's ↵ target and its question.
      *
      * @param t the task.
      * @param byId all session summaries by record id.
-     * @return the task's own session, or null when it has none.
+     * @return the session that made the task, or null when Lunamux does not list it.
+     * @see ownOf
+     */
+    private fun leadOf(t: AgentTask, byId: Map<String, AgentSessionSummary>): AgentSessionSummary? =
+        t.leadRecordId?.let(byId::get)
+
+    /**
+     * The part of a task's [leadOf] session that belongs in the task's own sessions: the record
+     * itself, unless another task hosts it.
+     *
+     * A record hosted under a different task's id is one of that task's sessions; counting it here
+     * as well would show it in two rows' state words. The row's ↵ still goes to it (see [leadOf]).
+     *
+     * Called by [unitOf] to add the record to the task's runs when no member holds it.
+     *
+     * @param t the task.
+     * @param byId all session summaries by record id.
+     * @return the session to count as the task's own, or null.
      */
     private fun ownOf(t: AgentTask, byId: Map<String, AgentSessionSummary>): AgentSessionSummary? =
-        t.leadRecordId?.let(byId::get)?.takeIf { it.taskId == null || it.taskId == t.id }
+        leadOf(t, byId)?.takeIf { it.taskId == null || it.taskId == t.id }
 
     /**
      * Pair a task's sessions with the hosted sessions they match, work out where the task sits and
@@ -1215,8 +1234,8 @@ class AgentsOverviewBackingViewModel(
         // The task's own session is one of its sessions even when it carries no task id and no file
         // member names it: it counts in the state word and is never a row of its own.
         val held = (fileRuns + extraRuns).mapNotNullTo(HashSet()) { it.session?.id }
-        val own = ownOf(t, byId)
-        val ownRuns = listOfNotNull(own?.takeIf { it.id !in held }).map { s -> Run(memberOf(s), s) }
+        val lead = leadOf(t, byId)
+        val ownRuns = listOfNotNull(ownOf(t, byId)?.takeIf { it.id !in held }).map { s -> Run(memberOf(s), s) }
         val runs = fileRuns + extraRuns + ownRuns
         if (runs.isEmpty() && !t.hasOpen) return null
         val ended = runs.all { it.member.state == ENDED }
@@ -1251,8 +1270,10 @@ class AgentsOverviewBackingViewModel(
         // holds. A task waiting on the person is the one exception, so a question is never filed away.
         val inNow = !ended && !settled && (urgentRank == 0 || open.isNotEmpty())
         val graced = (ended || settled) && inGrace(recency, nowMillis)
-        val (enter, target) = enterOf(t, own, runs, open)
-        return TaskUnit(t, runs, since, recency, graced, inNow, started, enter, target, own?.id)
+        // The creator may sit in a pane while another task counts it, so its pane is looked up directly.
+        val leadOpen = lead != null && lead.state != ENDED && panes[lead.leafId] != null
+        val (enter, target) = enterOf(t, lead, leadOpen, runs, open)
+        return TaskUnit(t, runs, since, recency, graced, inNow, started, enter, target, lead?.id)
     }
 
     /**
@@ -1267,7 +1288,8 @@ class AgentsOverviewBackingViewModel(
      * session is never chosen while a listed one is live.
      *
      * @param t the task.
-     * @param own the task's own session, from [ownOf], or null.
+     * @param own the session that made the task, from [leadOf], or null.
+     * @param ownOpen whether [own] is live and its pane is in the layout.
      * @param runs its sessions.
      * @param open the sessions whose pane is in the layout.
      * @return what ↵ does and the session it acts on (null for `open` and for nothing).
@@ -1275,11 +1297,11 @@ class AgentsOverviewBackingViewModel(
     private fun enterOf(
         t: AgentTask,
         own: AgentSessionSummary?,
+        ownOpen: Boolean,
         runs: List<Run>,
         open: List<Run>,
     ): Pair<Enter, AgentSessionSummary?> {
         if (own != null) {
-            val ownOpen = open.any { it.session?.id == own.id }
             return when {
                 ownOpen && own.background -> Enter.WATCH to own
                 ownOpen -> Enter.JUMP to own

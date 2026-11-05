@@ -1227,7 +1227,7 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun anOwnSessionThatBelongsToAnotherTaskIsNotCountedInThisTasksRowOrTwiceAsWorking() {
+    fun anOwnSessionThatBelongsToAnotherTaskIsNotCountedInThisTasksRowOrTwiceAsWorking() = runNow {
         layout("leaf-x", "leaf-m")
         val x = session("x", "working", taskId = "g2", lastActivityAt = now - 1_000)
         val m = session("m", "working", taskId = "g1", lastActivityAt = now - 1_000)
@@ -1238,6 +1238,29 @@ class AgentsOverviewTasksViewModelTest {
         assertEquals("working", row("task:g1").stateWord, "the other task's session is not this task's")
         assertEquals("working", row("task:g2").stateWord)
         assertEquals(2, vm.state.workingCount, "each moving session is counted once")
+        // Not counted here, but still the session that made the task: ↵ goes to it.
+        vm.open()
+        vm.select("task:g1")
+        assertEquals(Enter.JUMP, vm.state.selectedRow?.enter)
+        assertEquals("x", vm.state.selectedRow?.recordId)
+        vm.activateSelected()
+        assertEquals(jumpTo("leaf-x"), sent)
+    }
+
+    @Test
+    fun aSessionThatMadeTwoTasksAndBelongsToNeitherIsCountedOnceInTheChip() {
+        layout("leaf-x")
+        val x = session("x", "working", lastActivityAt = now - 1_000)
+        show(
+            listOf(
+                hostedTask(lead = "x"),
+                task(id = "g3", source = "agents", members = emptyList(), leadRecordId = "x"),
+            ),
+            x,
+        )
+        assertEquals("working", row("task:g1").stateWord)
+        assertEquals("working", row("task:g3").stateWord)
+        assertEquals(1, vm.state.workingCount, "one moving session is one working")
     }
 
     @Test

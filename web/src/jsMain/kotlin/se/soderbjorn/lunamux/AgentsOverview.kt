@@ -593,6 +593,8 @@ private fun buildFocus(row: Row, ask: AgentsOverviewBackingViewModel.Ask?): HTML
     }
     if (row.chips.isNotEmpty()) {
         val chips = div("ao-chips")
+        // While a question is up only its own keys answer it: a click on a chip is not an answer.
+        if (ask != null) chips.addEventListener("click", { e: Event -> e.stopPropagation() })
         row.chips.forEach { chip ->
             val kind = if (chip.kind == AgentsOverviewBackingViewModel.ChipKind.TAB) "ao-pill-tab" else "ao-pill-dir"
             chips.appendChild(span("ao-pill $kind", chip.text))
