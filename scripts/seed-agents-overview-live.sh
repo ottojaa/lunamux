@@ -163,7 +163,7 @@ now = int(time.time() * 1000)
 print(json.dumps({"taskId": sys.argv[1], "by": "release notes agent", "blocks": [
   {"id": "documents", "type": "documents", "title": "Documents", "items": [
     {"title": "Release 4.3 notes, first draft", "url": "https://example.com/notes/4.3", "updated": now - 180000},
-    {"title": "Changelog check: which entries have no merged pull request yet, and who to ask about each", "url": "https://example.com/changelog/check", "updated": now - 2100000},
+    {"title": "Changelog check: entries with no merged pull request, and who to ask about them", "url": "https://example.com/changelog/check", "updated": now - 2100000},
     {"title": "Screenshot list", "url": "file:///tmp/release-4.3/screenshots.md", "updated": now - 93600000},
     {"title": "Upgrade guide", "url": "https://example.com/upgrade"}]},
   {"id": "status", "type": "text", "title": "Status", "text": "**Drafted**, waiting on the changelog check.\n\n- 14 entries checked\n- 2 still to match"},

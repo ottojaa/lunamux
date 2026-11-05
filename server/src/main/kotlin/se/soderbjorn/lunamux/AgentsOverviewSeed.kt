@@ -334,7 +334,7 @@ object AgentsOverviewSeed {
                 TaskBlockContent.Documents(
                     listOf(
                         TaskDocument("Release 4.2 notes, first draft", "https://example.com/notes/4.2", now - 3 * MINUTE),
-                        TaskDocument("Changelog check: which entries have no merged pull request yet, and who to ask about each", "https://example.com/changelog/check", now - 35 * MINUTE),
+                        TaskDocument("Changelog check: entries with no merged pull request, and who to ask about them", "https://example.com/changelog/check", now - 35 * MINUTE),
                         TaskDocument("Screenshot list", "file:///tmp/release-4.2/screenshots.md", now - 26 * HOUR),
                         TaskDocument("Upgrade guide", "https://example.com/upgrade"),
                     ),

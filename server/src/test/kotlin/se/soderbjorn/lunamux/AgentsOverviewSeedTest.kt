@@ -110,7 +110,11 @@ class AgentsOverviewSeedTest {
         assertTrue("<img src=x onerror=alert(1)>" in literal.body, "markup is stored as the text it is")
         // Reading it back through the store, as a server start does, gives the same blocks.
         val index = TaskIndex(repo(), AgentSessionTracker(repo()), MutableStateFlow(emptyList()), { null }, { now })
-        assertEquals(rows.size, TaskPanelStore(repo(), index, { now }).blocksOf("seed-task-notes").size)
+        val stored = TaskPanelStore(repo(), index, { now }).blocksOf("seed-task-notes")
+        assertEquals(rows.size, stored.size)
+        // The seed skips the store's checks when it writes, so hold its blocks to them here: an agent
+        // writing the same blocks (as the live script does) must not be refused.
+        stored.forEach { TaskPanelLimits.check(it) }
         AgentsOverviewSeed.seed(db, tasksDir, now + day)
         assertEquals(rows.size, repo().loadTaskPanelRows().count { it.taskId == "seed-task-notes" }, "seeding again replaces, never adds")
     }
