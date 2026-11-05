@@ -103,3 +103,28 @@ tasks.named<Test>("jvmTest") {
     inputs.file(glyphSource).withPropertyName("workingGlyphSource")
     systemProperty("lunamux.workingGlyphSource", glyphSource.asFile.absolutePath)
 }
+
+// Connects to a running server as a read-only client and prints whether the overview, the footer
+// count and the task panel keep their rules (C1 to C7 and the panel's block check). Exits non-zero
+// on a FAIL. -Pwatch=<seconds> keeps watching the tabs for that long (C6 needs it); -Pmain=<task
+// id>=<start of the conversation id> says which conversation a task's main conversation must be.
+tasks.register<JavaExec>("overviewChecks") {
+    group = "verification"
+    description = "Runs the overview, footer and panel checks against a running server (-Purl, -Ptoken, -Pwatch, -Pmain)."
+    val jvmMain = kotlin.targets.getByName("jvm").compilations.getByName("main")
+    dependsOn("jvmMainClasses")
+    classpath(jvmMain.output.allOutputs, jvmMain.runtimeDependencyFiles)
+    mainClass.set("se.soderbjorn.lunamux.client.OverviewChecksMainKt")
+    val url = providers.gradleProperty("url")
+    val token = providers.gradleProperty("token")
+    val watch = providers.gradleProperty("watch")
+    val main = providers.gradleProperty("main")
+    argumentProviders.add(CommandLineArgumentProvider {
+        buildList {
+            url.orNull?.let { add("url=$it") }
+            token.orNull?.let { add("token=$it") }
+            watch.orNull?.let { add("watch=$it") }
+            main.orNull?.split(',')?.forEach { add("main=$it") }
+        }
+    })
+}
