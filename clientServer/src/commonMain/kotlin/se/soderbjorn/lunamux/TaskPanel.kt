@@ -4,7 +4,7 @@
  * `task_panel_blocks` table), pushes them to every window as [WindowEnvelope.TaskPanel], and
  * the clients draw them in the panel beside the task's own session.
  *
- * Contains [TaskPanelBlock], the sealed [TaskBlockContent] with its six cases, and the small item
+ * Contains [TaskPanelBlock], the sealed [TaskBlockContent] with its seven cases, and the small item
  * types those cases carry. Everything here is plain data; the limits on sizes and counts are
  * enforced by the server when a block is written, not by these types.
  *
@@ -90,6 +90,21 @@ sealed class TaskBlockContent {
     }
 
     /**
+     * Pages and files written for the person, one plain row each, that open outside Lunamux.
+     *
+     * Written by any agent through `set_task_panel` or `upsert_task_block`, the way [Links] are;
+     * drawn by the panel's clients from the view model's documents body.
+     *
+     * @property items the documents, in the order the writer gave.
+     * @see TaskDocument
+     */
+    @Serializable
+    @SerialName("documents")
+    data class Documents(val items: List<TaskDocument>) : TaskBlockContent() {
+        override val kindName: String get() = "documents"
+    }
+
+    /**
      * Things that happened, drawn newest first.
      *
      * @property items the entries, oldest first as stored.
@@ -150,6 +165,18 @@ data class TaskFact(val label: String, val value: String)
  */
 @Serializable
 data class TaskLink(val label: String, val url: String)
+
+/**
+ * A document in a [TaskBlockContent.Documents] block. The server only stores `http`, `https` and
+ * `file` addresses, as for [TaskLink].
+ *
+ * @property title the words shown for the document.
+ * @property url where it is; the person opens it outside Lunamux.
+ * @property updatedMillis when the document last changed, in epoch milliseconds, or null when the
+ *   writer gave no time.
+ */
+@Serializable
+data class TaskDocument(val title: String, val url: String, val updatedMillis: Long? = null)
 
 /**
  * One entry in a [TaskBlockContent.Timeline] block.

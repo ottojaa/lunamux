@@ -427,6 +427,7 @@ a `type`, an optional `title` (80) and the fields of its type:
 | `text` | `text` | 4000 characters of markdown: paragraphs, `#` to `###` headings, `-` / `1.` lists, fenced code, `**bold**`, `*italic*`, `` `code` `` and `[label](url)`. Anything else, HTML included, is shown as written. |
 | `facts` | `items`: `{label, value}` | 30 items; label 80, value 200. |
 | `links` | `items`: `{label, url}` | 30 items; `http`, `https` or `file` addresses only, 2000 characters. |
+| `documents` | `items`: `{title, url, updated?}` | 30 items; title 80; `http`, `https` or `file` addresses only, 2000 characters; `updated` is an ISO time or epoch milliseconds. One row per document, drawn with its time of day (with the day when it is not from today), that opens outside Lunamux. |
 | `timeline` | `items`: `{at, text}` | 50 items; `at` is an ISO time or epoch milliseconds; text 200. Shown newest first. |
 | `progress` | `done` and `total`, and/or `phase`; optional `label` | A bar when there is a count. |
 | `actions` | `buttons`: `{id, label, text}` | 8 buttons; label 40, text 500, one line. |

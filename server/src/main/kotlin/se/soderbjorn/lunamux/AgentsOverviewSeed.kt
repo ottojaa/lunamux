@@ -315,8 +315,9 @@ object AgentsOverviewSeed {
     private const val NOTES_WRITER = "release notes agent"
 
     /**
-     * Give the "Release 4.2 notes" task a panel of agent-written blocks: a status, a count of
-     * checks, a timeline, links, a line with markup that must stay text, and two buttons.
+     * Give the "Release 4.2 notes" task a panel of agent-written blocks: the documents written for
+     * the person (first, so it sits under the sessions list), a status, a count of checks, a
+     * timeline, links, a line with markup that must stay text, and two buttons.
      *
      * Called by [seedReleaseNotes]. The blocks are stored the way the panel store stores them, so
      * a server that starts on the seeded database shows them as soon as the task's own session is
@@ -328,6 +329,17 @@ object AgentsOverviewSeed {
      */
     private fun seedReleaseNotesPanel(repo: SettingsRepository, now: Long) {
         val blocks = listOf(
+            Triple(
+                "documents", "Documents",
+                TaskBlockContent.Documents(
+                    listOf(
+                        TaskDocument("Release 4.2 notes, first draft", "https://example.com/notes/4.2", now - 3 * MINUTE),
+                        TaskDocument("Changelog check: entries with no merged pull request, and who to ask about them", "https://example.com/changelog/check", now - 35 * MINUTE),
+                        TaskDocument("Screenshot list", "file:///tmp/release-4.2/screenshots.md", now - 26 * HOUR),
+                        TaskDocument("Upgrade guide", "https://example.com/upgrade"),
+                    ),
+                ),
+            ),
             Triple("status", "Status", TaskBlockContent.Text("**Drafted**, waiting on the changelog check.\n\n- 14 entries checked\n- 2 still to match")),
             Triple("checks", "Checks", TaskBlockContent.Progress(done = 3, total = 5, label = "changelog entries")),
             Triple(

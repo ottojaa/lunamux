@@ -36,13 +36,13 @@ object TaskPanelLimits {
     const val TITLE_MAX = 80
     /** Longest markdown text. */
     const val TEXT_MAX = 4000
-    /** Most items in a facts or links block. */
+    /** Most items in a facts, links or documents block. */
     const val LIST_MAX = 30
-    /** Longest fact or link label. */
+    /** Longest fact or link label, or document title. */
     const val LABEL_MAX = 80
     /** Longest fact value. */
     const val VALUE_MAX = 200
-    /** Longest link address. */
+    /** Longest link or document address. */
     const val URL_MAX = 2000
     /** Most entries a timeline keeps; the newest are kept. */
     const val TIMELINE_MAX = 50
@@ -124,6 +124,24 @@ object TaskPanelLimits {
                         throw TaskException(
                             "Block '$id': the address of link '${l.label}' is not allowed. Only http://, https:// and file:// addresses are kept.",
                         )
+                    }
+                }
+                c
+            }
+            is TaskBlockContent.Documents -> {
+                count("documents", c.items.size, LIST_MAX)
+                c.items.forEachIndexed { i, d ->
+                    if (d.title.isBlank()) throw TaskException("Block '$id': document ${i + 1} has no title.")
+                    limit("the title of document ${i + 1}", d.title, LABEL_MAX)
+                    limit("the address of document '${d.title}'", d.url, URL_MAX)
+                    if (!urlPattern.matches(d.url)) {
+                        throw TaskException(
+                            "Block '$id': the address of document '${d.title}' is not allowed. Only http://, https:// and file:// addresses are kept.",
+                        )
+                    }
+                    val updated = d.updatedMillis
+                    if (updated != null && updated < 0) {
+                        throw TaskException("Block '$id': document '${d.title}' has a negative time.")
                     }
                 }
                 c
