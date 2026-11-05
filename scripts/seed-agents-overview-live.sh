@@ -25,7 +25,7 @@
 #                    with background and the task's id), in background tabs that no tab strip lists:
 #                    "Changelog check" and "Screenshot refresh", both working. The task's row counts the
 #                    three sessions, its own and the two background ones, as its "3 working" and lists none.
-#                    The task also has a panel of blocks written by "release notes agent": in this tab ⌘I
+#                    The task also has a panel of blocks (documents, status, checks and so on) written by "release notes agent": in this tab ⌘I
 #                    shows it (the agents block first, both helpers listed and working), in any other tab
 #                    there is no panel. ↵ on a helper watches its terminal read-only; ⌘↵ shows its tab as an ordinary tab.
 #
@@ -162,6 +162,11 @@ call set_task_panel "$(python3 -I -c 'import json,sys
 import time
 now = int(time.time() * 1000)
 print(json.dumps({"taskId": sys.argv[1], "by": "release notes agent", "blocks": [
+  {"id": "documents", "type": "documents", "title": "Documents", "items": [
+    {"title": "Release 4.3 notes, first draft", "url": "https://example.com/notes/4.3", "updated": now - 180000},
+    {"title": "Changelog check: entries with no merged pull request, and who to ask about them", "url": "https://example.com/changelog/check", "updated": now - 2100000},
+    {"title": "Screenshot list", "url": "file:///tmp/release-4.3/screenshots.md", "updated": now - 93600000},
+    {"title": "Upgrade guide", "url": "https://example.com/upgrade"}]},
   {"id": "status", "type": "text", "title": "Status", "text": "**Drafted**, waiting on the changelog check.\n\n- 14 entries checked\n- 2 still to match"},
   {"id": "checks", "type": "progress", "title": "Checks", "done": 3, "total": 5, "label": "changelog entries"},
   {"id": "history", "type": "timeline", "title": "Timeline", "items": [

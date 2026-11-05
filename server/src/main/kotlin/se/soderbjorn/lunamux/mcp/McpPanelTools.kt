@@ -2,7 +2,7 @@
  * MCP tools for the panel beside a task's own session.
  *
  * An agent that works on a task can show the person what it is doing in blocks next to the task's
- * own session: text, facts, links, a timeline, progress and buttons. `set_task_panel` replaces
+ * own session: text, facts, links, documents, a timeline, progress and buttons. `set_task_panel` replaces
  * all of them, `upsert_task_block` and `remove_task_block` change one, and `get_task_panel` reads
  * them back. This file turns an agent's JSON into [TaskPanelBlock]s and the stored blocks back
  * into JSON; the rules about sizes and shapes live in [se.soderbjorn.lunamux.TaskPanelLimits] and
@@ -25,6 +25,7 @@ import kotlinx.serialization.json.put
 import se.soderbjorn.lunamux.AgentSessionTracker
 import se.soderbjorn.lunamux.TaskBlockContent
 import se.soderbjorn.lunamux.TaskButton
+import se.soderbjorn.lunamux.TaskDocument
 import se.soderbjorn.lunamux.TaskException
 import se.soderbjorn.lunamux.TaskFact
 import se.soderbjorn.lunamux.TaskLink
@@ -36,7 +37,7 @@ import java.time.Instant
 import java.time.OffsetDateTime
 
 /** The block types an agent may write, in the order the tool descriptions list them. */
-private val BLOCK_TYPES = listOf("text", "facts", "links", "timeline", "progress", "actions")
+private val BLOCK_TYPES = listOf("text", "facts", "links", "documents", "timeline", "progress", "actions")
 
 /**
  * Read a JSON value as the array of objects a block field expects.
@@ -66,20 +67,22 @@ private fun JsonObject.str(field: String, where: String): String =
         ?: throw McpArgumentException("$where needs a text '$field'.")
 
 /**
- * Turn the `at` of a timeline entry into epoch milliseconds.
+ * Turn the time of a timeline entry or a document into epoch milliseconds.
  *
  * @param el an ISO-8601 instant or offset date-time string, or epoch milliseconds as a number.
  * @param where words naming the entry for the refusal.
+ * @param field the name of the field the time was read from, used in the refusal: `at` for a
+ *   timeline entry, `updated` for a document.
  * @return epoch milliseconds.
  * @throws McpArgumentException when it is neither.
  */
-private fun parseAt(el: JsonElement?, where: String): Long {
-    val p = el as? JsonPrimitive ?: throw McpArgumentException("$where needs an 'at' time (ISO-8601 text or epoch milliseconds).")
+private fun parseAt(el: JsonElement?, where: String, field: String = "at"): Long {
+    val p = el as? JsonPrimitive ?: throw McpArgumentException("$where needs an '$field' time (ISO-8601 text or epoch milliseconds).")
     p.contentOrNull?.toLongOrNull()?.let { return it }
-    val text = p.contentOrNull ?: throw McpArgumentException("$where needs an 'at' time (ISO-8601 text or epoch milliseconds).")
+    val text = p.contentOrNull ?: throw McpArgumentException("$where needs an '$field' time (ISO-8601 text or epoch milliseconds).")
     return runCatching { Instant.parse(text).toEpochMilli() }.getOrNull()
         ?: runCatching { OffsetDateTime.parse(text).toInstant().toEpochMilli() }.getOrNull()
-        ?: throw McpArgumentException("$where has an 'at' of '${text.take(40)}' that is not ISO-8601 (like 2026-05-01T12:00:00Z) or epoch milliseconds.")
+        ?: throw McpArgumentException("$where has an '$field' of '${text.take(40)}' that is not ISO-8601 (like 2026-05-01T12:00:00Z) or epoch milliseconds.")
 }
 
 /**
@@ -106,6 +109,14 @@ internal fun parsePanelBlock(json: JsonObject): TaskPanelBlock {
         })
         "links" -> TaskBlockContent.Links(json.objects("items", id).mapIndexed { i, o ->
             TaskLink(o.str("label", "Block '$id' link ${i + 1}"), o.str("url", "Block '$id' link ${i + 1}"))
+        })
+        "documents" -> TaskBlockContent.Documents(json.objects("items", id).mapIndexed { i, o ->
+            val where = "Block '$id' document ${i + 1}"
+            TaskDocument(
+                title = o.str("title", where),
+                url = o.str("url", where),
+                updatedMillis = o["updated"]?.takeUnless { it is JsonNull }?.let { parseAt(it, where, "updated") },
+            )
         })
         "timeline" -> TaskBlockContent.Timeline(json.objects("items", id).mapIndexed { i, o ->
             TaskTimelineItem(parseAt(o["at"], "Block '$id' timeline entry ${i + 1}"), o.str("text", "Block '$id' timeline entry ${i + 1}"))
@@ -163,6 +174,15 @@ internal fun panelBlockJson(b: TaskPanelBlock): JsonObject = buildJsonObject {
         is TaskBlockContent.Links -> put("items", buildJsonArray {
             c.items.forEach { add(buildJsonObject { put("label", it.label); put("url", it.url) }) }
         })
+        is TaskBlockContent.Documents -> put("items", buildJsonArray {
+            c.items.forEach { d ->
+                add(buildJsonObject {
+                    put("title", d.title)
+                    put("url", d.url)
+                    d.updatedMillis?.let { put("updated", Instant.ofEpochMilli(it).toString()) }
+                })
+            }
+        })
         is TaskBlockContent.Timeline -> put("items", buildJsonArray {
             c.items.forEach {
                 add(buildJsonObject { put("at", Instant.ofEpochMilli(it.atMillis).toString()); put("text", it.text) })
@@ -209,6 +229,8 @@ fun registerMcpPanelTools(store: TaskPanelStore, tracker: AgentSessionTracker) {
         "items" to schemaArray(
             "type facts: [{label, value}] (up to ${TaskPanelLimits.LIST_MAX}; label ${TaskPanelLimits.LABEL_MAX}, value ${TaskPanelLimits.VALUE_MAX} characters). " +
                 "type links: [{label, url}] (up to ${TaskPanelLimits.LIST_MAX}; only http, https and file addresses). " +
+                "type documents: [{title, url, updated?}] (up to ${TaskPanelLimits.LIST_MAX}; title ${TaskPanelLimits.LABEL_MAX} characters; " +
+                "only http, https and file addresses; updated is ISO-8601 or epoch milliseconds). " +
                 "type timeline: [{at, text}] where at is ISO-8601 or epoch milliseconds (text ${TaskPanelLimits.TIMELINE_TEXT_MAX} characters; " +
                 "past ${TaskPanelLimits.TIMELINE_MAX} entries the newest are kept).",
             buildJsonObject { put("type", "object") },
@@ -249,7 +271,7 @@ fun registerMcpPanelTools(store: TaskPanelStore, tracker: AgentSessionTracker) {
     writeTool(
         name = "set_task_panel",
         description = "Show the person what is going on in a task, in blocks beside the task's own session: " +
-            "text, facts, links, a timeline, progress and buttons. This replaces every block of the task at once, in " +
+            "text, facts, links, documents, a timeline, progress and buttons. This replaces every block of the task at once, in " +
             "the order you give (at most ${TaskPanelLimits.MAX_BLOCKS}). To change one block without touching the " +
             "rest use upsert_task_block. Call it when the picture changes, not on every step. Only you and other " +
             "agents write here; the person's list of the task's sessions is drawn by the panel itself.",

@@ -103,14 +103,18 @@ class AgentsOverviewSeedTest {
     fun `the seeded task has a panel of every useful kind, all written by one agent, that a restart keeps`() {
         AgentsOverviewSeed.seed(db, tasksDir, now)
         val rows = repo().loadTaskPanelRows().filter { it.taskId == "seed-task-notes" }
-        assertEquals(listOf("status", "checks", "history", "links", "literal", "actions"), rows.map { it.blockId })
-        assertEquals(setOf("text", "progress", "timeline", "links", "actions"), rows.map { it.kind }.toSet())
+        assertEquals(listOf("documents", "status", "checks", "history", "links", "literal", "actions"), rows.map { it.blockId })
+        assertEquals(setOf("text", "progress", "timeline", "links", "documents", "actions"), rows.map { it.kind }.toSet())
         assertEquals(setOf("release notes agent"), rows.map { it.writtenBy }.toSet())
         val literal = rows.single { it.blockId == "literal" }
         assertTrue("<img src=x onerror=alert(1)>" in literal.body, "markup is stored as the text it is")
         // Reading it back through the store, as a server start does, gives the same blocks.
         val index = TaskIndex(repo(), AgentSessionTracker(repo()), MutableStateFlow(emptyList()), { null }, { now })
-        assertEquals(rows.size, TaskPanelStore(repo(), index, { now }).blocksOf("seed-task-notes").size)
+        val stored = TaskPanelStore(repo(), index, { now }).blocksOf("seed-task-notes")
+        assertEquals(rows.size, stored.size)
+        // The seed skips the store's checks when it writes, so hold its blocks to them here: an agent
+        // writing the same blocks (as the live script does) must not be refused.
+        stored.forEach { TaskPanelLimits.check(it) }
         AgentsOverviewSeed.seed(db, tasksDir, now + day)
         assertEquals(rows.size, repo().loadTaskPanelRows().count { it.taskId == "seed-task-notes" }, "seeding again replaces, never adds")
     }

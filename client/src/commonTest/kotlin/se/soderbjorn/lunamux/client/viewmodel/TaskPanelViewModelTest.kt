@@ -3,11 +3,14 @@
  * active tab, nothing in any other tab or without one, nothing while the person has it hidden),
  * the agents block (member order, state words, ages, dimmed finished members, and what a click on
  * each kind of line does), the stored blocks (byline, newest-first timeline, progress, parsed
- * text, links that may open, the empty sentence), buttons that go dead with the own session,
+ * text, links and documents that may open, the empty sentence), buttons that go dead with the own session,
  * and the hand-off to the watch (which opens it, and shows a tab, from a selected line).
  */
 package se.soderbjorn.lunamux.client.viewmodel
 
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.UtcOffset
+import kotlinx.datetime.asTimeZone
 import se.soderbjorn.lunamux.AgentSessionSummary
 import se.soderbjorn.lunamux.AgentTask
 import se.soderbjorn.lunamux.AgentTaskMember
@@ -16,6 +19,7 @@ import se.soderbjorn.lunamux.Pane
 import se.soderbjorn.lunamux.TabConfig
 import se.soderbjorn.lunamux.TaskBlockContent
 import se.soderbjorn.lunamux.TaskButton
+import se.soderbjorn.lunamux.TaskDocument
 import se.soderbjorn.lunamux.TaskFact
 import se.soderbjorn.lunamux.TaskLink
 import se.soderbjorn.lunamux.TaskPanelBlock
@@ -55,7 +59,7 @@ class TaskPanelViewModelTest {
     private val windowState = WindowStateRepository()
     private var now = 10_000_000L
     private val watch = WatchViewModel(windowState) { sent += it }
-    private val vm = TaskPanelViewModel(windowState, watch, clock = { now }) { sent += it }
+    private val vm = TaskPanelViewModel(windowState, watch, clock = { now }, zone = { TimeZone.UTC }) { sent += it }
 
     private fun session(
         id: String, state: String = "working", since: Long = now - 125_000, title: String = "agent $id",
@@ -289,6 +293,44 @@ class TaskPanelViewModelTest {
     }
 
     @Test
+    fun `a documents block keeps its order, shows a time as a clock time, and drops an address that must not open`() {
+        now = 1_800_000_000_000L // a Friday, 08:00 UTC
+        layout()
+        give(listOf(task()), listOf(session("own")))
+        windowState.updateTaskPanel(
+            "t1",
+            listOf(
+                block(
+                    "docs",
+                    TaskBlockContent.Documents(
+                        listOf(
+                            TaskDocument("Design page", "https://a.example/design", now - 2 * 3_600_000),
+                            TaskDocument("Yesterday", "https://a.example/y", now - 11 * 3_600_000),
+                            TaskDocument("Old", "https://a.example/old", now - 20 * 86_400_000),
+                            TaskDocument("No time", "file:///tmp/notes.md"),
+                            TaskDocument("Bad", "javascript:alert(1)", now),
+                        ),
+                    ),
+                    title = "Documents",
+                ),
+            ),
+        )
+        val view = vm.state.blocks.single()
+        assertEquals("Documents", view.title)
+        assertEquals(
+            BlockBody.Documents(
+                listOf(
+                    TaskPanelViewModel.DocumentRow("Design page", "https://a.example/design", "06:00"),
+                    TaskPanelViewModel.DocumentRow("Yesterday", "https://a.example/y", "Thu 21:00"),
+                    TaskPanelViewModel.DocumentRow("Old", "https://a.example/old", "26 Dec 08:00"),
+                    TaskPanelViewModel.DocumentRow("No time", "file:///tmp/notes.md", null),
+                ),
+            ),
+            view.body,
+        )
+    }
+
+    @Test
     fun `a panel with no stored blocks says so`() {
         layout()
         give(listOf(task()), listOf(session("own")))
@@ -412,6 +454,26 @@ class TaskPanelViewModelTest {
         assertEquals("file:///tmp/x", vm.linkTarget("file:///tmp/x"))
         assertNull(vm.linkTarget("javascript:alert(1)"))
         assertNull(vm.linkTarget("data:text/html,x"))
+    }
+
+    @Test
+    fun `a clock time is read in the viewer's zone and names the day when it is not today`() {
+        val now = 1_800_000_000_000L // Friday 15 January 2027, 08:00 UTC
+        val hour = 3_600_000L
+        val utc = TimeZone.UTC
+        assertEquals("06:00", TaskPanelViewModel.clockOf(now - 2 * hour, now, utc))
+        assertEquals("08:00", TaskPanelViewModel.clockOf(now, now, utc))
+        assertEquals("Thu 21:00", TaskPanelViewModel.clockOf(now - 11 * hour, now, utc))
+        assertEquals("Sat 08:00", TaskPanelViewModel.clockOf(now - 6 * 24 * hour, now, utc), "six days back still names the weekday")
+        assertEquals("8 Jan 08:00", TaskPanelViewModel.clockOf(now - 7 * 24 * hour, now, utc), "a week back names the date")
+        assertEquals("16 Jan 08:00", TaskPanelViewModel.clockOf(now + 24 * hour, now, utc), "a time ahead of the clock names the date")
+        // The same instants, read nine hours ahead of UTC (it is 17:00 on Friday there) and twelve behind (20:00 on Thursday).
+        val ahead = UtcOffset(hours = 9).asTimeZone()
+        val behind = UtcOffset(hours = -12).asTimeZone()
+        assertEquals("15:00", TaskPanelViewModel.clockOf(now - 2 * hour, now, ahead))
+        assertEquals("Thu 23:00", TaskPanelViewModel.clockOf(now - 18 * hour, now, ahead))
+        assertEquals("18:00", TaskPanelViewModel.clockOf(now - 2 * hour, now, behind))
+        assertEquals("Wed 23:00", TaskPanelViewModel.clockOf(now - 21 * hour, now, behind))
     }
 
     @Test

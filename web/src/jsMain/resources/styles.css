@@ -3908,6 +3908,15 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-fact-label { color: var(--tp-dim); }
 .tp-link { display: block; color: var(--tp-accent); cursor: pointer; text-decoration: underline; }
 .tp-md .tp-link { display: inline; }
+/* A document is one plain row under the same padding as an agent's line: a dim page mark in a 2ch
+   cell, the title (cut with an ellipsis, in the text colour), the time dimmed, and ↗ in the accent. */
+.tp-doc { display: grid; grid-template-columns: 2ch minmax(0, 1fr) auto auto; gap: 0 8px; align-items: center; padding: 4px 0; cursor: pointer; border-radius: 3px; }
+.tp-doc:hover, .tp-doc:focus-visible { background: color-mix(in srgb, var(--tp-text) 7%, transparent); outline: none; }
+.tp-doc:focus-visible { box-shadow: inset 2px 0 0 var(--tp-accent); }
+.tp-doc-mark { justify-self: center; width: 8px; height: 10px; box-sizing: border-box; border: 1px solid var(--tp-dim); border-radius: 1px; }
+.tp-doc-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tp-text); }
+.tp-doc-time { color: var(--tp-dim); font-size: 11px; }
+.tp-doc-go { color: var(--tp-accent); }
 .tp-tl { display: flex; gap: 10px; padding: 1px 0; }
 .tp-tl-age { flex: none; width: 4ch; color: var(--tp-dim); }
 .tp-bar { height: 6px; background: var(--tp-line); margin-bottom: 6px; }
