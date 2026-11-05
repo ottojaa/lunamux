@@ -102,6 +102,15 @@ class TaskPanelViewModel(
         val hint: String?,
     )
 
+    /**
+     * One row of a documents block.
+     *
+     * @property title the words shown for the document.
+     * @property url where it is; always http, https or file, and opened outside the app.
+     * @property age how long ago the document changed (see [ageOf]), or null when the writer gave no time.
+     */
+    data class DocumentRow(val title: String, val url: String, val age: String?)
+
     /** One entry of a timeline block, newest first. @property age how long ago. @property text what happened. */
     data class TimelineEntry(val age: String, val text: String)
 
@@ -124,6 +133,9 @@ class TaskPanelViewModel(
 
         /** Links. @property items label and address pairs; every address is http, https or file. */
         data class Links(val items: List<Pair<String, String>>) : BlockBody()
+
+        /** Documents, in the writer's order. @property items the rows; every address is http, https or file. */
+        data class Documents(val items: List<DocumentRow>) : BlockBody()
 
         /** Entries, newest first. @property items the entries. */
         data class Timeline(val items: List<TimelineEntry>) : BlockBody()
@@ -368,6 +380,9 @@ class TaskPanelViewModel(
             is TaskBlockContent.Text -> BlockBody.Text(PanelMarkdown.parse(c.markdown))
             is TaskBlockContent.Facts -> BlockBody.Facts(c.items.map { it.label to it.value })
             is TaskBlockContent.Links -> BlockBody.Links(c.items.filter { PanelMarkdown.isSafeUrl(it.url) }.map { it.label to it.url })
+            is TaskBlockContent.Documents -> BlockBody.Documents(
+                c.items.filter { PanelMarkdown.isSafeUrl(it.url) }.map { DocumentRow(it.title, it.url, it.updatedMillis?.let { at -> ageOf(at, now) }) },
+            )
             is TaskBlockContent.Timeline ->
                 BlockBody.Timeline(c.items.sortedByDescending { it.atMillis }.map { TimelineEntry(ageOf(it.atMillis, now), it.text) })
             is TaskBlockContent.Progress -> {

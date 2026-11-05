@@ -3,7 +3,8 @@
  * agents of a task wrote about it. It appears only in the tab that holds the task's own session,
  * starting with an "Agents" block (every other session of the task, with its state and age) and
  * followed by the blocks agents added with `set_task_panel`, `upsert_task_block` and
- * `remove_task_block`.
+ * `remove_task_block` (a documents block draws one plain row per document, which opens outside
+ * the app).
  *
  * ⌘I shows and hides the column (as does its ×), and the choice is kept with the other UI
  * settings. A member's line can be focused: ↵ on a background member starts the watch (see
@@ -309,6 +310,9 @@ private fun buildBlock(view: TaskPanelViewModel.BlockView): HTMLElement {
         is BlockBody.Links -> for ((label, url) in body.items) {
             block.appendChild(buildLink(label, url))
         }
+        is BlockBody.Documents -> body.items.forEachIndexed { i, doc ->
+            block.appendChild(buildDocument(doc, "doc:${view.id}:$i"))
+        }
         is BlockBody.Timeline -> for (entry in body.items) {
             val row = div("tp-tl")
             row.appendChild(span("tp-tl-age", entry.age))
@@ -353,6 +357,36 @@ private fun buildLink(label: String, url: String): HTMLElement {
     link.addEventListener("click", open)
     link.addEventListener("keydown", { e: Event -> if ((e as KeyboardEvent).key == "Enter") open(e) })
     return link
+}
+
+/**
+ * One document row: a dim document mark, the title, the time, and ↗. The whole row is the link: a
+ * click or ↵ opens the address outside the app, after it passes [TaskPanelViewModel.linkTarget].
+ * The row keeps focus across a redraw through its focus key.
+ *
+ * @param doc the row from the view model.
+ * @param focusKey the row's key for [FOCUS_KEY_ATTRIBUTE]: its block id and position.
+ */
+private fun buildDocument(doc: TaskPanelViewModel.DocumentRow, focusKey: String): HTMLElement {
+    val row = div("tp-doc")
+    row.appendChild(div("tp-doc-mark"))
+    row.appendChild(span("tp-doc-title", doc.title))
+    row.appendChild(span("tp-doc-time", doc.age ?: ""))
+    row.appendChild(span("tp-doc-go", "↗"))
+    row.setAttribute("role", "link")
+    row.setAttribute("tabindex", "0")
+    row.setAttribute(FOCUS_KEY_ATTRIBUTE, focusKey)
+    row.title = doc.url
+    val open: (Event) -> Unit = { taskPanel.linkTarget(doc.url)?.let { target -> openExternalUrl(target) } }
+    row.addEventListener("click", open)
+    row.addEventListener("keydown", { e: Event ->
+        val key = e as KeyboardEvent
+        if (key.key == "Enter") {
+            key.preventDefault()
+            open(e)
+        }
+    })
+    return row
 }
 
 /** Draw parsed markdown as elements; no node is ever made from an agent's text but a text node. */

@@ -23,6 +23,7 @@ import se.soderbjorn.lunamux.ClaudeUsageMonitor
 import se.soderbjorn.lunamux.GitInfo
 import se.soderbjorn.lunamux.PaneSnapshot
 import se.soderbjorn.lunamux.TaskBlockContent
+import se.soderbjorn.lunamux.TaskDocument
 import se.soderbjorn.lunamux.TaskFile
 import se.soderbjorn.lunamux.TaskIndex
 import se.soderbjorn.lunamux.TaskPanelStore
@@ -113,6 +114,62 @@ class McpPanelToolsTest {
         assertEquals(7, read.size)
         assertEquals("release agent", read[0].jsonObject["writtenBy"]!!.jsonPrimitive.content)
         assertEquals("1970-01-01T00:00:05Z", read[0].jsonObject["writtenAt"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `documents are set, upserted, removed and read back with their time`() {
+        val r = set(
+            """[
+              {"id":"docs","type":"documents","title":"Documents","items":[
+                {"title":"Design page","url":"https://example.com/design","updated":"2026-05-01T12:00:00Z"},
+                {"title":"Notes","url":"file:///tmp/notes.md","updated":1700000000000},
+                {"title":"No time yet","url":"http://example.com/x"}
+              ]},
+              {"id":"keep","type":"text","text":"kept"}
+            ]""",
+        )
+        assertTrue(!isError(r), textOf(r))
+        assertEquals(
+            listOf(
+                TaskDocument("Design page", "https://example.com/design", 1_777_636_800_000L),
+                TaskDocument("Notes", "file:///tmp/notes.md", 1_700_000_000_000L),
+                TaskDocument("No time yet", "http://example.com/x", null),
+            ),
+            (store.blocksOf(taskId)[0].content as TaskBlockContent.Documents).items,
+        )
+        val read = blocksJson()[0].jsonObject
+        assertEquals("documents", read["type"]!!.jsonPrimitive.content)
+        val items = read["items"]!!.jsonArray.map { it.jsonObject }
+        assertEquals("2026-05-01T12:00:00Z", items[0]["updated"]!!.jsonPrimitive.content)
+        assertNull(items[2]["updated"], "a document with no time reads back with none")
+
+        val written = blocksJson()[0].toString()
+        assertTrue(!isError(call("upsert_task_block", """{"taskId":"$taskId","block":$written}""")), "what get_task_panel returns is accepted back")
+        assertEquals(listOf("docs", "keep"), store.blocksOf(taskId).map { it.id })
+
+        assertTrue(!isError(call("upsert_task_block", """{"taskId":"$taskId","block":{"id":"docs","type":"documents","items":[{"title":"Only one","url":"https://example.com/1","updated":null}]}}""")))
+        assertEquals(listOf("docs", "keep"), store.blocksOf(taskId).map { it.id }, "replaced in place")
+        assertEquals(listOf(TaskDocument("Only one", "https://example.com/1")), (store.blocksOf(taskId)[0].content as TaskBlockContent.Documents).items)
+
+        assertTrue(!isError(call("remove_task_block", """{"taskId":"$taskId","id":"docs"}""")))
+        assertEquals(listOf("keep"), store.blocksOf(taskId).map { it.id })
+    }
+
+    @Test
+    fun `a document with a javascript url is refused and the panel keeps what it had`() {
+        set("""[{"id":"keep","type":"text","text":"old"}]""")
+        val msg = refusal(set("""[{"id":"d","type":"documents","items":[{"title":"click me","url":"javascript:alert(1)"}]}]"""))
+        assertTrue("'click me'" in msg && "http" in msg, msg)
+        assertEquals(listOf("keep"), store.blocksOf(taskId).map { it.id })
+    }
+
+    @Test
+    fun `a document refusal names the field at fault`() {
+        assertTrue("document 1 needs a text 'title'" in refusal(set("""[{"id":"d","type":"documents","items":[{"url":"https://a.b"}]}]""")))
+        assertTrue("document 1 needs a text 'url'" in refusal(set("""[{"id":"d","type":"documents","items":[{"title":"x"}]}]""")))
+        assertTrue("'updated'" in refusal(set("""[{"id":"d","type":"documents","items":[{"title":"x","url":"https://a.b","updated":"yesterday"}]}]""")))
+        assertTrue("'at'" in refusal(set("""[{"id":"tl","type":"timeline","items":[{"at":"yesterday","text":"x"}]}]""")), "the timeline still names 'at'")
+        assertTrue("31" in refusal(set("""[{"id":"d","type":"documents","items":[${List(31) { """{"title":"d","url":"https://a.b"}""" }.joinToString(",")}]}]""")))
     }
 
     @Test

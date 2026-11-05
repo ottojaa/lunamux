@@ -193,6 +193,39 @@ class TaskPanelStoreTest {
     }
 
     @Test
+    fun `documents hold 30 items at most, with title and address lengths`() {
+        fun docs(n: Int, title: String = "d", url: String = "https://example.com/d", at: Long? = null) =
+            TaskPanelBlock("d", null, TaskBlockContent.Documents(List(n) { TaskDocument(title, url, at) }), writtenAtMillis = 0)
+        store.upsert(taskId, docs(30), null)
+        assertTrue("31" in refused(docs(31)))
+        store.upsert(taskId, docs(1, "t".repeat(80)), null)
+        assertTrue("title" in refused(docs(1, "t".repeat(81))))
+        assertTrue("no title" in refused(docs(1, title = " ")))
+        store.upsert(taskId, docs(1, url = "https://example.com/" + "a".repeat(1900)), null)
+        assertTrue("address" in refused(docs(1, url = "https://example.com/" + "a".repeat(2000))))
+        store.upsert(taskId, docs(1, at = 0L), null)
+        assertTrue("negative" in refused(docs(1, at = -1L)))
+    }
+
+    @Test
+    fun `a document keeps http, https and file addresses only`() {
+        fun doc(url: String) = TaskPanelBlock("d", null, TaskBlockContent.Documents(listOf(TaskDocument("x", url))), writtenAtMillis = 0)
+        for (ok in listOf("http://a.b/c", "https://a.b", "HTTPS://A.B", "file:///tmp/x.md")) store.upsert(taskId, doc(ok), null)
+        for (bad in listOf("javascript:alert(1)", "JavaScript:alert(1)", "data:text/html,x", "vbscript:x", "ftp://a.b", "//a.b", "a.b", "https://a b", "mailto:a@b.c")) {
+            val msg = refused(doc(bad))
+            assertTrue("'x'" in msg && "http" in msg, "$bad -> $msg")
+        }
+    }
+
+    @Test
+    fun `documents survive a restart with and without a time`() {
+        val content = TaskBlockContent.Documents(listOf(TaskDocument("With time", "https://a.b/1", 1_700_000_000_000L), TaskDocument("No time", "file:///tmp/x.md")))
+        store.upsert(taskId, TaskPanelBlock("d", "Documents", content, writtenAtMillis = 0), "writer")
+        val reopened = TaskPanelStore(SettingsRepository(dbFile), index, clock = { now })
+        assertEquals(content, reopened.blocksOf(taskId).single().content)
+    }
+
+    @Test
     fun `a timeline keeps the newest 50 entries by time, in the order they came`() {
         val items = (0 until 60).map { TaskTimelineItem(atMillis = (if (it % 2 == 0) it else 1000 - it).toLong(), text = "e$it") }
         store.upsert(taskId, TaskPanelBlock("t", null, TaskBlockContent.Timeline(items), writtenAtMillis = 0), null)

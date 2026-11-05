@@ -3,7 +3,7 @@
  * active tab, nothing in any other tab or without one, nothing while the person has it hidden),
  * the agents block (member order, state words, ages, dimmed finished members, and what a click on
  * each kind of line does), the stored blocks (byline, newest-first timeline, progress, parsed
- * text, links that may open, the empty sentence), buttons that go dead with the own session,
+ * text, links and documents that may open, the empty sentence), buttons that go dead with the own session,
  * and the hand-off to the watch (which opens it, and shows a tab, from a selected line).
  */
 package se.soderbjorn.lunamux.client.viewmodel
@@ -16,6 +16,7 @@ import se.soderbjorn.lunamux.Pane
 import se.soderbjorn.lunamux.TabConfig
 import se.soderbjorn.lunamux.TaskBlockContent
 import se.soderbjorn.lunamux.TaskButton
+import se.soderbjorn.lunamux.TaskDocument
 import se.soderbjorn.lunamux.TaskFact
 import se.soderbjorn.lunamux.TaskLink
 import se.soderbjorn.lunamux.TaskPanelBlock
@@ -286,6 +287,39 @@ class TaskPanelViewModelTest {
         assertEquals(BlockBody.Progress("review", null, null), blocks.getValue("p2").body)
         assertEquals(BlockBody.Links(listOf("ok" to "https://a.example")), blocks.getValue("l").body)
         assertNull(vm.state.emptyText)
+    }
+
+    @Test
+    fun `a documents block keeps its order, shows a time as an age, and drops an address that must not open`() {
+        layout()
+        give(listOf(task()), listOf(session("own")))
+        windowState.updateTaskPanel(
+            "t1",
+            listOf(
+                block(
+                    "docs",
+                    TaskBlockContent.Documents(
+                        listOf(
+                            TaskDocument("Design page", "https://a.example/design", now - 2 * 3_600_000),
+                            TaskDocument("No time", "file:///tmp/notes.md"),
+                            TaskDocument("Bad", "javascript:alert(1)", now),
+                        ),
+                    ),
+                    title = "Documents",
+                ),
+            ),
+        )
+        val view = vm.state.blocks.single()
+        assertEquals("Documents", view.title)
+        assertEquals(
+            BlockBody.Documents(
+                listOf(
+                    TaskPanelViewModel.DocumentRow("Design page", "https://a.example/design", "2h"),
+                    TaskPanelViewModel.DocumentRow("No time", "file:///tmp/notes.md", null),
+                ),
+            ),
+            view.body,
+        )
     }
 
     @Test
