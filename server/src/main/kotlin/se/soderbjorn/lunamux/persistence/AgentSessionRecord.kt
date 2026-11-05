@@ -54,7 +54,7 @@ package se.soderbjorn.lunamux.persistence
  *   made no choice. A task file can still place a session that has none.
  * @property background whether the session runs (or ran) in a background tab an agent opened:
  *   out of sight, found by no search, but still counted in its task and still able to ask for
- *   the person. Stays set after the pane closes; taking the tab over clears it.
+ *   the person. Stays set after the pane closes.
  */
 data class AgentSessionRecord(
     val id: String,
