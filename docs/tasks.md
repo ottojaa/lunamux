@@ -389,18 +389,22 @@ Keyboard-shortcuts sidebar and can be rebound there. (Off macOS the default chor
 a terminal reads as Tab; rebind it there if that gets in the way.)
 
 The column starts with an **Agents** block, marked *live*: every other session of the task with its
-state mark (● working or waiting, ◆ needs you, ○ finished, ◉ the one being peeked), its name, its age
+state mark (● working or waiting, ◆ needs you, ○ finished), its name, its age
 at the right and, under the name, what it is doing, or its state word when it is not doing anything.
 A finished session is dimmed and reads "exited". A member that only the task file lists (one
 Lunamux does not host) shows the file's own label for it when it gives one: in place of the state
 word while it is not finished (for example "reviewing"), and after "exited" once it is (for example
-"exited · merged"). The action on a line is what a click does:
-*peek* for an agent in a background tab, *jump* for one in a tab of the strip, *open* for a member of
-a task file that no pane shows.
+"exited · merged"). Each line is a row you can reach and press: click the panel, then Tab to move
+between lines. A line shows what ↵ and ⌘↵ do once it is hovered or focused. An agent in a background tab
+reads "↵ watch · ⌘↵ show as tab"; one that already sits in a tab of the strip reads "↵ open", which
+jumps to that tab; a member of a task file that no pane shows also opens with ↵.
 
-*Peek* lays a read-only live copy of the agent's terminal over the pane you are looking at (the focused one, up to the column). It is a viewer:
-typing goes nowhere and the window never sends a size, so it cannot disturb the agent's grid. ⌘↵
-takes the background tab over (it becomes an ordinary tab) and esc goes back.
+The **watch** lays a read-only live copy of the agent's terminal over the pane you are looking at (the
+focused one, up to the column), under the header "Watching · read-only · ⌘↵ show as tab", with the
+agent's name and "esc back" beside it. It is a viewer: typing goes nowhere and the window never sends a
+size, so it cannot disturb the agent's grid. esc goes back and gives focus to the line you pressed. ⌘↵,
+from the open watch or straight from a selected line, shows the agent's background tab as an ordinary
+tab and switches to it; the session keeps running and stays in its task.
 
 After the agents come the blocks agents wrote. Each has its title on the left of its header and who wrote it and how long ago on the right. They are
 kept in the database and survive a restart; they are not removed when the task ends.

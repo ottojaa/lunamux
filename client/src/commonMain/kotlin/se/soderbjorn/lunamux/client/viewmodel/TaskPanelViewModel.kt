@@ -237,18 +237,16 @@ class TaskPanelViewModel(
     }
 
     /**
-     * Show the tab of a background member as an ordinary tab, straight from its selected line,
-     * without a watch having been opened first. Does nothing for any other kind of line. Called
-     * for ⌘↵ on a line.
+     * Show the tab of a background member as an ordinary tab, straight from its selected line.
+     * No watch is opened on the way, so no overlay is ever drawn. Does nothing for any other kind
+     * of line. Called for ⌘↵ on a line.
      *
      * @param line a line of [State.agents].
-     * @see WatchViewModel.showAsTab
+     * @see WatchViewModel.showRecordAsTab
      */
     suspend fun showAsTab(line: AgentLine) {
         if (line.action != MemberAction.WATCH) return
-        val recordId = line.recordId ?: return
-        watch.watch(recordId)
-        watch.showAsTab()
+        line.recordId?.let { watch.showRecordAsTab(it) }
     }
 
     /**

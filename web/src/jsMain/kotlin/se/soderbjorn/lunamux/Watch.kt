@@ -26,6 +26,7 @@ import kotlinx.coroutines.launch
 import org.khronos.webgl.ArrayBuffer
 import org.khronos.webgl.Uint8Array
 import org.w3c.dom.HTMLElement
+import org.w3c.dom.ParentNode
 import org.w3c.dom.WebSocket
 import org.w3c.dom.events.Event
 import org.w3c.dom.events.KeyboardEvent
@@ -63,7 +64,7 @@ internal val watchViewModel: WatchViewModel by lazy {
  * @property term the read-only terminal, or null when there is no session to mirror.
  * @property socket the viewer socket, or null.
  * @property keyHandler the capture-phase key listener installed on the window.
- * @property resizeHandler the window's resize listener that keeps the overlay over its pane.
+ * @property stopPlacing stops the loop that keeps the overlay over its pane.
  * @property returnFocus the element that had focus before the watch opened.
  */
 private class OpenWatch(
@@ -73,7 +74,7 @@ private class OpenWatch(
     val term: Terminal?,
     val socket: WebSocket?,
     val keyHandler: (Event) -> Unit,
-    val resizeHandler: (Event) -> Unit,
+    val stopPlacing: () -> Unit,
     val returnFocus: HTMLElement?,
 )
 
@@ -195,9 +196,34 @@ private fun openWatchView(watch: WatchViewModel.Watch) {
     window.addEventListener("keydown", handler, true)
     window.addEventListener("keypress", handler, true)
     window.addEventListener("keyup", handler, true)
-    val onResize: (Event) -> Unit = { placeWatch(root, body) }
-    window.addEventListener("resize", onResize)
-    openWatch = OpenWatch(watch.recordId, root, head, term, socket, handler, onResize, returnFocus)
+    openWatch = OpenWatch(watch.recordId, root, head, term, socket, handler, keepWatchPlaced(root, body), returnFocus)
+}
+
+/**
+ * Keep the watch over its pane for as long as it is open. The pane's rectangle changes without any
+ * event the watch could listen to (the task panel closes, the sidebar toggles, a pane is split), so
+ * the rectangle is read every frame and the overlay is moved only when it differs.
+ *
+ * @param root the overlay element.
+ * @param body the app frame body, used when no pane has focus.
+ * @return a function that stops the loop; called when the watch is taken down.
+ * @see placeWatch
+ */
+private fun keepWatchPlaced(root: HTMLElement, body: HTMLElement): () -> Unit {
+    var stopped = false
+    var frame = 0
+    lateinit var tick: (Double) -> Unit
+    tick = {
+        if (!stopped) {
+            placeWatch(root, body)
+            frame = window.requestAnimationFrame(tick)
+        }
+    }
+    frame = window.requestAnimationFrame(tick)
+    return {
+        stopped = true
+        window.cancelAnimationFrame(frame)
+    }
 }
 
 /**
@@ -212,10 +238,15 @@ private fun placeWatch(root: HTMLElement, body: HTMLElement) {
     val area = (document.querySelector(".dt-pane.dt-pane-focused") as? HTMLElement ?: body).getBoundingClientRect()
     val limit = (document.querySelector(".task-panel") as? HTMLElement)?.getBoundingClientRect()?.left ?: area.right
     val right = minOf(area.right, limit)
-    root.style.left = "${area.left}px"
-    root.style.top = "${area.top}px"
-    root.style.height = "${area.height}px"
-    root.style.width = "${(right - area.left).coerceAtLeast(0.0)}px"
+    val left = "${area.left}px"
+    val top = "${area.top}px"
+    val height = "${area.height}px"
+    val width = "${(right - area.left).coerceAtLeast(0.0)}px"
+    // Written only when it differs, so a steady layout costs two reads a frame and no style work.
+    if (root.style.left != left) root.style.left = left
+    if (root.style.top != top) root.style.top = top
+    if (root.style.height != height) root.style.height = height
+    if (root.style.width != width) root.style.width = width
 }
 
 /**
@@ -258,7 +289,7 @@ private fun closeWatchView(restoreFocus: Boolean) {
     window.removeEventListener("keydown", watch.keyHandler, true)
     window.removeEventListener("keypress", watch.keyHandler, true)
     window.removeEventListener("keyup", watch.keyHandler, true)
-    window.removeEventListener("resize", watch.resizeHandler)
+    watch.stopPlacing()
     watch.socket?.let { s ->
         s.onmessage = null
         runCatching { s.close() }
@@ -277,10 +308,23 @@ private fun closeWatchView(restoreFocus: Boolean) {
 private fun redrawnTwinOf(element: HTMLElement): HTMLElement? {
     if (element.isConnected) return element
     val key = element.getAttribute(FOCUS_KEY_ATTRIBUTE) ?: return null
-    val twins = document.querySelectorAll("[$FOCUS_KEY_ATTRIBUTE]")
-    for (i in 0 until twins.length) {
-        val twin = twins.item(i) as? HTMLElement ?: continue
-        if (twin.getAttribute(FOCUS_KEY_ATTRIBUTE) == key) return twin
+    return findByFocusKey(document, key)
+}
+
+/**
+ * The element under [root] that carries [key] in its [FOCUS_KEY_ATTRIBUTE], or null. Keys can hold
+ * any character (a member's key may be a session id from a task file), so they are compared as
+ * strings, never spliced into a selector, where a quote or backslash would make the query throw.
+ *
+ * @param root the part of the page to search.
+ * @param key the focus key to find.
+ * @return the first element carrying [key], or null when none does.
+ */
+internal fun findByFocusKey(root: ParentNode, key: String): HTMLElement? {
+    val candidates = root.querySelectorAll("[$FOCUS_KEY_ATTRIBUTE]")
+    for (i in 0 until candidates.length) {
+        val candidate = candidates.item(i) as? HTMLElement ?: continue
+        if (candidate.getAttribute(FOCUS_KEY_ATTRIBUTE) == key) return candidate
     }
     return null
 }

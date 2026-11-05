@@ -6,6 +6,11 @@
  */
 package se.soderbjorn.lunamux.client.viewmodel
 
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import se.soderbjorn.lunamux.AgentSessionSummary
 import se.soderbjorn.lunamux.AgentTask
 import se.soderbjorn.lunamux.AgentTaskMember
@@ -202,5 +207,48 @@ class WatchViewModelTest {
         watch.watch("bg1")
         give(listOf(session("bg1", background = true, leaf = null)))
         assertNull(watch.state)
+    }
+
+    @Test
+    fun `a record shown as a tab straight from a list never opens a watch, not even for an instant`() {
+        layout()
+        give(listOf(session("bg1", background = true, leaf = "leaf-bg")))
+        val seen = mutableListOf<WatchViewModel.Watch?>()
+        @OptIn(DelicateCoroutinesApi::class)
+        val collector = GlobalScope.launch(Dispatchers.Unconfined) { watch.stateFlow.collect { seen += it } }
+        runNow { watch.showRecordAsTab("bg1") }
+        collector.cancel()
+        assertEquals(listOf(WindowCommand.TakeOverTab("tab-bg"), WindowCommand.SetFocusedPane("tab-bg", "leaf-bg")), sent)
+        assertTrue(seen.isNotEmpty() && seen.all { it == null }, "every state the view saw was no watch: $seen")
+    }
+
+    @Test
+    fun `showing a record as a tab does nothing for an ended session, one in an ordinary tab or an unknown record`() {
+        layout()
+        give(
+            listOf(
+                session("done", state = "ended", background = true, leaf = "leaf-bg"),
+                session("w1", leaf = "leaf-w"),
+            ),
+        )
+        runNow {
+            watch.showRecordAsTab("done")
+            watch.showRecordAsTab("w1")
+            watch.showRecordAsTab("nobody")
+        }
+        assertTrue(sent.isEmpty())
+    }
+
+    @Test
+    fun `a stale build that showed nothing for an older watch does not close the watch opened since`() {
+        layout()
+        give(listOf(session("bg1", background = true, leaf = "leaf-bg"), session("bg2", background = true, leaf = "leaf-bg")))
+        watch.watch("bg2")
+        // A build made while no watch (or the watch on bg1) was open finishes late and shows nothing.
+        watch.forgetStale(null, null)
+        watch.forgetStale(WatchViewModel.Scope("bg1", "tab-1"), null)
+        assertEquals("bg2", watch.state?.recordId, "the newer watch survives")
+        watch.forgetStale(WatchViewModel.Scope("bg2", "tab-1"), null)
+        assertNull(watch.state, "the scope that showed nothing is the one forgotten")
     }
 }

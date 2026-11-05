@@ -178,7 +178,7 @@ private fun renderTaskPanel(state: TaskPanelViewModel.State) {
     panel.appendChild(content)
     content.scrollTop = scroll
     focusedKey?.let { key ->
-        (panel.querySelector("[$FOCUS_KEY_ATTRIBUTE=\"$key\"]") as? HTMLElement)?.focus()
+        findByFocusKey(panel, key)?.focus()
     }
     keepPanelClockTicking(true)
 }

@@ -121,19 +121,17 @@ class TaskPanelViewModelTest {
     }
 
     @Test
-    fun `the own session is the live record even when an ended record of a reused terminal id is newer`() {
-        // The server points the task's lead at the live record. A newer ended record of the same
-        // terminal id sits in a pane that is gone; the panel (and so ⌘I) must follow the live one.
+    fun `the panel follows the task's lead record when a newer ended record sits on the same leaf`() {
+        // A reused terminal id leaves an ended record and a live one on one leaf. Which of them is
+        // the task's lead is the server's to say (its index test covers that); given a lead that
+        // points at the live record, the panel shows for that task and lists no record twice.
         layout()
-        val ended = session("old", state = "ended", leaf = null, since = now - 10)
-        val live = session("own", since = now - 1_000_000)
+        val ended = session("old", state = "ended", leaf = "leaf-own", since = now - 10)
+        val live = session("own", leaf = "leaf-own", since = now - 1_000_000)
         give(listOf(task(lead = "own")), listOf(live, ended))
         assertTrue(vm.state.visible)
         assertEquals("t1", vm.state.taskId)
         assertFalse(vm.state.agents.any { it.recordId == "own" }, "the own session is not one of its own agents")
-
-        give(listOf(task(lead = "old")), listOf(live, ended))
-        assertFalse(vm.state.visible, "an ended record in no pane is not an own session in this tab")
     }
 
     @Test
@@ -373,7 +371,7 @@ class TaskPanelViewModelTest {
     }
 
     @Test
-    fun `show as tab from a selected line shows the tab without ever opening the watch`() {
+    fun `show as tab from a selected line shows the tab and leaves no watch open`() {
         layout()
         give(
             listOf(task(listOf(member("bg", "bg", "working", recordId = "bg1")))),
