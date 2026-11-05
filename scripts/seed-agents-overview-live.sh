@@ -27,7 +27,7 @@
 #                    two background ones as its "2 working" and lists neither.
 #                    The task also has a panel of blocks written by "release notes agent": in this tab ⌘I
 #                    shows it (the agents block first, both helpers listed and working), in any other tab
-#                    there is no panel. "peek" on a helper opens its terminal read-only; ⌘↵ takes it over.
+#                    there is no panel. ↵ on a helper watches its terminal read-only; ⌘↵ shows its tab as an ordinary tab.
 #
 # What to look at (⌘⇧A):
 #

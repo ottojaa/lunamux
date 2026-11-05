@@ -191,7 +191,7 @@ class TaskIndex(
     fun recompute() {
         synchronized(lock) {
             val records = tracker.snapshot()
-            adoptRunningPanes(records)
+            followOwnSessions(records)
             val snapshot = resolve(records, files.value, rows, meta)
             val fresh = snapshot.tasks.filter { it.id !in meta }
             if (fresh.isNotEmpty()) {
@@ -205,27 +205,63 @@ class TaskIndex(
     }
 
     /**
-     * Give a task stored the old way a pane to follow.
+     * Keep each task's own session where the conversation is: give a row stored the old way a pane
+     * to guess, then move a row to the pane its conversation was reopened in.
      *
      * A task named before layout leaf ids were stored remembers its own session only as a terminal
-     * session id, which the next start hands to whatever pane comes that many places in. Once a
-     * session that is not ended runs on that id, its pane is the best answer there is, and it is
-     * stored so the task stays with it from then on. An ended session proves nothing (right after
-     * a start every record is ended, and the newest on the id may have run in another pane), so it
-     * is never used; the task keeps resolving by terminal id until a running session shows up.
+     * session id, which each start hands to whatever pane comes that many places in. When a
+     * session that is not ended runs on that id, its pane is taken as the pane, as a best guess:
+     * the id may name another pane than it did when the task was named, and the guess is stored, so
+     * `set_task_lead` is the way to correct it. An ended session proves nothing (right after a
+     * start every record is ended, and the newest on the id may have run in another pane), so it is
+     * never used; the task keeps resolving by terminal id until a running session shows up.
+     *
+     * A resume always opens a new pane, and the tracker then either moves the ended record to that
+     * pane's leaf or starts a record there that takes over the conversation id. So that the task
+     * does not stay with the old pane (and offer "resume" for a conversation that is running), each
+     * row remembers the agent's conversation id of the session last seen in its pane. When nothing
+     * runs in the pane any more and that conversation runs in another pane, the row moves there.
+     * A new agent that starts in the old pane takes the remembered conversation over instead, so
+     * the pane keeps speaking for the task.
      *
      * Called by [recompute] with [lock] held, before it resolves.
      *
      * @param records every record the tracker holds.
      */
-    private fun adoptRunningPanes(records: List<AgentSessionRecord>) {
+    private fun followOwnSessions(records: List<AgentSessionRecord>) {
         for ((taskId, row) in meta.toList()) {
-            val terminalId = row.leadSession
-            if (row.leadLeaf != null || terminalId == null) continue
-            val leaf = records.filter { it.terminalSessionId == terminalId && it.state != ENDED }
-                .maxByOrNull { it.createdAt }?.leafId ?: continue
-            repo.setTaskLeadLeaf(taskId, leaf)
-            meta = meta + (taskId to row.copy(leadLeaf = leaf))
+            var current = row
+            val terminalId = current.leadSession
+            if (current.leadLeaf == null && terminalId != null) {
+                val leaf = records.filter { it.terminalSessionId == terminalId && it.state != ENDED }
+                    .maxByOrNull { it.createdAt }?.leafId
+                if (leaf != null) {
+                    repo.setTaskLeadLeaf(taskId, leaf)
+                    current = current.copy(leadLeaf = leaf)
+                }
+            }
+            if (current.leadLeaf == null) {
+                if (current !== row) meta = meta + (taskId to current)
+                continue
+            }
+            val here = recordBoundTo(records, current)
+            val conversation = current.leadAgentSession
+            if ((here == null || here.state == ENDED) && conversation != null) {
+                val moved = records.filter {
+                    it.agentSessionId == conversation && it.state != ENDED && it.leafId != null && it.leafId != current.leadLeaf
+                }.maxByOrNull { it.createdAt }
+                if (moved != null) {
+                    repo.moveTaskLead(taskId, moved.terminalSessionId, moved.leafId!!)
+                    meta = meta + (taskId to current.copy(leadSession = moved.terminalSessionId, leadLeaf = moved.leafId))
+                    continue
+                }
+            }
+            val seen = here?.agentSessionId
+            if (seen != null && seen != conversation) {
+                repo.setTaskLeadAgentSession(taskId, seen)
+                current = current.copy(leadAgentSession = seen)
+            }
+            if (current !== row) meta = meta + (taskId to current)
         }
     }
 
@@ -312,14 +348,14 @@ class TaskIndex(
     /**
      * Store the pane that speaks for a task: its layout leaf id, and the terminal session id it has
      * now. A pane with neither an open record nor a leaf (it cannot be told apart from a pane that
-     * is gone) is stored by terminal session id alone and picked up again by [adoptRunningPanes].
+     * is gone) is stored by terminal session id alone and picked up again by [followOwnSessions].
      */
     private fun storeOwnSession(taskId: String, sessionId: String) {
         val leaf = tracker.openRecordOf(sessionId)?.leafId ?: leafOfSession(sessionId)
         synchronized(lock) {
             ensureMeta(taskId)
             repo.setTaskLead(taskId, sessionId, leaf)
-            meta = meta + (taskId to meta.getValue(taskId).copy(leadSession = sessionId, leadLeaf = leaf))
+            meta = meta + (taskId to meta.getValue(taskId).copy(leadSession = sessionId, leadLeaf = leaf, leadAgentSession = null))
         }
         recompute()
     }

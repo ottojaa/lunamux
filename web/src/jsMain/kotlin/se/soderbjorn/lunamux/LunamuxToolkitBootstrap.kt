@@ -1511,6 +1511,7 @@ fun bootViaToolkitShell(root: HTMLElement) {
     registerAgentsOverviewHotkey() // ⌘⇧A opens the agents overview
     registerTaskPanelHotkey() // ⌘I shows or hides the task panel
     startTaskPanel() // the panel itself: follows the window state from here on
+    startWatch() // the watch overlay: follows the watch view model from here on
     registerWorld3dSpikeHotkey() // ⌥⌘← opens the world spike (mirror of ⌥⌘→)
     registerWorldSwitchHotkey() // ⌥⌘O cycles to the next world in flat 2D mode
     applyOverview3dChromeVisibility()

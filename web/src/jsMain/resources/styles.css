@@ -3825,18 +3825,24 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-agent { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; }
 .tp-agent.tp-dim { opacity: 0.5; }
 .tp-glyph { width: 1.2em; text-align: center; color: var(--tp-dim); flex: none; }
-.tp-state-working .tp-glyph, .tp-agent .tp-glyph.tp-peeked { color: var(--tp-accent); }
+.tp-state-working .tp-glyph { color: var(--tp-accent); }
 .tp-state-needs_you .tp-glyph { color: var(--tp-warn); }
 .tp-agent-text { flex: 1; min-width: 0; }
 .tp-agent-top { display: flex; justify-content: space-between; gap: 8px; }
 .tp-agent-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tp-agent-age { flex: none; color: var(--tp-dim); font-size: 11px; }
 .tp-agent-now { color: var(--tp-dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tp-verb, .tp-action {
+.tp-agent-hint { display: none; color: var(--tp-dim); font-size: 11px; margin-top: 2px; }
+.tp-agent-hint b { color: var(--tp-text); font-weight: 600; }
+.tp-agent-active { cursor: pointer; border-radius: 3px; }
+.tp-agent-active:hover, .tp-agent-active:focus-visible { background: color-mix(in srgb, var(--tp-text) 7%, transparent); outline: none; }
+.tp-agent-active:focus-visible { box-shadow: inset 2px 0 0 var(--tp-accent); }
+.tp-agent-active:hover .tp-agent-hint, .tp-agent-active:focus-visible .tp-agent-hint { display: block; }
+.tp-action {
     border: 1px solid var(--tp-line); background: transparent; color: inherit; font: inherit; font-size: 11px;
     padding: 2px 8px; cursor: pointer;
 }
-.tp-verb:hover, .tp-action:hover:not(:disabled) { border-color: var(--tp-accent); color: var(--tp-accent); }
+.tp-action:hover:not(:disabled) { border-color: var(--tp-accent); color: var(--tp-accent); }
 .tp-action:disabled { opacity: 0.4; cursor: default; }
 .tp-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 
@@ -3858,13 +3864,18 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-md code, .tp-md-code { background: color-mix(in srgb, var(--tp-text) 8%, transparent); padding: 0 3px; }
 .tp-md-code { display: block; margin: 0 0 6px; padding: 6px 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
 
-/* The read-only live view of a background member, laid over the panes. */
-.tp-peek {
-    position: fixed; z-index: 50; display: flex; flex-direction: column;
+/* The watch: the read-only live view of a background agent, laid over the panes. It never draws
+   outside the pane it lies over (a pane can be narrower than the header's words), so the header wraps
+   by words and the name line cuts with an ellipsis instead of running into the task panel. */
+.watch {
+    position: fixed; z-index: 50; display: flex; flex-direction: column; overflow: hidden;
     background: var(--dt-window-bg, var(--t-surface, #0c1a1e)); color: var(--t-text, #cfe3e2);
     font: 12px/1.4 var(--dt-font-mono, ui-monospace, Menlo, monospace);
 }
-.tp-peek-bar { display: flex; justify-content: space-between; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--t-border, #1b3136); }
-.tp-peek-live { color: var(--t-accent, #5fd4d0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tp-peek-keys { color: var(--t-text-dim, #6f8f92); white-space: nowrap; }
-.tp-peek-screen { flex: 1; min-height: 0; overflow: hidden; padding: 6px; }
+.watch-bar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; min-width: 0; padding: 8px 12px; border-bottom: 1px solid var(--t-border, #1b3136); }
+.watch-head { flex: 0 1 auto; min-width: 0; color: var(--t-accent, #5fd4d0); overflow-wrap: anywhere; }
+.watch-who { display: flex; flex: 1 1 8em; min-width: 0; overflow: hidden; color: var(--t-text-dim, #6f8f92); white-space: pre; }
+.watch-who-title { min-width: 0; margin-left: auto; overflow: hidden; text-overflow: ellipsis; }
+.watch-who-esc { flex: none; }
+.watch-screen { flex: 1; min-height: 0; overflow: hidden; padding: 6px; }
+.watch-empty { color: var(--t-text-dim, #6f8f92); }

@@ -66,6 +66,37 @@ object WindowState {
     }
 
     private fun newNodeId(): String = mintId("n", nodeIdCounter)
+
+    /**
+     * The number in a pane (layout leaf) id: `n7-ab12` and the older `n7` both give 7. Null for an id
+     * of any other shape.
+     *
+     * Called by [rehydrate] for every leaf id it meets and by [seedNodeIdsFromRecords]; the counter
+     * that [newNodeId] counts from must start above every number returned here.
+     *
+     * @param id a layout leaf id.
+     * @return the counter value the id was minted from, or null.
+     * @see newNodeId
+     */
+    internal fun nodeIdNumber(id: String): Long? = id.removePrefix("n").substringBefore('-').toLongOrNull()
+
+    /**
+     * Make [newNodeId] skip every pane id an agent session record remembers.
+     *
+     * A pane that was closed leaves no trace in the layout, but the sessions that ran in it are still
+     * on record under its id, and a task remembers its own session's pane by that id. A new pane that
+     * was handed the same id would put the task on an unrelated pane. [rehydrate] does this as part of
+     * rebuilding the layout; [initialize] calls it before [buildDefault] on the paths where the layout
+     * is not rebuilt (nothing persisted, or the persisted layout failed to load).
+     *
+     * @param repo the settings database whose agent session records are read.
+     * @see SettingsRepository.allAgentSessionLeafIds
+     */
+    private fun seedNodeIdsFromRecords(repo: SettingsRepository) {
+        val highest = runCatching { repo.allAgentSessionLeafIds() }.getOrDefault(emptyList())
+            .mapNotNull(::nodeIdNumber).maxOrNull() ?: return
+        nodeIdCounter.updateAndGet { maxOf(it, highest) }
+    }
     private fun newTabId(): String = mintId("t", tabIdCounter)
     private fun newWorldId(): String = mintId("w", worldIdCounter)
 
@@ -274,9 +305,11 @@ object WindowState {
                 rehydrate(loaded, repo)
             } catch (t: Throwable) {
                 log.warn("Failed to rehydrate persisted window config; using default", t)
+                seedNodeIdsFromRecords(repo)
                 buildDefault()
             }
         } else {
+            seedNodeIdsFromRecords(repo)
             buildDefault()
         }
         _config.value = cfg
@@ -324,8 +357,7 @@ object WindowState {
             // Ids may carry a `-nonce` suffix (post-#86 shape) — the counter
             // lives in the numeric portion before the dash. Legacy ids have
             // no dash, so substringBefore returns the whole remainder.
-            id.removePrefix("n").substringBefore('-').toLongOrNull()
-                ?.let { if (it > maxNodeId) maxNodeId = it }
+            nodeIdNumber(id)?.let { if (it > maxNodeId) maxNodeId = it }
         }
 
         fun rebuildLeaf(leaf: LeafNode): LeafNode? {

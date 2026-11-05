@@ -85,14 +85,21 @@ since that is what the person is asked to allow.
   which a restart keeps; the terminal session id is renumbered at every start and would name a
   different pane). It is looked up as the session running in that pane now; only when none is
   running does it stand for the newest ended session that ran in that pane, never another pane's.
-  A server restart keeps it: the session is then an ended one and ↵ resumes it. It is lost when
-  the pane is closed and that session is older than the history the overview loads (14 days, or
-  beyond the newest 300 sessions), or when the same conversation is resumed in a different pane
-  (the record then belongs to that pane); the task then has no own session until an agent names
-  one again with `set_task_lead`. `list_tasks` reports the terminal session id the pane has now as
-  `ownSession`, and null while the pane is closed. A task made before panes were remembered is
-  looked up by its terminal session id until a running session on that id shows which pane it is,
-  and keeps that pane from then on.
+  A server restart keeps it: the session is then an ended one and ↵ resumes it. A resume opens a
+  tab of its own, so the task also remembers the Claude conversation of its session, and when
+  that conversation runs in another pane while nothing runs in the remembered one, the task moves
+  to that pane. It does so once the conversation is known there (a resumed session is named by its
+  first hook, a moment after it starts). A new agent started in the remembered pane takes the
+  task's place there instead; the old conversation resumed elsewhere afterwards does not take it
+  back. ↵ on a task whose `open` action starts a new conversation does not move the task, since
+  that conversation is not the one it remembers. The own session is lost when the pane is closed
+  and that session is older than the history the overview loads (14 days, or beyond the newest
+  300 sessions); the task then has no own session until an agent names one again with
+  `set_task_lead`. `list_tasks` reports the terminal session id the pane has now as `ownSession`,
+  and null while the pane is closed. A task made before panes were remembered is looked up by its
+  terminal session id, and the first running session found on that id fixes the pane. This is a
+  guess: ids are handed out again at every start, so it can be a pane the task never had, and
+  `set_task_lead` corrects it.
 - **Three keys are not hinted.** **⌘↵** takes over the background session ↵ would peek: its tab
   becomes an ordinary tab and the app switches to it. **→** at the end of the search text peeks
   the session ↵ would open (**←** or esc goes back). **⌘⌫** asks to close a row that is one
@@ -382,18 +389,22 @@ Keyboard-shortcuts sidebar and can be rebound there. (Off macOS the default chor
 a terminal reads as Tab; rebind it there if that gets in the way.)
 
 The column starts with an **Agents** block, marked *live*: every other session of the task with its
-state mark (● working or waiting, ◆ needs you, ○ finished, ◉ the one being peeked), its name, its age
+state mark (● working or waiting, ◆ needs you, ○ finished), its name, its age
 at the right and, under the name, what it is doing, or its state word when it is not doing anything.
 A finished session is dimmed and reads "exited". A member that only the task file lists (one
 Lunamux does not host) shows the file's own label for it when it gives one: in place of the state
 word while it is not finished (for example "reviewing"), and after "exited" once it is (for example
-"exited · merged"). The action on a line is what a click does:
-*peek* for an agent in a background tab, *jump* for one in a tab of the strip, *open* for a member of
-a task file that no pane shows.
+"exited · merged"). Each line is a row you can reach and press: click the panel, then Tab to move
+between lines. A line shows what ↵ and ⌘↵ do once it is hovered or focused. An agent in a background tab
+reads "↵ watch · ⌘↵ show as tab"; one that already sits in a tab of the strip reads "↵ open", which
+jumps to that tab; a member of a task file that no pane shows also opens with ↵.
 
-*Peek* lays a read-only live copy of the agent's terminal over the pane you are looking at (the focused one, up to the column). It is a viewer:
-typing goes nowhere and the window never sends a size, so it cannot disturb the agent's grid. ⌘↵
-takes the background tab over (it becomes an ordinary tab) and esc goes back.
+The **watch** lays a read-only live copy of the agent's terminal over the pane you are looking at (the
+focused one, up to the column), under the header "Watching · read-only · ⌘↵ show as tab", with the
+agent's name and "esc back" beside it. It is a viewer: typing goes nowhere and the window never sends a
+size, so it cannot disturb the agent's grid. esc goes back and gives focus to the line you pressed. ⌘↵,
+from the open watch or straight from a selected line, shows the agent's background tab as an ordinary
+tab and switches to it; the session keeps running and stays in its task.
 
 After the agents come the blocks agents wrote. Each has its title on the left of its header and who wrote it and how long ago on the right. They are
 kept in the database and survive a restart; they are not removed when the task ends.

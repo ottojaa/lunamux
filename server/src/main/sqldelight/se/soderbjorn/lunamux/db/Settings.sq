@@ -52,7 +52,9 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
 -- one-line status. A row is made on first sight of the task and never replaces another.
 -- lead_leaf is the pane's layout leaf id, which survives a restart; lead_session is the terminal
 -- session id the pane had when it was named, which does not (ids are handed out again from s1),
--- and is the only thing an older row has.
+-- and is the only thing an older row has. lead_agent_session is the agent's own conversation id of
+-- the session last seen in that pane, so the task can follow the conversation when it is reopened
+-- in another pane.
 CREATE TABLE IF NOT EXISTS task_meta (
     task_id      TEXT NOT NULL PRIMARY KEY,
     started_at   INTEGER NOT NULL,
@@ -60,7 +62,8 @@ CREATE TABLE IF NOT EXISTS task_meta (
     status       TEXT,
     status_by    TEXT,
     status_at    INTEGER,
-    lead_leaf    TEXT
+    lead_leaf    TEXT,
+    lead_agent_session TEXT
 );
 
 -- The blocks agents write into a task's panel, any task id (an agent-made task or a task file's).
@@ -193,14 +196,21 @@ upsertAgentTask:
 INSERT OR REPLACE INTO agent_tasks(id, title, created_at, updated_at) VALUES (?, ?, ?, ?);
 
 selectTaskMeta:
-SELECT task_id, started_at, lead_session, status, status_by, status_at, lead_leaf FROM task_meta;
+SELECT task_id, started_at, lead_session, status, status_by, status_at, lead_leaf, lead_agent_session FROM task_meta;
 
 -- The first stamp wins: a task's place in the overview must not move once it has one.
 stampTaskStart:
 INSERT OR IGNORE INTO task_meta(task_id, started_at) VALUES (?, ?);
 
 setTaskLead:
+UPDATE task_meta SET lead_session = ?, lead_leaf = ?, lead_agent_session = NULL WHERE task_id = ?;
+
+-- Moves the task to the pane its own conversation was reopened in; the conversation stays.
+moveTaskLead:
 UPDATE task_meta SET lead_session = ?, lead_leaf = ? WHERE task_id = ?;
+
+setTaskLeadAgentSession:
+UPDATE task_meta SET lead_agent_session = ? WHERE task_id = ?;
 
 -- Fills in the pane of a row that only knows a terminal session id.
 setTaskLeadLeaf:

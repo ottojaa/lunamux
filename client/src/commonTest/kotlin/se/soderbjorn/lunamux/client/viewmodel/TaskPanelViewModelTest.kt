@@ -4,7 +4,7 @@
  * the agents block (member order, state words, ages, dimmed finished members, and what a click on
  * each kind of line does), the stored blocks (byline, newest-first timeline, progress, parsed
  * text, links that may open, the empty sentence), buttons that go dead with the own session,
- * and the peek with its take over.
+ * and the hand-off to the watch (which opens it, and shows a tab, from a selected line).
  */
 package se.soderbjorn.lunamux.client.viewmodel
 
@@ -36,7 +36,7 @@ import kotlin.test.assertTrue
 
 /**
  * Tests for [TaskPanelViewModel]: when the panel shows, the agents block and its click actions, the stored
- * blocks with their bylines, button presses, and the read-only peek with take over.
+ * blocks with their bylines, button presses, and what a selected line offers and does.
  *
  * Run by `:client:jvmTest` and `:client:jsTest`.
  *
@@ -54,7 +54,8 @@ class TaskPanelViewModelTest {
     private val sent = mutableListOf<WindowCommand>()
     private val windowState = WindowStateRepository()
     private var now = 10_000_000L
-    private val vm = TaskPanelViewModel(windowState, clock = { now }) { sent += it }
+    private val watch = WatchViewModel(windowState) { sent += it }
+    private val vm = TaskPanelViewModel(windowState, watch, clock = { now }) { sent += it }
 
     private fun session(
         id: String, state: String = "working", since: Long = now - 125_000, title: String = "agent $id",
@@ -120,6 +121,20 @@ class TaskPanelViewModelTest {
     }
 
     @Test
+    fun `the panel follows the task's lead record when a newer ended record sits on the same leaf`() {
+        // A reused terminal id leaves an ended record and a live one on one leaf. Which of them is
+        // the task's lead is the server's to say (its index test covers that); given a lead that
+        // points at the live record, the panel shows for that task and lists no record twice.
+        layout()
+        val ended = session("old", state = "ended", leaf = "leaf-own", since = now - 10)
+        val live = session("own", leaf = "leaf-own", since = now - 1_000_000)
+        give(listOf(task(lead = "own")), listOf(live, ended))
+        assertTrue(vm.state.visible)
+        assertEquals("t1", vm.state.taskId)
+        assertFalse(vm.state.agents.any { it.recordId == "own" }, "the own session is not one of its own agents")
+    }
+
+    @Test
     fun `no layout and no tasks show nothing`() {
         assertFalse(vm.state.visible)
         layout()
@@ -171,27 +186,13 @@ class TaskPanelViewModelTest {
     }
 
     @Test
-    fun `a finished member the file labels reads exited with the label, and the peeked member is marked`() {
+    fun `a finished member the file labels reads exited with the label`() {
         layout()
         give(
-            listOf(
-                task(
-                    listOf(
-                        member("done", "Marks", "ended", label = "merged"),
-                        member("bg", "Writer", "working", recordId = "bg1"),
-                        member("w", "Reviewer", "working", recordId = "w1"),
-                    ),
-                ),
-            ),
-            listOf(session("own"), session("bg1", background = true, leaf = "leaf-bg"), session("w1", leaf = "leaf-w")),
+            listOf(task(listOf(member("done", "Marks", "ended", label = "merged")))),
+            listOf(session("own")),
         )
         assertEquals("exited · merged", vm.state.agents.first { it.key == "done" }.stateWord)
-        assertTrue(vm.state.agents.none { it.peeking })
-
-        runNow { vm.activateMember(vm.state.agents.first { it.key == "bg" }) }
-        assertEquals(listOf("bg"), vm.state.agents.filter { it.peeking }.map { it.key })
-        vm.closePeek()
-        assertTrue(vm.state.agents.none { it.peeking })
     }
 
     @Test
@@ -226,7 +227,7 @@ class TaskPanelViewModelTest {
             ),
         )
         val byKey = vm.state.agents.associateBy { it.key }
-        assertEquals(MemberAction.PEEK, byKey.getValue("bg").action)
+        assertEquals(MemberAction.WATCH, byKey.getValue("bg").action)
         assertEquals(MemberAction.JUMP, byKey.getValue("listed").action)
         assertEquals(MemberAction.OPEN, byKey.getValue("file").action)
         assertEquals(MemberAction.NONE, byKey.getValue("nofile").action)
@@ -330,63 +331,67 @@ class TaskPanelViewModelTest {
     }
 
     @Test
-    fun `peeking a background member opens the read-only view and take over switches to its tab`() {
+    fun `a background member's line offers watch and show as tab, a visible one offers open, the rest offer nothing`() {
+        layout()
+        give(
+            listOf(
+                task(
+                    listOf(
+                        member("bg", "bg", "working", recordId = "bg1"),
+                        member("listed", "listed", "working", recordId = "w1"),
+                        member("file", "file", "idle", sessionId = "abc"),
+                        member("nofile", "nofile", "idle"),
+                        member("done", "done", "ended", recordId = "gone"),
+                    ),
+                ),
+            ),
+            listOf(
+                session("own"), session("bg1", background = true, leaf = "leaf-bg"), session("w1", leaf = "leaf-w"),
+                session("gone", state = "ended", leaf = null),
+            ),
+        )
+        val hints = vm.state.agents.associate { it.key to it.hint }
+        assertEquals("↵ watch · ⌘↵ show as tab", hints["bg"])
+        assertEquals("↵ open", hints["listed"])
+        assertEquals("↵ open", hints["file"])
+        assertNull(hints["nofile"])
+        assertNull(hints["done"])
+    }
+
+    @Test
+    fun `activating a background member's line opens the watch and sends nothing`() {
         layout()
         give(
             listOf(task(listOf(member("bg", "bg", "working", recordId = "bg1")))),
             listOf(session("own"), session("bg1", background = true, leaf = "leaf-bg", title = "Writer")),
         )
         runNow { vm.activateMember(vm.state.agents.single()) }
-        val peek = vm.state.peek!!
-        assertEquals(TaskPanelViewModel.PanelPeek("bg1", "Writer", "pty-leaf-bg", true), peek)
-        assertTrue(sent.isEmpty(), "peeking sends nothing")
+        assertEquals(WatchViewModel.Watch("bg1", "t1", "tab-1", "Writer", "pty-leaf-bg", true), watch.state)
+        assertTrue(sent.isEmpty(), "watching sends nothing")
+    }
 
-        runNow { vm.takeOver() }
+    @Test
+    fun `show as tab from a selected line shows the tab and leaves no watch open`() {
+        layout()
+        give(
+            listOf(task(listOf(member("bg", "bg", "working", recordId = "bg1")))),
+            listOf(session("own"), session("bg1", background = true, leaf = "leaf-bg")),
+        )
+        runNow { vm.showAsTab(vm.state.agents.single()) }
         assertEquals(listOf(WindowCommand.TakeOverTab("tab-bg"), WindowCommand.SetFocusedPane("tab-bg", "leaf-bg")), sent)
-        assertNull(vm.state.peek)
+        assertNull(watch.state)
     }
 
     @Test
-    fun `closing the peek and an ended member both clear it, and take over needs a background tab`() {
+    fun `show as tab from a line that is not a background member does nothing`() {
         layout()
         give(
-            listOf(task(listOf(member("bg", "bg", "working", recordId = "bg1")))),
-            listOf(session("own"), session("bg1", background = true, leaf = "leaf-bg")),
+            listOf(task(listOf(member("listed", "listed", "working", recordId = "w1"), member("file", "file", "idle", sessionId = "abc")))),
+            listOf(session("own"), session("w1", leaf = "leaf-w")),
         )
-        runNow { vm.activateMember(vm.state.agents.single()) }
-        vm.closePeek()
-        assertNull(vm.state.peek)
-
-        runNow { vm.activateMember(vm.state.agents.single()) }
-        give(listOf(task(listOf(member("bg", "bg", "ended", recordId = "bg1")))), listOf(session("own"), session("bg1", state = "ended", leaf = null, background = true)))
-        assertNull(vm.state.peek, "an ended member has nothing to mirror")
-
-        runNow { vm.takeOver() }
+        runNow { vm.state.agents.forEach { vm.showAsTab(it) } }
         assertTrue(sent.isEmpty())
-    }
-
-    @Test
-    fun `a peek is forgotten when the panel hides, so it never comes back with the tab`() {
-        layout()
-        give(
-            listOf(task(listOf(member("bg", "bg", "working", recordId = "bg1")))),
-            listOf(session("own"), session("bg1", background = true, leaf = "leaf-bg")),
-        )
-
-        runNow { vm.activateMember(vm.state.agents.single()) }
-        assertEquals("bg1", vm.state.peek?.recordId)
-        layout(active = "tab-2")
-        assertNull(vm.state.peek, "another tab shows no panel and so no peek")
-        layout(active = "tab-1")
-        assertNull(vm.state.peek, "coming back must not bring the peek back")
-
-        runNow { vm.activateMember(vm.state.agents.single()) }
-        assertEquals("bg1", vm.state.peek?.recordId)
-        vm.setOpen(false)
-        assertNull(vm.state.peek)
-        vm.setOpen(true)
-        assertNull(vm.state.peek, "showing the panel again starts without a peek")
-        assertTrue(sent.isEmpty())
+        assertNull(watch.state)
     }
 
     @Test
