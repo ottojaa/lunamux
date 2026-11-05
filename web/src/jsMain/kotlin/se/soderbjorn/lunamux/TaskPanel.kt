@@ -396,7 +396,7 @@ private fun buildLinks(links: TaskPanelViewModel.Block<TaskPanelViewModel.LinkRo
  * @param activity the block from the view model.
  * @return the block element.
  */
-private fun buildActivity(activity: TaskPanelViewModel.Block<TaskPanelViewModel.ActivityRow>): HTMLElement {
+internal fun buildActivity(activity: TaskPanelViewModel.Block<TaskPanelViewModel.ActivityRow>): HTMLElement {
     val root = block("Recent activity")
     if (activity.total == 0) {
         root.appendChild(div("tp-muted").also { it.textContent = "Nothing yet." })

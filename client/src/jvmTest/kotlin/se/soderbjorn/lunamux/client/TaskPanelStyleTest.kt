@@ -5,7 +5,7 @@
  * An entry that wraps to three lines must be followed by a gap of at least one line before the next
  * entry, so two entries never run together at the panel's narrowest width. The rule that gives the
  * gap is checked here; the rendered result (a three-line entry above a one-line entry at 320 and
- * 240 px) is measured on a page and its screenshots go with the hand-off.
+ * 240 px) is measured in a browser by `TaskPanelSpacingTest` in the web module's tests.
  *
  * Contains [TaskPanelStyleTest].
  *

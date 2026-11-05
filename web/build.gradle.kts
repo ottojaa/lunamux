@@ -1,3 +1,4 @@
+import java.util.Base64
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
 }
@@ -44,6 +45,31 @@ val generateVersionConstant by tasks.registering {
     }
 }
 
+// The browser tests lay real elements out with the real stylesheet. The stylesheet is handed to
+// them as a Kotlin string constant (base64, so no character needs escaping) generated from
+// `styles.css`, which keeps the test and the page reading the same file.
+val stylesCssFile = layout.projectDirectory.file("src/jsMain/resources/styles.css")
+val stylesGenDir = layout.buildDirectory.dir("generated/styles/kotlin")
+val generateStylesConstant by tasks.registering {
+    val cssFile = stylesCssFile.asFile
+    val outDir = stylesGenDir.get().asFile
+    inputs.file(cssFile)
+    outputs.dir(outDir)
+    doLast {
+        val out = File(outDir, "se/soderbjorn/lunamux/GeneratedStyles.kt")
+        out.parentFile.mkdirs()
+        val encoded = Base64.getEncoder().encodeToString(cssFile.readBytes())
+        out.writeText(
+            "package se.soderbjorn.lunamux\n\n" +
+                "/**\n" +
+                " * The web client's `styles.css`, base64 encoded, generated at build time for the\n" +
+                " * browser tests that lay elements out with the page's own rules.\n" +
+                " */\n" +
+                "internal const val STYLES_CSS_BASE64: String = \"$encoded\"\n",
+        )
+    }
+}
+
 kotlin {
     js {
         browser {
@@ -60,6 +86,12 @@ kotlin {
     sourceSets {
         jsMain {
             kotlin.srcDir(generateVersionConstant)
+        }
+        jsTest {
+            kotlin.srcDir(generateStylesConstant)
+        }
+        jsTest.dependencies {
+            implementation(kotlin("test"))
         }
         jsMain.dependencies {
             implementation(projects.clientServer)

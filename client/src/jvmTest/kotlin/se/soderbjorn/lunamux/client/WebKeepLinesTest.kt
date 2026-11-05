@@ -1,8 +1,8 @@
 /**
- * Holds in place two things the web page does that have no browser test: ⌘⇧A opens the agents
+ * Holds in place two things the web page does that no browser test in `:web:jsBrowserTest` covers: ⌘⇧A opens the agents
  * overview, and the task panel keeps its scroll position and focused line when it is drawn again.
  *
- * There is no browser test setup for the web module, so the tests read the web module's sources
+ * Those two are not drawn by a browser test, so the tests read the web module's sources
  * (paths come from system properties set in `client/build.gradle.kts`). The panel behaviour is
  * also seen on a running page in the rehearsal's page probe.
  *

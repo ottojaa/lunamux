@@ -231,9 +231,12 @@ server already trusts as a device (not the tool-endpoint token). It checks that:
 7. the panel's agents are only working or waiting ones; and the panel is four blocks with at most five
    entries before "+ N more".
 
-That a spinner never restarts when its row redraws is checked by `WorkingGlyphStyleTest` (the
-frame comes from the clock and no rule restarts the animation) and by a page probe that logs the
-frames for thirty seconds.
+That a spinner never restarts when its row redraws is checked by `WorkingGlyphRedrawTest` (run by
+`./gradlew :web:jsBrowserTest`: a keyed spinner is drawn again every 100 ms for two seconds in a
+headless Chrome, and its frame must follow the clock and only ever advance one place), by
+`WorkingGlyphStyleTest` (no rule restarts the animation) and by a page probe that logs the frames
+for thirty seconds. The same browser tests hold the space between the panel's activity entries
+(`TaskPanelSpacingTest`).
 
 ## Grouping sessions from an agent
 

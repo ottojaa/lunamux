@@ -91,7 +91,7 @@ fun main(args: Array<String>) {
             val finalChecks = first.zip(last).map { (a, b) -> if (!a.ok) a else b }
             val checks = finalChecks.filter { it.id.startsWith("C") } + tabs.result() + finalChecks.filter { !it.id.startsWith("C") }
             print(OverviewChecks.render(checks.sortedBy { it.id }))
-            println("INFO C8 a spinner never restarts when its row redraws: run WorkingGlyphStyleTest and the page probe (docs/tasks.md)")
+            println("INFO C8 a spinner never restarts when its row redraws: run :web:jsBrowserTest (WorkingGlyphRedrawTest) and the page probe (docs/tasks.md)")
             if (checks.all { it.ok }) 0 else 1
         } finally {
             socket.close()

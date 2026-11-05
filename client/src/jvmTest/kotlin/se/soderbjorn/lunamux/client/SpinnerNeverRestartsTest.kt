@@ -3,9 +3,9 @@
  * shows it is drawn again: the frame comes from the clock, every place that draws a spinner asks
  * for it by key, and the key hands back the element it built before.
  *
- * There is no browser test setup for the web module, so the tests read the web module's sources
- * (paths come from system properties set in `client/build.gradle.kts`). The behaviour itself is
- * watched on a running page by the checker's page probe, whose log goes with the hand-off.
+ * They read the web module's sources (paths come from system properties set in
+ * `client/build.gradle.kts`). The behaviour itself is run in a browser by `WorkingGlyphRedrawTest`
+ * in the web module's tests, and watched on a running page by the checker's page probe.
  *
  * Contains [SpinnerNeverRestartsTest].
  *
