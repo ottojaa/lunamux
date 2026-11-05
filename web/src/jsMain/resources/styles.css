@@ -3673,6 +3673,8 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-focus {
     grid-column: 2 / -1;
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
     gap: 7px;
     white-space: normal;
     font-size: 12px;
@@ -3681,10 +3683,9 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 }
 .ao-full { line-height: 1.5; }
 .ao-xtra { line-height: 1.5; }
-.ao-chips { display: flex; flex-wrap: wrap; gap: 8px; line-height: 1; }
+.ao-chips { display: flex; flex-wrap: wrap; gap: 8px; line-height: 1; min-width: 0; }
 .ao-pill {
-    display: inline-flex;
-    align-items: center;
+    display: inline-block;
     padding: 4px 9px;
     border-radius: 999px;
     white-space: nowrap;

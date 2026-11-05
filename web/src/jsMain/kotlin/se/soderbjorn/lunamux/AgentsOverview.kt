@@ -339,11 +339,12 @@ private fun onFooterKey(key: String) {
 /**
  * Turn a key press in the search box into a view-model call.
  *
- * ↑ and ↓ move the selection (which also closes a peek or a confirmation). → peeks at the session
+ * ↑ and ↓ move the selection (which also cancels a question, a peek or a confirmation). → peeks at the session
  * ↵ would open when the caret is at the end of the text, and ← goes back out of the peek. ⌘⌫ asks
  * to close the selected session (only while the box is empty and the row is one live session),
  * ⌘↵ takes the selected session's background tab over (in the list and in its peek), and esc steps
- * back one level: the peek, then the question, then the overlay. Space types into the search.
+ * back one level: the question the first ↵ asks, then a close confirmation, then the peek, then
+ * the overlay. Space types into the search.
  *
  * @param e the key press in the search box.
  */

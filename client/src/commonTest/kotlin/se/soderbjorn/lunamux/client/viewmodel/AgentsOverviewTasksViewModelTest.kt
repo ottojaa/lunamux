@@ -1594,6 +1594,36 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
+    fun theQuestionAndThePeekReplaceEachOtherAndEscStepsBackThroughThem() = runNow {
+        layout("leaf-m")
+        show(
+            listOf(hostedTask(lead = "lead")),
+            session("lead", "ended", taskId = "g1", endedAt = now - 5_000),
+            session("m", "working", taskId = "g1", lastActivityAt = now - 1_000),
+        )
+        vm.open()
+        vm.select("task:g1")
+        vm.peek()
+        assertTrue(vm.state.peek != null)
+        vm.activateSelected()
+        assertTrue(vm.state.ask != null, "the first enter asks even while a peek is open")
+        assertNull(vm.state.peek, "the question takes the peek's place, so the two are never up together")
+        vm.back()
+        assertNull(vm.state.ask, "the first esc cancels the question")
+        assertTrue(vm.state.open, "and leaves the overlay")
+        vm.peek()
+        vm.activateSelected()
+        vm.peek()
+        assertNull(vm.state.ask, "opening the peek withdraws the question")
+        assertTrue(vm.state.peek != null)
+        vm.back()
+        assertNull(vm.state.peek, "esc closes the peek")
+        assertTrue(vm.state.open)
+        vm.back()
+        assertFalse(vm.state.open, "the last one closes the overlay")
+    }
+
+    @Test
     fun escapeMovingOrANewQueryCancelsTheAskAndTheNextEnterAsksAgain() = runNow {
         layout("leaf-m")
         show(
