@@ -65,9 +65,9 @@ class AgentsOverviewSeedTest {
     @Test
     fun `two sessions are left open with an old state for a restart to end`() {
         AgentsOverviewSeed.seed(db, tasksDir, now)
-        val open = listOf("seed-open-idle", "seed-open-working").map { repo().findAgentSessionById(it)!! }
+        val open = listOf("seed-open-done", "seed-open-working").map { repo().findAgentSessionById(it)!! }
         assertTrue(open.all { it.state != "ended" && it.endedAt == null })
-        assertEquals(2 * day, now - open.first { it.id == "seed-open-idle" }.stateSince)
+        assertEquals(2 * day, now - open.first { it.id == "seed-open-done" }.stateSince)
     }
 
     @Test
@@ -103,11 +103,13 @@ class AgentsOverviewSeedTest {
     fun `the seeded task has a panel of every useful kind, all written by one agent, that a restart keeps`() {
         AgentsOverviewSeed.seed(db, tasksDir, now)
         val rows = repo().loadTaskPanelRows().filter { it.taskId == "seed-task-notes" }
-        assertEquals(listOf("documents", "status", "checks", "history", "links", "literal", "actions"), rows.map { it.blockId })
-        assertEquals(setOf("text", "progress", "timeline", "links", "documents", "actions"), rows.map { it.kind }.toSet())
+        assertEquals(listOf("progress", "links", "brief", "decisions", "activity"), rows.map { it.blockId })
+        assertEquals(setOf("progress", "links", "timeline"), rows.map { it.kind }.toSet())
         assertEquals(setOf("release notes agent"), rows.map { it.writtenBy }.toSet())
-        val literal = rows.single { it.blockId == "literal" }
-        assertTrue("<img src=x onerror=alert(1)>" in literal.body, "markup is stored as the text it is")
+        val activity = rows.single { it.blockId == "activity" }
+        assertTrue("<img src=x onerror=alert(1)>" in activity.body, "markup is stored as the text it is")
+        val shown = rows.filter { it.kind == "links" }.sumOf { r -> r.body.split("\"url\"").size - 1 }
+        assertTrue(shown > 5, "the links are more than the five the panel shows, so it says \"+ N more\": $shown")
         // Reading it back through the store, as a server start does, gives the same blocks.
         val index = TaskIndex(repo(), AgentSessionTracker(repo()), MutableStateFlow(emptyList()), { null }, { now })
         val stored = TaskPanelStore(repo(), index, { now }).blocksOf("seed-task-notes")
