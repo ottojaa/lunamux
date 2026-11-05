@@ -607,6 +607,21 @@ class SettingsRepository(
         database.settingsQueries.selectAgentSessionById(id, ::toAgentSessionRecord).executeAsOneOrNull()
 
     /**
+     * Look up the newest record of a conversation by the agent's own session id, whichever agent
+     * it belongs to.
+     *
+     * Called by the tracker's lookup for a resume that names a conversation instead of a record,
+     * which is how a task stores its main conversation: the record may be long gone from memory
+     * but its row is still here.
+     *
+     * @param conversationId the agent's own session id.
+     * @return the newest record of that conversation, or null when none was ever kept.
+     */
+    fun findAgentSessionByConversation(conversationId: String): AgentSessionRecord? =
+        database.settingsQueries.selectAgentSessionByConversation(conversationId, ::toAgentSessionRecord)
+            .executeAsOneOrNull()
+
+    /**
      * Mark every still-open record as ended, each at the last time it was known to be alive.
      *
      * Called by the tracker at startup: terminal sessions do not survive a restart, so a record

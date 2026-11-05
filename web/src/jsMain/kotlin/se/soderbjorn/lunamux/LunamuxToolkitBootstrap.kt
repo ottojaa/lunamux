@@ -969,7 +969,8 @@ private fun buildSidebarFooter(): HTMLElement {
  * One line of the footer's agent block: the label, its colour dot (null for the total line) and the
  * two counts.
  *
- * @property name    the line's label: "All worlds" for the total, else the world's display name.
+ * @property name    the line's label: "All worlds" for the total of a layout with several worlds,
+ *                    "Agents" for the total of a layout with one, else the world's display name.
  * @property accent  the world's resolved theme accent as a CSS colour string (the line's dot), or
  *   null for the total line.
  * @property working how many conversations work and are moving.
@@ -1002,9 +1003,10 @@ private fun computeAgentStatusRows(): List<WorldStatusRow> {
     val now = kotlin.js.Date.now().toLong()
     val total = AgentCounts.of(sessions, tasks, now)
     if (total.waiting == 0 && total.working == 0) return emptyList()
-    val out = mutableListOf(WorldStatusRow("All worlds", null, total.working, total.waiting))
-    val cfg = latestWindowConfig ?: return out
-    if (cfg.worlds.size < 2) return out
+    val cfg = latestWindowConfig
+    val several = cfg != null && cfg.worlds.size >= 2
+    val out = mutableListOf(WorldStatusRow(if (several) "All worlds" else "Agents", null, total.working, total.waiting))
+    if (cfg == null || !several) return out
     val byWorld = AgentCounts.byWorld(sessions, cfg, now)
     for (world in cfg.worlds) {
         val c = byWorld[world.id] ?: continue

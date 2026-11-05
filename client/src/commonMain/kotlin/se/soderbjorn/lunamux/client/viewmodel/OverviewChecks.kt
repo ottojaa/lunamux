@@ -95,14 +95,18 @@ object OverviewChecks {
         }
     }
 
-    /** The conversations each row stands for: a task's main conversation and its live members (background ones too), or the lone one. */
+    /** The conversations each row stands for: a task's main conversation and its live members, whichever way the task holds them (background ones too), or the lone one. */
     private fun conversationsOf(row: AgentsOverviewBackingViewModel.Row, s: Snapshot): Set<String> {
         val byKey = s.sessions.associateBy { it.id } + s.sessions.associateBy { it.conversationId }
         val task = row.taskId?.let { id -> s.tasks.firstOrNull { it.id == id } }
         if (task == null) return setOfNotNull(row.recordId?.let(byKey::get)?.conversationId)
-        val own = task.mainConversation
-        val live = s.sessions.filter { it.taskId == task.id && it.state != ENDED }
-        return (setOfNotNull(own) + live.map { it.conversationId }).toSet()
+        // The membership rule the rows use: the sessions the task file's members name, the hosted
+        // sessions that carry the task's id, and the main conversation.
+        val hosted = s.sessions.filter { it.taskId == task.id }
+        val named = task.members.mapNotNull { m -> m.recordId?.let(byKey::get) }
+        val unlisted = TaskMembers.unlistedSessions(task, byKey, hosted)
+        val live = (named + unlisted).filter { it.state != ENDED }
+        return (setOfNotNull(task.mainConversation) + live.map { it.conversationId }).toSet()
     }
 
     private fun inListedTab(session: AgentSessionSummary, config: WindowConfig): Boolean {
@@ -129,7 +133,7 @@ object OverviewChecks {
         return Check("C1", "the footer count equals the sum of \"needs you\" on the rows", problems)
     }
 
-    /** C2: a live conversation in a visible tab is in NOW exactly once; a background agent is never a row of its own. */
+    /** C2: a live conversation in a visible tab is in NOW exactly once; a background agent has no row of its own unless it waits for you. */
     private fun everyVisibleConversationOnce(s: Snapshot): Check {
         val problems = mutableListOf<String>()
         val nowRows = s.overview.now
@@ -139,9 +143,9 @@ object OverviewChecks {
         }
         for (row in allRows(s).filter { it.taskId == null }) {
             val session = s.sessions.firstOrNull { it.id == row.recordId || it.conversationId == row.recordId } ?: continue
-            if (session.background && session.state != ENDED) problems += "the background agent \"${session.title ?: session.id}\" has a row of its own"
+            if (session.background && session.state != ENDED && session.state != NEEDS_YOU) problems += "the background agent \"${session.title ?: session.id}\" has a row of its own"
         }
-        return Check("C2", "every live conversation in a visible tab is in NOW once; a background agent is never a row", problems)
+        return Check("C2", "every live conversation in a visible tab is in NOW once; a background agent has a row only while it waits", problems)
     }
 
     /** C3: no two rows are the same conversation. */
@@ -170,7 +174,9 @@ object OverviewChecks {
             when (row.enter) {
                 AgentsOverviewBackingViewModel.Enter.JUMP, AgentsOverviewBackingViewModel.Enter.RESUME -> {
                     val target = s.sessions.firstOrNull { it.id == row.recordId || it.conversationId == row.recordId }
-                    if (target == null) problems += "↵ on \"${row.title}\" names no conversation"
+                    // A main conversation older than the summaries kept is resumed by the id the task stores.
+                    if (target == null && row.enter == AgentsOverviewBackingViewModel.Enter.RESUME && row.recordId == main) Unit
+                    else if (target == null) problems += "↵ on \"${row.title}\" names no conversation"
                     else if (target.conversationId != main) problems += "↵ on \"${row.title}\" goes to conversation ${target.conversationId}, not the main one $main"
                 }
                 AgentsOverviewBackingViewModel.Enter.SHOW_WAITING -> {
@@ -194,6 +200,12 @@ object OverviewChecks {
             if (row == null) problems += "\"${c.title ?: c.id}\" needs you and no row leads to it"
             else if (row.enter != AgentsOverviewBackingViewModel.Enter.JUMP && row.enter != AgentsOverviewBackingViewModel.Enter.SHOW_WAITING) {
                 problems += "\"${c.title ?: c.id}\" needs you but ↵ on its row \"${row.title}\" does not open it"
+            } else {
+                // Opening something is not enough: the conversation Return opens must be one that asks.
+                val target = s.sessions.firstOrNull { it.id == row.recordId || it.conversationId == row.recordId }
+                if (target == null || target.state != NEEDS_YOU) {
+                    problems += "\"${c.title ?: c.id}\" needs you but ↵ on its row \"${row.title}\" opens \"${target?.title ?: target?.id ?: "nothing"}\", which does not ask"
+                }
             }
         }
         val byKey = s.sessions.associateBy { it.id } + s.sessions.associateBy { it.conversationId }

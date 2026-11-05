@@ -303,6 +303,18 @@ class TaskIndexTest {
     }
 
     @Test
+    fun `set_task_lead takes the conversation id of a record the database holds but memory does not`() {
+        session("s1")
+        val id = index.createTask("Plan", listOf("s1"))
+        repo.saveAgentSession(
+            AgentSessionRecord(id = "gone", agent = "claude", agentSessionId = "conv-gone", source = "hooks",
+                state = "ended", stateSince = 1, createdAt = 1, endedAt = 1),
+        )
+        index.setMainConversation(id, "conv-gone")
+        assertEquals("conv-gone", storedMain(id))
+    }
+
+    @Test
     fun `after a restart with reused pane ids list_tasks names the stored conversation and its live pane`() {
         val first = trackerOverRepo()
         first.onHook(paneIn("leaf-a", "s10"), event("SessionStart", "a-mine"))

@@ -164,8 +164,11 @@ class TaskPanelViewModel(
         val activity: Block<ActivityRow> = EMPTY_BLOCK,
     )
 
-    /** What the person has chosen: whether the panel is shown, and which lists are open in full. */
-    private data class Ui(val open: Boolean = true, val expanded: Set<Section> = emptySet())
+    /**
+     * What the person has chosen: whether the panel is shown, and which lists are open in full,
+     * each as the task id and the list, so opening Links on one task leaves every other task's cut.
+     */
+    private data class Ui(val open: Boolean = true, val expanded: Set<Pair<String, Section>> = emptySet())
 
     private val ui = MutableStateFlow(Ui())
     private val clockTick = MutableStateFlow(0)
@@ -210,11 +213,15 @@ class TaskPanelViewModel(
     fun toggle() = ui.update { it.copy(open = !it.open) }
 
     /**
-     * Open a list in full, in place. Called when the person presses a block's "+ N more".
+     * Open a list of the task the panel shows in full, in place. Called when the person presses a
+     * block's "+ N more". Does nothing when the panel shows no task.
      *
      * @param section the list to open.
      */
-    fun showMore(section: Section) = ui.update { it.copy(expanded = it.expanded + section) }
+    fun showMore(section: Section) {
+        val taskId = state.taskId ?: return
+        ui.update { it.copy(expanded = it.expanded + (taskId to section)) }
+    }
 
     /**
      * Do what ↵ or a click on [line] does: jump to a listed member, show a waiting background one
@@ -276,16 +283,16 @@ class TaskPanelViewModel(
             visible = ui.open,
             taskId = task.id,
             title = task.title,
-            agents = cut(agentLines(task, sessions, byId, config, own, now), Section.AGENTS, ui),
+            agents = cut(agentLines(task, sessions, byId, config, own, now), task.id, Section.AGENTS, ui),
             progress = progressOf(blocks),
-            links = cut(linkRows(blocks, now), Section.LINKS, ui),
-            activity = cut(activityRows(blocks, now), Section.ACTIVITY, ui),
+            links = cut(linkRows(blocks, now), task.id, Section.LINKS, ui),
+            activity = cut(activityRows(blocks, now), task.id, Section.ACTIVITY, ui),
         )
     }
 
-    /** Cut [all] to [SHOWN] entries unless the person opened [section]. */
-    private fun <T> cut(all: List<T>, section: Section, ui: Ui): Block<T> =
-        if (section in ui.expanded || all.size <= SHOWN) Block(all, 0, all.size)
+    /** Cut [all] to [SHOWN] entries unless the person opened [section] of task [taskId]. */
+    private fun <T> cut(all: List<T>, taskId: String, section: Section, ui: Ui): Block<T> =
+        if ((taskId to section) in ui.expanded || all.size <= SHOWN) Block(all, 0, all.size)
         else Block(all.take(SHOWN), all.size - SHOWN, all.size)
 
     /**

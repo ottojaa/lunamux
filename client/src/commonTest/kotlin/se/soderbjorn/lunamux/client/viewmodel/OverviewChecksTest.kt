@@ -149,6 +149,25 @@ class OverviewChecksTest {
     }
 
     @Test
+    fun aSessionATaskFileClaimsWithoutCarryingTheTaskIdIsInItsTasksRowOnlyOnce() {
+        usualCase()
+        val claimed = se.soderbjorn.lunamux.AgentTaskMember(key = "m1", title = "Claimed", state = "done", recordId = "solo")
+        windowState.updateAgentTasks(listOf(task("main").copy(members = listOf(claimed))))
+        val checks = OverviewChecks.evaluate(snapshot())
+        assertEquals(emptyList(), failed(checks), OverviewChecks.render(checks))
+    }
+
+    @Test
+    fun aRowWhoseReturnOpensAnotherConversationThanTheOneThatAsksFailsTheQuestionCheck() {
+        usualCase(bgState = "needs_you")
+        val s = snapshot()
+        val wrong = s.overview.now.map { if (it.taskId == "g1") it.copy(recordId = "main", enter = AgentsOverviewBackingViewModel.Enter.JUMP) else it }
+        val c5 = OverviewChecks.evaluate(s.copy(overview = s.overview.copy(now = wrong))).first { it.id == "C5" }
+        assertFalse(c5.ok)
+        assertTrue(c5.problems.single().contains("which does not ask"))
+    }
+
+    @Test
     fun thePanelListsFiveAndSaysHowManyMore() {
         usualCase()
         val s = snapshot()

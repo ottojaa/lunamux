@@ -861,8 +861,8 @@ private enum class SignalOverrideMode(val label: String) {
  * and a [showSpikeToast] names the mode you land on.
  *
  * The two override maps are written in lock-step so the effective mode is always one of
- * the four: **auto** removes both entries (the render loop and the 2D world-status footer
- * fall back to the pane's real session state); **working** / **waiting** force exactly one
+ * the four: **auto** removes both entries (the render loop falls back to the pane's real
+ * session state); **working** / **waiting** force exactly one
  * signal; **clear** forces both off (an explicit idle that overrides a live agent). The
  * cycle is seeded from the *current map entries* — not the effective look — so `auto` and
  * `clear` stay distinct even when both render as idle.
@@ -911,8 +911,8 @@ internal fun cycleSignalOverride() {
             spikeWaitingOverride[paneId] = false
         }
     }
-    // Keep the 2D sidebar world-status footer consistent with the override immediately, so
-    // returning to 2D shows the same tally the 3D warp-core boxes do.
+    // Redraw the footer; its counts come from the agent summaries, not from this override, so it
+    // does not change with the preview.
     updateWorldStatusFooter()
     showSpikeToast(next.label)
 }

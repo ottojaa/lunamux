@@ -218,24 +218,34 @@ class AgentSessionTracker(
                 rec = rec.copy(title = name)
                 put(rec)
             }
-            // A pane can change tabs (a move, a take over): the record follows the tab it is in now,
-            // or search and the overview's jump would treat it as still where it was.
+            // A pane can change tabs (a move, or a background tab shown while its agent waits): the
+            // record follows the tab it is in now, or search and the overview's jump would treat it
+            // as still where it was.
             if (rec.background != pane.background) {
                 rec = rec.copy(background = pane.background)
                 put(rec)
             }
             if (rec.source != SOURCE_SCREEN) {
-                // Claude Code sends no event when a permission prompt is approved, so
-                // a long tool would keep the row at needs_you until it finished. The
-                // screen is only used for that one step: it must have shown the
-                // prompt (waiting) before showing work again clears the row.
+                // Claude Code sends no event when a permission prompt is approved, and none when
+                // it is refused (a refused tool has no PostToolUse, and an interrupted turn no
+                // Stop), so the hooks alone would keep the row at needs_you for good. The screen
+                // is only used for that one step: it must have shown the prompt (waiting) first.
+                // Then work on screen means the person answered Yes, and a screen with neither
+                // the prompt nor work means the prompt is gone without a go-ahead (a No): done.
+                // The poller already holds the last state for a few polls, so one poll without
+                // the prompt is a prompt that has left. A later hook moves the row on again.
                 if (rec.state != NEEDS_YOU) promptSeen.remove(rec.id)
                 else if (pane.state == "waiting") promptSeen.add(rec.id)
-                else if (pane.state == "working" && promptSeen.remove(rec.id)) {
+                else if (promptSeen.remove(rec.id)) {
                     // Answering the prompt is a sign of life: without a fresh stamp the row
                     // would keep the time of the prompt and read "quiet" at once.
                     lastActivity[rec.id] = clock()
-                    put(rec.copy(state = WORKING, stateSince = clock(), question = null))
+                    if (pane.state == "working") {
+                        put(rec.copy(state = WORKING, stateSince = clock(), question = null))
+                    } else {
+                        toolInFlight.remove(rec.id)
+                        put(rec.copy(state = DONE, stateSince = clock(), nowLine = null, question = null))
+                    }
                 }
                 continue
             }
@@ -378,10 +388,19 @@ class AgentSessionTracker(
     /**
      * Look up a record for the resume command.
      *
-     * @param id the record id the user picked.
-     * @return the record from memory or the database, or null if unknown.
+     * [id] is a record id, else the agent's own conversation id: a task stores its main
+     * conversation that way, and the record of a conversation older than the ones held in memory
+     * is found by it in the database.
+     *
+     * @param id the record id the user picked, or a conversation id.
+     * @return the record from memory or the database, or null if unknown. For a conversation id,
+     *   the newest record of that conversation.
      */
-    fun find(id: String): AgentSessionRecord? = synchronized(lock) { records[id] ?: repo.findAgentSessionById(id) }
+    fun find(id: String): AgentSessionRecord? = synchronized(lock) {
+        records[id] ?: repo.findAgentSessionById(id)
+            ?: records.values.filter { it.conversationId == id }.maxByOrNull { it.createdAt }
+            ?: repo.findAgentSessionByConversation(id)
+    }
 
     /**
      * One record per conversation held in memory (the open run of it, else the newest ended one),
@@ -504,9 +523,17 @@ class AgentSessionTracker(
         val provisional = current != null && current.agent == CLAUDE &&
             current.agentSessionId == null && current.source == SOURCE_SCREEN
         if (provisional && earlier == null) {
-            return current!!.copy(
+            // From here on hooks decide when the conversation needs the person, so a needs_you the
+            // screen guessed (a picker or a dialog at start-up) is dropped: a session that has just
+            // started sits at its prompt, which is done. The event being folded sets it again if
+            // it really is a prompt.
+            val screenGuess = current!!.state == NEEDS_YOU
+            return current.copy(
                 agentSessionId = agentId, source = SOURCE_HOOKS, transcriptPath = transcript,
                 taskId = current.taskId ?: taskOfEarlier(agentId!!),
+                state = if (screenGuess) DONE else current.state,
+                stateSince = if (screenGuess) clock() else current.stateSince,
+                question = if (screenGuess) null else current.question,
             ).also { put(it) }
         }
         if (current != null) {

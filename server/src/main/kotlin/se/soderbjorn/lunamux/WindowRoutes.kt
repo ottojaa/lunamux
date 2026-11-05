@@ -865,8 +865,9 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
             val error = if (cmd.connected) hooks.connect() else hooks.disconnect()
             if (error != null) ctx.send(WindowEnvelope.AgentSessionError(null, error))
         }
-        // A window never lists a background tab, so it cannot mean to close one; only the agent
-        // that opened it closes it (the MCP close_tab tool).
+        // A window lists a background tab only while its agent waits on a prompt (a tab shown with
+        // ShowWaitingAgent). That tab is not the person's to close: it hides again by itself once
+        // the agent is answered, and only the agent that opened it closes it (the MCP close_tab tool).
         is WindowCommand.CloseTab -> if (!WindowState.isBackgroundTab(cmd.tabId)) WindowState.closeTab(cmd.tabId)
         is WindowCommand.ShowWaitingAgent -> {
             val rec = ctx.agentTracker?.find(cmd.recordId)

@@ -286,6 +286,25 @@ class TaskPanelViewModelTest {
     }
 
     @Test
+    fun `opening a list on one task leaves the same list of another task cut`() {
+        layout()
+        val links = TaskBlockContent.Links((1..19).map { TaskLink("Link $it", "https://example.com/$it") })
+        give(
+            listOf(task(), task(main = "own2", id = "t2")),
+            listOf(session("own"), session("own2", leaf = "leaf-w", taskId = "t2")),
+        )
+        blocks(block("l", links))
+        windowState.updateTaskPanel("t2", listOf(block("l", links)))
+        vm.showMore(Section.LINKS)
+        assertEquals(19, vm.state.links.shown.size)
+        layout(active = "tab-2")
+        assertEquals("t2", vm.state.taskId)
+        assertEquals(5, vm.state.links.shown.size, "the other task's Links list is still cut")
+        layout()
+        assertEquals(19, vm.state.links.shown.size, "the first task keeps its list open")
+    }
+
+    @Test
     fun `a list of exactly five shows no more button`() {
         layout()
         give(listOf(task()), listOf(session("own")))

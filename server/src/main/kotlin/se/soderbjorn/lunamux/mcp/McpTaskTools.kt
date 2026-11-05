@@ -190,6 +190,7 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
         val listed = taskIndex.listing().firstOrNull { it.id == taskId }
         McpToolResult.json(buildJsonObject {
             put("taskId", taskId)
+            put("ownSession", listed?.ownSessionId?.let(::JsonPrimitive) ?: JsonNull)
             put("mainConversation", mainConversationJson(listed))
         })
     }
@@ -222,7 +223,8 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
             description = "List the tasks there are and the sessions in each, so you can join one " +
                 "instead of making a duplicate. Call this before create_task when you may be continuing " +
                 "work that already has a task. mainConversation is the conversation that speaks for the task: " +
-                "its conversationId, and the sessionId of the pane it runs in now (null while it is closed).",
+                "its conversationId, and the sessionId of the pane it runs in now (null while it is closed). " +
+                "ownSession is the same pane's session id, kept for callers that still read it; use mainConversation.",
             inputSchema = schemaObject(),
             requiresWrite = false,
         ) { _, _ ->
@@ -231,6 +233,7 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
                     put("taskId", t.id)
                     put("title", t.title)
                     put("source", t.source)
+                    put("ownSession", t.ownSessionId?.let(::JsonPrimitive) ?: JsonNull)
                     put("mainConversation", mainConversationJson(t))
                     put("status", t.status?.let(::JsonPrimitive) ?: JsonNull)
                     put("sessions", buildJsonArray {

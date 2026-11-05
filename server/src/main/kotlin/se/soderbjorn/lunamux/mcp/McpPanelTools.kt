@@ -2,7 +2,9 @@
  * MCP tools for the panel beside a task's own session.
  *
  * An agent that works on a task can show the person what it is doing in blocks next to the task's
- * own session: text, facts, links, documents, a timeline, progress and buttons. `set_task_panel` replaces
+ * own session. The panel draws four things: the task's agents (it makes that block itself), a
+ * progress block, links and a timeline. Documents are stored and listed by `get_task_panel`;
+ * text, facts and buttons are stored too but no client draws them. `set_task_panel` replaces
  * all of them, `upsert_task_block` and `remove_task_block` change one, and `get_task_panel` reads
  * them back. This file turns an agent's JSON into [TaskPanelBlock]s and the stored blocks back
  * into JSON; the rules about sizes and shapes live in [se.soderbjorn.lunamux.TaskPanelLimits] and
@@ -220,7 +222,7 @@ fun registerMcpPanelTools(store: TaskPanelStore, tracker: AgentSessionTracker) {
                 "Other writers use the same panel, so start your ids with something of your own (like \"tests-status\"). " +
                 "'agents' is reserved.",
         ),
-        "type" to schemaString("What the block shows.", BLOCK_TYPES),
+        "type" to schemaString("What the block holds. The panel draws links, timeline and progress; the other types are stored and not drawn.", BLOCK_TYPES),
         "title" to schemaString("Heading above the block, up to ${TaskPanelLimits.TITLE_MAX} characters."),
         "text" to schemaString(
             "type text: up to ${TaskPanelLimits.TEXT_MAX} characters of markdown (paragraphs, # headings, - or 1. lists, " +
@@ -271,7 +273,9 @@ fun registerMcpPanelTools(store: TaskPanelStore, tracker: AgentSessionTracker) {
     writeTool(
         name = "set_task_panel",
         description = "Show the person what is going on in a task, in blocks beside the task's own session: " +
-            "text, facts, links, documents, a timeline, progress and buttons. This replaces every block of the task at once, in " +
+            "links, a timeline and progress (the panel also lists the task's agents itself). text, facts, documents and buttons " +
+            "are stored and read back by get_task_panel, but the panel does not draw them, so put what the person should see in " +
+            "links, the timeline or progress. This replaces every block of the task at once, in " +
             "the order you give (at most ${TaskPanelLimits.MAX_BLOCKS}). To change one block without touching the " +
             "rest use upsert_task_block. Call it when the picture changes, not on every step. Only you and other " +
             "agents write here; the person's list of the task's sessions is drawn by the panel itself.",

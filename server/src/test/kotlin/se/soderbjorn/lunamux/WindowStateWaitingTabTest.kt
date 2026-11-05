@@ -60,6 +60,61 @@ class WindowStateWaitingTabTest {
         }
     }
 
+    /**
+     * The shown tab is in another world than the person's: after the answer they are back in the
+     * world and on the tab they came from, and the other world keeps the tab it had.
+     */
+    @Test
+    fun aTabInAnotherWorldHidesAgainAndTheWorldAndTabTheyCameFromReturn() {
+        val home = WindowState.activeWorldId()!!
+        val visible = WindowState.addTab(worldId = home)
+        val other = WindowState.addWorld("Elsewhere")
+        val otherVisible = WindowState.addTab(worldId = other)
+        val bg = WindowState.addTab(worldId = other, background = true)
+        try {
+            WindowState.setActiveWorld(other)
+            WindowState.setActiveTab(otherVisible)
+            WindowState.setActiveWorld(home)
+            WindowState.setActiveTab(visible)
+
+            assertTrue(WindowState.showWaitingAgent(leafOf(bg)))
+            assertEquals(other, WindowState.activeWorldId(), "the person is taken to the agent's world")
+            assertEquals(bg, WindowState.config.value.worlds.first { it.id == other }.activeTabId)
+
+            WindowState.hideSettledWaitingTabs(emptySet())
+            assertFalse(tab(bg).isListed)
+            assertEquals(home, WindowState.activeWorldId(), "the world they came from comes back")
+            assertEquals(visible, WindowState.config.value.worlds.first { it.id == home }.activeTabId)
+            assertEquals(otherVisible, WindowState.config.value.worlds.first { it.id == other }.activeTabId,
+                "the other world shows the tab it showed before")
+        } finally {
+            WindowState.closeTab(bg); WindowState.closeTab(otherVisible)
+            WindowState.setActiveWorld(home)
+            WindowState.closeWorld(other); WindowState.closeTab(visible)
+        }
+    }
+
+    /** A person who went to another world while the tab was shown is left there. */
+    @Test
+    fun aPersonWhoMovedOnIsNotPulledBack() {
+        val home = WindowState.activeWorldId()!!
+        val visible = WindowState.addTab(worldId = home)
+        val other = WindowState.addWorld("Elsewhere")
+        val bg = WindowState.addTab(worldId = other, background = true)
+        try {
+            WindowState.setActiveTab(visible)
+            WindowState.showWaitingAgent(leafOf(bg))
+            WindowState.setActiveWorld(home)
+            WindowState.hideSettledWaitingTabs(emptySet())
+            assertEquals(home, WindowState.activeWorldId())
+            assertFalse(tab(bg).shownWhileWaiting)
+        } finally {
+            WindowState.closeTab(bg)
+            WindowState.setActiveWorld(home)
+            WindowState.closeWorld(other); WindowState.closeTab(visible)
+        }
+    }
+
     /** A pane no tab holds shows nothing. */
     @Test
     fun anUnknownPaneShowsNothing() {

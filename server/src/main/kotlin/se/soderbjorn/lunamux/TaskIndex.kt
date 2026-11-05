@@ -265,12 +265,12 @@ class TaskIndex(
      * session id, which `claude --resume` takes).
      *
      * @param taskId an agent-made task or a task file's id.
-     * @param conversationId a conversation the tracker holds.
+     * @param conversationId a conversation the tracker or its database holds.
      * @throws TaskException when the task or the conversation is unknown.
      */
     fun setMainConversation(taskId: String, conversationId: String) {
         requireTask(taskId)
-        val known = tracker.snapshot().firstOrNull { it.conversationId == conversationId || it.id == conversationId }
+        val known = tracker.find(conversationId)
             ?: throw TaskException("Unknown conversation '$conversationId'. Use the conversationId list_tasks or list_sessions shows.")
         storeMainConversation(taskId, known.conversationId)
     }

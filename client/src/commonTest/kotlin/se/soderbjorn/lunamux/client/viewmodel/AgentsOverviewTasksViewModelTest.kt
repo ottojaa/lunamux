@@ -471,6 +471,17 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
+    fun aTaskRowAndTheFooterLeaveOutTheUnhostedWorkingMembersWhileTheMainConversationIsClosed() {
+        show(
+            listOf(task(mainConversation = "main", members = listOf(member("a", "working", recordId = "a"), member("b", "working")))),
+            session("main", "ended"),
+            session("a", "working", lastActivityAt = now - 1_000),
+        )
+        assertEquals("working", row("task:g1").stateWord, "the one run Lunamux hosts")
+        assertEquals(1, vm.state.workingCount, "the row and the footer both count only the hosted run")
+    }
+
+    @Test
     fun aTaskOutsideEveryTabWithSessionsThatMoveStillReadsWorkingNotFinished() {
         showAway(
             listOf(task(members = listOf(member("a", "working", recordId = "a"), member("b", "working")))),
@@ -619,7 +630,7 @@ class AgentsOverviewTasksViewModelTest {
         show(
             listOf(hostedTask(main = "main")),
             session("main", "done", taskId = "g1", since = 1_000),
-            session("m", "needs_you", taskId = "g1", since = 2_000),
+            session("m", "working", taskId = "g1", lastActivityAt = now - 1_000),
         )
         vm.open()
         vm.select("task:g1")
@@ -634,7 +645,7 @@ class AgentsOverviewTasksViewModelTest {
         show(
             listOf(hostedTask(main = "main", hasOpen = true)),
             session("main", "ended", taskId = "g1", since = 500, endedAt = now - 5_000),
-            session("m", "needs_you", taskId = "g1", since = 2_000),
+            session("m", "working", taskId = "g1", lastActivityAt = now - 1_000),
         )
         vm.open()
         vm.select("task:g1")
@@ -654,7 +665,7 @@ class AgentsOverviewTasksViewModelTest {
         show(
             listOf(hostedTask(main = "main")),
             session("main", "ended", taskId = "g1", since = 500, endedAt = now - 5_000),
-            session("m", "needs_you", taskId = "g1", since = 2_000),
+            session("m", "working", taskId = "g1", lastActivityAt = now - 1_000),
         )
         vm.open()
         vm.select("task:g1")
@@ -684,6 +695,34 @@ class AgentsOverviewTasksViewModelTest {
         assertEquals("r2", r.recordId)
         vm.activate(r)
         assertEquals(jumpTo("leaf-r2"), sent)
+    }
+
+    @Test
+    fun aClosedMainConversationDoesNotHideAWaitingMemberInAListedTab() = runNow {
+        layout("leaf-m")
+        show(
+            listOf(hostedTask(main = "main")),
+            session("main", "ended", taskId = "g1", since = 500, endedAt = now - 5_000),
+            session("m", "needs_you", taskId = "g1", since = 2_000),
+        )
+        val r = row("task:g1")
+        assertEquals(Enter.JUMP, r.enter)
+        assertEquals("m", r.recordId)
+    }
+
+    @Test
+    fun aLiveMainConversationThatWorksDoesNotHideAWaitingMemberInAListedTab() = runNow {
+        layout("leaf-main", "leaf-ask")
+        show(
+            listOf(hostedTask(main = "main")),
+            session("main", "working", taskId = "g1", lastActivityAt = now - 1_000),
+            session("ask", "needs_you", taskId = "g1", since = 1_000),
+        )
+        val r = row("task:g1")
+        assertEquals(Enter.JUMP, r.enter)
+        assertEquals("ask", r.recordId)
+        vm.activate(r)
+        assertEquals(jumpTo("leaf-ask"), sent)
     }
 
     @Test
@@ -1391,6 +1430,44 @@ class AgentsOverviewTasksViewModelTest {
         assertEquals(Enter.SHOW_WAITING, row("task:g1").enter)
         assertEquals("↵ answer it · opens as a tab until it works on · ↑↓ move · esc close", footerText())
     }
+    @Test
+    fun aWaitingBackgroundSessionThatNoTaskHoldsHasARowWhoseReturnListsItsTab() = runNow {
+        layoutWithBackground(listOf("leaf-listed"), listOf("leaf-bg", "leaf-bgworks"))
+        show(
+            emptyList(),
+            session("listed", "working", lastActivityAt = now - 1_000),
+            session("bg", "needs_you", background = true),
+            session("bgworks", "working", background = true, lastActivityAt = now - 1_000),
+        )
+        assertEquals(setOf("listed", "bg"), vm.state.rows.map { it.id }.toSet(), "a background session that works has no row, one that asks has")
+        val r = row("bg")
+        assertEquals(Enter.SHOW_WAITING, r.enter)
+        assertEquals("bg", r.recordId)
+        assertEquals(1, vm.state.needYouCount)
+        vm.activate(r)
+        assertEquals(listOf<WindowCommand>(WindowCommand.ShowWaitingAgent("bg")), sent)
+    }
+
+    @Test
+    fun aMainConversationNoSummaryHoldsAnyMoreIsResumedByItsStoredIdNotReplacedByAnotherSession() = runNow {
+        layout("leaf-m")
+        show(
+            listOf(hostedTask(main = "conv-from-last-month")),
+            session("m", "working", taskId = "g1", lastActivityAt = now - 1_000),
+            session("older", "ended", taskId = "g1", endedAt = now - 9_000),
+        )
+        val r = row("task:g1")
+        assertEquals(Enter.RESUME, r.enter)
+        assertEquals("conv-from-last-month", r.recordId)
+        assertEquals("conversation closed", r.ask?.tag)
+        vm.open()
+        vm.select("task:g1")
+        vm.activateSelected()
+        assertTrue(sent.isEmpty())
+        vm.activateSelected()
+        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("conv-from-last-month")), sent)
+    }
+
     @Test
     fun theFirstEnterOnAClosedOwnConversationAsksAndTheSecondResumesItInANewTab() = runNow {
         layout("leaf-m")

@@ -79,7 +79,7 @@ class AgentsOverviewMomentsTest {
         val earlier = (1..7).map { conversation("old$it", "ended", ended = true, since = it * 60_000L) }
         show(
             listOf(task("main")),
-            conversation("main", "working", taskId = "g1"),
+            conversation("main", "done", taskId = "g1"),
             conversation("b1", "working", taskId = "g1", background = true),
             conversation("b2", "working", taskId = "g1", background = true),
             conversation("codex", "working", agent = "codex", since = 2_000),
@@ -87,14 +87,14 @@ class AgentsOverviewMomentsTest {
             *earlier.toTypedArray(),
         )
         assertEquals(listOf("task:g1", "codex", "done"), vm.state.now.map { it.id })
-        assertEquals("3 working", row("task:g1").stateWord)
+        assertEquals("2 working", row("task:g1").stateWord)
         assertEquals("working", row("codex").stateWord)
         assertEquals("done", row("done").stateWord)
         assertEquals(setOf("finished"), vm.state.earlier.map { it.stateWord }.toSet())
         assertEquals(5, vm.state.earlier.size)
         assertEquals(2, vm.state.earlierHidden, "five shown, then \"+ 2 more\"")
         assertEquals(0, vm.state.needYouCount)
-        assertEquals(4, vm.state.workingCount)
+        assertEquals(3, vm.state.workingCount)
         assertFalse(vm.state.rows.any { it.recordId in setOf("b1", "b2") }, "a background agent never gets a row")
     }
 
@@ -117,6 +117,10 @@ class AgentsOverviewMomentsTest {
         assertEquals("◆", row("task:g1").marker)
         assertEquals(1, vm.state.needYouCount)
         assertEquals(1, AgentCounts.of(windowState.agentSessions.value, windowState.agentTasks.value, now).waiting)
+        // The tab strip's dot is the waiting state of the panes in the tab; the pane of the main conversation sits in tab-1.
+        windowState.updateStates(mapOf("s-leaf-main" to "waiting"))
+        val tab = windowState.config.value!!.tabs.single { it.id == "tab-1" }
+        assertTrue(tab.panes.any { windowState.states.value[it.leaf.sessionId] == "waiting" }, "the tab holding the asking conversation shows the waiting dot")
     }
 
     /** Moment 4: a background member asks; the tab stays hidden. */

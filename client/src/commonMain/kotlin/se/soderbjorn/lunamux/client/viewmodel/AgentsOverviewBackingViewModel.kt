@@ -507,7 +507,7 @@ class AgentsOverviewBackingViewModel(
 
     /**
      * Show the overlay with an empty search and the first ◆ row in list order selected (the
-     * first row when nothing needs the user). Called by ⌘⇧A and by a click on the footer's count.
+     * first row when nothing needs the user). Called by ⌘⇧A, the only way in.
      */
     fun open() {
         windowState.clearAgentSessionError()
@@ -898,8 +898,12 @@ class AgentsOverviewBackingViewModel(
      * @property started epoch millis the task started, which fixes its place in NOW.
      * @property enter what ↵ does on the task's row.
      * @property target the session [enter] acts on, or null for [Enter.OPEN] and [Enter.NONE].
+     * @property resumeId the stored id of the task's main conversation when no summary holds it any
+     *   more (it is older than the ones kept), else null. ↵ resumes the conversation by this id.
      * @property mainId the record id of the task's main conversation, or null when Lunamux does not
      *   list it.
+     * @property countsUnhosted false when the task names a main conversation that is not open; the task's
+     *   row then leaves the members Lunamux does not host out of its working count, as the footer does.
      */
     private class TaskUnit(
         val task: AgentTask,
@@ -913,6 +917,8 @@ class AgentsOverviewBackingViewModel(
         val enter: Enter,
         val target: AgentSessionSummary?,
         val mainId: String?,
+        val resumeId: String?,
+        val countsUnhosted: Boolean,
     ) {
         /** Whether the task is in EARLIER: every place that draws a task there asks this. */
         val inEarlier: Boolean get() = !inNow
@@ -984,10 +990,11 @@ class AgentsOverviewBackingViewModel(
             }
 
         // A conversation a task unit holds is drawn inside it, not again as a lone conversation. A
-        // conversation an agent runs out of sight never gets a row of its own: it is counted, and a task
-        // that holds it shows it.
+        // conversation an agent runs out of sight gets no row of its own while it works or rests: it is
+        // counted, and a task that holds it shows it. One that waits for the person and that no task
+        // holds does get a row, because ↵ on it is the only way to its question.
         val claimed = units.flatMap { u -> u.runs.mapNotNull { it.session?.id } }.toSet()
-        val singles = sessions.filter { it.id !in claimed && !it.background }
+        val singles = sessions.filter { it.id !in claimed && (!it.background || (it.state == NEEDS_YOU && c.live(it))) }
 
         // NOW is every live conversation in a tab, once each, whatever its state, and every task with a
         // live conversation. NOW keeps the order work started in, for tasks and lone conversations alike,
@@ -1186,16 +1193,18 @@ class AgentsOverviewBackingViewModel(
         }
         val questionWaits = unhostedAsks.isNotEmpty() && !mainLive
         val inNow = open.isNotEmpty() || mainLive || questionWaits
-        val (enter, target) = enterOf(t, main, mainLive, runs, open)
-        return TaskUnit(t, runs, waiting, since, recency, inNow, questionWaits, started, enter, target, main?.id)
+        val resumeId = t.mainConversation.takeIf { main == null }
+        val (enter, target) = enterOf(t, main, mainLive, runs, open, resumeId)
+        return TaskUnit(t, runs, waiting, since, recency, inNow, questionWaits, started, enter, target, main?.id, resumeId, t.mainConversation == null || (main != null && main.state != ENDED))
     }
 
     /**
      * What ↵ does on a task's row, and on which conversation.
      *
-     * A live main conversation is jumped to, unless a background conversation of the task waits for
-     * the person and the main one does not: that one is opened as a marked tab. With the main
-     * conversation closed, a waiting background conversation is opened as a marked tab, else the
+     * A live main conversation is jumped to, unless another open conversation of the task waits for
+     * the person and the main one does not: that one is jumped to, or opened as a marked tab when it
+     * is a background one. With the main conversation closed, a waiting open conversation is
+     * reached the same way, else the
      * closed main conversation is resumed (a conversation the task has in a listed tab does not
      * replace it), else a live conversation in a listed tab is jumped to (the one waiting longest
      * on the person, else the busiest), else the task's `open` action runs, else the newest
@@ -1206,7 +1215,10 @@ class AgentsOverviewBackingViewModel(
      * @param mainLive whether [main] is live and its pane is in the layout.
      * @param runs the task's conversations.
      * @param open the conversations whose pane is in the layout.
-     * @return what ↵ does and the session it acts on (null for `open` and for nothing).
+     * @param resumeId the stored id of a main conversation no summary holds, or null; it is resumed
+     *   like a closed main conversation, by that id.
+     * @return what ↵ does and the session it acts on (null for `open`, for nothing and for a resume
+     *   by [resumeId]).
      */
     private fun enterOf(
         t: AgentTask,
@@ -1214,12 +1226,12 @@ class AgentsOverviewBackingViewModel(
         mainLive: Boolean,
         runs: List<Run>,
         open: List<Run>,
+        resumeId: String?,
     ): Pair<Enter, AgentSessionSummary?> {
-        val hiddenAsks = open.filter { it.session!!.background && it.member.state == NEEDS_YOU }
-            .minByOrNull { it.member.sinceMillis }?.session
+        val asking = open.filter { it.member.state == NEEDS_YOU }.minByOrNull { it.member.sinceMillis }?.session
         val mainAsks = main != null && main.state == NEEDS_YOU
-        if (mainLive && (hiddenAsks == null || mainAsks)) return Enter.JUMP to main
-        if (hiddenAsks != null) return Enter.SHOW_WAITING to hiddenAsks
+        if (mainLive && (asking == null || mainAsks)) return Enter.JUMP to main
+        if (asking != null) return (if (asking.background) Enter.SHOW_WAITING else Enter.JUMP) to asking
         // The conversation that most needs the person comes first: the ◆ that has waited longest, then
         // the working one with the freshest sign of life, then any other open one.
         val urgency = compareBy<Run>(
@@ -1231,6 +1243,7 @@ class AgentsOverviewBackingViewModel(
         return when {
             mainLive -> Enter.JUMP to main
             main != null -> Enter.RESUME to main
+            resumeId != null -> Enter.RESUME to null
             listed != null -> Enter.JUMP to listed.session
             t.hasOpen -> Enter.OPEN to null
             newest != null -> Enter.RESUME to newest
@@ -1323,7 +1336,8 @@ class AgentsOverviewBackingViewModel(
     private fun taskRow(u: TaskUnit, c: Context): Row {
         val t = u.task
         val id = "$TASK_PREFIX${t.id}"
-        val moving = u.runs.filter { runMoving(it, t.refreshedAtMillis, c.nowMillis) }
+        // A task whose main conversation is named but closed does not count the members Lunamux does not host, as the footer does not.
+        val moving = u.runs.filter { (it.session != null || u.countsUnhosted) && runMoving(it, t.refreshedAtMillis, c.nowMillis) }
         val waiting = u.waiting.minByOrNull { it.member.sinceMillis }
         // Something that moves is working, wherever the task is filed; a task that only rests reads done in NOW and finished in EARLIER.
         val stateWord = when {
@@ -1359,10 +1373,10 @@ class AgentsOverviewBackingViewModel(
                 error,
             ),
             chips = chipsOf(t.title, target, c),
-            ask = askOf(id, u.enter, own = target != null && target.id == u.mainId),
+            ask = askOf(id, u.enter, own = if (target != null) target.id == u.mainId else u.resumeId != null),
             sinceMillis = if (u.inEarlier) u.recency else u.since,
             enter = u.enter,
-            recordId = target?.id,
+            recordId = target?.id ?: u.resumeId.takeIf { u.enter == Enter.RESUME },
             isLive = live,
             canClose = single != null && c.live(single) && !single.background,
             error = error,
@@ -1370,7 +1384,10 @@ class AgentsOverviewBackingViewModel(
     }
 
     /**
-     * The row of a conversation that is a task of one.
+     * The row of a lone conversation, or of a conversation that is a task of one.
+     *
+     * Its ↵ jumps to a live conversation, opens a waiting background one as a marked tab and
+     * resumes one that is not live.
      *
      * @param s the conversation's summary.
      * @param earlier whether the row is drawn in EARLIER, where a conversation that rests reads
@@ -1392,7 +1409,11 @@ class AgentsOverviewBackingViewModel(
             moving -> nowLine ?: ""
             else -> ""
         }
-        val enter = if (live) Enter.JUMP else Enter.RESUME
+        val enter = when {
+            live && s.background && needs -> Enter.SHOW_WAITING
+            live -> Enter.JUMP
+            else -> Enter.RESUME
+        }
         val error = c.errorOf(id)
         val title = taskTitle ?: titleOf(s)
         return Row(

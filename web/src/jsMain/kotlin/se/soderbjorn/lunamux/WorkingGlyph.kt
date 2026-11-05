@@ -82,7 +82,8 @@ private fun tick() {
  * or "N working", by the footer's working count and by the task panel's agent lines. Such a
  * place is moving by definition, so the glyph is always live. A glyph that was built for [key]
  * and is still in use is returned as it is: appending it to a new parent moves it, with its
- * frame and its fade intact.
+ * frame intact; a fade in progress at that moment is cut short by the move, as the browser
+ * cancels a transition on a node that is taken out and put back.
  *
  * @param key what the glyph stands for (a row, a footer, an agent line), or null for one that
  *   nothing draws twice.

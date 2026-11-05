@@ -361,6 +361,36 @@ class AgentSessionTrackerTest {
     }
 
     @Test
+    fun `a prompt answered with No leaves needs_you once it is gone from the screen`() {
+        val t = tracker()
+        t.onHook(pane(), event("PreToolUse", "a-1", "tool_name" to "Bash"))
+        t.onHook(pane(), event("Notification", "a-1", "message" to "Claude needs your permission to use Bash"))
+
+        // No go-ahead and no work follows a refusal: the screen shows neither the prompt nor work.
+        t.onPoll(listOf(pane(agent = "claude", state = "waiting")))
+        assertEquals("needs_you", t.summaries.value.single().state)
+        now = 5_000
+        t.onPoll(listOf(pane(agent = "claude", state = null)))
+        val row = t.summaries.value.single()
+        assertEquals("done", row.state)
+        assertNull(row.question)
+        assertEquals(now, row.lastActivityAt)
+
+        // A hook that arrives later still moves the row on, and a later prompt is asked afresh.
+        t.onHook(pane(), event("Notification", "a-1", "message" to "Claude needs your permission to use Bash"))
+        assertEquals("needs_you", t.summaries.value.single().state)
+    }
+
+    @Test
+    fun `a prompt the screen never showed is not cleared by a screen without it`() {
+        val t = tracker()
+        t.onHook(pane(), event("PreToolUse", "a-1", "tool_name" to "Bash"))
+        t.onHook(pane(), event("Notification", "a-1", "message" to "Claude needs your permission to use Bash"))
+        t.onPoll(listOf(pane(agent = "claude", state = null)))
+        assertEquals("needs_you", t.summaries.value.single().state)
+    }
+
+    @Test
     fun `a prompt approved long after it was asked is a fresh sign of life`() {
         val t = tracker()
         t.onHook(pane(), event("PreToolUse", "a-1", "tool_name" to "Bash"))
@@ -403,6 +433,34 @@ class AgentSessionTrackerTest {
         assertEquals("done", row.state)
         assertNull(row.endedAt)
         assertEquals("leaf-s9", row.leafId)
+    }
+
+    @Test
+    fun `a freshly resumed session at its prompt is done, not needs_you, whichever way its record is found`() {
+        // The pane was reopened and the screen showed a dialog before the hook named the conversation.
+        val reopen = tracker()
+        reopen.onHook(pane("s1"), event("SessionStart", "a-1"))
+        reopen.onSessionDestroyed("s1", "old screen")
+        reopen.onPoll(listOf(pane("s9", agent = "claude", state = "waiting")))
+        assertEquals(2, reopen.summaries.value.size, "the screen opened a record of its own")
+        assertEquals("needs_you", reopen.summaries.value.single { it.state != "ended" }.state)
+        reopen.onHook(pane("s9", agent = "claude", state = "waiting"), event("SessionStart", "a-1"))
+        val reopened = reopen.summaries.value.single()
+        assertEquals("done", reopened.state)
+        assertNull(reopened.question)
+
+        // The conversation has no record yet: the screen's record is adopted.
+        val adopt = tracker(SettingsRepository(File(dbDir, "adopt.db")))
+        adopt.onPoll(listOf(pane("s5", agent = "claude", state = "waiting")))
+        assertEquals("needs_you", adopt.summaries.value.single().state)
+        adopt.onHook(pane("s5", agent = "claude", state = "waiting"), event("SessionStart", "b-1"))
+        val adopted = adopt.summaries.value.single()
+        assertEquals("done", adopted.state)
+        assertEquals("hooks", adopt.cached(adopted.id)!!.source)
+
+        // Its next prompt still raises needs_you, from the hook.
+        adopt.onHook(pane("s5"), event("Notification", "b-1", "message" to "Claude needs your permission to use Bash"))
+        assertEquals("needs_you", adopt.summaries.value.single().state)
     }
 
     @Test
@@ -476,6 +534,21 @@ class AgentSessionTrackerTest {
         assertEquals(300, t.summaries.value.size)
         assertEquals(false, t.summaries.value.any { it.id == "e300" })
         assertNotEquals(null, t.find("e300"))
+    }
+
+    @Test
+    fun `a conversation older than the ones kept in memory is found by its conversation id`() {
+        val day = 24L * 60 * 60 * 1000
+        now = 100 * day
+        repo.saveAgentSession(
+            AgentSessionRecord(id = "old-record", agent = "claude", agentSessionId = "conv-old", source = "hooks",
+                state = "ended", stateSince = now - 30 * day, createdAt = now - 30 * day, endedAt = now - 30 * day),
+        )
+        val t = tracker()
+        assertEquals(false, t.summaries.value.any { it.conversationId == "conv-old" })
+        assertEquals("old-record", t.find("conv-old")?.id)
+        assertEquals("old-record", t.find("old-record")?.id)
+        assertEquals(null, t.find("conv-unknown"))
     }
 
     @Test

@@ -138,15 +138,16 @@ since that is what the person is asked to allow.
   tab list, never becomes the active tab and is never where the layout lands on its own. Its
   conversations are live: they count in the footer and in their task's state word, and one that
   needs the person still asks for the person. They are counted, not listed: a background agent
-  never gets a row. A search never finds a background conversation while it is out of sight. A
+  gets no row of its own while it works or rests; a task that holds it shows it. One that waits for
+  the person and that no task holds has a row in NOW, and ↵ on it lists its tab (see below). A search never finds a background conversation while it is out of sight. A
   background tab is in no tab list, so the agent that opened it closes it with `close_tab` when
   its work is done; a server restart closes every background tab, as the agents in them ended with
   the old process.
 - **A waiting agent in a hidden tab.** When a background agent asks the person, the tab stays hidden
   until the person asks for it. ↵ on the row (or on the agent in the task panel) lists the tab, makes
   it the active tab and marks it with the header "background agent · hides again once it works on".
-  The tab before it is remembered. When the agent leaves needs-you, by an answer or by a refusal, the
-  tab hides again and the remembered tab returns. A server restart forgets all of this. No other tab
+  The tab before it, and its world, is remembered. When the agent leaves needs-you, by an answer or by a refusal, the
+  tab hides again and the remembered tab and world return. A server restart forgets all of this. No other tab
   ever appears by itself.
 - **NOW keeps its order.** Rows are in the order their work started, ascending, a task at the
   start of its first conversation, ties by id. The state never moves a row: a conversation that starts
@@ -165,8 +166,8 @@ since that is what the person is asked to allow.
     to every window; older records stay in the database for search only.
 - **The footer counts the same thing.** Under the Claude usage in the footer, each world shows
   **▲ N waiting** for the conversations that need the person and, beside the spinner, the number that
-  work. Background agents are counted. The same two numbers are in the overview's header, and the
-  count of "needs you" on the rows always adds up to the footer's. There is no counter in the top bar.
+  work. Background agents are counted. The count of "needs you" on the rows always adds up to
+  the footer's. There is no counter in the top bar.
   Paused conversations never count as needing the person.
 
 ## Closing a tab that is working
@@ -221,7 +222,7 @@ and prints one PASS or FAIL line per rule, exiting non-zero on a FAIL. The token
 server already trusts as a device (not the tool-endpoint token). It checks that:
 
 1. the footer count equals the sum of "needs you" on the rows;
-2. every live conversation in a visible tab is in NOW exactly once, and a background agent is never a row;
+2. every live conversation in a visible tab is in NOW exactly once, and a background agent has a row only while it waits for you;
 3. no two rows are the same conversation;
 4. Return on a task's row reaches or resumes its main conversation by conversation id (`-Pmain` names
    the conversation a task must have);
