@@ -22,6 +22,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 import se.soderbjorn.lunamux.AgentSessionSummary
 import se.soderbjorn.lunamux.AgentTask
 import se.soderbjorn.lunamux.AgentTaskMember
@@ -43,6 +46,8 @@ import se.soderbjorn.lunamux.effectiveActiveTabId
  * @param watch the watch an agent's line opens; shared with every other surface that opens one.
  * @param clock the current epoch millis, read whenever the state is built (ages and the idle
  *   grace depend on it). Tests pass a fixed one.
+ * @param zone the time zone a document's clock time is shown in, normally the viewer's own.
+ *   Tests pass a fixed one.
  * @param send sends a command to the server, normally `windowSocket::send`.
  * @see PanelMarkdown
  * @see WatchViewModel
@@ -51,6 +56,7 @@ class TaskPanelViewModel(
     private val windowState: WindowStateRepository,
     private val watch: WatchViewModel,
     private val clock: () -> Long = { Clock.System.now().toEpochMilliseconds() },
+    private val zone: () -> TimeZone = { TimeZone.currentSystemDefault() },
     private val send: suspend (WindowCommand) -> Unit,
 ) {
     /**
@@ -107,9 +113,10 @@ class TaskPanelViewModel(
      *
      * @property title the words shown for the document.
      * @property url where it is; always http, https or file, and opened outside the app.
-     * @property age how long ago the document changed (see [ageOf]), or null when the writer gave no time.
+     * @property time when the document changed, as a clock time in the viewer's time zone (see
+     *   [clockOf]), or null when the writer gave no time.
      */
-    data class DocumentRow(val title: String, val url: String, val age: String?)
+    data class DocumentRow(val title: String, val url: String, val time: String?)
 
     /** One entry of a timeline block, newest first. @property age how long ago. @property text what happened. */
     data class TimelineEntry(val age: String, val text: String)
@@ -381,7 +388,7 @@ class TaskPanelViewModel(
             is TaskBlockContent.Facts -> BlockBody.Facts(c.items.map { it.label to it.value })
             is TaskBlockContent.Links -> BlockBody.Links(c.items.filter { PanelMarkdown.isSafeUrl(it.url) }.map { it.label to it.url })
             is TaskBlockContent.Documents -> BlockBody.Documents(
-                c.items.filter { PanelMarkdown.isSafeUrl(it.url) }.map { DocumentRow(it.title, it.url, it.updatedMillis?.let { at -> ageOf(at, now) }) },
+                c.items.filter { PanelMarkdown.isSafeUrl(it.url) }.map { DocumentRow(it.title, it.url, it.updatedMillis?.let { at -> clockOf(at, now, zone()) }) },
             )
             is TaskBlockContent.Timeline ->
                 BlockBody.Timeline(c.items.sortedByDescending { it.atMillis }.map { TimelineEntry(ageOf(it.atMillis, now), it.text) })
@@ -428,6 +435,32 @@ class TaskPanelViewModel(
                 seconds < 3600 -> "${seconds / 60}m"
                 seconds < 86_400 -> "${seconds / 3600}h"
                 else -> "${seconds / 86_400}d"
+            }
+        }
+
+        /**
+         * A clock time for a document: `21:31` when it is from today, `Tue 21:31` when it is from
+         * the last six days, and `4 Oct 21:31` otherwise (older, or ahead of the clock). Always in
+         * [zone], so the viewer reads it in their own time.
+         *
+         * Called for each document row of a documents block, as the approved drawing shows a clock
+         * time there where the timeline and agent lines show an age ([ageOf]).
+         *
+         * @param atMillis epoch millis the document changed.
+         * @param nowMillis the current epoch millis, which decides what counts as today.
+         * @param zone the time zone both are read in.
+         * @return the clock text, with the day when it is not today.
+         */
+        fun clockOf(atMillis: Long, nowMillis: Long, zone: TimeZone): String {
+            val at = Instant.fromEpochMilliseconds(atMillis).toLocalDateTime(zone)
+            val today = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(zone).date
+            val time = "${at.hour.toString().padStart(2, '0')}:${at.minute.toString().padStart(2, '0')}"
+            val daysAgo = today.toEpochDays() - at.date.toEpochDays()
+            fun short(name: String) = name.take(3).lowercase().replaceFirstChar { it.uppercase() }
+            return when (daysAgo) {
+                0 -> time
+                in 1..6 -> "${short(at.dayOfWeek.name)} $time"
+                else -> "${at.dayOfMonth} ${short(at.month.name)} $time"
             }
         }
 
