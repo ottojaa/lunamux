@@ -73,13 +73,13 @@ class SidebarUnaffectedByTasksTest {
         fun panes(vararg ids: String) = ids.map { Pane(LeafNode(id = it, sessionId = "s-$it", title = it), 0.0, 0.0, 1.0, 1.0, 0) }
         val config = WindowConfig(
             tabs = listOf(
-                TabConfig("tab-1", "one", panes = panes("leaf-lead")),
+                TabConfig("tab-1", "one", panes = panes("leaf-main")),
                 TabConfig("tab-bg", "agents", panes = panes("leaf-bg"), isBackground = true),
             ),
             activeTabId = "tab-1",
         )
         windowState.updateConfig(config)
-        windowState.updateStates(mapOf("s-leaf-lead" to "working", "s-leaf-bg" to "working"))
+        windowState.updateStates(mapOf("s-leaf-main" to "working", "s-leaf-bg" to "working"))
         val vm = AgentsOverviewBackingViewModel(windowState, clock = { 10_000 }) { sent += it }
         vm.open()
         val states = windowState.states.value
@@ -93,11 +93,11 @@ class SidebarUnaffectedByTasksTest {
         assertEquals(listOf("tab-1"), tabsBefore.tabs.map { it.id }, "the model reads the layout (a background tab is not listed)")
 
         windowState.updateAgentSessions(
-            listOf(summary("lead", "leaf-lead", taskId = null, background = false), summary("bg", "leaf-bg", taskId = "g1", background = true)),
+            listOf(summary("main", "leaf-main", taskId = null, background = false), summary("bg", "leaf-bg", taskId = "g1", background = true)),
             true,
         )
         windowState.updateAgentTasks(
-            listOf(AgentTask(id = "g1", title = "Release", repo = "proj", source = "agents", hasOpen = false, members = emptyList(), mainConversation = "lead")),
+            listOf(AgentTask(id = "g1", title = "Release", repo = "proj", source = "agents", hasOpen = false, members = emptyList(), mainConversation = "main")),
         )
 
         assertEquals(listOf("task:g1"), vm.state.rows.map { it.id }, "the overview folds them into one row")

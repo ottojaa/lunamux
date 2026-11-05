@@ -132,9 +132,9 @@ class AgentsOverviewTasksViewModelTest {
         refreshedAtMillis = refreshedAtMillis, startedAtMillis = startedAt, mainConversation = mainConversation, status = status,
     )
 
-    /** A task whose sessions are all hosted ones that carry its id, with [lead] as its own session. */
-    private fun hostedTask(lead: String? = null, hasOpen: Boolean = false, status: String? = null) =
-        task(source = "agents", members = emptyList(), hasOpen = hasOpen, mainConversation = lead, status = status)
+    /** A task whose sessions are all hosted ones that carry its id, with [main] as its own session. */
+    private fun hostedTask(main: String? = null, hasOpen: Boolean = false, status: String? = null) =
+        task(source = "agents", members = emptyList(), hasOpen = hasOpen, mainConversation = main, status = status)
 
     /**
      * Shows [tasks] and [sessions]. Unless the test laid out its own tab, every session with a pane
@@ -424,7 +424,7 @@ class AgentsOverviewTasksViewModelTest {
     fun oneMovingSessionReadsWorkingAndSeveralReadNWorkingBackgroundSessionsCountedToo() {
         layoutWithBackground(listOf("leaf-n"), listOf("leaf-bg"))
         show(
-            listOf(hostedTask(lead = "n", status = "Notes drafted"), task(id = "g2", source = "agents", members = emptyList())),
+            listOf(hostedTask(main = "n", status = "Notes drafted"), task(id = "g2", source = "agents", members = emptyList())),
             session("n", "working", taskId = "g1", lastActivityAt = now - 1_000),
             session("bg", "working", taskId = "g1", background = true, lastActivityAt = now - 1_000),
             session("only", "working", taskId = "g2", lastActivityAt = now - 1_000),
@@ -439,7 +439,7 @@ class AgentsOverviewTasksViewModelTest {
     fun aBackgroundSessionThatNeedsYouMakesItsTaskReadNeedsYouWithItsQuestion() {
         layoutWithBackground(listOf("leaf-n"), listOf("leaf-bg"))
         show(
-            listOf(hostedTask(lead = "n", status = null)),
+            listOf(hostedTask(main = "n", status = null)),
             session("n", "working", taskId = "g1", lastActivityAt = now - 1_000),
             session("bg", "needs_you", taskId = "g1", background = true, question = "Which release?"),
         )
@@ -586,11 +586,11 @@ class AgentsOverviewTasksViewModelTest {
 
     @Test
     fun aTaskWhoseOwnSessionRunsInTheBackgroundHasNothingInItsExtraLineButTheDetail() {
-        layoutWithBackground(listOf("leaf-m"), listOf("leaf-lead"))
+        layoutWithBackground(listOf("leaf-m"), listOf("leaf-main"))
         show(
-            listOf(hostedTask(lead = "lead", status = "Notes drafted")),
+            listOf(hostedTask(main = "main", status = "Notes drafted")),
             session("m", "working", taskId = "g1", lastActivityAt = now - 1_000),
-            session("lead", "working", taskId = "g1", background = true, lastActivityAt = now - 1_000),
+            session("main", "working", taskId = "g1", background = true, lastActivityAt = now - 1_000),
         )
         assertEquals("Notes drafted", row("task:g1").detail)
         assertEquals("", row("task:g1").extra, "nothing but the detail, which the row shows itself")
@@ -615,25 +615,25 @@ class AgentsOverviewTasksViewModelTest {
     }
     @Test
     fun enterOnATaskWhoseOwnSessionIsLiveJumpsToItsPane() = runNow {
-        layout("leaf-lead", "leaf-m")
+        layout("leaf-main", "leaf-m")
         show(
-            listOf(hostedTask(lead = "lead")),
-            session("lead", "done", taskId = "g1", since = 1_000),
+            listOf(hostedTask(main = "main")),
+            session("main", "done", taskId = "g1", since = 1_000),
             session("m", "needs_you", taskId = "g1", since = 2_000),
         )
         vm.open()
         vm.select("task:g1")
         assertEquals(Enter.JUMP, vm.state.selectedRow?.enter)
         vm.activateSelected()
-        assertEquals(jumpTo("leaf-lead"), sent)
+        assertEquals(jumpTo("leaf-main"), sent)
     }
 
     @Test
     fun enterOnATaskWhoseOwnSessionIsGoneResumesItEvenWhenTheTaskHasAnOpenAction() = runNow {
         layout("leaf-m")
         show(
-            listOf(hostedTask(lead = "lead", hasOpen = true)),
-            session("lead", "ended", taskId = "g1", since = 500, endedAt = now - 5_000),
+            listOf(hostedTask(main = "main", hasOpen = true)),
+            session("main", "ended", taskId = "g1", since = 500, endedAt = now - 5_000),
             session("m", "needs_you", taskId = "g1", since = 2_000),
         )
         vm.open()
@@ -641,10 +641,10 @@ class AgentsOverviewTasksViewModelTest {
         val r = row("task:g1")
         assertEquals(Enter.RESUME, r.enter, "the open action starts a conversation; this one exists and is resumed")
         assertFalse(r.isLive)
-        assertEquals("lead", r.recordId)
+        assertEquals("main", r.recordId)
         vm.activateSelected()
         vm.activateSelected()
-        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("lead")), sent)
+        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("main")), sent)
         assertTrue(vm.state.open, "the overlay waits for the new tab")
     }
 
@@ -652,8 +652,8 @@ class AgentsOverviewTasksViewModelTest {
     fun enterOnATaskWhoseOwnSessionIsGoneResumesItWhenThereIsNothingToOpen() = runNow {
         layout("leaf-m")
         show(
-            listOf(hostedTask(lead = "lead")),
-            session("lead", "ended", taskId = "g1", since = 500, endedAt = now - 5_000),
+            listOf(hostedTask(main = "main")),
+            session("main", "ended", taskId = "g1", since = 500, endedAt = now - 5_000),
             session("m", "needs_you", taskId = "g1", since = 2_000),
         )
         vm.open()
@@ -661,11 +661,11 @@ class AgentsOverviewTasksViewModelTest {
         val r = row("task:g1")
         assertEquals(Enter.RESUME, r.enter)
         assertFalse(r.isLive)
-        assertEquals("lead", r.recordId)
+        assertEquals("main", r.recordId)
         vm.activateSelected()
         assertTrue(sent.isEmpty())
         vm.activateSelected()
-        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("lead")), sent)
+        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("main")), sent)
     }
 
     @Test
@@ -888,7 +888,7 @@ class AgentsOverviewTasksViewModelTest {
     fun aTaskWithSeveralSessionsIsOneRowAndItsSessionsAreNotListedAgain() {
         layout("leaf-r1", "leaf-r2", "leaf-r3")
         show(
-            listOf(hostedTask(lead = "r1")),
+            listOf(hostedTask(main = "r1")),
             session("r1", "needs_you", taskId = "g1", question = "Which branch?"),
             session("r2", "working", taskId = "g1", lastActivityAt = now - 1_000),
             session("r3", "done", taskId = "g1"),
@@ -1058,10 +1058,10 @@ class AgentsOverviewTasksViewModelTest {
 
     @Test
     fun aSearchResultOpensTheSessionThatMatchedEvenWhenThatIsNotTheOneEnterOpensForTheTask() = runNow {
-        layout("leaf-lead", "leaf-m")
-        val lead = session("lead", "done", taskId = "g1", title = "Lead")
+        layout("leaf-main", "leaf-m")
+        val main = session("main", "done", taskId = "g1", title = "Main")
         val m = session("m", "done", taskId = "g1", title = "Mate")
-        show(listOf(hostedTask(lead = "lead")), lead, m)
+        show(listOf(hostedTask(main = "main")), main, m)
         vm.open()
         answer("mate", AgentSessionMatch(m, "title", null, 0, 4, null))
         assertEquals("m", vm.state.matches.single().recordId)
@@ -1072,20 +1072,20 @@ class AgentsOverviewTasksViewModelTest {
     @Test
     fun aSearchMatchOnATasksOwnSessionThatCarriesNoTaskIdIsTheTasksRowNotARowOfItsOwn() = runNow {
         layout("leaf-m")
-        val lead = session("lead", "ended", endedAt = now - 5_000, title = "Lead chat")
+        val main = session("main", "ended", endedAt = now - 5_000, title = "Main chat")
         val m = session("m", "working", taskId = "g1", title = "Mate", lastActivityAt = now - 1_000)
-        show(listOf(hostedTask(lead = "lead")), lead, m)
+        show(listOf(hostedTask(main = "main")), main, m)
         vm.open()
-        answer("needle", AgentSessionMatch(lead, "transcript", "…a needle…", 3, 6, null))
+        answer("needle", AgentSessionMatch(main, "transcript", "…a needle…", 3, 6, null))
         val only = vm.state.matches.single()
         assertEquals("task:g1", only.id, "the own session's match is the task's row")
-        assertEquals("lead", only.recordId)
+        assertEquals("main", only.recordId)
         vm.activateSelected()
         assertEquals("conversation closed", vm.state.ask?.tag, "the own conversation, not just some session")
 
         answer(
             "needle",
-            AgentSessionMatch(lead, "transcript", "…a needle…", 3, 6, null),
+            AgentSessionMatch(main, "transcript", "…a needle…", 3, 6, null),
             AgentSessionMatch(m, "transcript", "…another needle…", 8, 6, null),
         )
         assertEquals(listOf("task:g1"), vm.state.matches.map { it.id }, "two matches of one task are one result, whichever carries the id")
@@ -1097,7 +1097,7 @@ class AgentsOverviewTasksViewModelTest {
         val x = session("x", "working", taskId = "g2", lastActivityAt = now - 1_000)
         val m = session("m", "working", taskId = "g1", lastActivityAt = now - 1_000)
         show(
-            listOf(hostedTask(lead = "x"), task(id = "g2", source = "agents", members = emptyList())),
+            listOf(hostedTask(main = "x"), task(id = "g2", source = "agents", members = emptyList())),
             x, m,
         )
         assertEquals("working", row("task:g1").stateWord, "the other task's session is not this task's")
@@ -1118,7 +1118,7 @@ class AgentsOverviewTasksViewModelTest {
         val x = session("x", "working", lastActivityAt = now - 1_000)
         show(
             listOf(
-                hostedTask(lead = "x"),
+                hostedTask(main = "x"),
                 task(id = "g3", source = "agents", members = emptyList(), mainConversation = "x"),
             ),
             x,
@@ -1132,8 +1132,8 @@ class AgentsOverviewTasksViewModelTest {
     fun aClickOnTheRowThatIsAskingAnswersTheQuestionInsteadOfWithdrawingIt() = runNow {
         layout("leaf-m")
         show(
-            listOf(hostedTask(lead = "lead")),
-            session("lead", "ended", taskId = "g1", endedAt = now - 5_000),
+            listOf(hostedTask(main = "main")),
+            session("main", "ended", taskId = "g1", endedAt = now - 5_000),
             session("m", "working", taskId = "g1", lastActivityAt = now - 1_000),
         )
         vm.open()
@@ -1144,7 +1144,7 @@ class AgentsOverviewTasksViewModelTest {
         vm.select("task:g1")
         assertEquals("task:g1", vm.state.ask?.rowId, "selecting the asking row keeps its question")
         vm.activate(vm.state.selectedRow!!)
-        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("lead")), sent)
+        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("main")), sent)
     }
 
     // ---- selection ----
@@ -1318,10 +1318,10 @@ class AgentsOverviewTasksViewModelTest {
 
     @Test
     fun aTasksOwnLiveSessionIsPartOfItsRowAndCountsInTheStateWordWhetherOrNotItCarriesTheTaskId() {
-        layout("leaf-lead", "leaf-a", "leaf-b")
+        layout("leaf-main", "leaf-a", "leaf-b")
         show(
-            listOf(hostedTask(lead = "lead")),
-            session("lead", "working", lastActivityAt = now - 1_000),
+            listOf(hostedTask(main = "main")),
+            session("main", "working", lastActivityAt = now - 1_000),
             session("a", "working", taskId = "g1", lastActivityAt = now - 1_000),
             session("b", "working", taskId = "g1", lastActivityAt = now - 1_000),
         )
@@ -1329,8 +1329,8 @@ class AgentsOverviewTasksViewModelTest {
         assertEquals("3 working", row("task:g1").stateWord)
 
         show(
-            listOf(hostedTask(lead = "lead")),
-            session("lead", "working", taskId = "g1", lastActivityAt = now - 1_000),
+            listOf(hostedTask(main = "main")),
+            session("main", "working", taskId = "g1", lastActivityAt = now - 1_000),
             session("a", "working", taskId = "g1", lastActivityAt = now - 1_000),
             session("b", "working", taskId = "g1", lastActivityAt = now - 1_000),
         )
@@ -1342,16 +1342,16 @@ class AgentsOverviewTasksViewModelTest {
     fun anEndedOwnSessionWithNoTaskIdStaysInTheTasksRunsSoItsResumeIsNeverASecondRow() = runNow {
         layout("leaf-a")
         show(
-            listOf(hostedTask(lead = "lead")),
-            session("lead", "ended", endedAt = now - 5_000),
+            listOf(hostedTask(main = "main")),
+            session("main", "ended", endedAt = now - 5_000),
             session("a", "working", taskId = "g1", lastActivityAt = now - 1_000),
         )
         assertEquals(listOf("task:g1"), vm.state.rows.map { it.id })
         assertEquals("working", row("task:g1").stateWord, "an ended session is not moving")
         // The resumed conversation comes back as a live session with the same record: still the same row.
         show(
-            listOf(hostedTask(lead = "lead")),
-            session("lead", "working", lastActivityAt = now - 1_000),
+            listOf(hostedTask(main = "main")),
+            session("main", "working", lastActivityAt = now - 1_000),
             session("a", "working", taskId = "g1", lastActivityAt = now - 1_000),
         )
         assertEquals(listOf("task:g1"), vm.state.rows.map { it.id })
@@ -1360,10 +1360,10 @@ class AgentsOverviewTasksViewModelTest {
 
     @Test
     fun aSessionThatIsNotMovingIsNotCountedAsWorking() {
-        layout("leaf-lead", "leaf-a")
+        layout("leaf-main", "leaf-a")
         show(
-            listOf(hostedTask(lead = "lead")),
-            session("lead", "done", taskId = "g1"),
+            listOf(hostedTask(main = "main")),
+            session("main", "done", taskId = "g1"),
             session("a", "working", taskId = "g1", lastActivityAt = now - 1_000),
         )
         assertEquals("working", row("task:g1").stateWord, "the idle own session is not counted")
@@ -1374,18 +1374,18 @@ class AgentsOverviewTasksViewModelTest {
 
     @Test
     fun theFooterReadsOpenForAPaneThatIsShownAndAnswerItForAWaitingBackgroundMember() = runNow {
-        layoutWithBackground(listOf("leaf-lead", "leaf-m"), listOf("leaf-bg"))
+        layoutWithBackground(listOf("leaf-main", "leaf-m"), listOf("leaf-bg"))
         show(
-            listOf(hostedTask(lead = "lead")),
-            session("lead", "working", taskId = "g1", lastActivityAt = now - 1_000),
+            listOf(hostedTask(main = "main")),
+            session("main", "working", taskId = "g1", lastActivityAt = now - 1_000),
             session("m", "working", taskId = "g1", lastActivityAt = now - 1_000),
         )
         vm.open()
         vm.select("task:g1")
         assertEquals("↵ open · ↑↓ move · esc close", footerText())
         show(
-            listOf(hostedTask(lead = "lead")),
-            session("lead", "working", taskId = "g1", lastActivityAt = now - 1_000),
+            listOf(hostedTask(main = "main")),
+            session("main", "working", taskId = "g1", lastActivityAt = now - 1_000),
             session("bg", "needs_you", taskId = "g1", background = true),
         )
         assertEquals(Enter.SHOW_WAITING, row("task:g1").enter)
@@ -1395,8 +1395,8 @@ class AgentsOverviewTasksViewModelTest {
     fun theFirstEnterOnAClosedOwnConversationAsksAndTheSecondResumesItInANewTab() = runNow {
         layout("leaf-m")
         show(
-            listOf(hostedTask(lead = "lead")),
-            session("lead", "ended", taskId = "g1", endedAt = now - 5_000),
+            listOf(hostedTask(main = "main")),
+            session("main", "ended", taskId = "g1", endedAt = now - 5_000),
             session("m", "working", taskId = "g1", lastActivityAt = now - 1_000),
         )
         vm.open()
@@ -1412,7 +1412,7 @@ class AgentsOverviewTasksViewModelTest {
         assertEquals("↵ resume · esc cancel", footerText())
         assertTrue(sent.isEmpty())
         vm.activateSelected()
-        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("lead")), sent)
+        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("main")), sent)
         assertNull(vm.state.ask)
     }
 
@@ -1446,8 +1446,8 @@ class AgentsOverviewTasksViewModelTest {
     fun theQuestionAndThePeekReplaceEachOtherAndEscStepsBackThroughThem() = runNow {
         layout("leaf-m")
         show(
-            listOf(hostedTask(lead = "lead")),
-            session("lead", "ended", taskId = "g1", endedAt = now - 5_000),
+            listOf(hostedTask(main = "main")),
+            session("main", "ended", taskId = "g1", endedAt = now - 5_000),
             session("m", "working", taskId = "g1", lastActivityAt = now - 1_000),
         )
         vm.open()
@@ -1476,8 +1476,8 @@ class AgentsOverviewTasksViewModelTest {
     fun escapeMovingOrANewQueryCancelsTheAskAndTheNextEnterAsksAgain() = runNow {
         layout("leaf-m")
         show(
-            listOf(hostedTask(lead = "lead")),
-            session("lead", "ended", taskId = "g1", endedAt = now - 5_000),
+            listOf(hostedTask(main = "main")),
+            session("main", "ended", taskId = "g1", endedAt = now - 5_000),
             session("m", "working", taskId = "g1", lastActivityAt = now - 1_000),
             session("x", "working", lastActivityAt = now - 2_000),
         )
@@ -1504,8 +1504,8 @@ class AgentsOverviewTasksViewModelTest {
     fun aRefreshThatChangesWhatEnterWouldDoCancelsTheAsk() = runNow {
         layout("leaf-m")
         show(
-            listOf(hostedTask(lead = "lead")),
-            session("lead", "ended", taskId = "g1", endedAt = now - 5_000),
+            listOf(hostedTask(main = "main")),
+            session("main", "ended", taskId = "g1", endedAt = now - 5_000),
             session("m", "working", taskId = "g1", lastActivityAt = now - 1_000),
         )
         vm.open()
@@ -1513,10 +1513,10 @@ class AgentsOverviewTasksViewModelTest {
         vm.activateSelected()
         assertTrue(vm.state.ask != null)
         // The conversation was resumed elsewhere: ↵ now means "go to it", so the question is void.
-        layout("leaf-m", "leaf-lead")
+        layout("leaf-m", "leaf-main")
         show(
-            listOf(hostedTask(lead = "lead")),
-            session("lead", "working", taskId = "g1", lastActivityAt = now - 1_000),
+            listOf(hostedTask(main = "main")),
+            session("main", "working", taskId = "g1", lastActivityAt = now - 1_000),
             session("m", "working", taskId = "g1", lastActivityAt = now - 1_000),
         )
         assertNull(vm.state.ask)
@@ -1528,8 +1528,8 @@ class AgentsOverviewTasksViewModelTest {
     fun theStatusIsRepeatedInFullOnlyForTheSelectedRowWhenItsCellCutIt() {
         layout("leaf-a", "leaf-b")
         show(
-            listOf(hostedTask(lead = "lead", status = "A very long status that no cell can hold")),
-            session("lead", "working", taskId = "g1", lastActivityAt = now - 1_000),
+            listOf(hostedTask(main = "main", status = "A very long status that no cell can hold")),
+            session("main", "working", taskId = "g1", lastActivityAt = now - 1_000),
             session("b", "working", lastActivityAt = now - 1_000, nowLine = "Edit b.kt"),
         )
         vm.open()
@@ -1551,10 +1551,10 @@ class AgentsOverviewTasksViewModelTest {
 
     @Test
     fun theFolderChipIsTheFolderOfTheSessionEnterGoesToWithHomeAsTilde() {
-        layout("leaf-lead")
+        layout("leaf-main")
         show(
-            listOf(hostedTask(lead = "lead")),
-            session("lead", "working", taskId = "g1", lastActivityAt = now - 1_000, cwdShown = "~/code/lunamux"),
+            listOf(hostedTask(main = "main")),
+            session("main", "working", taskId = "g1", lastActivityAt = now - 1_000, cwdShown = "~/code/lunamux"),
         )
         assertEquals(listOf(AgentsOverviewBackingViewModel.Chip(AgentsOverviewBackingViewModel.ChipKind.FOLDER, "~/code/lunamux")), row("task:g1").chips.filter { it.kind == AgentsOverviewBackingViewModel.ChipKind.FOLDER })
 
@@ -1572,8 +1572,8 @@ class AgentsOverviewTasksViewModelTest {
     fun theTabChipNamesTheTabUnlessItsNameAlreadyHasEveryWordOfTheTitle() {
         // The task is titled "Release g1".
         fun withTab(name: String): String? {
-            layoutNamed(name, "leaf-lead")
-            show(listOf(hostedTask(lead = "lead")), session("lead", "working", taskId = "g1", lastActivityAt = now - 1_000))
+            layoutNamed(name, "leaf-main")
+            show(listOf(hostedTask(main = "main")), session("main", "working", taskId = "g1", lastActivityAt = now - 1_000))
             return tabChip("task:g1")
         }
         assertEquals("notes", withTab("notes"), "a tab that says something else is named")

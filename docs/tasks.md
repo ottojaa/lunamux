@@ -1,8 +1,11 @@
 # Tasks
 
-The agents overview (⌘⇧A) shows **tasks**, not sessions. A task is one piece of work: a release,
-a refactor split across branches, a batch of reviews, or just one chat. Every agent session
-belongs to exactly one task, and a task is always one row, however many sessions it holds.
+The agents overview (⌘⇧A) shows the **conversations** that are live in Lunamux, each as one row,
+and the **tasks** they belong to. A task is one piece of work: a release, a refactor split across
+branches, a batch of reviews, or just one chat. A conversation is one Claude or Codex dialogue; it
+keeps its row when it is resumed with `claude --resume` and when Lunamux restarts, because the row is
+the conversation, not the pane it happens to run in. A task has one **main conversation**, the one
+that speaks for it, and that conversation's row stands for the whole task.
 
 There are two ways a session gets into a task, and they can be mixed:
 
@@ -14,39 +17,52 @@ There are two ways a session gets into a task, and they can be mixed:
 
 ## What the person sees
 
-The overview is one aligned list with **one row per task**. A session that is in no task is a task
-of one, so it is a row too; a session that belongs to a task is never a row of its own, whether it
-runs in a tab or in the background. A row has no mark but one: **◆** at the start of a task that
-needs the person (the selected row shows **▸** there instead). Rows are told apart by brightness
-and by the colour of the state word: a task that works or needs the person has a bright title, a
-done one a mid-grey title, and a finished one in EARLIER a dim one (a task in EARLIER whose
-agent still moves stays bright, with the working glyph).
+The overview is one aligned list with **one row per conversation**. A conversation that is in no
+task is a row of its own. The **main conversation** of a task carries the task's row, and the task's
+other agents are not rows: a **background agent** (one that works in a tab out of sight) is only
+counted, in the row's state word ("2 working") and in the task panel. An agent that runs in a tab of
+the strip and belongs to a task also shows on the task's row, not as a row of its own. A row has no
+mark but one: **◆** at the start of a row that needs the person (the selected row shows **▸** there
+instead). Rows are told apart by brightness and by the colour of the state word: a row that works or
+needs the person has a bright title, a done one a mid-grey title, and a finished one in EARLIER a dim
+one.
 
-A row reads, left to right: the **title**, **where** (the task's repo, else the folder the session
-runs in, home as `~`), one **state word**, a **detail** and the **age**. The state word is one of:
+A row reads, left to right: the **title**, **where** (the task's repo, else the folder the
+conversation runs in, home as `~`), one **state word**, a **detail** and the **age**. A conversation
+is in exactly one of three states: **working**, **needs you** or **done**. A finished turn is done;
+Lunamux never guesses from the last words of a reply that the agent is asking. The state word is
+one of:
 
 | Word | When |
 |---|---|
-| **needs you** (yellow) | any session of the task waits for the person |
-| **N working** (cyan, with the moving braille glyph before it) | two or more sessions are moving, background ones counted |
-| **working** (cyan, with the glyph) | one session is moving |
-| **done** (muted green) | the task is in NOW and nothing is moving or waiting |
-| **finished** (dim) | the task is in EARLIER and nothing is moving or waiting |
+| **needs you** (yellow) | one conversation waits for the person; with more than one it reads "2 need you" |
+| **N working** (cyan, with the moving braille glyph before it) | two or more of the task's conversations are moving, background ones counted |
+| **working** (cyan, with the glyph) | one conversation is moving |
+| **done** (muted green) | the row is in NOW and nothing is moving or waiting |
+| **finished** (dim) | the row is in EARLIER and nothing is moving or waiting |
+
+**Needs you** always means a question the person can see and answer: a permission prompt or an
+elicitation that Claude Code reports, an `AskUserQuestion` call, or the approval overlay of Codex.
+One question counts once. A reply that merely ends in a question ("Want me to go ahead?") is done,
+and so is a conversation that was just resumed and sits at its prompt.
 
 The glyph is the app's own working mark: four braille frames that cross-fade
 about three times a second. With reduced motion it is a still frame. It is always drawn at regular
 weight, not the bold of the word beside it: the system's braille font draws a ring at all six dot
-positions in a bold weight, and the glyph is meant to show two dots turning.
+positions in a bold weight, and the glyph is meant to show two dots turning. Its frame is read from
+the clock, never from when the row was drawn, so a row that is redrawn (a new status line, a new
+age) keeps the frame it had, and the footer's spinner shows the same frame as the rows.
 
-A session is *moving* while it works and has shown a sign of life in the last five minutes (for a
-session Lunamux does not host: while its file was refreshed in the last twenty). One that works but
-has gone quiet reads as not moving, so a task of quiet sessions reads **done**. A task in EARLIER
-whose session is moving anyway still reads **working**, not **finished**.
+A conversation is *moving* while it works and has shown a sign of life in the last five minutes (for
+a member that only a task file lists: while its file was refreshed in the last twenty). One that works but
+has gone quiet reads as not moving, so a task of quiet conversations reads **done**.
 
 The **detail** is the first of these that exists: the task's status line, the question of the
-session that waits (in quotes), what a moving session is doing, or nothing. A session that is a
-task of one follows the same order without the status. The folder and the detail are hidden when
-the panel is narrower than 700px.
+conversation that waits (in quotes), what a moving conversation is doing, or nothing. The folder
+and the detail are hidden when the panel is narrower than 700px.
+
+When a question waits and the main conversation is closed, the row says "a question waits" and the
+count does not rise yet; ↵ resumes the conversation, which asks again, and the count rises then.
 
 What a moving session is doing is said **in words, never as the raw command**, because a column of
 shell commands tells nobody anything at a glance. Lunamux words each tool call as it arrives:
@@ -73,112 +89,85 @@ since that is what the person is asked to allow.
   home folder written `~`. The **tab chip** names the session's tab, and shows only when the
   tab's name does not already contain every word of the row's title (a word is a run of letters
   and digits; case and punctuation are ignored; whole words only, no fuzzy matching); a tab in
-  another world adds the world's name after it ("Checkout · Work"). A session in a background tab has no tab chip. There is no other chip, and
+  another world adds the world's name after it ("Checkout · Work"). There is no other chip, and
   a row with nothing to put under it has no extra line, never an empty one.
-- **↵ opens the task's own session.** Every task can have one session that speaks for it: the one
-  that made the task, or the one an agent names with `set_task_lead`. That session is one of the
-  task's sessions, so it is counted in the state word ("3 working") and never gets a row of its
-  own. When it runs in a tab of the strip, ↵ jumps to its pane and the footer reads "↵ open".
-  When it runs in a background tab (see below), ↵ opens its read-only watch and the footer reads
-  "↵ watch". When it is not running, ↵ asks first (below), and only a second ↵ acts: it resumes
-  that conversation in a tab of its own, in its own folder, or, when there is nothing to resume,
-  runs the task's `open` action (which starts a new conversation). A task with no such
-  session takes the first of these that applies: jump to a live session in a listed tab (the ◆ that
-  has waited longest, else the working session with the freshest sign of life); run the `open`
-  action; watch a live background session; resume the newest session (after the question). A
-  background session is never chosen while a session in a listed tab is live, and a row never does
-  nothing unless no session of it is known and it has no `open` action. The session is remembered by the pane it ran in (the pane's layout id,
-  which a restart keeps; the terminal session id is renumbered at every start and would name a
-  different pane). It is looked up as the session running in that pane now; only when none is
-  running does it stand for the newest ended session that ran in that pane, never another pane's.
-  A server restart keeps it: the session is then an ended one and ↵ asks, then resumes it. A resume opens a
-  tab of its own, so the task also remembers the Claude conversation of its session, and when
-  that conversation runs in another pane while nothing runs in the remembered one, the task moves
-  to that pane. It does so once the conversation is known there (a resumed session is named by its
-  first hook, a moment after it starts). A new agent started in the remembered pane takes the
-  task's place there instead; the old conversation resumed elsewhere afterwards does not take it
-  back. ↵ on a task whose `open` action starts a new conversation does not move the task, since
-  that conversation is not the one it remembers. The own session is lost when the pane is closed
-  and that session is older than the history the overview loads (14 days, or beyond the newest
-  300 sessions); the task then has no own session until an agent names one again with
-  `set_task_lead`. `list_tasks` reports the terminal session id the pane has now as `ownSession`,
-  and null while the pane is closed. A task made before panes were remembered is looked up by its
-  terminal session id, and the first running session found on that id fixes the pane. This is a
-  guess: ids are handed out again at every start, so it can be a pane the task never had, and
-  `set_task_lead` corrects it.
-- **A question before a resume.** When the session ↵ would go to is not running, the first ↵
+- **↵ goes to the main conversation, by its conversation id.** The row's main conversation is the
+  task's `mainConversation`: the conversation that made the task, or the one an agent names with
+  `set_task_lead`. It is stored by the agent's own session id, which a restart and a resume keep, and
+  never by the pane it ran in (pane ids are handed out again at every start). Return does the first
+  of these that applies:
+  1. **The main conversation is live in a tab of the strip:** jump to its pane. The footer reads "↵ open".
+  2. **A background agent waits and the main conversation does not:** the tab of that agent is
+     shown (see "A waiting agent in a hidden tab" below). The row's hint reads "↵ answer it · opens as
+     a tab until it works on".
+  3. **The main conversation is closed:** ask "conversation closed / Resume it in a new tab?"; a
+     second ↵ runs `claude --resume <conversation id>` in a new tab in its own folder (`codex resume
+     <id>` for a Codex conversation whose id is known). `claude --continue` is never used: it picks the
+     newest conversation of the folder, not this one.
+  4. **There is no conversation:** ask "no conversation / Start one in a new tab?"; a second ↵ runs the
+     task file's `open` action.
+  A row for a conversation that is in no task does 1 or 3 for itself. A resumed conversation is the
+  task's main conversation again, in the same row.
+  `list_tasks` reports `mainConversation: {conversationId, sessionId?}`; the `sessionId` is the pane
+  the conversation runs in now and is missing while it is closed.
+- **A question before a resume.** When the conversation ↵ would go to is not running, the first ↵
   turns the selected row's extra part into a question: a dim tag, "Resume it in a new tab?", and
   "↵ resume · esc cancel" (the footer reads the same). The tag says what is missing and never
-  sounds like the state of the whole task: "conversation closed" for the task's own session,
-  "session closed" for any other ended session. When there is no conversation at all the tag is
-  "no conversation" and the question "Start one in a new tab?" (↵ start). A second ↵ does it: the
-  resumed conversation is the task's own session again, in the same row. esc, ↑ or ↓, a change to
-  the search text, or a refresh that changes what ↵ would do, cancels the question.
-- **Three keys are not hinted.** **⌘↵** takes over the background session ↵ would watch: its tab
-  becomes an ordinary tab and the app switches to it. **→** at the end of the search text peeks
-  the session ↵ would open (**←** or esc goes back). **⌘⌫** asks to close a row that is one
-  session, live in a pane; it never closes a task of several sessions, and does nothing while
-  the search box has text. The question is the same as
-  for closing a tab that is working. The footer is `↵ open · ↑↓ move · esc close` (`↵ watch` for a
-  session in a background tab, `↵ resume · esc cancel` while the question is up). esc
-  closes the question, then the confirmation, then the peek, then the overlay.
+  sounds like the state of the whole task: "conversation closed" for the main conversation,
+  "session closed" for any other ended conversation. When there is no conversation at all the tag is
+  "no conversation" and the question "Start one in a new tab?" (↵ start). A second ↵ does it. esc, ↑ or
+  ↓, a change to the search text, or a refresh that changes what ↵ would do, cancels the question.
+- **Two keys are not hinted.** **→** at the end of the search text peeks the conversation ↵ would
+  open (**←** or esc goes back). **⌘⌫** asks to close a row that is one conversation, live in a
+  pane; it never closes a task of several, and does nothing while the search box has text. The
+  question is the same as for closing a tab that is working. The footer is `↵ open · ↑↓ move · esc
+  close` (`↵ resume · esc cancel` while the question is up). esc closes the question, then the
+  confirmation, then the peek, then the overlay.
 - **A task has a one-line status.** An agent sets it with `set_task_status` and the row shows it as
   its detail. Line breaks become spaces, the ends are trimmed, and at most 120 characters are
   kept. An empty text clears it.
-- **NOW is the open tabs.** A session is in NOW only while its pane is in a tab that is open,
-  and a task only while one of its sessions is. A session whose pane is not in any open tab is in
-  EARLIER with the rest of what is not happening on screen, however busy it is. The one exception
-  is a session that needs the person (a ◆): it stays in NOW wherever it runs, because a question
-  must not wait where the **+ N more** cut or the fourteen-day window can hide it. A task is one
-  unit: while one of its sessions is in an open tab, the task stays in NOW, and a session that
-  needs the person keeps its whole task there, wherever it runs. When neither holds, the task goes
-  to EARLIER. The chip counts what NOW shows, so a working session of a task that is in EARLIER is
-  not counted as working. A tab counts as open whatever the tab strip shows of it.
+- **NOW is the live conversations.** Every live conversation in a tab of the strip has a row in NOW,
+  once. A task's main conversation carries the task's row. A task whose main conversation is closed
+  stays in NOW while a background agent of it is live (it reads "2 working"); otherwise it goes to
+  EARLIER. A conversation that needs the person stays in NOW wherever it runs, because a question
+  must not wait where the **+ N more** cut or the fourteen-day window can hide it. A tab counts as
+  open whatever the tab strip shows of it. There is no grace period: a conversation that has ended
+  is in EARLIER at once.
 - **Agents can work out of sight.** An agent opens a **background tab** with `create_tab`,
   `create_window` or `run_command` and `background: true`. The tab is not in the tab strip or the
   tab list, never becomes the active tab and is never where the layout lands on its own. Its
-  sessions are still sessions: they are in NOW (a background pane counts as open), they count in
-  the topbar chip and in their task's state word, and a ◆ in one still asks for the person. They
-  are counted, not listed: a background session of a task is no row of its own. A background
-  session that is in no task is a row, and ↵ on it opens its read-only watch, **⌘↵**
-  takes the tab over. A search never finds a background session while it is out of sight, live or
-  closed. A background tab is in no tab list, so the agent that opened it closes it with
-  `close_tab` when its work is done; a server restart closes every background tab, as the agents
-  in them ended with the old process.
-- **A session or task that has just ended stays in NOW for ten minutes.** With the ◆ above, this
-  is the other thing in NOW that is in no tab: a session that has ended less than ten minutes ago,
-  and a task that has just finished, so a row never reads "now" under a heading that says days.
-  After the ten minutes it goes to EARLIER by its age. A session that is still running but idle,
-  in no tab, gets no such grace.
+  conversations are live: they count in the footer and in their task's state word, and one that
+  needs the person still asks for the person. They are counted, not listed: a background agent
+  never gets a row. A search never finds a background conversation while it is out of sight. A
+  background tab is in no tab list, so the agent that opened it closes it with `close_tab` when
+  its work is done; a server restart closes every background tab, as the agents in them ended with
+  the old process.
+- **A waiting agent in a hidden tab.** When a background agent asks the person, the tab stays hidden
+  until the person asks for it. ↵ on the row (or on the agent in the task panel) lists the tab, makes
+  it the active tab and marks it with the header "background agent · hides again once it works on".
+  The tab before it is remembered. When the agent leaves needs-you, by an answer or by a refusal, the
+  tab hides again and the remembered tab returns. A server restart forgets all of this. No other tab
+  ever appears by itself.
 - **NOW keeps its order.** Rows are in the order their work started, ascending, a task at the
-  start of its first session, ties by id. The state never moves a row: a session that starts
+  start of its first conversation, ties by id. The state never moves a row: a conversation that starts
   needing the person stays where it was, and the overlay opens with the selection on the first row in
   list order that needs the person. A task's start is stamped the first time the server sees it
-  and never changes, so the order survives a restart. EARLIER is newest first as before.
-- **Inside NOW, a task stays while it has work.** A task stays in NOW while a session needs the
-  person or works. A task that a task file declares also stays there while it has open work, such
-  as a session in review or queued, even when nothing is running at the moment, so it does not
-  change section as sessions start and stop. Once every session of such a task reads done, nothing
-  is moving or waiting and the task goes to EARLIER, even if none of its sessions has ended, once
-  ten minutes have passed since its newest activity. A task made only of Lunamux's own sessions
-  behaves like one idle session in a tab: it stays in NOW for ten minutes after the last activity
-  and then moves to EARLIER. A task whose sessions have all ended is in EARLIER after the same
-  ten minutes.
-- **EARLIER is two bands, newest first; finished rows are dimmed.** **LAST FEW DAYS** holds the rows last active
-  within three days. **LAST TWO WEEKS** holds those between three and fourteen days old. Together
+  and never changes, so the order survives a restart. EARLIER is newest first.
+- **EARLIER shows the five newest, then "+ N more".** **LAST FEW DAYS** holds the rows last active
+  within three days and **LAST TWO WEEKS** those between three and fourteen days old. Together
   they show the newest five rows, then one **+ N more** line (a click on it, or ↓ on the last row,
   shows the rest). A band with nothing to show has no heading. Older rows are not listed, but
   search still finds them, and search is never cut.
-  - A task's age is its newest session's: a task with a session from yesterday and one from ten
-    days ago is in the first band. A single session is a task of its own.
+  - A task's age is its newest conversation's.
   - Both edges are inclusive on the older side: exactly three days old is still in the first band,
     exactly fourteen still listed.
-  - An idle pane that has been open for more than fourteen days is no longer listed either. It
-    is still hosted, and search finds it.
-  - The server keeps the ended sessions of the last fourteen days, at most 300, and pushes them
+  - The server keeps the ended conversations of the last fourteen days, at most 300, and pushes them
     to every window; older records stay in the database for search only.
-- Sessions count in the topbar chip next to ordinary ones: `◆ 2 need you · 1 working`,
-  `3 working`, or `agents idle`. Paused sessions never count as needing the person.
+- **The footer counts the same thing.** Under the Claude usage in the footer, each world shows
+  **▲ N waiting** for the conversations that need the person and, beside the spinner, the number that
+  work. Background agents are counted. The same two numbers are in the overview's header, and the
+  count of "needs you" on the rows always adds up to the footer's. There is no counter in the top bar.
+  Paused conversations never count as needing the person.
 
 ## Closing a tab that is working
 
@@ -189,8 +178,11 @@ to pick up the conversation: open the agents overview and choose the task. Cance
 cancels and ↵ acts on the focused button. A tab with nothing working in it closes at once, closing a
 single pane is not asked about, and an agent's `close_tab` never asks.
 
-Sessions of Claude Code report their state through hooks. For Codex and Gemini the state comes
-from reading the screen, so it is a best guess and lags a little.
+Sessions of Claude Code report their state through hooks: a prompt that asks for permission or
+elicits an answer is **needs you**, a finished turn is **done**, and nothing is guessed from the text of
+a reply. For Codex and Gemini the state comes from reading the screen, so it is a best guess and lags a
+little. Codex is its own conversation per session: its own conversation id has not been confirmed
+against a real session, so a resumed Codex session may show as a new row.
 
 ## Searching sessions
 
@@ -211,11 +203,37 @@ never the background ones.
 ## Trying it out
 
 `scripts/seed-agents-overview.sh <db file> <tasks folder>` fills a scratch database and folder
-with about twenty ended sessions (last active today, 1, 2, 6, 12 and 30 days ago), six
-agent-made tasks (one with its own session, a status and two background members) and six task files. Seed while the scratch server is stopped, then start it on
-its own port with `-Dlunamux.dbPath`, `-Dlunamux.tasksDir`, `-Dlunamux.agentGroupsDir` and
-`-Dlunamux.claudeProjects` pointing at scratch paths (`./gradlew :server:run` forwards all four).
-The script's header lists what to look at, and the cases that need a running agent.
+with about twenty ended conversations (last active today, 1, 2, 6, 12 and 30 days ago), six
+agent-made tasks (one with its own main conversation, a status and two background members) and six
+task files. Seed while the scratch server is stopped, then start it on its own port, with a
+throwaway `-Duser.home` (the settings file lives there), `-Dlunamux.dbPath`, `-Dlunamux.tasksDir`,
+`-Dlunamux.agentGroupsDir` and `-Dlunamux.claudeProjects` pointing at scratch paths. The script's
+header lists what to look at, and the cases that need a running agent.
+`scripts/seed-agents-overview-live.sh <server> <token> <moment>` then makes the usual case (1), a
+background agent that asks (4) or a closed main conversation with two agents working (5) happen on
+the running server, with a panel of four blocks that has more than five of each.
+
+## Checking it
+
+`./gradlew :client:overviewChecks -Purl=<server> -Ptoken=<device token> [-Pwatch=<seconds>]
+[-Pmain=<task id>=<conversation id start>]` connects as an ordinary client, never sends a command,
+and prints one PASS or FAIL line per rule, exiting non-zero on a FAIL. The token must be one the
+server already trusts as a device (not the tool-endpoint token). It checks that:
+
+1. the footer count equals the sum of "needs you" on the rows;
+2. every live conversation in a visible tab is in NOW exactly once, and a background agent is never a row;
+3. no two rows are the same conversation;
+4. Return on a task's row reaches or resumes its main conversation by conversation id (`-Pmain` names
+   the conversation a task must have);
+5. every needs-you leads to a visible question;
+6. no hidden tab appears on its own: with `-Pwatch` the checker keeps watching the layout, and a tab
+   that becomes listed without a mark, or stays listed after nothing in it waits, fails;
+7. the panel's agents are only working or waiting ones; and the panel is four blocks with at most five
+   entries before "+ N more".
+
+That a spinner never restarts when its row redraws is checked by `WorkingGlyphStyleTest` (the
+frame comes from the clock and no rule restarts the animation) and by a page probe that logs the
+frames for thirty seconds.
 
 ## Grouping sessions from an agent
 
@@ -228,9 +246,9 @@ Seven MCP tools are registered. All but `list_tasks` change tasks and need a `re
 | `add_to_task` | `taskId`, `sessionIds` | Moves sessions into a task. The id can name a task file's task: the session is then in that task. |
 | `remove_from_task` | `sessionIds` | Takes sessions out, so each is a task of its own again. Returns where each one ended up; a session that a task file still matches stays in that file's task. |
 | `rename_task` | `taskId`, `title` | Renames a task made through the tools. A file's task is named by its file, so renaming it is refused with that reason. |
-| `set_task_lead` | `taskId`, `sessionId` | Names the session that speaks for the task: the pane's `$LUNAMUX_SESSION_ID`. Refused for an unknown task or pane. `create_task` already sets it to the session that made the task (the pane named in the `X-Lunamux-Session` header, else the first one in `sessionIds`). |
+| `set_task_lead` | `taskId`, and exactly one of `sessionId` or `conversationId` | Names the session that speaks for the task. A `sessionId` (the pane's `$LUNAMUX_SESSION_ID`) is turned into the conversation running in it now; a `conversationId` is the agent's own session id, which a closed conversation still has. Refused for an unknown task, pane or both arguments. `create_task` already names the conversation of the session that made the task (the pane named in the `X-Lunamux-Session` header, else the first one in `sessionIds`). Returns the `taskId` and the `mainConversation` now named. |
 | `set_task_status` | `taskId`, `text` | Sets the task's one-line status; empty clears it. Newlines become spaces, the ends are trimmed, at most 120 characters. |
-| `list_tasks` | none | Lists every task with its sessions and their states, including a task nothing is in yet, with each task's own session, status and start. |
+| `list_tasks` | none | Lists every task with its sessions and their states, including a task nothing is in yet, with each task's `mainConversation` (`{conversationId, sessionId?}`), status and start. |
 
 `sessionIds` are terminal session ids: the `$LUNAMUX_SESSION_ID` of the pane a session runs in.
 An agent's own id is in its environment, and `list_sessions` shows the others. `create_window`
@@ -253,8 +271,8 @@ An agent told to split its work in two does this:
 
 1. `create_task` with a title and its own `$LUNAMUX_SESSION_ID` in `sessionIds` → `taskId`.
 2. `create_window` with that `taskId`, then start the second agent in the new pane.
-3. The overview now shows one row for the task, reading "2 working", and a session that needs the
-   person turns the row into a ◆ "needs you".
+3. The overview now shows one row for the task, reading "2 working", and a conversation that needs
+   the person turns the row into a ◆ "needs you".
 
 Resuming a conversation keeps its task, even in another pane. A task made through the tools is
 shown only once a session is in it; a task that loses its last session disappears.
@@ -344,10 +362,9 @@ fixed version of the file is picked up within about three seconds.
 
 ### The `open` action
 
-`open` is optional. With it, ↵ on a row whose own session is gone, or that has no session in a
-listed tab, types `open.command` into a new tab started in `open.folder`. The tab is named like
-the task. Without it, ↵ watches a live background session or resumes the newest session (after the
-question), and does nothing only for a task none of whose sessions Lunamux knows.
+`open` is optional. With it, ↵ on a row that has no conversation at all (after the question "Start
+one in a new tab?") types `open.command` into a new tab started in `open.folder`. The tab is named
+like the task. Without it, a task with no conversation does nothing.
 
 ### Matching members to real sessions
 
@@ -397,32 +414,39 @@ a member is built by the server from the member's `sessionId` alone.
 ## The task panel
 
 A task can have a panel: a 320px column on the right of the window that shows what its agents
-wrote about it. It appears only in the tab that holds the task's own session (the one named by
-`set_task_lead`; a task with none has no panel), and in no other tab. ⌘I shows and hides it, and
-so does its ×; the choice is kept with the other UI settings. The shortcut is listed in the
-Keyboard-shortcuts sidebar and can be rebound there. (Off macOS the default chord is Ctrl+I, which
-a terminal reads as Tab; rebind it there if that gets in the way.)
+wrote about it. It appears only in the tab where the task's main conversation is live (a task with
+none has no panel), and in no other tab. ⌘I shows and hides it, and so does its ×; the choice is
+kept with the other UI settings. The shortcut is listed in the Keyboard-shortcuts sidebar and can be
+rebound there. (Off macOS the default chord is Ctrl+I, which a terminal reads as Tab; rebind it there
+if that gets in the way.)
 
-The column starts with an **Agents** block, marked *live*: every other session of the task with its
-state mark (● working or waiting, ◆ needs you, ○ finished), its name, its age
-at the right and, under the name, what it is doing, or its state word when it is not doing anything.
-A finished session is dimmed and reads "exited". A member that only the task file lists (one
-Lunamux does not host) shows the file's own label for it when it gives one: in place of the state
-word while it is not finished (for example "reviewing"), and after "exited" once it is (for example
-"exited · merged"). Each line is a row you can reach and press: click the panel, then Tab to move
-between lines. A line shows what ↵ and ⌘↵ do once it is hovered or focused. An agent in a background tab
-reads "↵ watch · ⌘↵ show as tab"; one that already sits in a tab of the strip reads "↵ open", which
-jumps to that tab; a member of a task file that no pane shows also opens with ↵.
+The panel is **four blocks and no other**, in this order, each headed by its name alone (no writer,
+no byline):
 
-The **watch** lays a read-only live copy of the agent's terminal over the pane you are looking at (the
-focused one, up to the column), under the header "Watching · read-only · ⌘↵ show as tab", with the
-agent's name and "esc back" beside it. It is a viewer: typing goes nowhere and the window never sends a
-size, so it cannot disturb the agent's grid. esc goes back and gives focus to the line you pressed. ⌘↵,
-from the open watch or straight from a selected line, shows the agent's background tab as an ordinary
-tab and switches to it; the session keeps running and stays in its task.
+1. **Agents** lists the task's agents that work or wait, and only those: each with its state mark
+   (the working glyph, or ◆ when it waits), its name, its age at the right and, under the name, what
+   it is doing in words, never a tool name. A waiting agent shows the question it asks. An agent
+   that has finished is not listed. Each line is a row you can reach and press: click the panel,
+   then Tab to move between lines. A line shows what ↵ does once it is hovered or focused: for an
+   agent in a hidden tab "↵ answer it · opens as a tab until it works on" (the tab appears, marked,
+   until the agent works on); for one that already sits in a tab of the strip "↵ open", which jumps to
+   that tab.
+2. **Progress** shows the task in hand above a bar, and "x of y" below it. It is built from the
+   `progress` block.
+3. **Links** takes any kind of link: a Slack thread, a GitHub pull request or issue, a Claude
+   artifact, a document, a brief, and each of the owner's decisions linking to its record. Each row
+   shows its kind (`slack`, `PR`, `issue`, `art`, `doc`, `brief`, `decision` or `link`), its label and
+   its time, newest first. It is built from the `links` and `documents` blocks together.
+4. **Recent activity** has one line per item with the time at the left and the text beside it; a
+   long item wraps under itself, and the next item stands one full line below it. It is built from
+   the `timeline` block, newest first.
 
-After the agents come the blocks agents wrote. Each has its title on the left of its header and who wrote it and how long ago on the right. They are
-kept in the database and survive a restart; they are not removed when the task ends.
+Every list shows five entries and then **+ N more**, which opens the rest in place; the panel
+scrolls. A panel with 19 agents, 19 links and 19 lines of activity shows five of each and "+ 14 more".
+
+The blocks agents write are kept in the database and survive a restart; they are not removed when
+the task ends. Blocks of the other types below are stored and read back by `get_task_panel`, but
+the panel does not draw them.
 
 | Tool | Arguments | What it does |
 | --- | --- | --- |
@@ -432,7 +456,8 @@ kept in the database and survive a restart; they are not removed when the task e
 | `get_task_panel` | `taskId` | Reads the blocks back (read-only; needs only a read token). |
 
 `by` names the writer; without it the calling session's title is used, else nothing (at most 40
-characters). The panel follows each call within a second.
+characters). It is kept with the block, and the panel does not show it. The panel follows each call
+within a second.
 
 A block is an object with an `id` (letters, digits, `.`, `_`, `:` and `-`; at most 64; `agents` is reserved),
 a `type`, an optional `title` (80) and the fields of its type:
@@ -449,7 +474,7 @@ a `type`, an optional `title` (80) and the fields of its type:
 
 A panel holds at most 24 blocks. Every refusal names the block, field or id at fault.
 
-A button types its `text` and Enter into the task's own session, exactly as if the person had
-typed it there. The text is the one stored with the block; the window only says which button was
-pressed. A button is disabled, and the server refuses quietly, while that session's agent has
-ended, so the text never runs as a shell command.
+An `actions` block is stored and a pressed button still types its `text` and Enter into the task's
+main conversation, exactly as if the person had typed it there, but the panel draws no buttons. The
+text is the one stored with the block; the window only says which button was pressed. The server
+refuses quietly while that conversation has ended, so the text never runs as a shell command.

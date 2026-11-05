@@ -75,11 +75,11 @@ class AgentsOverviewMomentsTest {
     /** Moment 1: the usual case. */
     @Test
     fun theUsualCaseShowsTheMainRowACodexRowADoneRowFiveEarlierEntriesAndThreeWorking() {
-        layout(listOf("leaf-lead", "leaf-codex", "leaf-done"), hidden = listOf("leaf-b1", "leaf-b2"))
+        layout(listOf("leaf-main", "leaf-codex", "leaf-done"), hidden = listOf("leaf-b1", "leaf-b2"))
         val earlier = (1..7).map { conversation("old$it", "ended", ended = true, since = it * 60_000L) }
         show(
-            listOf(task("lead")),
-            conversation("lead", "working", taskId = "g1"),
+            listOf(task("main")),
+            conversation("main", "working", taskId = "g1"),
             conversation("b1", "working", taskId = "g1", background = true),
             conversation("b2", "working", taskId = "g1", background = true),
             conversation("codex", "working", agent = "codex", since = 2_000),
@@ -101,18 +101,18 @@ class AgentsOverviewMomentsTest {
     /** Moment 2: Return goes to the live main conversation. */
     @Test
     fun returnOnALiveMainConversationJumpsToItsPane() = runNow {
-        layout(listOf("leaf-lead"))
-        show(listOf(task("lead")), conversation("lead", "working", taskId = "g1"))
+        layout(listOf("leaf-main"))
+        show(listOf(task("main")), conversation("main", "working", taskId = "g1"))
         assertEquals(Enter.JUMP, row("task:g1").enter)
         vm.activate(row("task:g1"))
-        assertEquals(listOf<WindowCommand>(WindowCommand.SetActiveTab("tab-1"), WindowCommand.SetFocusedPane("tab-1", "leaf-lead")), sent)
+        assertEquals(listOf<WindowCommand>(WindowCommand.SetActiveTab("tab-1"), WindowCommand.SetFocusedPane("tab-1", "leaf-main")), sent)
     }
 
     /** Moment 3: the main conversation asks. */
     @Test
     fun whenTheMainConversationAsksTheRowSaysNeedsYouAndTheFooterCountsOne() {
-        layout(listOf("leaf-lead"))
-        show(listOf(task("lead")), conversation("lead", "needs_you", taskId = "g1", question = "Run the tests?"))
+        layout(listOf("leaf-main"))
+        show(listOf(task("main")), conversation("main", "needs_you", taskId = "g1", question = "Run the tests?"))
         assertEquals("needs you", row("task:g1").stateWord)
         assertEquals("◆", row("task:g1").marker)
         assertEquals(1, vm.state.needYouCount)
@@ -122,10 +122,10 @@ class AgentsOverviewMomentsTest {
     /** Moment 4: a background member asks; the tab stays hidden. */
     @Test
     fun whenABackgroundMemberAsksTheRowAndTheFooterShowItAndNoTabIsListed() {
-        layout(listOf("leaf-lead"), hidden = listOf("leaf-bg"))
+        layout(listOf("leaf-main"), hidden = listOf("leaf-bg"))
         show(
-            listOf(task("lead")),
-            conversation("lead", "working", taskId = "g1"),
+            listOf(task("main")),
+            conversation("main", "working", taskId = "g1"),
             conversation("bg", "needs_you", taskId = "g1", background = true),
         )
         assertEquals("◆", row("task:g1").marker)
@@ -138,18 +138,18 @@ class AgentsOverviewMomentsTest {
     /** Moment 4b: Return on it asks the server to show the tab. */
     @Test
     fun returnOnAWaitingBackgroundMemberSendsShowWaitingAgent() = runNow {
-        layout(listOf("leaf-lead"), hidden = listOf("leaf-bg"))
+        layout(listOf("leaf-main"), hidden = listOf("leaf-bg"))
         show(
-            listOf(task("lead")),
-            conversation("lead", "working", taskId = "g1"),
+            listOf(task("main")),
+            conversation("main", "working", taskId = "g1"),
             conversation("bg", "needs_you", taskId = "g1", background = true),
         )
         vm.activate(row("task:g1"))
         assertEquals(listOf<WindowCommand>(WindowCommand.ShowWaitingAgent("bg")), sent)
         // The member works on: the row is an ordinary jump again.
         show(
-            listOf(task("lead")),
-            conversation("lead", "working", taskId = "g1"),
+            listOf(task("main")),
+            conversation("main", "working", taskId = "g1"),
             conversation("bg", "working", taskId = "g1", background = true),
         )
         assertEquals(Enter.JUMP, row("task:g1").enter)
@@ -161,11 +161,11 @@ class AgentsOverviewMomentsTest {
     fun aClosedMainConversationWithTwoMembersWorkingStaysInNowAndResumesByConversationId() = runNow {
         layout(listOf("leaf-other"), hidden = listOf("leaf-b1", "leaf-b2"))
         val facts = arrayOf(
-            conversation("lead", "ended", taskId = "g1", ended = true),
+            conversation("main", "ended", taskId = "g1", ended = true),
             conversation("b1", "working", taskId = "g1", background = true),
             conversation("b2", "working", taskId = "g1", background = true),
         )
-        show(listOf(task("lead")), *facts)
+        show(listOf(task("main")), *facts)
         assertTrue(vm.state.now.any { it.id == "task:g1" })
         assertEquals("2 working", row("task:g1").stateWord)
         vm.open(); vm.select("task:g1")
@@ -173,15 +173,15 @@ class AgentsOverviewMomentsTest {
         assertEquals("conversation closed", vm.state.ask!!.tag)
         assertEquals("Resume it in a new tab?", vm.state.ask!!.question)
         vm.activateSelected()
-        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("lead")), sent)
+        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("main")), sent)
 
         // A restart reuses pane ids for other tabs and sends the same conversations again.
         sent.clear()
-        layout(listOf("leaf-lead"), hidden = listOf("leaf-b1", "leaf-b2"))
-        show(listOf(task("lead")), *facts)
+        layout(listOf("leaf-main"), hidden = listOf("leaf-b1", "leaf-b2"))
+        show(listOf(task("main")), *facts)
         vm.close(); vm.open(); vm.select("task:g1")
         vm.activateSelected(); vm.activateSelected()
-        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("lead")), sent, "still by conversation, not by pane")
+        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("main")), sent, "still by conversation, not by pane")
     }
 
     /** The footer's per-world split leaves out a conversation with no pane in the layout. */
