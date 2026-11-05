@@ -119,7 +119,7 @@ those only, and the task line names the others by their own word: *1 working · 
 a task is not shown as stopped while a session is still live. Because the chip can now fall to idle on
 the clock alone, the web client keeps its 30 s clock running while any session is working even with
 the overlay closed. Tests (`AgentsOverviewTasksViewModelTest`):
-`theChipCountsAsWorkingOnlyTheSessionsThatAreMovingAndTheClockAloneEndsThat`,
+`theFooterCountsAsWorkingOnlyTheSessionsThatAreMovingAndTheClockAloneEndsThat`,
 `aTaskLineCountsAQuietOrStaleSessionUnderThatWordAndNeverAsWorking`.
 
 ![After: the chip no longer counts the quiet session; the task line says "1 quiet"](ux-review-m4/10-after-t1-quiet.png)
