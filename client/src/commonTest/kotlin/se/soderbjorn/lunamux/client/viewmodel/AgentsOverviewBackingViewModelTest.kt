@@ -37,7 +37,7 @@ class AgentsOverviewBackingViewModelTest {
 
     private val sent = mutableListOf<WindowCommand>()
     private val windowState = WindowStateRepository()
-    // A fixed clock well past the idle grace, so the sessions built with small `since` values are
+    // A fixed clock well past a few minutes, so the sessions built with small `since` values are
     // old enough for EARLIER and young enough for its first band.
     private val now = 1_000_000L
     private val vm = AgentsOverviewBackingViewModel(windowState, clock = { now }) { sent += it }
@@ -51,7 +51,7 @@ class AgentsOverviewBackingViewModelTest {
         id = id, agent = agent, state = state, stateSince = since, title = title, links = emptyList(),
         repo = repo, branch = branch, cwd = cwd, nowLine = nowLine, question = question, leafId = leaf, endedAt = endedAt,
         firstPrompt = firstPrompt, lastSaid = lastSaid, cwdHome = cwdHome, taskId = taskId,
-        // A working session is moving (not quiet) unless a test says otherwise, as the chip counts only those.
+        // A working session is moving (not quiet) unless a test says otherwise, as the footer counts only those.
         lastActivityAt = lastActivityAt ?: if (state == "working") now - 1_000 else null,
     )
 
@@ -224,8 +224,8 @@ class AgentsOverviewBackingViewModelTest {
         val clockNow = 100 * day
         val vmAtDay100 = AgentsOverviewBackingViewModel(windowState, clock = { clockNow }) { sent += it }
         // "stale" entered its state a minute ago but its last sign of life was two days ago (the
-        // state time was refreshed without the session doing anything); "fresh" is inside the idle
-        // grace; "justDone" ended a minute ago and gets the same grace; "done" ended three hours
+        // state time was refreshed without the session doing anything); "fresh" is a conversation
+        // that just finished; "justDone" ended a minute ago; "done" ended three hours
         // ago. The heading a row sits under and the age it shows are read from the same moment.
         // The two idle ones are in open tabs; the ended ones have no pane.
         layout(leaf("leaf-stale"), leaf("leaf-fresh"))
@@ -377,7 +377,7 @@ class AgentsOverviewBackingViewModelTest {
     }
 
     @Test
-    fun theChipCountsAreNotNarrowedByTheQuery() {
+    fun theFooterCountsAreNotNarrowedByTheQuery() {
         hosted("a", "b")
         windowState.updateAgentSessions(listOf(session("a", "working"), session("b", "working")), true)
         vm.setQuery("zzz")

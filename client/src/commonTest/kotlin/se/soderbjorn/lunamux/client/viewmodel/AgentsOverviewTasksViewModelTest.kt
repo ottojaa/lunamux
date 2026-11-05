@@ -225,7 +225,7 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aDoneOnlyFileTaskGoesToEarlierOnceItsNewestMemberIsPastTheGrace() {
+    fun aDoneOnlyFileTaskWithNoOpenConversationGoesToEarlier() {
         show(listOf(task(members = listOf(member("a", "done", label = "done", since = now - 11 * MINUTE), member("b", "done", label = "done", since = now - 12 * MINUTE)))))
         assertTrue(vm.state.now.isEmpty())
         assertEquals(listOf("task:g1"), vm.state.earlier.map { it.id })
@@ -356,7 +356,7 @@ class AgentsOverviewTasksViewModelTest {
         assertEquals("task:g1", vm.state.selectedId)
     }
 
-    // ---- the chip ----
+    // ---- the footer count ----
 
     @Test
     fun theCountsIncludeTheMembersATaskFileListsOnlyWhileItsMainConversationIsOpen() {
@@ -369,7 +369,7 @@ class AgentsOverviewTasksViewModelTest {
         assertEquals(2, vm.state.workingCount)
     }
     @Test
-    fun theChipCountsAsWorkingOnlyTheSessionsThatAreMovingAndTheClockAloneEndsThat() {
+    fun theFooterCountsAsWorkingOnlyTheSessionsThatAreMovingAndTheClockAloneEndsThat() {
         // Window-wide stamps: hosted singles by their last activity, a member Lunamux does not host by its file's refresh time.
         show(
             listOf(task(id = "f", refreshedAtMillis = now - 25 * MINUTE, members = listOf(member("file-run", "working"), member("other", "done")))),
@@ -464,7 +464,7 @@ class AgentsOverviewTasksViewModelTest {
         )
         assertEquals("done", row("task:review").stateWord)
         assertEquals("finished", row("task:closed").stateWord)
-        assertEquals("done", row("chat").stateWord, "a chat inside the grace is still in NOW")
+        assertEquals("done", row("chat").stateWord, "a finished conversation in an open tab is in NOW")
         assertEquals("finished", row("old").stateWord)
         assertTrue(row("old").finished)
         assertFalse(row("chat").finished)
@@ -1113,7 +1113,7 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aSessionThatMadeTwoTasksAndBelongsToNeitherIsCountedOnceInTheChip() {
+    fun aSessionThatMadeTwoTasksAndBelongsToNeitherIsCountedOnceInTheFooter() {
         layout("leaf-x")
         val x = session("x", "working", lastActivityAt = now - 1_000)
         show(
