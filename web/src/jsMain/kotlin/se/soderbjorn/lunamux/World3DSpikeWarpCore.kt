@@ -58,6 +58,7 @@ import kotlinx.browser.document
 import kotlinx.browser.window
 import org.w3c.dom.HTMLCanvasElement
 import org.w3c.dom.HTMLElement
+import se.soderbjorn.lunamux.client.viewmodel.AgentCounts
 import se.soderbjorn.lunula.core.argbToCss
 import se.soderbjorn.lunamux.three.PerspectiveCamera
 
@@ -437,46 +438,30 @@ private class WorldStatus(
 )
 
 /**
- * Tallies every world's waiting/working panes from the resident [latestWindowConfig] and the
- * global session-state map ([lunamuxClient]`.windowState.states`, keyed by `sessionId` across all
- * worlds), honouring the manual [spikeWaitingOverride] / [spikeWorkingOverride] test maps (keyed
- * by pane id) exactly as the render loop does. Returns one [WorldStatus] per world that has any
- * activity, in the config's world order; worlds with no waiting/working panes are omitted (so
- * they get no box).
+ * Tallies every world's waiting and working conversations with [AgentCounts.byWorld], the same
+ * rule the footer and the agents overview count with, so the boxes agree with both. Returns one
+ * [WorldStatus] per world that has any activity, in the config's world order; worlds with
+ * nothing waiting or working are omitted (so they get no box).
  *
- * Called every frame by [tickWarpCoreOverlay]. Uses config panes rather than [spikePanes] because
- * only the on-screen world's panes are mounted as [RingPane]s — a per-world *count* needs the
- * full tab→pane tree of every world, which the config carries.
+ * Called every frame by [tickWarpCoreOverlay].
  *
  * @return the active worlds' tallies, in world order.
  * @see updateWarpWorldBoxes
  */
 private fun computeWorldStatuses(): List<WorldStatus> {
     val cfg = latestWindowConfig ?: return emptyList()
-    val states = runCatching { lunamuxClient.windowState.states.value }.getOrNull()
-    val out = mutableListOf<WorldStatus>()
-    for (world in cfg.worlds) {
-        var working = 0
-        var waiting = 0
-        for (tab in world.tabs) {
-            for (pane in tab.panes) {
-                val paneId = pane.leaf.id
-                val sessionId = pane.leaf.sessionId
-                val isWaiting = spikeWaitingOverride[paneId] ?: (states?.get(sessionId) == "waiting")
-                val isWorking = spikeWorkingOverride[paneId] ?: (states?.get(sessionId) == "working")
-                if (isWaiting) waiting++ else if (isWorking) working++
-            }
-        }
-        if (working > 0 || waiting > 0) {
-            out.add(WorldStatus(world.id, world.name, world.themeSelection, working, waiting))
-        }
+    val counts = AgentCounts.byWorld(
+        lunamuxClient.windowState.agentSessions.value, cfg, kotlin.js.Date.now().toLong(),
+    )
+    return cfg.worlds.mapNotNull { world ->
+        val c = counts[world.id] ?: return@mapNotNull null
+        WorldStatus(world.id, world.name, world.themeSelection, c.working, c.waiting)
     }
-    return out
 }
 
 /**
- * The count line for a world's box — "N working • M waiting", omitting a half that is zero (so a
- * purely-waiting world reads just "M waiting"). All one colour (the world accent, applied to the
+ * The count line for a world's box — "▲ M waiting • N working", omitting a half that is zero (so a
+ * purely-waiting world reads just "▲ M waiting"), in the same order the footer draws them. All one colour (the world accent, applied to the
  * element by [updateWarpWorldBoxes]); no per-state tinting. Doubles as the change-detection key
  * ([WorldStatusBox.lastText]).
  *
@@ -485,8 +470,8 @@ private fun computeWorldStatuses(): List<WorldStatus> {
  */
 private fun countLineText(working: Int, waiting: Int): String {
     val parts = mutableListOf<String>()
+    if (waiting > 0) parts.add("\u25B2 $waiting waiting")
     if (working > 0) parts.add("$working working")
-    if (waiting > 0) parts.add("$waiting waiting")
     return parts.joinToString(" • ")
 }
 

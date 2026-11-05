@@ -32,6 +32,7 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.w3c.dom.HTMLElement
+import se.soderbjorn.lunamux.client.viewmodel.AgentCounts
 import se.soderbjorn.lunula.core.argbToCss
 import se.soderbjorn.lunula.web.confirmClosePane
 import se.soderbjorn.lunula.web.hotkey.Hotkey
@@ -965,150 +966,127 @@ private fun buildSidebarFooter(): HTMLElement {
 }
 
 /**
- * A single active world's agent tally, for the sidebar's world-status block.
+ * One line of the footer's agent block: the label, its colour dot (null for the total line) and the
+ * two counts.
  *
- * @property name    the world's display name (the row's label).
- * @property accent  the world's resolved theme accent as a CSS colour string
- *   (the row's status dot), from [resolvedThemeForWorld] via [argbToCss].
- * @property working how many of the world's panes have a running agent.
- * @property waiting how many of the world's panes have an agent awaiting input.
- * @see computeWorldStatusRows
+ * @property name    the line's label: "All worlds" for the total, else the world's display name.
+ * @property accent  the world's resolved theme accent as a CSS colour string (the line's dot), or
+ *   null for the total line.
+ * @property working how many conversations work and are moving.
+ * @property waiting how many conversations wait for the person.
+ * @see computeAgentStatusRows
  */
 private class WorldStatusRow(
     val name: String,
-    val accent: String,
+    val accent: String?,
     val working: Int,
     val waiting: Int,
 )
 
 /**
- * Tallies every world's working/waiting panes from the resident
- * [latestWindowConfig] and the authoritative session-state map
- * ([lunamuxClient]`.windowState.states`, keyed by `sessionId` across all
- * worlds). Returns one [WorldStatusRow] per world that has any activity, in the
- * config's world order; quiet worlds are omitted so the block stays empty when
- * nothing is running.
+ * The footer's lines: the total of every conversation waiting for the person and every one
+ * working, then, when the layout has more than one world, one line for each world that has any.
  *
- * This is the 2D counterpart of the 3D warp-core's `computeWorldStatuses`: it
- * reads the same shared session-state model AND honours the same manual
- * [spikeWaitingOverride] / [spikeWorkingOverride] test maps (keyed by pane id,
- * toggled by the 3D `w` key), so the sidebar footer and the 3D warp-core boxes
- * agree on the numbers even while an override is in effect.
+ * The numbers come from the same function the agents overview counts with ([AgentCounts]), so the
+ * footer's "waiting" always equals the number of rows that show "needs you" (a background agent
+ * that waits counts here and opens as a tab from its row). It no longer reads terminal state.
  *
- * @return the active worlds' tallies, in world order.
+ * @return the lines to draw; empty when nothing waits and nothing works.
  * @see updateWorldStatusFooter
+ * @see AgentCounts.of
+ * @see AgentCounts.byWorld
  */
-private fun computeWorldStatusRows(): List<WorldStatusRow> {
-    val cfg = latestWindowConfig ?: return emptyList()
-    val states = runCatching { lunamuxClient.windowState.states.value }.getOrNull()
-    val out = mutableListOf<WorldStatusRow>()
+private fun computeAgentStatusRows(): List<WorldStatusRow> {
+    val sessions = lunamuxClient.windowState.agentSessions.value
+    val tasks = lunamuxClient.windowState.agentTasks.value
+    val now = kotlin.js.Date.now().toLong()
+    val total = AgentCounts.of(sessions, tasks, now)
+    if (total.waiting == 0 && total.working == 0) return emptyList()
+    val out = mutableListOf(WorldStatusRow("All worlds", null, total.working, total.waiting))
+    val cfg = latestWindowConfig ?: return out
+    if (cfg.worlds.size < 2) return out
+    val byWorld = AgentCounts.byWorld(sessions, cfg, now)
     for (world in cfg.worlds) {
-        var working = 0
-        var waiting = 0
-        for (tab in world.tabs) {
-            for (pane in tab.panes) {
-                // A manual override (3D `w` key) wins over the live session state,
-                // exactly as the 3D warp-core's computeWorldStatuses does; absent an
-                // override the pane follows its real state.
-                val paneId = pane.leaf.id
-                val sessionId = pane.leaf.sessionId
-                val isWaiting = spikeWaitingOverride[paneId] ?: (states?.get(sessionId) == "waiting")
-                val isWorking = spikeWorkingOverride[paneId] ?: (states?.get(sessionId) == "working")
-                if (isWaiting) waiting++ else if (isWorking) working++
-            }
-        }
-        if (working > 0 || waiting > 0) {
-            val accent = runCatching { argbToCss(resolvedThemeForWorld(world.themeSelection).accent) }
-                .getOrNull() ?: "#4f8cf7"
-            out.add(WorldStatusRow(world.name, accent, working, waiting))
-        }
+        val c = byWorld[world.id] ?: continue
+        val accent = runCatching { argbToCss(resolvedThemeForWorld(world.themeSelection).accent) }
+            .getOrNull() ?: "#4f8cf7"
+        out.add(WorldStatusRow(world.name, accent, c.working, c.waiting))
     }
     return out
 }
 
 /**
- * Fills a row's count element with colour-coded, gently-pulsing segments — "N
- * working" in reactor blue and "M waiting" in attention amber (the 3D warp
- * core's semantic working/waiting colours), joined by a muted separator, and
- * omitting a half that is zero (so a purely-waiting world reads just "M
- * waiting"). The colour + slow breathe draw the eye to live / blocked agents
- * without the heavier chrome of the sidebar's per-pane dots.
+ * Fills a line's count element: "▲ M waiting" in attention amber, then the working glyph and
+ * "N working" in the working colour, omitting a half that is zero. The waiting half pulses on the
+ * shared global pulse loop ([startPulse]) and the working half carries the app's working glyph,
+ * built by [workingGlyph] under [glyphKey] so the footer's rebuild on every state push puts the
+ * same moving glyph back and its motion never starts over.
  *
- * The breathe opacity is driven by the shared global pulse loop
- * ([startPulse] / `pulseTick` in `WebStateActions`), NOT a CSS `@keyframes`
- * animation: [updateWorldStatusFooter] rebuilds this block with `innerHTML = ""`
- * on every state push, and a CSS animation on the fresh span would restart from
- * `opacity: 1` each time, making the breathe look erratic. Seeding each segment
- * off the shared clock keeps every world's breathe steady and in sync — the same
- * fix the per-pane `.tt-status-dot` beads use.
- *
- * @param host    the row's count container to populate (assumed empty).
- * @param working the world's working-pane count.
- * @param waiting its waiting-pane count.
+ * @param host      the line's count container to populate (assumed empty).
+ * @param working   the working count.
+ * @param waiting   the waiting count.
+ * @param glyphKey  the key the working glyph is kept under.
  * @see startPulse
  */
-private fun appendWorldStatusCounts(host: HTMLElement, working: Int, waiting: Int) {
-    var needSep = false
-    if (working > 0) {
-        val w = document.createElement("span") as HTMLElement
-        w.className = "world-status-working"
-        w.textContent = "$working working"
-        host.appendChild(w)
-        startPulse(w, WORLD_WORKING_PULSE_PERIOD_MS, WORLD_WORKING_PULSE_FLOOR)
-        needSep = true
-    }
+private fun appendWorldStatusCounts(host: HTMLElement, working: Int, waiting: Int, glyphKey: String) {
     if (waiting > 0) {
-        if (needSep) {
-            val sep = document.createElement("span") as HTMLElement
-            sep.className = "world-status-sep"
-            sep.textContent = " • "
-            host.appendChild(sep)
-        }
         val a = document.createElement("span") as HTMLElement
         a.className = "world-status-waiting"
-        a.textContent = "$waiting waiting"
+        a.textContent = "\u25B2 $waiting waiting"
         host.appendChild(a)
         startPulse(a, WORLD_WAITING_PULSE_PERIOD_MS, WORLD_WAITING_PULSE_FLOOR)
+    }
+    if (working > 0) {
+        if (waiting > 0) {
+            val sep = document.createElement("span") as HTMLElement
+            sep.className = "world-status-sep"
+            sep.textContent = " \u2022 "
+            host.appendChild(sep)
+        }
+        val w = document.createElement("span") as HTMLElement
+        w.className = "world-status-working"
+        w.appendChild(workingGlyph(glyphKey))
+        w.appendChild(document.createTextNode(" $working working"))
+        host.appendChild(w)
     }
 }
 
 /**
- * Repaints the sidebar's world-status block from the current worlds + session
- * states. Called from [updateStateIndicators] — the shared hub every config /
- * state push already routes through — so the rows track agent activity live,
- * exactly like the per-pane sidebar dots beside them.
+ * Repaints the sidebar's agent block from the conversations the server pushed. Called from
+ * [updateStateIndicators] (every config and state push routes through it), from the agents
+ * overview when sessions or tasks change, and on a slow clock so a quiet agent stops counting as
+ * working.
  *
- * When no world has any working/waiting pane, the block collapses to nothing
- * (via `world-status-empty`, which zeroes its padding) so an idle footer shows
- * only the usage bar. Otherwise it renders a "Worlds" title over one accent-dot
- * row per active world. The whole block is rebuilt each call (a handful of
- * worlds, pushed at most every few seconds) rather than diffed.
+ * When nothing waits and nothing works the block collapses to nothing (via `world-status-empty`,
+ * which zeroes its padding) so an idle footer shows only the usage bar. The whole block is
+ * rebuilt each call (a handful of lines) rather than diffed.
  *
- * @see computeWorldStatusRows
+ * @see computeAgentStatusRows
  */
 internal fun updateWorldStatusFooter() {
     val host = worldStatusEl ?: return
-    val rows = computeWorldStatusRows()
+    val rows = computeAgentStatusRows()
+    host.innerHTML = ""
     if (rows.isEmpty()) {
         host.classList.add("world-status-empty")
-        host.innerHTML = ""
+        keepWorkingGlyphs("footer:", emptySet())
         return
     }
     host.classList.remove("world-status-empty")
-    host.innerHTML = ""
 
     val title = document.createElement("div") as HTMLElement
     title.className = "world-status-title"
-    title.textContent = "Workspace agent status"
+    title.textContent = "Agents"
     host.appendChild(title)
 
+    val keys = HashSet<String>()
     for (row in rows) {
         val rowEl = document.createElement("div") as HTMLElement
         rowEl.className = "world-status-row"
 
         val dot = document.createElement("span") as HTMLElement
         dot.className = "world-status-dot"
-        dot.style.background = row.accent
+        if (row.accent != null) dot.style.background = row.accent else dot.style.visibility = "hidden"
 
         val name = document.createElement("span") as HTMLElement
         name.className = "world-status-name"
@@ -1116,13 +1094,16 @@ internal fun updateWorldStatusFooter() {
 
         val count = document.createElement("span") as HTMLElement
         count.className = "world-status-count"
-        appendWorldStatusCounts(count, row.working, row.waiting)
+        val key = "footer:${row.name}"
+        if (row.working > 0) keys += key
+        appendWorldStatusCounts(count, row.working, row.waiting, key)
 
         rowEl.appendChild(dot)
         rowEl.appendChild(name)
         rowEl.appendChild(count)
         host.appendChild(rowEl)
     }
+    keepWorkingGlyphs("footer:", keys)
 }
 
 /* -------------------------------------------------------------------- */
@@ -1368,7 +1349,6 @@ fun bootViaToolkitShell(root: HTMLElement) {
             // just left of "+". Click routes to the same [toggleOverview3d] as
             // the ⌥⌘→ hotkey.
             extraTopbarBeforeStandard = buildList {
-                add(buildAgentsOverviewTopbarAction())
                 add(buildOverview3dTopbarAction())
                 add(buildWorld3dSpikeTopbarAction())
             },
@@ -1511,7 +1491,7 @@ fun bootViaToolkitShell(root: HTMLElement) {
     registerAgentsOverviewHotkey() // ⌘⇧A opens the agents overview
     registerTaskPanelHotkey() // ⌘I shows or hides the task panel
     startTaskPanel() // the panel itself: follows the window state from here on
-    startWatch() // the watch overlay: follows the watch view model from here on
+    startAgentsOverview() // the overview overlay: follows its view model from here on
     registerWorld3dSpikeHotkey() // ⌥⌘← opens the world spike (mirror of ⌥⌘→)
     registerWorldSwitchHotkey() // ⌥⌘O cycles to the next world in flat 2D mode
     applyOverview3dChromeVisibility()

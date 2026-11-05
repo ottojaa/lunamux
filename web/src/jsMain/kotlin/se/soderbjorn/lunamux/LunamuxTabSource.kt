@@ -131,6 +131,7 @@ fun lunamuxTabSource(
                 // sidebar and overflow menu, and it must not hold ids it could ask to close or move.
                 val worldTabs = (world?.tabs ?: config.tabs).filter { it.isListed }
                 val worldActiveTab = world?.activeTabId ?: config.activeTabId
+                updateWaitingTabTag(worldTabs.firstOrNull { it.id == worldActiveTab && it.shownWhileWaiting } != null)
                 // Repaint to the active world's theme pair when it changes
                 // (no-op otherwise). Runs before the tab push so the chrome
                 // rebuild below already carries the new theme.
