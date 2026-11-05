@@ -485,4 +485,125 @@ class TaskPanelViewModelTest {
         assertEquals("2d", TaskPanelViewModel.ageOf(0, 2 * 86_400_000L))
         assertEquals("waiting", TaskPanelViewModel.wordOf("idle"))
     }
+
+    /** A task with finished and live members of every kind, for the fold tests. */
+    private fun giveFoldTask(taskId: String = "t1") {
+        layout()
+        give(
+            listOf(
+                task(
+                    listOf(
+                        member("live1", "Writer", "working", recordId = "bg1"),
+                        member("fin-file", "Old run", "ended", recordId = "gone"),
+                        member("fin-label", "Merged one", "ended", label = "merged"),
+                        member("live2", "Reviewer", "needs_you", recordId = "w1"),
+                    ),
+                    id = taskId,
+                ),
+            ),
+            listOf(
+                session("own", state = "ended", taskId = taskId),
+                session("bg1", background = true, leaf = "leaf-bg", taskId = taskId),
+                session("w1", leaf = "leaf-w", state = "needs_you", taskId = taskId),
+                session("gone", state = "ended", leaf = null, taskId = taskId),
+                session("old-a", state = "ended", leaf = null, taskId = taskId, since = now - 20_000_000),
+                session("old-b", state = "ended", leaf = null, taskId = taskId, since = now - 10_000_000),
+            ),
+        )
+    }
+
+    @Test
+    fun `the fold counts every finished line, file members and unlisted records alike, never the own session`() {
+        giveFoldTask()
+        val s = vm.state
+        // fin-file, fin-label and the two unlisted records; the own session is finished too and is not counted.
+        assertEquals("4 finished · done", s.fold?.text)
+        assertEquals(4, s.fold?.count)
+        assertEquals(6, s.agents.size, "agents still holds every line but the own session")
+        assertEquals(listOf("live1", "fin-file", "fin-label", "live2", "old-a", "old-b"), s.agents.map { it.key })
+    }
+
+    @Test
+    fun `a task with nothing finished has no fold and shows every line`() {
+        layout()
+        give(
+            listOf(task(listOf(member("m1", "Writer", "working", recordId = "bg1"), member("m2", "Waiting", "idle", recordId = "idle1")))),
+            listOf(session("own"), session("bg1", background = true, leaf = "leaf-bg"), session("idle1", state = "idle", leaf = null)),
+        )
+        val s = vm.state
+        assertNull(s.fold)
+        assertEquals(listOf("m1", "m2"), s.shown.map { it.key })
+        vm.toggleFinished()
+        assertNull(vm.state.fold, "toggling a task with nothing finished folds nothing")
+        assertEquals(listOf("m1", "m2"), vm.state.shown.map { it.key })
+    }
+
+    @Test
+    fun `folded, the panel shows the live lines in member order, and toggling lists the finished ones first, dimmed`() {
+        giveFoldTask()
+        assertEquals(false, vm.state.fold?.expanded)
+        assertEquals(listOf("live1", "live2"), vm.state.shown.map { it.key })
+
+        vm.toggleFinished()
+        val expanded = vm.state
+        assertEquals(true, expanded.fold?.expanded)
+        assertEquals(listOf("fin-file", "fin-label", "old-a", "old-b", "live1", "live2"), expanded.shown.map { it.key })
+        assertEquals(listOf(true, true, true, true, false, false), expanded.shown.map { it.dimmed })
+        assertEquals("4 finished · done", expanded.fold?.text, "the count does not change with the fold")
+
+        vm.toggleFinished()
+        assertEquals(false, vm.state.fold?.expanded)
+        assertEquals(listOf("live1", "live2"), vm.state.shown.map { it.key })
+    }
+
+    @Test
+    fun `the choice belongs to the task and survives a refresh`() {
+        giveFoldTask("t1")
+        vm.toggleFinished()
+        assertEquals(true, vm.state.fold?.expanded)
+        // A refresh of the sessions (an age moving on, a state change) keeps it open.
+        windowState.updateAgentSessions(windowState.agentSessions.value.map { if (it.id == "bg1") it.copy(state = "idle") else it }, true)
+        vm.tick()
+        assertEquals(true, vm.state.fold?.expanded)
+        // Another task's panel starts folded, and opening it does not fold this one.
+        giveFoldTask("t2")
+        assertEquals(false, vm.state.fold?.expanded)
+        giveFoldTask("t1")
+        assertEquals(true, vm.state.fold?.expanded)
+    }
+
+    @Test
+    fun `a task whose members are all finished still has a fold and lines to show once it is opened`() {
+        layout()
+        give(
+            listOf(task(listOf(member("a", "A", "ended", recordId = "gone")))),
+            listOf(session("own"), session("gone", state = "ended", leaf = null)),
+        )
+        val s = vm.state
+        assertEquals("1 finished · done", s.fold?.text)
+        assertEquals(emptyList(), s.shown)
+        assertEquals(listOf("a"), s.agents.map { it.key }, "agents is not empty, so the empty sentence is not shown")
+    }
+
+    @Test
+    fun `a finished member the file lists with a session id keeps its open action and hint when expanded`() {
+        layout()
+        give(
+            listOf(task(listOf(member("fin", "Done run", "ended", sessionId = "abc", label = "merged")))),
+            listOf(session("own")),
+        )
+        vm.toggleFinished()
+        val line = vm.state.shown.single()
+        assertEquals(MemberAction.OPEN, line.action)
+        assertEquals("↵ open", line.hint)
+        assertEquals("exited · merged", line.stateWord)
+        runNow { vm.activateMember(line) }
+        assertEquals(listOf<WindowCommand>(WindowCommand.OpenTaskMember("t1", "fin")), sent)
+    }
+
+    @Test
+    fun `toggling with no panel shown does nothing`() {
+        vm.toggleFinished()
+        assertFalse(vm.state.visible)
+    }
 }
