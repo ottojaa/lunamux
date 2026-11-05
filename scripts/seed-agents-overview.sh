@@ -41,7 +41,7 @@
 #                    them the LAST TWO WEEKS band (3 to 14 days: "Flaky checkout tests", the 6- and
 #                    12-day sessions, "Onboarding emails", "Docs sweep"). Search is never cut.
 #   An EARLIER task  one dimmed row reading "finished" (title, repo, age), however many sessions it
-#                    holds; ↵ resumes its own session, or its newest when it has none.
+#                    holds; ↵ asks, then a second ↵ resumes its own session, or its newest when it has none.
 #   Awkward rows     "seed-home" (run from the home folder), "seed-branch-only" (only a run-named
 #                    branch), "seed-run-id-title" and "seed-folder-title" (a stored title that is a
 #                    run id or a folder name): each is named by its first prompt, never "~", the
