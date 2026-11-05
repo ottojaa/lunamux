@@ -8,7 +8,7 @@
  * sessions that say nothing about what the work is (a home folder, a branch named after a run, a
  * detached HEAD), previews written in markdown, a bare code fence, and sessions a server restart
  * ends. It also seeds one agent-made task, "Release 4.2 notes", with its own session, a one-line status
- * and two members that ran out of sight in background tabs (their records stay out of search). It turns the scratch server's MCP endpoint on and adds a read+write MCP token
+ * and six members that ran out of sight in background tabs (their records stay out of search). It turns the scratch server's MCP endpoint on and adds a read+write MCP token
  * ([MCP_TOKEN]), so `scripts/seed-agents-overview-live.sh` can open tabs and windows and a script
  * can post hook events from panes. It is run by the Gradle task `seedAgentsOverview` (through
  * `scripts/seed-agents-overview.sh`) while the scratch server is stopped, and by a test.
@@ -261,15 +261,18 @@ object AgentsOverviewSeed {
         return Summary(sessions.size + cases.size + NOTES_SESSIONS, tasks.size, files)
     }
 
-    /** How many session records [seedReleaseNotes] writes: the task's own session and two background ones. */
-    private const val NOTES_SESSIONS = 3
+    /** How many session records [seedReleaseNotes] writes: the task's own session and six background ones. */
+    private const val NOTES_SESSIONS = 7
 
     /**
-     * Write the "Release 4.2 notes" task: an own session, a status line and two background members.
+     * Write the "Release 4.2 notes" task: an own session, a status line and six background members.
      *
-     * Called by [seed]. The own session is an ordinary ended record; the two members ran in
-     * background tabs, so they are marked as background and search never finds them. The task's
-     * own pane and status are stored the way the MCP tools store them.
+     * Called by [seed]. The own session is an ordinary ended record; the six members ran in
+     * background tabs, so they are marked as background and search never finds them. All of them
+     * are ended, as a server ends any record still open when it starts; the task's panel folds
+     * them into one "6 finished · done" line, and `scripts/seed-agents-overview-live.sh` adds the
+     * working members that stay under that line. The task's own pane and status are stored the
+     * way the MCP tools store them.
      *
      * @param repo the scratch database.
      * @param workdir an absolute folder for the records' working folder.
@@ -305,6 +308,10 @@ object AgentsOverviewSeed {
         record(1, "Release 4.2 notes", "Write the release notes for 4.2 and split the checks between two agents", 2 * HOUR, NOTES_OWN_PANE, background = false)
         record(2, "Changelog check", "Check every changelog entry against the merged pull requests", 2 * HOUR + 10 * MINUTE, null, background = true)
         record(3, "Screenshot refresh", "Retake the screenshots the notes link to", 2 * HOUR + 20 * MINUTE, null, background = true)
+        record(4, "Link check", "Open every link in the notes and list the ones that no longer answer", 2 * HOUR + 30 * MINUTE, null, background = true)
+        record(5, "Contributor list", "Collect the names of everyone who merged a change into 4.2", 2 * HOUR + 40 * MINUTE, null, background = true)
+        record(6, "Upgrade steps", "Write the steps for upgrading from 4.1 and try them on a clean install", 2 * HOUR + 50 * MINUTE, null, background = true)
+        record(7, "Known issues", "List the open bugs that still affect 4.2 and say how to work around each", 3 * HOUR, null, background = true)
         repo.stampTaskStart("seed-task-notes", now - 3 * HOUR)
         repo.setTaskLead("seed-task-notes", NOTES_OWN_PANE, NOTES_OWN_LEAF)
         repo.setTaskStatus("seed-task-notes", NOTES_STATUS, NOTES_OWN_PANE, now - 2 * HOUR)
