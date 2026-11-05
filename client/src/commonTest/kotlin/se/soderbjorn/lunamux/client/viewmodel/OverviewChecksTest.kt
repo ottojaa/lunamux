@@ -33,9 +33,9 @@ class OverviewChecksTest {
     private fun layout(config: WindowConfig) = windowState.updateConfig(config)
 
     private fun conversation(
-        id: String, state: String, taskId: String? = null, background: Boolean = false, ended: Boolean = false,
+        id: String, state: String, taskId: String? = null, background: Boolean = false, ended: Boolean = false, since: Long = 1_000,
     ) = AgentSessionSummary(
-        id = id, agent = "claude", state = state, stateSince = 1_000, title = "conversation $id", repo = "proj", cwd = "/work/proj",
+        id = id, agent = "claude", state = state, stateSince = since, title = "conversation $id", repo = "proj", cwd = "/work/proj",
         leafId = "leaf-$id".takeIf { !ended }, endedAt = 500L.takeIf { ended }, lastActivityAt = now - 1_000,
         taskId = taskId, background = background,
     )
@@ -125,10 +125,23 @@ class OverviewChecksTest {
     fun returnMustReachTheMainConversation() {
         usualCase()
         val s = snapshot()
-        val wrong = s.overview.now.map { if (it.taskId == "g1") it.copy(recordId = "solo") else it }
-        val c4 = OverviewChecks.evaluate(s.copy(overview = s.overview.copy(now = wrong))).first { it.id == "C4" }
-        assertFalse(c4.ok)
-        assertTrue(c4.problems.single().contains("neither the main one main nor one that asks"))
+        fun c4With(recordId: String): OverviewChecks.Check {
+            val wrong = s.overview.now.map { if (it.taskId == "g1") it.copy(recordId = recordId) else it }
+            return OverviewChecks.evaluate(s.copy(overview = s.overview.copy(now = wrong))).first { it.id == "C4" }
+        }
+        val hidden = c4With("b2")
+        assertFalse(hidden.ok)
+        assertTrue(hidden.problems.single().contains("not listed"), "a jump to a conversation in a hidden tab shows nothing")
+        val foreign = c4With("solo")
+        assertFalse(foreign.ok)
+        assertTrue(foreign.problems.single().contains("not a conversation of the task"))
+        windowState.updateAgentSessions(
+            listOf(conversation("main", "working", taskId = "g1"), conversation("solo", "working", taskId = "g1")),
+            true,
+        )
+        val own = OverviewChecks.evaluate(snapshot().let { t -> t.copy(overview = t.overview.copy(now = t.overview.now.map { if (it.taskId == "g1") it.copy(recordId = "solo") else it })) }).first { it.id == "C4" }
+        assertFalse(own.ok)
+        assertTrue(own.problems.single().contains("neither the main one main nor one that asks"))
     }
 
     @Test
@@ -206,6 +219,70 @@ class OverviewChecksTest {
         windowState.updateAgentSessions(listOf(conversation("main", "working", taskId = "g1", background = true), conversation("solo", "done")), true)
         windowState.updateAgentTasks(listOf(task("main")))
         assertEquals(emptyList(), failed(OverviewChecks.evaluate(snapshot())), OverviewChecks.render(OverviewChecks.evaluate(snapshot())))
+    }
+
+    @Test
+    fun theMainConversationAskingInAListedTabWhileABackgroundAgentAlsoAsksPassesEveryCheck() {
+        usualCase(bgState = "needs_you")
+        windowState.updateAgentSessions(
+            listOf(
+                conversation("main", "needs_you", taskId = "g1"),
+                conversation("b1", "needs_you", taskId = "g1", background = true),
+                conversation("b2", "working", taskId = "g1", background = true),
+                conversation("solo", "done"),
+            ),
+            true,
+        )
+        val s = snapshot()
+        val row = s.overview.now.single { it.taskId == "g1" }
+        assertEquals(AgentsOverviewBackingViewModel.Enter.JUMP, row.enter, "the main conversation is jumped to; the agent is reached after it is answered")
+        assertEquals("main", row.recordId)
+        assertEquals(2, s.overview.needYouCount)
+        assertEquals(emptyList(), failed(OverviewChecks.evaluate(s)), OverviewChecks.render(OverviewChecks.evaluate(s)))
+    }
+
+    @Test
+    fun aWaitingMemberInAListedTabWithAnotherWaitingInABackgroundTabPassesEveryCheck() {
+        usualCase(bgState = "needs_you")
+        windowState.updateAgentSessions(
+            listOf(
+                conversation("main", "working", taskId = "g1"),
+                conversation("b1", "needs_you", taskId = "g1", background = true),
+                conversation("solo", "needs_you", taskId = "g1", since = 500),
+            ),
+            true,
+        )
+        val s = snapshot()
+        val row = s.overview.now.single { it.taskId == "g1" }
+        assertEquals(AgentsOverviewBackingViewModel.Enter.JUMP, row.enter)
+        assertEquals("solo", row.recordId, "Return goes to the question in a tab of the strip")
+        assertEquals(emptyList(), failed(OverviewChecks.evaluate(s)), OverviewChecks.render(OverviewChecks.evaluate(s)))
+    }
+
+    @Test
+    fun aReturnThatJumpsToAHiddenMainConversationOrToAnotherTasksConversationFailsTheReturnCheck() {
+        layout(
+            WindowConfig(
+                tabs = listOf(
+                    TabConfig(id = "tab-1", title = "one", panes = panes(listOf("leaf-solo"))),
+                    TabConfig(id = "tab-bg", title = "agents", panes = panes(listOf("leaf-main")), isBackground = true),
+                ),
+                activeTabId = "tab-1",
+            ),
+        )
+        windowState.updateAgentSessions(listOf(conversation("main", "working", taskId = "g1", background = true), conversation("solo", "working")), true)
+        windowState.updateAgentTasks(listOf(task("main")))
+        val s = snapshot()
+        fun c4With(recordId: String): OverviewChecks.Check {
+            val changed = s.overview.now.map { if (it.taskId == "g1") it.copy(recordId = recordId, enter = AgentsOverviewBackingViewModel.Enter.JUMP) else it }
+            return OverviewChecks.evaluate(s.copy(overview = s.overview.copy(now = changed))).first { it.id == "C4" }
+        }
+        val hidden = c4With("main")
+        assertFalse(hidden.ok, "a jump to a tab that is not listed shows nothing")
+        assertTrue(hidden.problems.single().contains("not listed"))
+        val foreign = c4With("solo")
+        assertFalse(foreign.ok, "a conversation of another task is not what Return on this row may open")
+        assertTrue(foreign.problems.single().contains("not a conversation of the task"))
     }
 
     @Test

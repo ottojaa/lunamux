@@ -165,10 +165,11 @@ object OverviewChecks {
     /**
      * C4: Return on a task's row reaches or resumes its main conversation, by conversation id.
      *
-     * Two things may stand in for the main conversation: another conversation of the task that asks
-     * for the person (the row then leads to the question), and, when the main conversation runs in
-     * a background tab and does not ask, a conversation of the task in a listed tab, since that
-     * background tab cannot be jumped to.
+     * Two things may stand in for the main conversation, and each must belong to the task: another
+     * conversation that asks for the person (the row then leads to the question), and, when the main
+     * conversation runs in a background tab and does not ask, a conversation in a listed tab, since
+     * that background tab cannot be jumped to. A jump to any conversation in a tab that is not
+     * listed, the main one included, fails: it would show nothing.
      */
     private fun returnReachesMain(s: Snapshot): Check {
         val problems = mutableListOf<String>()
@@ -181,11 +182,19 @@ object OverviewChecks {
             when (row.enter) {
                 AgentsOverviewBackingViewModel.Enter.JUMP, AgentsOverviewBackingViewModel.Enter.RESUME -> {
                     val target = s.sessions.firstOrNull { it.id == row.recordId || it.conversationId == row.recordId }
+                    val place = target?.leafId?.let { TaskMembers.locate(s.config, it) }
                     // A main conversation older than the summaries kept is resumed by the id the task stores.
                     if (target == null && row.enter == AgentsOverviewBackingViewModel.Enter.RESUME && row.recordId == main) Unit
                     else if (target == null) problems += "↵ on \"${row.title}\" names no conversation"
-                    else if (target.conversationId != main && target.state != NEEDS_YOU && !mainIsUnreachableBackground(s, main)) {
-                        problems += "↵ on \"${row.title}\" goes to conversation ${target.conversationId}, which is neither the main one $main nor one that asks"
+                    else if (row.enter == AgentsOverviewBackingViewModel.Enter.JUMP && place != null && !place.tab.isListed) {
+                        // A jump to a tab that is not listed shows nothing, the main conversation's tab included.
+                        problems += "↵ on \"${row.title}\" jumps to a conversation in a tab that is not listed"
+                    } else if (target.conversationId != main) {
+                        if (target.conversationId !in conversationsOf(row, s)) {
+                            problems += "↵ on \"${row.title}\" goes to conversation ${target.conversationId}, which is not a conversation of the task"
+                        } else if (target.state != NEEDS_YOU && !mainIsUnreachableBackground(s, main)) {
+                            problems += "↵ on \"${row.title}\" goes to conversation ${target.conversationId}, which is neither the main one $main nor one that asks"
+                        }
                     }
                 }
                 AgentsOverviewBackingViewModel.Enter.SHOW_WAITING -> {
@@ -214,14 +223,15 @@ object OverviewChecks {
             if (row == null) problems += "\"${c.title ?: c.id}\" needs you and no row leads to it"
             else if (row.enter != AgentsOverviewBackingViewModel.Enter.JUMP && row.enter != AgentsOverviewBackingViewModel.Enter.SHOW_WAITING) {
                 problems += "\"${c.title ?: c.id}\" needs you but ↵ on its row \"${row.title}\" does not open it"
-            } else if (!place.tab.isListed && row.enter != AgentsOverviewBackingViewModel.Enter.SHOW_WAITING) {
-                // A jump to a tab that is not listed shows nothing: only the marked tab reaches it.
-                problems += "\"${c.title ?: c.id}\" needs you in a background tab but ↵ on its row \"${row.title}\" jumps instead of showing the tab"
             } else {
-                // Opening something is not enough: the conversation Return opens must be one that asks.
+                // Return opens one conversation: it must be one that asks, and a tab that is not listed
+                // needs its marked tab. When two wait on one row, the other is reached once this is answered.
                 val target = s.sessions.firstOrNull { it.id == row.recordId || it.conversationId == row.recordId }
+                val targetPlace = target?.leafId?.let { TaskMembers.locate(s.config, it) }
                 if (target == null || target.state != NEEDS_YOU) {
                     problems += "\"${c.title ?: c.id}\" needs you but ↵ on its row \"${row.title}\" opens \"${target?.title ?: target?.id ?: "nothing"}\", which does not ask"
+                } else if (targetPlace != null && !targetPlace.tab.isListed && row.enter != AgentsOverviewBackingViewModel.Enter.SHOW_WAITING) {
+                    problems += "\"${target.title ?: target.id}\" needs you in a background tab but ↵ on its row \"${row.title}\" jumps instead of showing the tab"
                 }
             }
         }

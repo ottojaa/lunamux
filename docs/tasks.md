@@ -103,14 +103,19 @@ since that is what the person is asked to allow.
   2. **The main conversation is live in a tab of the strip:** jump to its pane. The footer reads "↵ open".
   3. **The main conversation is live in a hidden tab:** while it asks, its tab is shown as in 1. While it
      does not ask there is nothing to answer there and no tab to jump to, so ↵ goes to a conversation
-     of the task in a tab of the strip, else offers nothing.
+     of the task in a tab of the strip (the one with the freshest sign of life), else offers nothing:
+     the row says "it works in a background tab: ↵ has nothing to open until it asks", the footer
+     leaves ↵ out, and → still peeks at the conversation.
   4. **The main conversation is closed:** ask "conversation closed / Resume it in a new tab?"; a
      second ↵ runs `claude --resume <conversation id>` in a new tab in its own folder (`codex resume
      <id>` for a Codex conversation whose id is known). The same holds when the server no longer keeps
      a summary of the conversation: it is resumed by the id the task stores. `claude --continue` is
      never used: it picks the newest conversation of the folder, not this one.
-  5. **There is no conversation:** ask "no conversation / Start one in a new tab?"; a second ↵ runs the
-     task file's `open` action.
+  5. **The task has no main conversation on record:** a live conversation of the task in a tab of the
+     strip is jumped to (the one waiting longest, else the busiest); else ask "no conversation /
+     Start one in a new tab?" and run the task file's `open` action on a second ↵; else the newest
+     conversation the task has a record of is resumed after the same kind of question; else ↵
+     offers nothing.
   A row for a conversation that is in no task does the same for itself: it jumps to a live one in a tab
   of the strip, shows the tab of a waiting one in a hidden tab, and resumes a closed one. A resumed
   conversation is the task's main conversation again, in the same row.
@@ -238,9 +243,11 @@ server already trusts as a device (not the tool-endpoint token). It checks that:
 3. no two rows are the same conversation;
 4. Return on a task's row reaches or resumes its main conversation by conversation id (`-Pmain` names
    the conversation a task must have), or leads to another conversation of the task that asks, or, when
-   the main conversation runs in a hidden tab and does not ask, to one in a tab of the strip;
+   the main conversation runs in a hidden tab and does not ask, to one in a tab of the strip. A
+   conversation Return jumps to is never in a hidden tab, and every target belongs to the task;
 5. every needs-you leads to a visible question: the row's Return opens a conversation that asks, and
-   shows the tab when the conversation is in a hidden one;
+   shows the tab when that conversation is in a hidden one. When two conversations wait on one row,
+   Return opens one (the main conversation first) and the other is reached once it is answered;
 6. no hidden tab appears on its own: with `-Pwatch` the checker keeps watching the layout, and a tab
    that becomes listed without a mark, or stays listed after nothing in it waits, fails;
 7. the panel's agents are only working or waiting ones; and the panel is four blocks with at most five

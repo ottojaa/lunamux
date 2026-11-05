@@ -175,7 +175,9 @@ class AgentsOverviewBackingViewModel(
      * @property enter what ↵ does.
      * @property recordId the session ↵ and → act on: the one [enter] jumps to, shows or
      *   resumes, and what a peek and the inspection ask the server about. Null when [enter] is
-     *   [Enter.OPEN] or [Enter.NONE]. For a search result it is the session that matched.
+     *   [Enter.OPEN], or [Enter.NONE] for a session outside Lunamux's panes; a main conversation in a
+     *   background tab with nothing to open keeps its id so it can be peeked at. For a search result it
+     *   is the session that matched.
      * @property isLive whether [recordId]'s pane is open.
      * @property canClose whether ⌘⌫ may ask to close the row: it is one session, live in a pane.
      *   A task with several sessions can never be closed from here.
@@ -897,7 +899,8 @@ class AgentsOverviewBackingViewModel(
      *   conversation, which asks it.
      * @property started epoch millis the task started, which fixes its place in NOW.
      * @property enter what ↵ does on the task's row.
-     * @property target the session [enter] acts on, or null for [Enter.OPEN] and [Enter.NONE].
+     * @property target the session [enter] acts on, or null for [Enter.OPEN] and for [Enter.NONE]
+     *   unless the main conversation is live in a background tab (then it is that conversation).
      * @property resumeId the stored id of the task's main conversation when no summary holds it any
      *   more (it is older than the ones kept), else null. ↵ resumes the conversation by this id.
      * @property mainId the record id of the task's main conversation, or null when Lunamux does not
@@ -1219,8 +1222,9 @@ class AgentsOverviewBackingViewModel(
      * @param open the conversations whose pane is in the layout.
      * @param resumeId the stored id of a main conversation no summary holds, or null; it is resumed
      *   like a closed main conversation, by that id.
-     * @return what ↵ does and the session it acts on (null for `open`, for nothing and for a resume
-     *   by [resumeId]).
+     * @return what ↵ does and the session it acts on (null for `open`, for a resume by [resumeId]
+     *   and for nothing, except that a main conversation in a background tab with nothing to open
+     *   still names itself, so the row can be peeked at and shows its folder).
      */
     private fun enterOf(
         t: AgentTask,
@@ -1248,9 +1252,9 @@ class AgentsOverviewBackingViewModel(
         val listed = open.filter { !it.session!!.background }.minWithOrNull(urgency)
         val newest = runs.mapNotNull { it.session }.maxByOrNull(::activityOf)
         return when {
-            mainLive && main != null && !main.background -> Enter.JUMP to main
+            // Only a main conversation in a background tab gets here: a listed one has returned above.
             mainLive && listed != null -> Enter.JUMP to listed.session
-            mainLive -> Enter.NONE to null
+            mainLive -> Enter.NONE to main
             main != null -> Enter.RESUME to main
             resumeId != null -> Enter.RESUME to null
             listed != null -> Enter.JUMP to listed.session
@@ -1378,7 +1382,7 @@ class AgentsOverviewBackingViewModel(
             detail = detail,
             extra = extraOf(
                 c.noteOf(target?.id),
-                NOTHING_TO_JUMP.takeIf { u.enter == Enter.NONE },
+                (if (target != null) HIDDEN_MAIN_NOTE else NOTHING_TO_JUMP).takeIf { u.enter == Enter.NONE },
                 error,
             ),
             chips = chipsOf(t.title, target, c),
@@ -1677,8 +1681,9 @@ class AgentsOverviewBackingViewModel(
          * @param enter what ↵ does on the selected row, or null when no row is selected.
          * @return the keys, ↵ first.
          */
-        fun defaultFooter(enter: Enter?): List<FooterKey> = listOf(
-            FooterKey("↵", if (enter == Enter.SHOW_WAITING) SHOW_WAITING_HINT else "open"),
+        fun defaultFooter(enter: Enter?): List<FooterKey> = listOfNotNull(
+            // A row ↵ cannot open does not advertise it.
+            FooterKey("↵", if (enter == Enter.SHOW_WAITING) SHOW_WAITING_HINT else "open").takeIf { enter != Enter.NONE },
             FooterKey("↑↓", "move"),
             FooterKey("esc", "close"),
         )
@@ -1706,6 +1711,12 @@ class AgentsOverviewBackingViewModel(
 
         /** What the selected row's extra line says when ↵ has no session Lunamux can open. */
         const val NOTHING_TO_JUMP = "nothing to jump to: this session is not in a Lunamux pane"
+
+        /**
+         * What the selected row's extra line says when the task's main conversation runs in a
+         * background tab, which ↵ cannot jump to, and nothing else of the task is in a listed tab.
+         */
+        const val HIDDEN_MAIN_NOTE = "it works in a background tab: ↵ has nothing to open until it asks"
 
         /** How many of the newest EARLIER rows show before "+ N more". */
         const val EARLIER_LIMIT = 5
