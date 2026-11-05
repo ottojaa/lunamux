@@ -1,19 +1,20 @@
 /**
- * The shared view model of a task's panel: the column of agent-written blocks that sits beside
- * the session that speaks for a task. It decides whether a panel shows at all (only in the tab
- * that holds that session, and only while the person has it open), builds the agents block from
- * the task's members, turns every stored block into something a view can draw without further
- * thought, and carries out what a click or key on a line does (watch a background member, show it
- * as a tab, jump to a listed one, attach to an unhosted one, press a button).
+ * The shared view model of a task's panel: the column that sits beside the task's main
+ * conversation and shows what is happening now. It has exactly four blocks, Agents, Progress,
+ * Links and Recent activity, and no list in it is ever drawn in full: each shows its five newest
+ * entries, then "+ N more", which opens the rest in place.
+ *
+ * This file decides whether the panel shows at all (only in the tab where the main conversation
+ * is live, and only while the person has it open), builds the four blocks from the task's
+ * members and the blocks agents wrote, and carries out what a click or key on an agent line does
+ * (jump to a listed one, show a waiting background one as a tab, attach to an unhosted one).
  *
  * Contains [TaskPanelViewModel] with its state types ([TaskPanelViewModel.State],
- * [TaskPanelViewModel.AgentLine], [TaskPanelViewModel.BlockView]). Web draws it today; another
- * client can draw the same state.
+ * [TaskPanelViewModel.AgentLine], [TaskPanelViewModel.LinkRow], [TaskPanelViewModel.ActivityRow],
+ * [TaskPanelViewModel.ProgressView]). Web draws it today; another client can draw the same state.
  *
- * @see PanelMarkdown
- * @see WatchViewModel
- * @see se.soderbjorn.lunamux.TaskPanelBlock
  * @see AgentsOverviewBackingViewModel
+ * @see se.soderbjorn.lunamux.TaskPanelBlock
  */
 package se.soderbjorn.lunamux.client.viewmodel
 
@@ -27,34 +28,32 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import se.soderbjorn.lunamux.AgentSessionSummary
 import se.soderbjorn.lunamux.AgentTask
-import se.soderbjorn.lunamux.AgentTaskMember
 import se.soderbjorn.lunamux.TaskBlockContent
 import se.soderbjorn.lunamux.TaskPanelBlock
 import se.soderbjorn.lunamux.WindowCommand
 import se.soderbjorn.lunamux.WindowConfig
 import se.soderbjorn.lunamux.client.WindowStateRepository
 import se.soderbjorn.lunamux.effectiveActiveTabId
+import se.soderbjorn.lunamux.isListed
 
 /**
  * View model of the task panel.
  *
  * Created once per window by the web client's panel, which collects [stateFlow], draws it and
- * calls the action functions from clicks and keys. The person's open/closed choice lives here
- * as [State.open]; the client stores it and hands it back with [setOpen].
+ * calls the action functions from clicks and keys. The person's open/closed choice and which
+ * lists they opened in full live here as [State.open] and [State.Block.more]; the client stores the
+ * first and hands it back with [setOpen].
  *
  * @param windowState the source of the tasks, sessions, layout and stored blocks.
- * @param watch the watch an agent's line opens; shared with every other surface that opens one.
- * @param clock the current epoch millis, read whenever the state is built (ages and the idle
- *   grace depend on it). Tests pass a fixed one.
- * @param zone the time zone a document's clock time is shown in, normally the viewer's own.
+ * @param clock the current epoch millis, read whenever the state is built (ages depend on it).
  *   Tests pass a fixed one.
+ * @param zone the time zone a link's or an activity line's clock time is shown in, normally the
+ *   viewer's own. Tests pass a fixed one.
  * @param send sends a command to the server, normally `windowSocket::send`.
- * @see PanelMarkdown
- * @see WatchViewModel
+ * @see AgentsOverviewBackingViewModel
  */
 class TaskPanelViewModel(
     private val windowState: WindowStateRepository,
-    private val watch: WatchViewModel,
     private val clock: () -> Long = { Clock.System.now().toEpochMilliseconds() },
     private val zone: () -> TimeZone = { TimeZone.currentSystemDefault() },
     private val send: suspend (WindowCommand) -> Unit,
@@ -65,35 +64,34 @@ class TaskPanelViewModel(
      * @see AgentLine.action
      */
     enum class MemberAction {
-        /** Nothing: the member has no session this client can reach. */
+        /** Nothing: the member has no session this client can reach, or it works out of sight. */
         NONE,
-
-        /** Watch a member running in a background tab: its screen opens read-only over the current pane. */
-        WATCH,
 
         /** Go to the tab of a member running in a tab the person can see. */
         JUMP,
 
+        /** Show a background member that waits on the person as a marked tab until it works on. */
+        SHOW_WAITING,
+
         /** Open a member the task file lists but Lunamux does not host, with its own attach command. */
         OPEN,
     }
+
+    /** The lists of the panel that can open in full. */
+    enum class Section { AGENTS, LINKS, ACTIVITY }
 
     /**
      * One line of the agents block.
      *
      * @property key the member's key, unique within the task; keeps a line's identity through a redraw.
      * @property title the member's name.
-     * @property state `needs_you`, `working`, `idle` or `ended`; a view picks the glyph from it.
-     * @property stateWord the word for [state]: working, needs you, waiting or exited, or the task
-     *   file's own word for a member Lunamux does not host; a finished member the file labels reads
-     *   `exited · label`.
+     * @property state `needs_you` or `working`; a view picks the glyph from it.
+     * @property stateWord the word for [state]: "working" or "needs you".
      * @property age how long the member has been in [state], as `now`, `5m`, `3h` or `2d`.
-     * @property nowLine what it is doing or asking, or null.
-     * @property dimmed true for a finished member, which stays in the list but recedes.
+     * @property nowLine what it is doing or asking, in words, or null. Never a bare tool name.
      * @property action what a click does.
      * @property recordId the session record behind the line, or null for an unhosted member.
-     * @property hint the keys that act on the line while it is selected, or null when none does:
-     *   [WatchViewModel.LINE_HINT] for a member to watch, [OPEN_HINT] for one to go to.
+     * @property hint the keys that act on the line while it is selected, or null when none does.
      */
     data class AgentLine(
         val key: String,
@@ -102,98 +100,72 @@ class TaskPanelViewModel(
         val stateWord: String,
         val age: String,
         val nowLine: String?,
-        val dimmed: Boolean,
         val action: MemberAction,
         val recordId: String?,
         val hint: String?,
     )
 
     /**
-     * One row of a documents block.
+     * One row of the links block.
      *
-     * @property title the words shown for the document.
+     * @property kind the short word for what the link is: `slack`, `PR`, `issue`, `art`, `doc`,
+     *   `brief`, `decision` or `link`.
+     * @property title the words shown for the link.
      * @property url where it is; always http, https or file, and opened outside the app.
-     * @property time when the document changed, as a clock time in the viewer's time zone (see
-     *   [clockOf]), or null when the writer gave no time.
+     * @property time when it was written or changed, as a clock time in the viewer's time zone
+     *   (see [clockOf]).
      */
-    data class DocumentRow(val title: String, val url: String, val time: String?)
+    data class LinkRow(val kind: String, val title: String, val url: String, val time: String)
 
-    /** One entry of a timeline block, newest first. @property age how long ago. @property text what happened. */
-    data class TimelineEntry(val age: String, val text: String)
+    /** One line of the recent-activity block. @property time its clock time. @property text what happened, in plain words. */
+    data class ActivityRow(val time: String, val text: String)
 
     /**
-     * A button of an actions block.
+     * The progress block: what is being worked on, then how far along it is.
      *
-     * @property id the button's id inside its block.
-     * @property label the words on it.
-     * @property enabled false while the task's own session is not running, when pressing would go nowhere.
+     * @property current the task in hand, drawn above the bar, or null when none is named.
+     * @property fraction 0 to 1 for the bar, or null when no count was written.
+     * @property count "2 of 5", drawn below the bar, or null when no count was written.
      */
-    data class ButtonView(val id: String, val label: String, val enabled: Boolean)
-
-    /** What a stored block shows, in the shape a view draws. */
-    sealed class BlockBody {
-        /** Parsed text. @property nodes the markdown blocks. */
-        data class Text(val nodes: List<MdBlock>) : BlockBody()
-
-        /** Label and value pairs. @property items the pairs, in order. */
-        data class Facts(val items: List<Pair<String, String>>) : BlockBody()
-
-        /** Links. @property items label and address pairs; every address is http, https or file. */
-        data class Links(val items: List<Pair<String, String>>) : BlockBody()
-
-        /** Documents, in the writer's order. @property items the rows; every address is http, https or file. */
-        data class Documents(val items: List<DocumentRow>) : BlockBody()
-
-        /** Entries, newest first. @property items the entries. */
-        data class Timeline(val items: List<TimelineEntry>) : BlockBody()
-
-        /**
-         * Progress.
-         *
-         * @property text "2 of 5", the phase, or both.
-         * @property fraction 0 to 1 when the block has a count, else null.
-         * @property label the writer's caption, or null.
-         */
-        data class Progress(val text: String, val fraction: Double?, val label: String?) : BlockBody()
-
-        /** Buttons. @property buttons them, in order. */
-        data class Actions(val buttons: List<ButtonView>) : BlockBody()
-    }
+    data class ProgressView(val current: String?, val fraction: Double?, val count: String?)
 
     /**
-     * One stored block, ready to draw.
+     * One list of the panel, cut to five entries unless the person opened it.
      *
-     * @property id the writer's id for the block.
-     * @property title the heading, or null for none.
-     * @property byline "writer · age", or just the age when no writer is known.
-     * @property body what to draw.
+     * @property shown the entries to draw, newest first (agents: waiting ones first).
+     * @property more how many entries are not drawn; the view shows "+ [more] more" when this is
+     *   above zero and calls [showMore] when it is pressed. Zero once the list is open.
+     * @property total how many entries the list holds in all.
      */
-    data class BlockView(val id: String, val title: String?, val byline: String, val body: BlockBody)
+    data class Block<out T>(val shown: List<T>, val more: Int, val total: Int)
 
     /**
      * Everything a view needs to draw the panel.
      *
      * @property open the person's choice: true unless they hid the panel.
-     * @property visible whether to draw the column: [open] and a task whose own session is in the active tab.
+     * @property visible whether to draw the column: [open] and a task whose main conversation is
+     *   live in the active tab.
      * @property taskId the task being shown, or null when [visible] is false for lack of one.
      * @property title the task's name.
-     * @property agents the agents block's lines, in the task's member order, without the session the
-     *   panel sits beside; empty when the task has no other members.
-     * @property blocks the stored blocks, in the order the agents gave.
-     * @property emptyText the sentence to show when there is nothing besides the agents, else null.
+     * @property agents the agents block: members working or waiting on the person, without the main
+     *   conversation the panel sits beside.
+     * @property progress the progress block, or null when no agent wrote one.
+     * @property links the links block, newest first.
+     * @property activity the recent-activity block, newest first.
      */
     data class State(
         val open: Boolean = true,
         val visible: Boolean = false,
         val taskId: String? = null,
         val title: String = "",
-        val agents: List<AgentLine> = emptyList(),
-        val blocks: List<BlockView> = emptyList(),
-        val emptyText: String? = null,
+        val agents: Block<AgentLine> = EMPTY_BLOCK,
+        val progress: ProgressView? = null,
+        val links: Block<LinkRow> = EMPTY_BLOCK,
+        val activity: Block<ActivityRow> = EMPTY_BLOCK,
     )
 
-    /** What the person has chosen: whether the panel is shown. */
-    private data class Ui(val open: Boolean = true)
+    /** What the person has chosen: whether the panel is shown, and which lists are open in full. */
+    private data class Ui(val open: Boolean = true, val expanded: Set<Section> = emptySet())
 
     private val ui = MutableStateFlow(Ui())
     private val clockTick = MutableStateFlow(0)
@@ -238,51 +210,28 @@ class TaskPanelViewModel(
     fun toggle() = ui.update { it.copy(open = !it.open) }
 
     /**
-     * Do what ↵ or a click on [line] does: watch a background member, jump to a listed one,
-     * attach to an unhosted one, or nothing.
+     * Open a list in full, in place. Called when the person presses a block's "+ N more".
+     *
+     * @param section the list to open.
+     */
+    fun showMore(section: Section) = ui.update { it.copy(expanded = it.expanded + section) }
+
+    /**
+     * Do what ↵ or a click on [line] does: jump to a listed member, show a waiting background one
+     * as a tab, attach to an unhosted one, or nothing.
      *
      * @param line a line of [State.agents].
      * @see MemberAction
-     * @see WatchViewModel.watch
+     * @see WindowCommand.ShowWaitingAgent
      */
     suspend fun activateMember(line: AgentLine) {
         val taskId = state.taskId ?: return
         when (line.action) {
-            MemberAction.WATCH -> line.recordId?.let(watch::watch)
             MemberAction.JUMP -> jump(line.recordId)
+            MemberAction.SHOW_WAITING -> line.recordId?.let { send(WindowCommand.ShowWaitingAgent(it)) }
             MemberAction.OPEN -> send(WindowCommand.OpenTaskMember(taskId, line.key))
             MemberAction.NONE -> Unit
         }
-    }
-
-    /**
-     * Show the tab of a background member as an ordinary tab, straight from its selected line.
-     * No watch is opened on the way, so no overlay is ever drawn. Does nothing for any other kind
-     * of line. Called for ⌘↵ on a line.
-     *
-     * @param line a line of [State.agents].
-     * @see WatchViewModel.showRecordAsTab
-     */
-    suspend fun showAsTab(line: AgentLine) {
-        if (line.action != MemberAction.WATCH) return
-        line.recordId?.let { watch.showRecordAsTab(it) }
-    }
-
-    /**
-     * Press a button of an actions block. The server holds the text; only the names travel. Does
-     * nothing while the buttons are disabled.
-     *
-     * @param blockId the block holding the button.
-     * @param buttonId the button's id inside the block.
-     * @see WindowCommand.PressTaskButton
-     */
-    suspend fun press(blockId: String, buttonId: String) {
-        val current = state
-        val taskId = current.taskId ?: return
-        val button = current.blocks.firstOrNull { it.id == blockId }
-            ?.let { it.body as? BlockBody.Actions }?.buttons?.firstOrNull { it.id == buttonId } ?: return
-        if (!button.enabled) return
-        send(WindowCommand.PressTaskButton(taskId, blockId, buttonId))
     }
 
     /**
@@ -313,116 +262,181 @@ class TaskPanelViewModel(
         if (config == null) return hidden
         val activeTab = config.effectiveActiveTabId ?: return hidden
         val byId = sessions.associateBy { it.id }
+        val byKey = byId + sessions.associateBy { it.conversationId }
         val task = tasks.filter { t ->
-            val leaf = t.leadRecordId?.let(byId::get)?.leafId ?: return@filter false
+            val own = t.mainConversation?.let(byKey::get)?.takeIf { it.state != ENDED } ?: return@filter false
+            val leaf = own.leafId ?: return@filter false
             locate(config, leaf)?.tab?.id == activeTab
         }.minByOrNull { it.startedAtMillis ?: Long.MAX_VALUE } ?: return hidden
-        val own = byId.getValue(task.leadRecordId!!)
+        val own = byKey.getValue(task.mainConversation!!)
         val now = clock()
-        val live = own.state != ENDED
-        val agents = linesOf(task, sessions, byId, config, own.id, now)
-        val blocks = (panels[task.id] ?: emptyList()).map { viewOf(it, live, now) }
+        val blocks = panels[task.id] ?: emptyList()
         return State(
             open = ui.open,
             visible = ui.open,
             taskId = task.id,
             title = task.title,
-            agents = agents,
-            blocks = blocks,
-            emptyText = EMPTY_TEXT.takeIf { blocks.isEmpty() },
+            agents = cut(agentLines(task, sessions, byId, config, own, now), Section.AGENTS, ui),
+            progress = progressOf(blocks),
+            links = cut(linkRows(blocks, now), Section.LINKS, ui),
+            activity = cut(activityRows(blocks, now), Section.ACTIVITY, ui),
         )
     }
 
-    private fun linesOf(
+    /** Cut [all] to [SHOWN] entries unless the person opened [section]. */
+    private fun <T> cut(all: List<T>, section: Section, ui: Ui): Block<T> =
+        if (section in ui.expanded || all.size <= SHOWN) Block(all, 0, all.size)
+        else Block(all.take(SHOWN), all.size - SHOWN, all.size)
+
+    /**
+     * The members working or waiting on the person, the ones waiting first. The main conversation
+     * is left out (the panel sits beside it), and so is every member that finished.
+     */
+    private fun agentLines(
         task: AgentTask,
         sessions: List<AgentSessionSummary>,
         byId: Map<String, AgentSessionSummary>,
         config: WindowConfig,
-        ownId: String,
+        own: AgentSessionSummary,
         now: Long,
     ): List<AgentLine> {
         val fileMembers = task.members.map { it to it.recordId?.let(byId::get) }
         val extra = TaskMembers.unlistedSessions(task, byId, sessions.filter { it.taskId == task.id })
             .map { TaskMembers.memberOf(it) to it }
-        return (fileMembers + extra).filter { (_, s) -> s?.id != ownId }.map { (m, s) ->
-            val where = s?.takeIf { it.state != ENDED }?.leafId?.let { locate(config, it) }
-            val action = when {
-                s == null && m.sessionId != null -> MemberAction.OPEN
-                where != null && s!!.background -> MemberAction.WATCH
-                where != null && !where.tab.isBackground -> MemberAction.JUMP
-                else -> MemberAction.NONE
-            }
-            AgentLine(
-                key = m.key,
-                title = m.title.ifBlank { "Agent session" },
-                state = m.state,
-                stateWord = stateWordOf(m, s),
-                age = ageOf(m.sinceMillis, now),
-                nowLine = (m.line ?: s?.nowLine)?.trim()?.takeIf { it.isNotEmpty() },
-                dimmed = m.state == ENDED,
-                action = action,
-                recordId = s?.id,
-                hint = when (action) {
-                    MemberAction.WATCH -> WatchViewModel.LINE_HINT
-                    MemberAction.JUMP, MemberAction.OPEN -> OPEN_HINT
-                    MemberAction.NONE -> null
-                },
-            )
-        }
-    }
-
-    /** The word under a line: the file's own label for an unhosted member, else the state's word. */
-    private fun stateWordOf(m: AgentTaskMember, s: AgentSessionSummary?): String {
-        val label = m.label?.takeIf { s == null && it.isNotBlank() }
-        return when {
-            m.state == ENDED && label != null -> "${wordOf(ENDED)} · $label"
-            label != null -> label
-            else -> wordOf(m.state)
-        }
-    }
-
-    private fun viewOf(b: TaskPanelBlock, live: Boolean, now: Long): BlockView {
-        val age = ageOf(b.writtenAtMillis, now)
-        val body = when (val c = b.content) {
-            is TaskBlockContent.Text -> BlockBody.Text(PanelMarkdown.parse(c.markdown))
-            is TaskBlockContent.Facts -> BlockBody.Facts(c.items.map { it.label to it.value })
-            is TaskBlockContent.Links -> BlockBody.Links(c.items.filter { PanelMarkdown.isSafeUrl(it.url) }.map { it.label to it.url })
-            is TaskBlockContent.Documents -> BlockBody.Documents(
-                c.items.filter { PanelMarkdown.isSafeUrl(it.url) }.map { DocumentRow(it.title, it.url, it.updatedMillis?.let { at -> clockOf(at, now, zone()) }) },
-            )
-            is TaskBlockContent.Timeline ->
-                BlockBody.Timeline(c.items.sortedByDescending { it.atMillis }.map { TimelineEntry(ageOf(it.atMillis, now), it.text) })
-            is TaskBlockContent.Progress -> {
-                val done = c.done
-                val total = c.total
-                val count = if (done != null && total != null) "$done of $total" else null
-                BlockBody.Progress(
-                    text = listOfNotNull(count, c.phase?.takeIf { it.isNotBlank() }).joinToString(" · "),
-                    fraction = if (done != null && total != null && total > 0) done.toDouble() / total else null,
-                    label = c.label?.takeIf { it.isNotBlank() },
+        val lines = (fileMembers + extra)
+            .filter { (_, s) -> s == null || s.conversationId != own.conversationId }
+            .mapNotNull { (m, s) ->
+                val state = s?.state ?: m.state
+                if (state != WORKING && state != NEEDS_YOU) return@mapNotNull null
+                val where = s?.takeIf { it.state != ENDED }?.leafId?.let { locate(config, it) }
+                val action = when {
+                    s == null && m.sessionId != null -> MemberAction.OPEN
+                    where != null && !where.tab.isListed && state == NEEDS_YOU -> MemberAction.SHOW_WAITING
+                    where != null && where.tab.isListed -> MemberAction.JUMP
+                    else -> MemberAction.NONE
+                }
+                AgentLine(
+                    key = m.key,
+                    title = m.title.ifBlank { "Agent session" },
+                    state = state,
+                    stateWord = if (state == NEEDS_YOU) "needs you" else "working",
+                    age = ageOf(s?.stateSince ?: m.sinceMillis, now),
+                    nowLine = inWords(m.line ?: s?.nowLine),
+                    action = action,
+                    recordId = s?.id,
+                    hint = when (action) {
+                        MemberAction.SHOW_WAITING -> AgentsOverviewBackingViewModel.SHOW_WAITING_HINT.let { "↵ $it" }
+                        MemberAction.JUMP, MemberAction.OPEN -> OPEN_HINT
+                        MemberAction.NONE -> null
+                    },
                 )
             }
-            is TaskBlockContent.Actions -> BlockBody.Actions(c.buttons.map { ButtonView(it.id, it.label, live) })
-        }
-        return BlockView(b.id, b.title, b.writtenBy?.let { "$it · $age" } ?: age, body)
+        return lines.filter { it.state == NEEDS_YOU } + lines.filter { it.state != NEEDS_YOU }
+    }
+
+    /** The first progress block the agents wrote, as a current task, a bar and a count. */
+    private fun progressOf(blocks: List<TaskPanelBlock>): ProgressView? {
+        val c = blocks.firstNotNullOfOrNull { it.content as? TaskBlockContent.Progress } ?: return null
+        val done = c.done
+        val total = c.total
+        val hasCount = done != null && total != null && total > 0
+        return ProgressView(
+            current = (c.phase ?: c.label)?.trim()?.takeIf { it.isNotEmpty() },
+            fraction = if (hasCount) (done!!.toDouble() / total!!).coerceIn(0.0, 1.0) else null,
+            count = if (hasCount) "$done of $total" else null,
+        )
+    }
+
+    /**
+     * Every link and document any block carries, newest first, each once. A link has no time of
+     * its own, so it takes the time its block was written.
+     */
+    private fun linkRows(blocks: List<TaskPanelBlock>, now: Long): List<LinkRow> {
+        data class Found(val at: Long, val kind: String, val title: String, val url: String)
+        val found = blocks.flatMap { b ->
+            when (val c = b.content) {
+                is TaskBlockContent.Links -> c.items.map { Found(b.writtenAtMillis, kindOf(it.url, it.label, b.title, false), it.label, it.url) }
+                is TaskBlockContent.Documents ->
+                    c.items.map { Found(it.updatedMillis ?: b.writtenAtMillis, kindOf(it.url, it.title, b.title, true), it.title, it.url) }
+                else -> emptyList()
+            }
+        }.filter { PanelMarkdown.isSafeUrl(it.url) }
+        val zone = zone()
+        return found.sortedByDescending { it.at }.distinctBy { it.url }
+            .map { LinkRow(it.kind, it.title.ifBlank { it.url }, it.url, clockOf(it.at, now, zone)) }
+    }
+
+    /** Every timeline entry of every block, newest first, one line each. */
+    private fun activityRows(blocks: List<TaskPanelBlock>, now: Long): List<ActivityRow> {
+        val zone = zone()
+        return blocks.flatMap { b -> (b.content as? TaskBlockContent.Timeline)?.items.orEmpty() }
+            .sortedByDescending { it.atMillis }
+            .map { ActivityRow(clockOf(it.atMillis, now, zone), it.text) }
     }
 
     private fun locate(config: WindowConfig, leafId: String): TaskMembers.PanePlace? = TaskMembers.locate(config, leafId)
 
     companion object {
-        /** Shown when a task's panel has no stored blocks. */
-        const val EMPTY_TEXT = "Nothing else here yet. Agents can add blocks with set_task_panel."
+        /** What a list shows before "+ N more". */
+        const val SHOWN = 5
 
         /** What a line says about ↵ when it goes to the member's own tab or attach command. */
         const val OPEN_HINT = "↵ open"
 
+        private val EMPTY_BLOCK = Block<Nothing>(emptyList(), 0, 0)
+
         private const val NEEDS_YOU = "needs_you"
+        private const val WORKING = "working"
         private const val ENDED = "ended"
+
+        /** A tool-call line that names a tool, not an act: "Running cd", "Using Foo". */
+        private val BARE_TOOL = Regex("^(Running|Using|Calling) [\\w./:-]+$")
+
+        /**
+         * A line about what a member does, if it is in words. A line that only names a command or
+         * a tool ("Running cd") says nothing the person can use, so it is dropped and the view shows
+         * the state word alone.
+         *
+         * Called for every agent line.
+         *
+         * @param line the member's line, or null.
+         * @return the trimmed line, or null when it is blank or only names a tool.
+         */
+        fun inWords(line: String?): String? =
+            line?.trim()?.takeIf { it.isNotEmpty() && !BARE_TOOL.matches(it) }
+
+        /**
+         * The short word for what a link is, from where it points and what it is called.
+         *
+         * Called for every link row. A block titled "Decisions" or "Briefs" marks its links as
+         * such; any other link is told apart by its address.
+         *
+         * @param url the address.
+         * @param label the words shown for it.
+         * @param blockTitle the title of the block that holds it, or null.
+         * @param isDocument true for an entry of a documents block.
+         * @return `decision`, `brief`, `slack`, `PR`, `issue`, `art`, `doc` or `link`.
+         */
+        fun kindOf(url: String, label: String, blockTitle: String?, isDocument: Boolean): String {
+            val u = url.lowercase()
+            val where = (blockTitle ?: "").lowercase()
+            val words = label.lowercase()
+            return when {
+                "decision" in where || words.startsWith("you decided") -> "decision"
+                "brief" in where || words.startsWith("brief") -> "brief"
+                "slack.com" in u -> "slack"
+                "github.com" in u && "/pull/" in u -> "PR"
+                "github.com" in u && "/issues/" in u -> "issue"
+                "claude.ai" in u && "/artifact" in u -> "art"
+                isDocument || u.startsWith("file:") -> "doc"
+                else -> "link"
+            }
+        }
 
         /**
          * A compact age: `now`, `5m`, `3h` or `2d`. A time in the future reads `now`.
          *
-         * Called for every line and block; kept here so every client says the same thing.
+         * Called for every agent line; kept here so every client says the same thing.
          *
          * @param sinceMillis epoch millis the age counts from.
          * @param nowMillis the current epoch millis.
@@ -439,14 +453,14 @@ class TaskPanelViewModel(
         }
 
         /**
-         * A clock time for a document: `21:31` when it is from today, `Tue 21:31` when it is from
-         * the last six days, and `4 Oct 21:31` otherwise (older, or ahead of the clock). Always in
-         * [zone], so the viewer reads it in their own time.
+         * A clock time: `21:31` when it is from today, `Tue 21:31` when it is from the last six
+         * days, and `4 Oct 21:31` otherwise (older, or ahead of the clock). Always in [zone], so the
+         * viewer reads it in their own time.
          *
-         * Called for each document row of a documents block, as the approved drawing shows a clock
-         * time there where the timeline and agent lines show an age ([ageOf]).
+         * Called for each link and each activity line, as the approved drawing shows a clock time
+         * there where the agent lines show an age ([ageOf]).
          *
-         * @param atMillis epoch millis the document changed.
+         * @param atMillis epoch millis the thing happened.
          * @param nowMillis the current epoch millis, which decides what counts as today.
          * @param zone the time zone both are read in.
          * @return the clock text, with the day when it is not today.
@@ -462,19 +476,6 @@ class TaskPanelViewModel(
                 in 1..6 -> "${short(at.dayOfWeek.name)} $time"
                 else -> "${at.dayOfMonth} ${short(at.month.name)} $time"
             }
-        }
-
-        /**
-         * The word for a member state.
-         *
-         * @param state `needs_you`, `working`, `idle` or `ended`.
-         * @return working, needs you, waiting or exited.
-         */
-        fun wordOf(state: String): String = when (state) {
-            "working" -> "working"
-            NEEDS_YOU -> "needs you"
-            ENDED -> "exited"
-            else -> "waiting"
         }
     }
 }
