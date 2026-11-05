@@ -131,8 +131,8 @@ internal object TabManager {
     }
 
     /**
-     * Mark [tabId] as the currently-selected tab. A background tab is refused (`null`): it can
-     * only become active by [takeOverTab].
+     * Mark [tabId] as the currently-selected tab. A background tab is refused (`null`) unless it
+     * is shown while its agent waits ([showWaitingTab]).
      */
     fun setActiveTab(cfg: WindowConfig, tabId: String): WindowConfig? {
         if (cfg.activeTabId == tabId) return null
@@ -142,20 +142,47 @@ internal object TabManager {
     }
 
     /**
-     * Turn a background tab into a normal one and make it the active tab.
+     * Show a background tab whose agent waits for the person, and make it the active tab.
+     *
+     * The tab stays a background tab; [TabConfig.shownWhileWaiting] makes it listed and marks it.
+     *
+     * Called by [WindowState.showWaitingAgent].
      *
      * @param cfg the world view holding the tab.
-     * @param tabId the tab the person takes over.
-     * @return the new config, or `null` when the tab is unknown.
+     * @param tabId the tab to show.
+     * @return the new config, or `null` when the tab is unknown or already shown and active.
      */
-    fun takeOverTab(cfg: WindowConfig, tabId: String): WindowConfig? {
+    fun showWaitingTab(cfg: WindowConfig, tabId: String): WindowConfig? {
         val idx = cfg.tabs.indexOfFirst { it.id == tabId }
         if (idx < 0) return null
         val tab = cfg.tabs[idx]
-        if (!tab.isBackground && cfg.activeTabId == tabId) return null
+        if (tab.shownWhileWaiting && cfg.activeTabId == tabId) return null
         val newTabs = cfg.tabs.toMutableList()
-        newTabs[idx] = tab.copy(isBackground = false)
+        newTabs[idx] = tab.copy(shownWhileWaiting = tab.isBackground)
         return cfg.copy(tabs = newTabs, activeTabId = tabId)
+    }
+
+    /**
+     * Hide a tab that was shown while its agent waited, and bring a listed tab back to the front
+     * when it was the active one.
+     *
+     * Called by [WindowState.hideSettledWaitingTabs] when the agent no longer waits.
+     *
+     * @param cfg the world view holding the tab.
+     * @param tabId the tab to hide.
+     * @param returnTo the tab that was active before it was shown; used when it still exists and is
+     *   listed, else the first listed tab.
+     * @return the new config, or `null` when the tab is unknown or not shown.
+     */
+    fun hideWaitingTab(cfg: WindowConfig, tabId: String, returnTo: String?): WindowConfig? {
+        val idx = cfg.tabs.indexOfFirst { it.id == tabId }
+        if (idx < 0 || !cfg.tabs[idx].shownWhileWaiting) return null
+        val newTabs = cfg.tabs.toMutableList()
+        newTabs[idx] = newTabs[idx].copy(shownWhileWaiting = false)
+        val target = newTabs.firstOrNull { it.id == returnTo && it.isListed }?.id
+            ?: newTabs.firstOrNull { it.isListed }?.id
+        val active = if (cfg.activeTabId == tabId) target else cfg.activeTabId
+        return cfg.copy(tabs = newTabs, activeTabId = active)
     }
 
     /**

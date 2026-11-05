@@ -352,9 +352,13 @@ sealed class WindowEnvelope {
  * [WindowEnvelope.AgentSessions] and ordered and titled by the client's
  * agents overview view model.
  *
- * @param id Lunamux's record id; also what [WindowCommand.ResumeAgentSession] names.
+ * @param id Lunamux's record id; also what [WindowCommand.ResumeAgentSession] names. One summary is
+ *   sent per conversation: when a conversation has run in several panes, this is the id of the open
+ *   record, else of the newest.
+ * @param conversationId the conversation this row stands for: the agent's own session id when it
+ *   reported one (what `claude --resume` takes), else the same as [id]. Two rows never share it.
  * @param agent `claude`, `codex` or `gemini`.
- * @param state `needs_you`, `working`, `idle` or `ended`.
+ * @param state `needs_you`, `working`, `done` or `ended`.
  * @param stateSince epoch millis when [state] last changed.
  * @param title the agent's own title for the session, frozen once seen; null if none.
  * @param links ticket keys such as `ABC-12` found in the branch or title.
@@ -412,6 +416,7 @@ data class AgentSessionSummary(
     val taskId: String? = null,
     val background: Boolean = false,
     val startedAt: Long? = null,
+    val conversationId: String = id,
 )
 
 /**
@@ -613,12 +618,12 @@ enum class DiffLineType {
  * @param refreshedAtMillis epoch millis the task file was last written or touched (its modification
  *   time), or null when no file declares the task. A file nobody has refreshed for a while no longer
  *   says anything about its members; the overview marks such rows stale from this alone.
- * @param leadRecordId the id of the session record that speaks for the task (the agent that made it,
- *   or the one an agent named with `set_task_lead`), resolved to the record running in the pane that
- *   session ran in (the pane, not its terminal id, which is renumbered at every start), else to the
- *   newest ended record that ran in that pane; null when the task has none or no record exists yet.
- *   The task follows its session's Claude conversation to the pane it is resumed in. The overview
- *   opens it on ↵.
+ * @param mainConversation the conversation that speaks for the task: the one that made it, or the one
+ *   an agent named with `set_task_lead`. It is a conversation id ([AgentSessionSummary.conversationId]),
+ *   never a pane, so it still names the same conversation after a restart renumbers the panes. The
+ *   client finds its row and its live pane through the summary with that conversation id; when no
+ *   summary has it, the conversation is closed and gone from memory, and ↵ resumes it by this id.
+ *   Null when none was named. The overview opens it on ↵.
  * @param status the one-line status a member set through `set_task_status`, shown on the task's
  *   row; null when none was set or it was cleared.
  * @param statusAtMillis epoch millis the status was set, or null with no status.
@@ -634,7 +639,7 @@ data class AgentTask(
     val hasOpen: Boolean = false,
     val members: List<AgentTaskMember> = emptyList(),
     val refreshedAtMillis: Long? = null,
-    val leadRecordId: String? = null,
+    val mainConversation: String? = null,
     val status: String? = null,
     val statusAtMillis: Long? = null,
     val startedAtMillis: Long? = null,
@@ -649,7 +654,7 @@ data class AgentTask(
  *   [WindowCommand.OpenTaskMember] and keeps a row's identity through a redraw.
  * @param title the member's name, always the file's.
  * @param links ticket keys or other short labels shown beside the title.
- * @param state `needs_you`, `working`, `idle` or `ended`.
+ * @param state `needs_you`, `working`, `done` or `ended`.
  * @param label a state word the file gave ("in review"), used in the task's summary line; null for the default.
  * @param line one line about what the member is doing or waiting for, or null.
  * @param sinceMillis epoch millis when the member entered [state].

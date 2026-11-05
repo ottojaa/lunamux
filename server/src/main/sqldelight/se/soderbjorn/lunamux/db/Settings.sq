@@ -143,9 +143,10 @@ FROM agent_sessions WHERE state != 'ended';
 endAgentSessionAt:
 UPDATE agent_sessions SET state = 'ended', ended_at = :endedAt, state_since = :endedAt WHERE id = :id;
 
--- Taking a background tab over makes its sessions ordinary again, closed ones included.
-clearAgentSessionBackgroundByLeaf:
-UPDATE agent_sessions SET background = 0 WHERE leaf_id = ?;
+-- A screen record that a hook later named, and whose conversation already had a record, is
+-- dropped: the older record carries on in its place.
+deleteAgentSession:
+DELETE FROM agent_sessions WHERE id = ?;
 
 setAgentSessionSearchText:
 UPDATE agent_sessions SET search_text = ? WHERE id = ?;
@@ -196,25 +197,16 @@ upsertAgentTask:
 INSERT OR REPLACE INTO agent_tasks(id, title, created_at, updated_at) VALUES (?, ?, ?, ?);
 
 selectTaskMeta:
-SELECT task_id, started_at, lead_session, status, status_by, status_at, lead_leaf, lead_agent_session FROM task_meta;
+SELECT task_id, started_at, status, status_by, status_at, lead_agent_session FROM task_meta;
 
 -- The first stamp wins: a task's place in the overview must not move once it has one.
 stampTaskStart:
 INSERT OR IGNORE INTO task_meta(task_id, started_at) VALUES (?, ?);
 
-setTaskLead:
-UPDATE task_meta SET lead_session = ?, lead_leaf = ?, lead_agent_session = NULL WHERE task_id = ?;
-
--- Moves the task to the pane its own conversation was reopened in; the conversation stays.
-moveTaskLead:
-UPDATE task_meta SET lead_session = ?, lead_leaf = ? WHERE task_id = ?;
-
-setTaskLeadAgentSession:
-UPDATE task_meta SET lead_agent_session = ? WHERE task_id = ?;
-
--- Fills in the pane of a row that only knows a terminal session id.
-setTaskLeadLeaf:
-UPDATE task_meta SET lead_leaf = ? WHERE task_id = ?;
+-- lead_agent_session holds the conversation that speaks for the task. The pane columns are no
+-- longer read (a pane id names another pane after a restart); a write clears them.
+setTaskMainConversation:
+UPDATE task_meta SET lead_agent_session = ?, lead_session = NULL, lead_leaf = NULL WHERE task_id = ?;
 
 -- Every pane an agent session ever ran in, so a leaf id is never handed out twice.
 selectAgentSessionLeafIds:

@@ -269,11 +269,13 @@ sealed class WindowCommand {
     object AddTab : WindowCommand()
 
     /**
-     * Pick a finished or idle agent session back up: the server opens a new
+     * Pick a closed conversation back up: the server opens a new
      * tab named like the row, in the folder the agent ran in, and types the
-     * agent's resume command (`claude --resume <id>`, `claude --continue`
-     * without an id, or `codex resume`). Gemini has no resume; for it the tab
-     * just opens in the folder. When a worktree's folder was removed, the
+     * agent's resume command for that conversation (`claude --resume <conversationId>`,
+     * or `codex resume <id>` when Codex's id is known). A conversation with no id to resume is
+     * answered with [WindowEnvelope.AgentSessionError], and `claude --continue` is never typed,
+     * because it picks the newest conversation of the folder, which may be another one. Gemini has
+     * no resume; for it the tab just opens in the folder. When a worktree's folder was removed, the
      * server first recreates it at the old path (from the branch, or from the
      * default branch when the branch is gone); a folder that cannot be
      * recreated is answered with [WindowEnvelope.AgentSessionError].
@@ -373,18 +375,22 @@ sealed class WindowCommand {
     data class CloseTab(val tabId: String) : WindowCommand()
 
     /**
-     * Take over a background tab: it becomes a normal tab (its [TabConfig.isBackground] is
-     * cleared, and so is the `background` flag of the agent sessions in it), the server makes it
-     * the active tab, and the world that holds it becomes the active world.
+     * Show the background tab of an agent that waits for the person, so they can answer it.
      *
-     * Sent by the agents overview for ⌘↵ on a background session.
+     * The tab stays a background tab: it is listed, active and marked ([TabConfig.shownWhileWaiting])
+     * only while the agent waits. The server remembers the tab that was active and brings it back
+     * when the agent stops waiting, whether it was answered Yes or No. The agent keeps its
+     * background flag, so it still gets no row of its own.
      *
-     * @param tabId the id of the background tab to take over
-     * @see TabConfig.isBackground
+     * Sent by the agents overview for ↵ on a waiting background member.
+     *
+     * @param recordId the [AgentSessionSummary.id] of the waiting member; an id that names no live
+     *   pane is ignored.
+     * @see TabConfig.shownWhileWaiting
      */
     @Serializable
-    @SerialName("takeOverTab")
-    data class TakeOverTab(val tabId: String) : WindowCommand()
+    @SerialName("showWaitingAgent")
+    data class ShowWaitingAgent(val recordId: String) : WindowCommand()
 
     /**
      * Change the display title of a tab in the tab bar.

@@ -306,7 +306,7 @@ object AgentsOverviewSeed {
         record(2, "Changelog check", "Check every changelog entry against the merged pull requests", 2 * HOUR + 10 * MINUTE, null, background = true)
         record(3, "Screenshot refresh", "Retake the screenshots the notes link to", 2 * HOUR + 20 * MINUTE, null, background = true)
         repo.stampTaskStart("seed-task-notes", now - 3 * HOUR)
-        repo.setTaskLead("seed-task-notes", NOTES_OWN_PANE, NOTES_OWN_LEAF)
+        repo.setTaskMainConversation("seed-task-notes", "5eed0002-0000-4000-8000-000000000001")
         repo.setTaskStatus("seed-task-notes", NOTES_STATUS, NOTES_OWN_PANE, now - 2 * HOUR)
         seedReleaseNotesPanel(repo, now)
     }

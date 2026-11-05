@@ -181,7 +181,7 @@ class AgentSessionTracker(
      * Fold one screen-poll result into the records.
      *
      * Opens a record for a pane that newly shows an agent, follows
-     * `waiting`/`working`/none into `needs_you`/`working`/`idle` for records
+     * `waiting`/`working`/none into `needs_you`/`working`/`done` for records
      * not fed by hooks, and ends records whose session is gone.
      * Called every 3 s by the state poller with a snapshot of all live panes.
      *
@@ -242,7 +242,7 @@ class AgentSessionTracker(
             val state = when (pane.state) {
                 "waiting" -> NEEDS_YOU
                 "working" -> WORKING
-                else -> IDLE
+                else -> DONE
             }
             // A record no hook feeds is followed by the screen alone, so a screen that shows work
             // is the only sign of life it will ever give. The stamp is renewed only once it is
@@ -305,20 +305,23 @@ class AgentSessionTracker(
             }
             "PreToolUse" -> {
                 toolInFlight[rec.id] = rawToolLine(event)
-                set(WORKING, nowLine = toolLine(event))
+                // A question put through AskUserQuestion is a prompt on screen the moment it starts.
+                val asked = askedQuestionOf(event)
+                if (asked != null) set(NEEDS_YOU, nowLine = null, question = asked.take(QUESTION_MAX))
+                else set(WORKING, nowLine = toolLine(event))
             }
             "PostToolUse" -> {
                 toolInFlight.remove(rec.id)
                 set(WORKING)
             }
             "Notification" -> {
-                // The idle reminder fires a minute after a turn ends and is not a request.
-                // It is recognised by its type, or by its text in case a version omits the type.
+                // Only a prompt the person has to answer needs them: a permission prompt or an
+                // elicitation dialog. The idle reminder (a minute after a turn ends) and the sign-in
+                // notice are not requests. The type decides; a version that omits it is read by its
+                // text, with the idle reminder's wording ruled out first.
                 val message = event.str("message")
                 val type = event.str("notification_type")
-                if (type == "idle_prompt" || type == "auth_success" ||
-                    message?.contains("waiting for your input", ignoreCase = true) == true
-                ) return@synchronized
+                if (!isPromptNotification(type, message)) return@synchronized
                 // The hook text is generic ("Claude needs your permission"). The tool call the prompt
                 // is about arrived with the PreToolUse just before, so say what is being asked instead.
                 set(NEEDS_YOU, nowLine = null, question = pendingQuestionOf(toolInFlight[rec.id], message, type)?.take(QUESTION_MAX))
@@ -327,9 +330,9 @@ class AgentSessionTracker(
                 toolInFlight.remove(rec.id)
                 val last = event.str("last_assistant_message")?.trim().orEmpty()
                 if (last.isNotEmpty()) rec = rec.copy(lastSaid = lastSaidOf(last))
-                val asked = bareQuestionOf(last)
-                if (asked != null) set(NEEDS_YOU, nowLine = null, question = asked.take(QUESTION_MAX))
-                else set(IDLE, nowLine = null)
+                // A finished turn is done, whatever its last line says: a reply that ends in
+                // "Want me to go ahead?" blocks nothing. Only a prompt on screen needs the person.
+                set(DONE, nowLine = null)
             }
             "SessionEnd" -> {
                 end(rec, pane.screenText())
@@ -381,14 +384,15 @@ class AgentSessionTracker(
     fun find(id: String): AgentSessionRecord? = synchronized(lock) { records[id] ?: repo.findAgentSessionById(id) }
 
     /**
-     * Every record held in memory (each open one and the recent ended ones), copied under the lock.
+     * One record per conversation held in memory (the open run of it, else the newest ended one),
+     * copied under the lock: the records [summaries] is made of.
      *
      * Called by [TaskIndex] whenever [summaries] changes, because a summary lacks the agent's own
      * session id that task file members are matched by.
      *
-     * @return the records, oldest first.
+     * @return the records, in the order [summaries] lists them.
      */
-    fun snapshot(): List<AgentSessionRecord> = synchronized(lock) { records.values.toList() }
+    fun snapshot(): List<AgentSessionRecord> = synchronized(lock) { conversationRecords() }
 
     /**
      * The open record of a terminal session, if an agent runs in it.
@@ -418,32 +422,6 @@ class AgentSessionTracker(
             publish()
         }
         true
-    }
-
-    /**
-     * Make the sessions that ran in the panes [leafIds] ordinary sessions again.
-     *
-     * Called by the `TakeOverTab` handler once a background tab became a normal tab: its records
-     * (open and closed, in memory and stored) lose [AgentSessionRecord.background], so search finds
-     * them from then on.
-     *
-     * @param leafIds the layout leaf ids of the tab's panes.
-     * @see WindowState.takeOverTab
-     */
-    fun clearBackground(leafIds: Collection<String>) = synchronized(lock) {
-        if (leafIds.isEmpty()) return@synchronized
-        var changed = false
-        for (leaf in leafIds) {
-            runCatching { repo.clearAgentSessionBackgroundByLeaf(leaf) }
-                .onFailure { log.warn("Failed to clear background flag for pane {}", leaf, it) }
-        }
-        for (rec in records.values.toList()) {
-            if (rec.background && rec.leafId in leafIds) {
-                records[rec.id] = rec.copy(background = false)
-                changed = true
-            }
-        }
-        if (changed) publish()
     }
 
     /**
@@ -500,47 +478,73 @@ class AgentSessionTracker(
     }
 
     /**
-     * Pick the record a hook event belongs to, creating or adopting one.
+     * Pick the record a hook event belongs to, creating, adopting or reopening one.
      *
-     * Keeps one open record per pane: the pane's open record is reused when
-     * it has the same agent session id, adopted when it was opened from the
-     * screen before any id was known, and ended otherwise. An ended record
-     * with the same agent session id (a resumed conversation) is reopened in
-     * this pane instead of starting a second row.
+     * Keeps one record per conversation. The pane's open record is reused when it has the same
+     * agent session id, and ended otherwise. A record that was opened from the screen before any
+     * id was known is adopted when the conversation has no record yet; when it already has one (a
+     * resumed conversation whose pane was seen before its first hook), the older record is
+     * reopened in this pane and the screen record is dropped, in memory and in the database, so
+     * the conversation is one record and search lists it once.
+     *
+     * @param pane the pane the event came from.
+     * @param agentId the hook's `session_id`, or null.
+     * @param transcript the hook's `transcript_path`, or null.
+     * @return the record to apply the event to; the caller stores it.
      */
     private fun attach(pane: PaneSnapshot, agentId: String?, transcript: String?): AgentSessionRecord {
         val current = openFor(pane.terminalSessionId)
         if (current != null && current.agent == CLAUDE) {
             if (agentId == null || current.agentSessionId == agentId) return current
-            if (current.agentSessionId == null && current.source == SOURCE_SCREEN) {
-                return current.copy(
-                    agentSessionId = agentId, source = SOURCE_HOOKS, transcriptPath = transcript,
-                    taskId = current.taskId ?: taskOfEarlier(agentId),
-                ).also { put(it) }
-            }
         }
-        if (current != null) end(current, pane.screenText())
-        awaitScreenClear.remove(pane.terminalSessionId)
         val earlier = agentId?.let { id ->
-            records.values.firstOrNull { it.agent == CLAUDE && it.agentSessionId == id }
-                ?: repo.findAgentSession(CLAUDE, id)
+            (records.values.firstOrNull { it.agent == CLAUDE && it.agentSessionId == id && it.id != current?.id }
+                ?: repo.findAgentSession(CLAUDE, id)?.takeIf { it.id != current?.id })
         }
+        val provisional = current != null && current.agent == CLAUDE &&
+            current.agentSessionId == null && current.source == SOURCE_SCREEN
+        if (provisional && earlier == null) {
+            return current!!.copy(
+                agentSessionId = agentId, source = SOURCE_HOOKS, transcriptPath = transcript,
+                taskId = current.taskId ?: taskOfEarlier(agentId!!),
+            ).also { put(it) }
+        }
+        if (current != null) {
+            if (provisional) discard(current) else end(current, pane.screenText())
+        }
+        awaitScreenClear.remove(pane.terminalSessionId)
         if (earlier != null && earlier.state == ENDED) {
             return earlier.copy(
                 source = SOURCE_HOOKS,
                 leafId = pane.leafId,
                 terminalSessionId = pane.terminalSessionId,
-                state = IDLE,
+                state = DONE,
                 stateSince = clock(),
                 nowLine = null,
                 question = null,
                 lastScreen = null,
                 endedAt = null,
-                taskId = pane.leafId?.let { pendingTasks.remove(it) } ?: earlier.taskId,
+                title = earlier.title ?: current?.title.takeIf { provisional },
+                taskId = pane.leafId?.let { pendingTasks.remove(it) } ?: earlier.taskId ?: current?.taskId.takeIf { provisional },
                 background = pane.background,
             ).also { put(it) }
         }
         return open(pane, CLAUDE, SOURCE_HOOKS, agentId, transcript)
+    }
+
+    /**
+     * Forget a record that duplicates a conversation another record already carries.
+     *
+     * Not an end: nothing is saved for search and the ended-session hook is not called, because the
+     * record never held anything but what the screen showed.
+     */
+    private fun discard(rec: AgentSessionRecord) {
+        records.remove(rec.id)
+        lastActivity.remove(rec.id)
+        toolInFlight.remove(rec.id)
+        promptSeen.remove(rec.id)
+        runCatching { repo.deleteAgentSession(rec.id) }
+            .onFailure { log.warn("Failed to delete agent session {}", rec.id, it) }
     }
 
     /** Read git facts for [cwd] unless a read from the last minute is cached. Never call with the lock held. */
@@ -582,7 +586,7 @@ class AgentSessionTracker(
             title = pane.customName?.trim()?.takeIf { it.isNotEmpty() },
             transcriptPath = transcriptPath,
             links = ticketKeys(git.branch),
-            state = IDLE,
+            state = DONE,
             stateSince = now,
             createdAt = now,
             taskId = pane.leafId?.let { pendingTasks.remove(it) } ?: agentSessionId?.let(::taskOfEarlier),
@@ -632,9 +636,19 @@ class AgentSessionTracker(
     private fun openFor(terminalSessionId: String) =
         records.values.firstOrNull { it.state != ENDED && it.terminalSessionId == terminalSessionId }
 
+    /**
+     * Publish one summary per conversation. A conversation that ran in several panes over time
+     * has several records; its summary is the open record's, else the newest one's.
+     */
     private fun publish() {
-        _summaries.value = records.values.map { it.toSummary().copy(lastActivityAt = lastActivity[it.id]) }
+        _summaries.value = conversationRecords().map { it.toSummary().copy(lastActivityAt = lastActivity[it.id]) }
     }
+
+    /** One record per conversation: the open one (the newest if several), else the newest ended. */
+    private fun conversationRecords(): List<AgentSessionRecord> =
+        records.values.groupBy { it.conversationId }.values.map { run ->
+            run.filter { it.state != ENDED }.maxByOrNull { it.createdAt } ?: run.maxBy { it.endedAt ?: it.createdAt }
+        }
 
     private companion object {
         const val CLAUDE = "claude"
@@ -642,7 +656,7 @@ class AgentSessionTracker(
         const val SOURCE_HOOKS = "hooks"
         const val NEEDS_YOU = "needs_you"
         const val WORKING = "working"
-        const val IDLE = "idle"
+        const val DONE = "done"
         const val ENDED = "ended"
 
         /**
@@ -686,6 +700,7 @@ internal fun AgentSessionRecord.toSummary() = AgentSessionSummary(
     taskId = taskId,
     background = background,
     startedAt = createdAt,
+    conversationId = conversationId,
 )
 
 private const val TOOL_LINE_MAX = 160
@@ -722,39 +737,6 @@ internal fun lastSaidOf(message: String): String {
     }
     return (line ?: "").take(LAST_SAID_MAX)
 }
-
-/**
- * The question a finished turn leaves for the owner, or null when the turn is just a reply.
- *
- * A turn that ends in a reply, even one that closes with an offer ("... Want me to go ahead?"),
- * is idle: the chat is not blocked on anything. Only a closing paragraph that is a single
- * question counts: one line, one sentence, ending in "?".
- *
- * Called from the tracker's `Stop` hook handling.
- *
- * @param message the assistant's last message of the turn, already trimmed.
- * @return the closing question, or null when the message is a reply.
- * @see QUESTION_SENTENCE_MAX
- */
-internal fun bareQuestionOf(message: String): String? {
-    val paragraph = message.trim().substringAfterLast("\n\n").trim()
-    if (!paragraph.endsWith("?") || paragraph.length > QUESTION_SENTENCE_MAX) return null
-    val body = paragraph.dropLast(1)
-    if ('\n' in body || SENTENCE_BREAK.containsMatchIn(body.replace(ABBREVIATION, ""))) return null
-    return paragraph
-}
-
-/** Longest closing paragraph that still reads as one question rather than a reply with an offer. */
-private const val QUESTION_SENTENCE_MAX = 200
-
-/**
- * A sentence end inside a paragraph: `.`, `!` or `?` followed by a space. A colon or semicolon does
- * not end one, so "Which do you want: the alias or the rename?" stays a single question.
- */
-private val SENTENCE_BREAK = Regex("""[.!?]\s""")
-
-/** Abbreviations whose full stop is not a sentence end ("e.g. the alias"); removed before looking for breaks. */
-private val ABBREVIATION = Regex("""\b(?:e\.g|i\.e|etc|vs)\.""", RegexOption.IGNORE_CASE)
 
 private const val SCREEN_LINES = 200
 private val TICKET_KEY = Regex("""\b[A-Z][A-Z0-9]+-\d+\b""")
@@ -795,8 +777,8 @@ internal fun cleanTitle(raw: String?): String? {
  *
  * The row is read at a glance across many terminals, so it never shows a raw command, a long
  * path or a whole `tool_input`. Each kind of tool gets a short phrase instead:
- * - `Bash` uses the `description` Claude Code sends with the call, or `Running <first word of the
- *   command>` when there is none;
+ * - `Bash` uses the `description` Claude Code sends with the call, or `Running a command` when there
+ *   is none (a program's name is not words a person reads);
  * - the file tools name the file only (`Editing card-check`, `Reading tick.py`, `Writing notes.md`);
  * - searches name their pattern (`Searching for "fun toolLine"`), web fetches the host
  *   (`Fetching example.com`);
@@ -845,6 +827,41 @@ internal fun rawToolLine(event: JsonObject): String? {
     return (if (arg == null) tool else "$tool $arg").take(TOOL_LINE_MAX)
 }
 
+/**
+ * The question an `AskUserQuestion` call puts to the person, or null for any other call.
+ *
+ * Called from the tracker's `PreToolUse` handling: that call is a prompt on screen, so the
+ * conversation needs the person from the moment it starts.
+ *
+ * @param event a PreToolUse hook payload.
+ * @return the first question's text, or null when the call is another tool or carries no question.
+ */
+internal fun askedQuestionOf(event: JsonObject): String? {
+    if (event.str("tool_name") != ASK_TOOL) return null
+    val asked = (((event["tool_input"] as? JsonObject)?.get("questions") as? JsonArray)?.firstOrNull() as? JsonObject)
+        ?.str("question")
+    return asked?.trim()?.takeIf { it.isNotEmpty() } ?: "A question is waiting"
+}
+
+/**
+ * Whether a Notification hook is a prompt the person has to answer.
+ *
+ * A permission prompt and an elicitation dialog are; the idle reminder, the sign-in notice and
+ * any other type are not. A version that sends no type is read by its text.
+ *
+ * Called from the tracker's `Notification` handling.
+ *
+ * @param type the hook's `notification_type`, or null.
+ * @param message the hook's text, or null.
+ * @return true when the conversation now waits for the person.
+ */
+internal fun isPromptNotification(type: String?, message: String?): Boolean = when (type) {
+    "permission_prompt", "elicitation_dialog" -> true
+    null -> message != null && !message.contains("waiting for your input", ignoreCase = true) &&
+        (message.contains("permission", ignoreCase = true) || message.contains("needs your", ignoreCase = true))
+    else -> false
+}
+
 /** The `Asks: <question>` line for an `AskUserQuestion` call that carries a question, else null. */
 private fun askedLine(tool: String, input: JsonObject?): String? {
     if (tool != ASK_TOOL) return null
@@ -872,7 +889,7 @@ private fun wordsFor(tool: String, input: JsonObject?): String {
         keys.firstNotNullOfOrNull { input?.str(it)?.let(::firstLine) }
     fun file(vararg keys: String): String? = arg(*keys)?.let(::fileNameOf)?.takeIf { it.isNotEmpty() }
     return when (tool) {
-        "Bash" -> arg("description") ?: "Running ${commandWordOf(input?.str("command"))}"
+        "Bash" -> arg("description") ?: "Running a command"
         "Edit", "MultiEdit" -> "Editing " + (file("file_path") ?: "a file")
         "NotebookEdit" -> "Editing " + (file("notebook_path", "file_path") ?: "a notebook")
         "Write" -> "Writing " + (file("file_path") ?: "a file")
@@ -893,26 +910,6 @@ private fun wordsFor(tool: String, input: JsonObject?): String {
         ASK_TOOL -> "Asking a question"
         else -> mcpWords(tool) ?: "Using ${wordsOf(tool)}"
     }
-}
-
-/** Runs of whitespace, for splitting a command into words. */
-private val WHITESPACE = Regex("""\s+""")
-
-/** A `NAME=value` word that sets an environment variable in front of a command. */
-private val ENV_ASSIGNMENT = Regex("""[A-Za-z_][A-Za-z0-9_]*=.*""")
-
-/**
- * The program a shell command starts, for `Running <program>` when Claude Code sent no description:
- * its first word without any leading `NAME=value` assignments, redirections or folder.
- *
- * @param command the `command` argument of a Bash call, or null.
- * @return the program's name, or `a command` when there is none to name.
- */
-private fun commandWordOf(command: String?): String {
-    val word = command?.let(::firstLine)?.split(WHITESPACE)
-        ?.firstOrNull { it.isNotEmpty() && !ENV_ASSIGNMENT.matches(it) }
-        ?.let(::fileNameOf)
-    return word?.takeIf { it.isNotEmpty() } ?: "a command"
 }
 
 /** The host of [url] (`example.com` for `https://example.com/a?b`), or the url itself when it has none. */

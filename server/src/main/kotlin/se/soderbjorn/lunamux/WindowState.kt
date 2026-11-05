@@ -151,6 +151,23 @@ object WindowState {
             ?: cfg.worlds.firstOrNull()?.id
     }
 
+    /**
+     * [cfg] with every [TabConfig.shownWhileWaiting] flag cleared, and a world whose active tab
+     * that made unlisted pointing at its first listed tab instead.
+     *
+     * Called by [initialize] on the persisted config.
+     */
+    private fun withoutShownWaitingTabs(cfg: WindowConfig): WindowConfig {
+        if (cfg.worlds.none { w -> w.tabs.any { it.shownWhileWaiting } }) return cfg
+        val worlds = cfg.worlds.map { w ->
+            val tabs = w.tabs.map { if (it.shownWhileWaiting) it.copy(shownWhileWaiting = false) else it }
+            val active = w.activeTabId?.takeIf { id -> tabs.firstOrNull { it.id == id }?.isListed != false }
+                ?: tabs.firstOrNull { it.isListed }?.id
+            w.copy(tabs = tabs, activeTabId = active)
+        }
+        return syncLegacyMirror(cfg.copy(worlds = worlds))
+    }
+
     /** A single world exposed as a flat [WindowConfig] the stateless
      *  TabManager/PaneManager transforms can operate on. */
     private fun viewOf(world: WorldConfig): WindowConfig =
@@ -300,7 +317,7 @@ object WindowState {
         TerminalSessions.idNonce = idNonce
 
         val loaded = repo.loadWindowConfig()
-        val cfg = if (loaded != null && loaded.worlds.any { it.tabs.isNotEmpty() }) {
+        val restored = if (loaded != null && loaded.worlds.any { it.tabs.isNotEmpty() }) {
             try {
                 rehydrate(loaded, repo)
             } catch (t: Throwable) {
@@ -312,6 +329,9 @@ object WindowState {
             seedNodeIdsFromRecords(repo)
             buildDefault()
         }
+        // A background tab shown for a waiting agent is hidden again by a restart: the tab that
+        // was active before it is not remembered, so the first listed tab takes its place.
+        val cfg = withoutShownWaitingTabs(restored)
         _config.value = cfg
 
         val everyTab = allTabs(cfg)
@@ -559,7 +579,7 @@ object WindowState {
 
     /**
      * Mark [tabId] as the currently-selected tab (within its own world). A background tab is
-     * refused: only [takeOverTab] makes one active.
+     * refused unless its agent waits ([showWaitingAgent]).
      */
     fun setActiveTab(tabId: String) = synchronized(this) {
         val cfg = _config.value
@@ -569,22 +589,63 @@ object WindowState {
     }
 
     /**
-     * Turn a background tab into a normal tab and make it the active tab of its world, switching
-     * to that world when it is another one. Called by the `TakeOverTab` window command.
-     *
-     * @param tabId the tab to take over; unknown ids are ignored.
-     * @return true when the tab exists (whether or not it was a background tab).
-     * @see TabConfig.isBackground
+     * The tab that was active before a waiting background tab was shown, by the shown tab's id.
+     * Memory only: a restart forgets it, and clears the shown flag with it (see [initialize]).
      */
-    fun takeOverTab(tabId: String): Boolean = synchronized(this) {
+    private val returnTabOf = HashMap<String, String>()
+
+    /**
+     * Show the background tab a waiting agent runs in, make it the active tab of its world and
+     * switch to that world when it is another one.
+     *
+     * Called by the `ShowWaitingAgent` window command. The tab that was active is remembered so
+     * [hideSettledWaitingTabs] can bring it back.
+     *
+     * @param leafId the layout leaf (pane) of the waiting agent.
+     * @return true when a tab holds that pane.
+     * @see TabConfig.shownWhileWaiting
+     */
+    fun showWaitingAgent(leafId: String): Boolean = synchronized(this) {
         val cfg = _config.value
-        val world = worldOfTab(cfg, tabId) ?: return@synchronized false
-        val newView = TabManager.takeOverTab(viewOf(world), tabId)
-        val withTab = if (newView != null) writeBackWorld(cfg, world.id, newView) else cfg
-        _config.value = if (withTab.activeWorldId != world.id) {
-            syncLegacyMirror(withTab.copy(activeWorldId = world.id))
-        } else withTab
+        val world = cfg.worlds.firstOrNull { w -> w.tabs.any { t -> t.panes.any { it.leaf.id == leafId } } }
+            ?: return@synchronized false
+        val tab = world.tabs.first { t -> t.panes.any { it.leaf.id == leafId } }
+        val view = viewOf(world)
+        val previous = view.activeTabId
+        val newView = TabManager.showWaitingTab(view, tab.id)
+        if (newView != null) {
+            if (previous != null && previous != tab.id && !returnTabOf.containsKey(tab.id)) returnTabOf[tab.id] = previous
+            val withTab = writeBackWorld(cfg, world.id, newView)
+            _config.value = if (withTab.activeWorldId != world.id) {
+                syncLegacyMirror(withTab.copy(activeWorldId = world.id))
+            } else withTab
+        }
         true
+    }
+
+    /**
+     * Hide every background tab that is shown while its agent waits and no longer has a waiting
+     * agent in it, and bring the tab that was active before it back.
+     *
+     * Called whenever the agent records change. An agent that was answered, whether Yes or No, or
+     * that ended leaves the waiting state, so its tab goes away again.
+     *
+     * @param waitingLeafIds the layout leaves of every agent that waits for the person now.
+     */
+    fun hideSettledWaitingTabs(waitingLeafIds: Set<String>) = synchronized(this) {
+        var cfg = _config.value
+        var changed = false
+        for (world in cfg.worlds) {
+            for (tab in world.tabs) {
+                if (!tab.shownWhileWaiting) continue
+                if (tab.panes.any { it.leaf.id in waitingLeafIds }) continue
+                val live = cfg.worlds.first { it.id == world.id }
+                val newView = TabManager.hideWaitingTab(viewOf(live), tab.id, returnTabOf.remove(tab.id)) ?: continue
+                cfg = writeBackWorld(cfg, world.id, newView)
+                changed = true
+            }
+        }
+        if (changed) _config.value = cfg
     }
 
     /**
@@ -607,18 +668,6 @@ object WindowState {
      */
     fun isBackgroundSession(sessionId: String): Boolean = synchronized(this) {
         allTabs(_config.value).any { tab -> tab.isBackground && tab.panes.any { it.leaf.sessionId == sessionId } }
-    }
-
-    /**
-     * The layout leaf ids of every pane in [tabId].
-     *
-     * Called by the `TakeOverTab` handler to tell the agent tracker which records to make ordinary.
-     *
-     * @param tabId the tab to look up.
-     * @return the leaf ids, or an empty list for an unknown tab.
-     */
-    fun leafIdsOfTab(tabId: String): List<String> = synchronized(this) {
-        allTabs(_config.value).firstOrNull { it.id == tabId }?.panes?.map { it.leaf.id } ?: emptyList()
     }
 
     /** Record the user's focus on [paneId] in [tabId]. */
