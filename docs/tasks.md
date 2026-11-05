@@ -67,9 +67,9 @@ since that is what the person is asked to allow.
 
 - **The selected row has more under it.** In this order: the whole status, only when the row cut
   it short (it ends in "…") or hides it in a panel narrower than 700px, so the same words are
-  never shown twice; any text the model put on the row (where a search matched, the message of a
-  resume that failed, "nothing to jump to: this session is not in a Lunamux pane"); then up to two
-  chips about the session ↵ goes to. The **folder chip** is that session's working folder, the
+  never shown twice; then up to two chips about the session ↵ goes to; then any text the model
+  put on the row (where a search matched, the message of a resume that failed, "nothing to jump to:
+  this session is not in a Lunamux pane"). The **folder chip** is that session's working folder, the
   home folder written `~`. The **tab chip** names the session's tab, and shows only when the
   tab's name does not already contain every word of the row's title (a word is a run of letters
   and digits; case and punctuation are ignored; whole words only, no fuzzy matching); a tab in

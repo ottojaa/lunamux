@@ -3668,8 +3668,8 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-age { text-align: right; color: var(--ao-dim); }
 .ao-n-error { color: var(--ao-error); }
 
-/* The selected row's own block under the columns after the marker: the status in full, any extra
-   text, the question the first enter asks, and the chips. */
+/* The selected row's own block under the columns after the marker: the status in full, the chips, any extra
+   text, and in place of the status the question the first enter asks. */
 .ao-focus {
     grid-column: 2 / -1;
     display: grid;

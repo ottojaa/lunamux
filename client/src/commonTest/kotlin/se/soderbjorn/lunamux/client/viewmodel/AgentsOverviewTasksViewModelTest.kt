@@ -1204,6 +1204,61 @@ class AgentsOverviewTasksViewModelTest {
         assertEquals(jumpTo("leaf-m"), sent)
     }
 
+    @Test
+    fun aSearchMatchOnATasksOwnSessionThatCarriesNoTaskIdIsTheTasksRowNotARowOfItsOwn() = runNow {
+        layout("leaf-m")
+        val lead = session("lead", "ended", endedAt = now - 5_000, title = "Lead chat")
+        val m = session("m", "working", taskId = "g1", title = "Mate", lastActivityAt = now - 1_000)
+        show(listOf(hostedTask(lead = "lead")), lead, m)
+        vm.open()
+        answer("needle", AgentSessionMatch(lead, "transcript", "…a needle…", 3, 6, null))
+        val only = vm.state.matches.single()
+        assertEquals("task:g1", only.id, "the own session's match is the task's row")
+        assertEquals("lead", only.recordId)
+        vm.activateSelected()
+        assertEquals("conversation closed", vm.state.ask?.tag, "the own conversation, not just some session")
+
+        answer(
+            "needle",
+            AgentSessionMatch(lead, "transcript", "…a needle…", 3, 6, null),
+            AgentSessionMatch(m, "transcript", "…another needle…", 8, 6, null),
+        )
+        assertEquals(listOf("task:g1"), vm.state.matches.map { it.id }, "two matches of one task are one result, whichever carries the id")
+    }
+
+    @Test
+    fun anOwnSessionThatBelongsToAnotherTaskIsNotCountedInThisTasksRowOrTwiceAsWorking() {
+        layout("leaf-x", "leaf-m")
+        val x = session("x", "working", taskId = "g2", lastActivityAt = now - 1_000)
+        val m = session("m", "working", taskId = "g1", lastActivityAt = now - 1_000)
+        show(
+            listOf(hostedTask(lead = "x"), task(id = "g2", source = "agents", members = emptyList())),
+            x, m,
+        )
+        assertEquals("working", row("task:g1").stateWord, "the other task's session is not this task's")
+        assertEquals("working", row("task:g2").stateWord)
+        assertEquals(2, vm.state.workingCount, "each moving session is counted once")
+    }
+
+    @Test
+    fun aClickOnTheRowThatIsAskingAnswersTheQuestionInsteadOfWithdrawingIt() = runNow {
+        layout("leaf-m")
+        show(
+            listOf(hostedTask(lead = "lead")),
+            session("lead", "ended", taskId = "g1", endedAt = now - 5_000),
+            session("m", "working", taskId = "g1", lastActivityAt = now - 1_000),
+        )
+        vm.open()
+        vm.select("task:g1")
+        vm.activate(vm.state.selectedRow!!)
+        assertEquals("task:g1", vm.state.ask?.rowId)
+        // What a click does: select the row, then open it.
+        vm.select("task:g1")
+        assertEquals("task:g1", vm.state.ask?.rowId, "selecting the asking row keeps its question")
+        vm.activate(vm.state.selectedRow!!)
+        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("lead")), sent)
+    }
+
     // ---- selection ----
 
     @Test
@@ -1553,7 +1608,7 @@ class AgentsOverviewTasksViewModelTest {
         vm.open()
         vm.select("task:g1")
         assertNull(vm.state.ask)
-        assertEquals("↵ open · ↑↓ move · esc close", footerText().replace("↵ resume", "↵ open"), "before the ask the footer is the default one")
+        assertEquals("↵ open · ↑↓ move · esc close", footerText(), "before the ask the footer is the default one")
         vm.activateSelected()
         val ask = vm.state.ask!!
         assertEquals("task:g1", ask.rowId)

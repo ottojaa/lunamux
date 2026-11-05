@@ -563,9 +563,9 @@ private fun buildState(row: Row): HTMLElement {
 }
 
 /**
- * What the selected row shows under its columns: the status in full when the row cut it, then any
- * text the model put in [Row.extra] (where a search matched, a failed resume or open in the error
- * colour), then the chips ([Row.chips]): the folder, and the tab when it tells something.
+ * What the selected row shows under its columns: the status in full when the row cut it, then the
+ * chips ([Row.chips]): the folder, and the tab when it tells something, then any text the model put
+ * in [Row.extra] (where a search matched, a failed resume or open in the error colour).
  *
  * While a question is asked ([ask]) the bar with the question stands in place of the status and the
  * text, and the chips stay under it. Called by [buildRow] for the selected row.
@@ -580,31 +580,16 @@ private fun buildState(row: Row): HTMLElement {
  */
 private fun buildFocus(row: Row, ask: AgentsOverviewBackingViewModel.Ask?): HTMLElement? {
     val focus = div("ao-focus")
+    val full = row.statusFull
     if (ask != null) {
         focus.appendChild(buildAsk(ask))
-    } else {
-        val full = row.statusFull
-        if (full != null) {
-            focus.appendChild(
-                div("ao-full").also {
-                    if (row.matchInSnippet) it.appendChild(highlighted(full, row.matchStart, row.matchLength))
-                    else it.textContent = full
-                },
-            )
-        }
-        if (row.extra.isNotEmpty()) {
-            val line = div("ao-xtra")
-            val error = row.error
-            val at = if (error != null) row.extra.indexOf(error) else -1
-            if (error != null && at >= 0) {
-                line.appendChild(document.createTextNode(row.extra.substring(0, at)))
-                line.appendChild(span("ao-n-error", error))
-                line.appendChild(document.createTextNode(row.extra.substring(at + error.length)))
-            } else {
-                line.textContent = row.extra
-            }
-            focus.appendChild(line)
-        }
+    } else if (full != null) {
+        focus.appendChild(
+            div("ao-full").also {
+                if (row.matchInSnippet) it.appendChild(highlighted(full, row.matchStart, row.matchLength))
+                else it.textContent = full
+            },
+        )
     }
     if (row.chips.isNotEmpty()) {
         val chips = div("ao-chips")
@@ -613,6 +598,19 @@ private fun buildFocus(row: Row, ask: AgentsOverviewBackingViewModel.Ask?): HTML
             chips.appendChild(span("ao-pill $kind", chip.text))
         }
         focus.appendChild(chips)
+    }
+    if (ask == null && row.extra.isNotEmpty()) {
+        val line = div("ao-xtra")
+        val error = row.error
+        val at = if (error != null) row.extra.indexOf(error) else -1
+        if (error != null && at >= 0) {
+            line.appendChild(document.createTextNode(row.extra.substring(0, at)))
+            line.appendChild(span("ao-n-error", error))
+            line.appendChild(document.createTextNode(row.extra.substring(at + error.length)))
+        } else {
+            line.textContent = row.extra
+        }
+        focus.appendChild(line)
     }
     return if (focus.hasChildNodes()) focus else null
 }

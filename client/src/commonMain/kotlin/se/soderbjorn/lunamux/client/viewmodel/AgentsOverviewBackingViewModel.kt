@@ -15,12 +15,12 @@
  * Every row is one task, drawn as one aligned line. A session that belongs to no task is a task
  * of one. The sessions of a task, background ones included, are never rows of their own: the
  * row counts them in its state word ("needs you", "2 working", "working", "done" or
- * "finished") and shows the task's status as its detail. The selected row has one more line,
- * carries the places that matter for opening it, such as the tab the session sits in, but not the
- * detail (the view puts the status in full in front only when the row cut it, see
- * [AgentsOverviewBackingViewModel.Row.statusFull]) and shows chips for the folder and the tab of
- * the session ↵ opens; a row with nothing to add has an empty
- * [AgentsOverviewBackingViewModel.Row.extra], no chips and no line. EARLIER lists its newest five
+ * "finished") and shows the task's status as its detail. The selected row has more below it: the
+ * status in full when the row cut it (see [AgentsOverviewBackingViewModel.Row.statusFull]), then
+ * chips for the folder and the tab of the session ↵ opens, then a line of what else matters for
+ * opening it ([AgentsOverviewBackingViewModel.Row.extra]: where a search matched, a resume note or
+ * an error), never the detail itself; a row with nothing to add has an empty extra, no chips and
+ * no block. EARLIER lists its newest five
  * rows and a "+ N more" line for the rest.
  *
  * What ↵ opens follows one order. A task with an own session opens that session: its pane, or a
@@ -475,20 +475,18 @@ class AgentsOverviewBackingViewModel(
         ),
     ) { v ->
         @Suppress("UNCHECKED_CAST")
-        build(
-            Inputs(
-                v[0] as List<AgentSessionSummary>,
-                v[1] as List<AgentTask>,
-                v[2] as WindowConfig?,
-                v[3] as String?,
-                v[4] as WindowEnvelope.AgentSessionMatches?,
-                v[5] as WindowEnvelope.AgentSessionInspection?,
-                v[6] as Ui,
-            ),
+        val input = Inputs(
+            v[0] as List<AgentSessionSummary>,
+            v[1] as List<AgentTask>,
+            v[2] as WindowConfig?,
+            v[3] as String?,
+            v[4] as WindowEnvelope.AgentSessionMatches?,
+            v[5] as WindowEnvelope.AgentSessionInspection?,
+            v[6] as Ui,
         )
+        build(input).also { settleAsk(it, input.ui) }
     }.onEach {
         settleResume()
-        settleAsk(it)
         if (it.open) scope.launch { inspectSelected() }
     }
 
@@ -496,7 +494,8 @@ class AgentsOverviewBackingViewModel(
     val state: State
         get() {
             settleResume()
-            return build(inputs()).also(::settleAsk)
+            val input = inputs()
+            return build(input).also { settleAsk(it, input.ui) }
         }
 
     private fun inputs() = Inputs(
@@ -527,11 +526,16 @@ class AgentsOverviewBackingViewModel(
      * Forget an ask that no longer shows, so it cannot come back to life later: when a refresh
      * changed what ↵ would act on, the person's answer was meant for something else.
      *
+     * Only a state built from the view inputs as they are now may withdraw the ask: the state
+     * [stateFlow] builds can be one step behind [ui], and a state that never saw a fresh ask has no
+     * say about it.
+     *
      * @param built the state just built.
+     * @param from the view inputs [built] was built from.
      */
-    private fun settleAsk(built: State) {
+    private fun settleAsk(built: State, from: Ui) {
         val current = ui.value
-        if (current.askRowId != null && built.ask == null) {
+        if (current.askRowId != null && built.ask == null && current == from) {
             ui.update { it.copy(askRowId = null, askRecordId = null, askEnter = null) }
         }
     }
@@ -633,14 +637,18 @@ class AgentsOverviewBackingViewModel(
     }
 
     /**
-     * Highlight the row with [rowId], as a mouse click does. Does nothing for an id that is not listed.
+     * Highlight the row with [rowId], as a mouse click does. Does nothing for an id that is not
+     * listed, and nothing for the row that is asking its question: a click on it is the answer,
+     * and selecting it again would withdraw the question the click is meant to answer.
      *
      * Called by the view when a row is clicked, before it opens the row.
      *
      * @param rowId the [Row.id] to select.
      */
     fun select(rowId: String) {
-        val rows = state.rows
+        val current = state
+        if (current.ask?.rowId == rowId && current.selectedId == rowId) return
+        val rows = current.rows
         val index = rows.indexOfFirst { it.id == rowId }
         if (index >= 0) ui.update { it.withoutAsk().copy(selectedId = rowId, selectedHint = index, peekOpen = false, confirmRowId = null, cutRowId = null) }
     }
@@ -942,6 +950,7 @@ class AgentsOverviewBackingViewModel(
      * @property started epoch millis the task started, which fixes its place in NOW.
      * @property enter what ↵ does on the task's row.
      * @property target the session [enter] acts on, or null for [Enter.OPEN] and [Enter.NONE].
+     * @property ownId the record id of the task's own session, or null when it has none (see [ownOf]).
      */
     private class TaskUnit(
         val task: AgentTask,
@@ -953,6 +962,7 @@ class AgentsOverviewBackingViewModel(
         val started: Long,
         val enter: Enter,
         val target: AgentSessionSummary?,
+        val ownId: String?,
     ) {
         /**
          * Whether the task is in EARLIER: not in NOW, and not inside the grace of a task that has
@@ -1006,18 +1016,21 @@ class AgentsOverviewBackingViewModel(
         val unitsById = units.associateBy { it.task.id }
 
         // The server lists matches best first; the first match of a task is the one that stands for it.
+        // A task's own session often carries no task id, so a match on it is routed to its task by
+        // the session id the task's runs hold; otherwise it would be a row of its own beside the task.
+        val unitBySession = units.flatMap { u -> u.runs.mapNotNull { r -> r.session?.id?.let { it to u } } }.toMap()
         val answer = matches?.takeIf { matchMode && it.query == query }
         val matchRows = answer?.matches.orEmpty()
-            .distinctBy { it.summary.taskId ?: it.summary.id }
-            .map { m ->
-                val s = byId[m.summary.id] ?: m.summary
-                val unit = s.taskId?.let(unitsById::get)
+            .map { m -> m to (byId[m.summary.id] ?: m.summary) }
+            .map { (m, s) -> Triple(m, s, s.taskId?.let(unitsById::get) ?: unitBySession[s.id]) }
+            .distinctBy { (_, s, unit) -> unit?.task?.id ?: s.taskId ?: s.id }
+            .map { (m, s, unit) ->
                 val base = when {
                     unit != null -> taskRow(unit, c)
                     // A task older than the pushed list is still one row, named by the title the search found.
                     else -> sessionRow(s, earlier = s.state == ENDED || !c.live(s), c = c, taskTitle = if (s.taskId != null) m.taskTitle ?: titleOf(s) else null)
                 }
-                matchRow(base, m, s, c, unit?.task?.leadRecordId)
+                matchRow(base, m, s, c, unit?.ownId)
             }
 
         // A session a task unit holds is drawn inside it, not again as a lone session.
@@ -1158,6 +1171,23 @@ class AgentsOverviewBackingViewModel(
         if (s.state == ENDED || s.state == IDLE) activityOf(s) else s.stateSince
 
     /**
+     * The session that speaks for a task: the record its `leadRecordId` names, when Lunamux lists it
+     * and it does not belong to another task.
+     *
+     * A record hosted under a different task's id is one of that task's sessions; counting it here
+     * as well would show it in two rows' state words and count it twice as working.
+     *
+     * Called by [unitOf] for the task's runs and its ↵ target, and by the search for the row a
+     * match on that session belongs to.
+     *
+     * @param t the task.
+     * @param byId all session summaries by record id.
+     * @return the task's own session, or null when it has none.
+     */
+    private fun ownOf(t: AgentTask, byId: Map<String, AgentSessionSummary>): AgentSessionSummary? =
+        t.leadRecordId?.let(byId::get)?.takeIf { it.taskId == null || it.taskId == t.id }
+
+    /**
      * Pair a task's sessions with the hosted sessions they match, work out where the task sits and
      * what ↵ on its row opens.
      *
@@ -1185,7 +1215,8 @@ class AgentsOverviewBackingViewModel(
         // The task's own session is one of its sessions even when it carries no task id and no file
         // member names it: it counts in the state word and is never a row of its own.
         val held = (fileRuns + extraRuns).mapNotNullTo(HashSet()) { it.session?.id }
-        val ownRuns = listOfNotNull(t.leadRecordId?.let(byId::get)?.takeIf { it.id !in held }).map { s -> Run(memberOf(s), s) }
+        val own = ownOf(t, byId)
+        val ownRuns = listOfNotNull(own?.takeIf { it.id !in held }).map { s -> Run(memberOf(s), s) }
         val runs = fileRuns + extraRuns + ownRuns
         if (runs.isEmpty() && !t.hasOpen) return null
         val ended = runs.all { it.member.state == ENDED }
@@ -1220,8 +1251,8 @@ class AgentsOverviewBackingViewModel(
         // holds. A task waiting on the person is the one exception, so a question is never filed away.
         val inNow = !ended && !settled && (urgentRank == 0 || open.isNotEmpty())
         val graced = (ended || settled) && inGrace(recency, nowMillis)
-        val (enter, target) = enterOf(t, runs, open, byId)
-        return TaskUnit(t, runs, since, recency, graced, inNow, started, enter, target)
+        val (enter, target) = enterOf(t, own, runs, open)
+        return TaskUnit(t, runs, since, recency, graced, inNow, started, enter, target, own?.id)
     }
 
     /**
@@ -1236,18 +1267,17 @@ class AgentsOverviewBackingViewModel(
      * session is never chosen while a listed one is live.
      *
      * @param t the task.
+     * @param own the task's own session, from [ownOf], or null.
      * @param runs its sessions.
      * @param open the sessions whose pane is in the layout.
-     * @param byId all session summaries by record id.
      * @return what ↵ does and the session it acts on (null for `open` and for nothing).
      */
     private fun enterOf(
         t: AgentTask,
+        own: AgentSessionSummary?,
         runs: List<Run>,
         open: List<Run>,
-        byId: Map<String, AgentSessionSummary>,
     ): Pair<Enter, AgentSessionSummary?> {
-        val own = t.leadRecordId?.let(byId::get)
         if (own != null) {
             val ownOpen = open.any { it.session?.id == own.id }
             return when {
@@ -1407,7 +1437,7 @@ class AgentsOverviewBackingViewModel(
                 error,
             ),
             chips = chipsOf(t.title, target, c),
-            ask = askOf(id, u.enter, own = target != null && target.id == t.leadRecordId),
+            ask = askOf(id, u.enter, own = target != null && target.id == u.ownId),
             sinceMillis = if (u.inEarlier) u.recency else u.since,
             enter = u.enter,
             recordId = target?.id,
