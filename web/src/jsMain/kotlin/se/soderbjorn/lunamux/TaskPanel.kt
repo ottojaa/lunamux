@@ -1,7 +1,8 @@
 /**
  * The task panel in the web client: a 320px column on the right of the window that shows what the
  * agents of a task wrote about it. It appears only in the tab that holds the task's own session,
- * starting with an "Agents" block (every other session of the task, with its state and age) and
+ * starting with an "Agents" block (every other session of the task, with its state and age; the
+ * finished ones folded into one "N finished · done" line that ↵ or a click opens) and
  * followed by the blocks agents added with `set_task_panel`, `upsert_task_block` and
  * `remove_task_block` (a documents block draws one plain row per document, which opens outside
  * the app).
@@ -52,6 +53,9 @@ import se.soderbjorn.lunula.web.shell.AppFrameClassNames
  * @see registerTaskPanelHotkey
  */
 internal const val TASK_PANEL_HOTKEY_ACTION_ID: String = "Lunamux.taskPanel.toggle"
+
+/** Focus key of the line that folds the finished agents, which a redraw gives focus back to. */
+private const val FOLD_FOCUS_KEY = "agent-fold"
 
 /** UI-settings key holding whether the person left the panel open (absent means open). */
 private const val KEY_TASK_PANEL_OPEN = "taskPanelOpen"
@@ -148,7 +152,9 @@ private fun setTaskPanelOpen(open: Boolean) {
 
 /**
  * Redraw the column from [state]; take it down when the panel is not visible. A redraw rebuilds
- * every node, so the focused agent line is found again by its focus key and given focus back.
+ * every node, so the focused agent line is found again by its focus key and given focus back. An
+ * agent line that is no longer drawn (the agent finished and folded away) hands focus to the fold
+ * line, which is where it went.
  *
  * @param state the view model's latest state.
  */
@@ -179,7 +185,9 @@ private fun renderTaskPanel(state: TaskPanelViewModel.State) {
     panel.appendChild(content)
     content.scrollTop = scroll
     focusedKey?.let { key ->
-        findByFocusKey(panel, key)?.focus()
+        val target = findByFocusKey(panel, key)
+            ?: if (key.startsWith("agent:")) findByFocusKey(panel, FOLD_FOCUS_KEY) else null
+        target?.focus()
     }
     keepPanelClockTicking(true)
 }
@@ -223,10 +231,11 @@ private fun blockHead(title: String?, right: String, rightClass: String): HTMLEl
 }
 
 /**
- * The "Agents" block: one line per other session of the task. A line shows the member's state
- * mark, name and age on the first row and what it is doing (or its state word) under the name.
- * A line with an action can be focused: ↵ or a click runs it, ⌘↵ shows a background member's tab,
- * and a hint row under the name says which keys do what while the line is hovered or focused.
+ * The "Agents" block: a fold line for the finished agents when there are any, then one line per
+ * agent in [TaskPanelViewModel.State.shown]. A line shows the member's state mark, name and age on
+ * the first row and what it is doing (or its state word) under the name. A line with an action
+ * can be focused: ↵ or a click runs it, ⌘↵ shows a background member's tab, and a hint row under
+ * the name says which keys do what while the line is hovered or focused.
  */
 @OptIn(DelicateCoroutinesApi::class)
 private fun buildAgents(state: TaskPanelViewModel.State): HTMLElement {
@@ -236,7 +245,8 @@ private fun buildAgents(state: TaskPanelViewModel.State): HTMLElement {
         block.appendChild(div("tp-muted").also { it.textContent = "No other agents in this task." })
         return block
     }
-    for (line in state.agents) {
+    state.fold?.let { block.appendChild(buildFold(it)) }
+    for (line in state.shown) {
         val row = div("tp-agent tp-state-${line.state}" + if (line.dimmed) " tp-dim" else "")
         val glyph = when {
             line.state == "needs_you" -> "◆"
@@ -273,6 +283,35 @@ private fun buildAgents(state: TaskPanelViewModel.State): HTMLElement {
         block.appendChild(row)
     }
     return block
+}
+
+/**
+ * The line that stands for the finished agents: a finished mark, "N finished · done" and ▸ (folded)
+ * or ▾ (listed) at the right. A click or ↵ folds or unfolds them; ⌘↵ does nothing, as there is no
+ * session behind the line to show. It has no age and no hint row, and keeps focus across a redraw
+ * through its focus key.
+ *
+ * @param fold the fold from the view model.
+ */
+private fun buildFold(fold: TaskPanelViewModel.AgentFold): HTMLElement {
+    val row = div("tp-agent tp-fold tp-state-ended tp-agent-active")
+    row.appendChild(span("tp-glyph", "○"))
+    row.appendChild(span("tp-fold-text", fold.text))
+    row.appendChild(span("tp-fold-mark", if (fold.expanded) "▾" else "▸"))
+    row.setAttribute("tabindex", "0")
+    row.setAttribute("role", "button")
+    row.setAttribute("aria-expanded", fold.expanded.toString())
+    row.setAttribute(FOCUS_KEY_ATTRIBUTE, FOLD_FOCUS_KEY)
+    row.addEventListener("click", { _: Event -> taskPanel.toggleFinished() })
+    row.addEventListener("keydown", { e: Event ->
+        val key = e as KeyboardEvent
+        if (key.key == "Enter") {
+            key.preventDefault()
+            key.stopPropagation()
+            if (!key.metaKey && !key.ctrlKey) taskPanel.toggleFinished()
+        }
+    })
+    return row
 }
 
 /**
