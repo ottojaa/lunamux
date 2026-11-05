@@ -827,7 +827,7 @@ internal fun applyDotState(el: HTMLElement, state: String?) {
  * [spikeWaitingOverride], keyed by pane id and toggled by the 3D `w` key) into a
  * session-keyed state map, so every session-level indicator — the global logo
  * dot, the per-pane dots, and the per-tab aggregates — reflects the same preview
- * the 3D warp-core boxes and the 2D world-status footer already show.
+ * the 3D warp-core boxes already show.
  *
  * The overrides are per-pane but these indicators are per-session, so a pane's
  * override REPLACES its session's live state: for any session with at least one

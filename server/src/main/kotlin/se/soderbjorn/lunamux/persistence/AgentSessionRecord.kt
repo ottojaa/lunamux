@@ -36,7 +36,8 @@ package se.soderbjorn.lunamux.persistence
  * @property firstPrompt the first prompt typed into the session (hooks only).
  * @property transcriptPath path of the agent's transcript file (hooks only).
  * @property links ticket keys (`ABC-12`) found in the branch name or title.
- * @property state `needs_you`, `working`, `idle` or `ended`.
+ * @property state `needs_you`, `working`, `done` or `ended`. `done` is a turn that finished: the agent
+ *   waits at its prompt and nothing it asked is blocking it.
  * @property stateSince epoch millis when [state] last changed.
  * @property nowLine what the last tool call does in words ("Running the server tests"), or null.
  * @property question what the agent is asking when [state] is `needs_you`.
@@ -53,7 +54,7 @@ package se.soderbjorn.lunamux.persistence
  *   made no choice. A task file can still place a session that has none.
  * @property background whether the session runs (or ran) in a background tab an agent opened:
  *   out of sight, found by no search, but still counted in its task and still able to ask for
- *   the person. Stays set after the pane closes; taking the tab over clears it.
+ *   the person. Stays set after the pane closes.
  */
 data class AgentSessionRecord(
     val id: String,
@@ -70,7 +71,7 @@ data class AgentSessionRecord(
     val firstPrompt: String? = null,
     val transcriptPath: String? = null,
     val links: List<String> = emptyList(),
-    val state: String = "idle",
+    val state: String = "done",
     val stateSince: Long = 0,
     val nowLine: String? = null,
     val question: String? = null,
@@ -81,4 +82,17 @@ data class AgentSessionRecord(
     val lastSaid: String? = null,
     val taskId: String? = null,
     val background: Boolean = false,
-)
+) {
+    /**
+     * The conversation this record is a run of: the agent's own session id when it is known,
+     * else this record's id.
+     *
+     * A resumed conversation has one record per run in a pane, but is one conversation; the
+     * tracker publishes one summary per conversation by this key. Codex and Gemini report no id,
+     * so each of their runs is its own conversation.
+     *
+     * Called by the tracker when it groups records and by the task index when it stores or
+     * resolves a task's main conversation.
+     */
+    val conversationId: String get() = agentSessionId ?: id
+}

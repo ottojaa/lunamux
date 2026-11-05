@@ -1,39 +1,38 @@
 /**
- * The agents overview in the web client: a topbar chip that says how many agent sessions need the
- * user and how many work, and the ⌘⇧A overlay that lists every task as one aligned row under
- * "NOW", then what finished or went quiet under "EARLIER" in two bands, "last few days" and
- * "last two weeks" (a heading with nothing under it is not drawn).
+ * The agents overview in the web client: the ⌘⇧A overlay that lists every live conversation once
+ * under "NOW", then the closed ones under "EARLIER" in two bands, "last few days" and "last two
+ * weeks" (a heading with nothing under it is not drawn).
  *
- * Every row is the same six-column grid: a marker (◆ when the task needs the person, ▸ on the
+ * Every row is the same six-column grid: a marker (◆ when the row needs the person, ▸ on the
  * selected row), the title, where it runs, one state word, a detail line and the age. Brightness
  * and colour follow the state: a working or needs-you row has a bright title, a done one a
- * mid-grey title, and a finished one in EARLIER a dim row (a task in EARLIER whose agent still moves stays bright, with the glyph). The state word is cyan with the app's working glyph in
- * front while an agent moves ([workingGlyph]), yellow when the task needs the person, a muted
- * green when it is done. The selected row carries more under it: the status in full when (and only when)
- * the row cut it short or hides it in a narrow panel, any text the model put on the row (where a
- * search matched, a failed resume), then chips: the working folder of the session ↵ goes to and,
- * when it tells something the title does not, the tab that session is in. ↵ opens the row (a
- * session in a background tab is watched, and one that is not running is resumed only after a
- * question under the row, answered by a second ↵), ⌘↵ takes a background tab over, → peeks at the
- * session ↵ would open, and ⌘⌫ closes a live one after an inline confirmation. Typing two or more
- * characters swaps the lists for search results over every task ever run, one row per task.
- * EARLIER shows its newest five rows and a "+ N more" line for the rest. The footer's keys come
- * from the model, so they follow the selection and the question.
+ * mid-grey title, and a finished one in EARLIER a dim row. The state word is cyan with the app's
+ * working glyph in front while an agent moves ([workingGlyph]), yellow when the row needs the
+ * person, a muted green when it is done. The selected row carries more under it: the status in
+ * full when (and only when) the row cut it short or hides it in a narrow panel, any text the model
+ * put on the row (where a search matched, a failed resume), then chips: the working folder of the
+ * session ↵ goes to and, when it tells something the title does not, the tab that session is in.
+ * ↵ opens the row (a live conversation is jumped to; a background agent that waits opens as a marked
+ * tab; a closed conversation is resumed only after a question under the row, answered by a second
+ * ↵), → peeks at the session ↵ would open, and ⌘⌫ closes a live one after an inline confirmation.
+ * Typing two or more characters swaps the lists for search results over every conversation ever
+ * run, one row per conversation. EARLIER shows its newest five rows and a "+ N more" line for the
+ * rest. The footer's keys come from the model, so they follow the selection and the question.
  *
  * All state and behaviour live in the shared [AgentsOverviewBackingViewModel]; this file only
  * draws its state as plain DOM and turns key presses and clicks into calls on it. Rows are found
  * again by their id, never by their position, so a redraw while the list changes under the
- * pointer cannot move a click onto another row. The chip and the overlay read the same state, so
- * their counts always agree.
+ * pointer cannot move a click onto another row.
  *
  * @see AgentsOverviewBackingViewModel
  * @see workingGlyph
  * @see registerAgentsOverviewHotkey
- * @see buildAgentsOverviewTopbarAction
+ * @see startAgentsOverview
  */
 package se.soderbjorn.lunamux
 
 import kotlinx.browser.document
+import kotlinx.browser.window
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.flow.collect
@@ -47,7 +46,6 @@ import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Row
 import se.soderbjorn.lunula.web.hotkey.Hotkey
 import se.soderbjorn.lunula.web.hotkey.HotkeyActionSpec
 import se.soderbjorn.lunula.web.hotkey.HotkeyBindings
-import se.soderbjorn.lunula.web.shell.TopbarAction
 
 /**
  * Stable action id for the **agents overview** hotkey (default ⌘⇧A). Persistence
@@ -59,10 +57,9 @@ internal const val AGENTS_OVERVIEW_HOTKEY_ACTION_ID: String = "Lunamux.agentsOve
 
 /** The shared view model; created on first use, after the window socket exists. */
 private val agentsOverview: AgentsOverviewBackingViewModel by lazy {
-    AgentsOverviewBackingViewModel(lunamuxClient.windowState, watch = watchViewModel::watch) { windowSocket.send(it) }
+    AgentsOverviewBackingViewModel(lunamuxClient.windowState) { windowSocket.send(it) }
 }
 
-private var chipElement: HTMLElement? = null
 private var overlayElement: HTMLElement? = null
 private var searchInput: HTMLInputElement? = null
 private var listElement: HTMLElement? = null
@@ -73,6 +70,9 @@ private var searchTimer: Int? = null
 private var peekTimer: Int? = null
 private var clockTimer: Int? = null
 private var lastState: AgentsOverviewBackingViewModel.State? = null
+
+/** The glyph keys the list being drawn used, so [keepWorkingGlyphs] can let go of the rest. */
+private val drawnGlyphKeys = HashSet<String>()
 
 /** Pause after the last key press before the query is sent to the server. */
 private const val SEARCH_DEBOUNCE_MS = 150
@@ -101,39 +101,31 @@ internal fun registerAgentsOverviewHotkey() {
 }
 
 /**
- * Build the topbar chip ("◆ 2 need you · 1 working") that opens the overview. It shows from the
- * first agent session on, so it also says "agents idle", and starts following the view model's
- * state as soon as it is built.
+ * Start following the view model's state, so the overlay opens, redraws and closes with it.
+ * Called once by [bootViaToolkitShell]; the hotkey's [registerAgentsOverviewHotkey] only toggles it.
  *
- * Called by [bootViaToolkitShell] when it assembles the topbar.
- *
- * @return the topbar action wrapping the chip button.
- * @see AgentsOverviewBackingViewModel.State.chipVisible
+ * @see AgentsOverviewBackingViewModel.stateFlow
  */
 @OptIn(DelicateCoroutinesApi::class)
-internal fun buildAgentsOverviewTopbarAction(): TopbarAction {
-    val chip = document.createElement("button") as HTMLElement
-    chip.asDynamic().type = "button"
-    chip.className = "ao-chip"
-    chip.style.display = "none"
-    chip.title = "Agents overview"
-    chip.addEventListener("click", { _: Event -> agentsOverview.toggle() })
-    chipElement = chip
-
+internal fun startAgentsOverview() {
     GlobalScope.launch { agentsOverview.stateFlow.collect { renderAgentsOverview(it) } }
-
-    return TopbarAction(
-        id = "tt-topbar-agents-overview",
-        label = "Agents overview",
-        onActivate = { agentsOverview.toggle() },
-        element = chip,
-    )
+    // The footer counts the same conversations the rows do, so it follows the same pushes; the
+    // timer lets a conversation that went quiet stop counting as working.
+    GlobalScope.launch {
+        lunamuxClient.windowState.agentSessions.collect { updateWorldStatusFooter() }
+    }
+    GlobalScope.launch {
+        lunamuxClient.windowState.agentTasks.collect { updateWorldStatusFooter() }
+    }
+    window.setInterval({ updateWorldStatusFooter() }, FOOTER_CLOCK_TICK_MS)
 }
 
-/** Redraw the chip, and the overlay if it is open, from [state]. */
+/** How often the footer recounts on its own, so a conversation that went quiet stops counting as working. */
+private const val FOOTER_CLOCK_TICK_MS = 30_000
+
+/** Redraw the overlay if it is open, or close it, from [state]. */
 private fun renderAgentsOverview(state: AgentsOverviewBackingViewModel.State) {
     lastState = state
-    renderChip(state)
     if (state.open) {
         ensureOverlay(state.query)
         renderFooter(state)
@@ -142,7 +134,7 @@ private fun renderAgentsOverview(state: AgentsOverviewBackingViewModel.State) {
         closeOverlayElement()
     }
     keepPeekFresh(state.peek?.live == true)
-    // The chip counts a session as working only while it is moving, which the clock alone can end.
+    // A row counts as working only while it is moving, which the clock alone can end.
     keepClockTicking(state.open || state.workingCount > 0)
 }
 
@@ -157,7 +149,7 @@ private fun renderAgentsOverview(state: AgentsOverviewBackingViewModel.State) {
 private fun keepClockTicking(needed: Boolean) {
     if (needed && clockTimer == null) {
         clockTimer = kotlinx.browser.window.setInterval({
-            // An idle session leaves NOW on the clock alone, so the state is built again first.
+            // A row stops moving on the clock alone, so the state is built again first.
             agentsOverview.tick()
             val state = lastState
             val list = listElement
@@ -198,23 +190,6 @@ private fun searchSoon() {
         { searchTimer = null; launchAgentsOverview { agentsOverview.search() } },
         SEARCH_DEBOUNCE_MS,
     )
-}
-
-/**
- * Redraw the topbar chip: "◆ 2 need you" in the warning colour, then the dim rest ("1 working",
- * or "agents idle"), joined by a faint dot.
- *
- * @param state the view model's current state.
- */
-private fun renderChip(state: AgentsOverviewBackingViewModel.State) {
-    val chip = chipElement ?: return
-    chip.style.display = if (state.chipVisible) "" else "none"
-    chip.textContent = ""
-    val needs = state.chipNeeds
-    val rest = state.chipRest
-    if (needs != null) chip.appendChild(span("ao-chip-need", "◆ $needs"))
-    if (needs != null && rest != null) chip.appendChild(span("ao-chip-sep", "·"))
-    if (rest != null) chip.appendChild(span("ao-chip-rest", rest))
 }
 
 /** Create the backdrop, search line, list and footer the first time the overlay opens. */
@@ -301,6 +276,7 @@ private fun closeOverlayElement() {
     kotlinx.browser.window.removeEventListener("resize", resizeListener)
     overlayElement?.remove()
     overlayElement = null
+    keepWorkingGlyphs("overview:", emptySet())
     searchInput = null
     listElement = null
     footerElement = null
@@ -342,8 +318,7 @@ private fun onFooterKey(key: String) {
  * ↑ and ↓ move the selection (which also cancels a question, a peek or a confirmation). → peeks at the session
  * ↵ would open when the caret is at the end of the text, and ← goes back out of the peek. ⌘⌫ asks
  * to close the selected session (only while the box is empty and the row is one live session),
- * ⌘↵ takes the selected session's background tab over (in the list and in its peek), and esc steps
- * back one level: the question the first ↵ asks, then a close confirmation, then the peek, then
+ * and esc steps back one level: the question the first ↵ asks, then a close confirmation, then the peek, then
  * the overlay. Space types into the search.
  *
  * @param e the key press in the search box.
@@ -354,7 +329,6 @@ private fun onSearchKey(e: KeyboardEvent) {
     when {
         e.key == "ArrowDown" -> { e.preventDefault(); agentsOverview.moveSelection(1) }
         e.key == "ArrowUp" -> { e.preventDefault(); agentsOverview.moveSelection(-1) }
-        e.key == "Enter" && (e.metaKey || e.ctrlKey) -> { e.preventDefault(); launchAgentsOverview { agentsOverview.takeOverSelected() } }
         e.key == "Enter" -> { e.preventDefault(); launchAgentsOverview { agentsOverview.activateSelected() } }
         e.key == "Escape" -> { e.preventDefault(); agentsOverview.back() }
         state.confirm != null && (e.key == "ArrowLeft" || e.key == "ArrowRight" || e.key == "Tab") -> {
@@ -391,9 +365,11 @@ private fun launchAgentsOverview(block: suspend () -> Unit) {
 private fun renderList(state: AgentsOverviewBackingViewModel.State) {
     val list = listElement ?: return
     list.textContent = ""
+    drawnGlyphKeys.clear()
     shownRows = state.rows.associateBy { it.id }
     if (state.rows.isEmpty()) {
         list.appendChild(div("ao-empty").also { it.textContent = state.emptyText })
+        keepWorkingGlyphs("overview:", emptySet())
         return
     }
     fun add(rows: List<Row>) = rows.forEach { row ->
@@ -419,6 +395,7 @@ private fun renderList(state: AgentsOverviewBackingViewModel.State) {
         // The line closes EARLIER whichever band the last shown row is in.
         if (state.earlierHidden > 0) list.appendChild(buildMoreLine(state.earlierHidden))
     }
+    keepWorkingGlyphs("overview:", drawnGlyphKeys)
     fitSelectedFocus()
     (list.querySelector(".ao-sel") as? HTMLElement)?.asDynamic().scrollIntoView(js("({block: 'nearest'})"))
 }
@@ -554,7 +531,9 @@ private fun buildState(row: Row): HTMLElement {
         "",
     )
     if (row.working) {
-        cell.appendChild(workingGlyph())
+        val key = "overview:${row.id}"
+        drawnGlyphKeys += key
+        cell.appendChild(workingGlyph(key))
         cell.appendChild(document.createTextNode(" ${row.stateWord}"))
     } else {
         cell.textContent = row.stateWord
@@ -664,8 +643,7 @@ private fun buildMoreLine(hidden: Int): HTMLElement {
 }
 
 /**
- * The popover under the selected row: a heading and the last lines of the session's screen, and,
- * for a session in a background tab, a line saying ⌘↵ takes the tab over.
+ * The popover under the selected row: a heading and the last lines of the session's screen.
  *
  * @param peek the peek's data from the view model.
  * @return the popover element.
@@ -681,10 +659,6 @@ private fun buildPeek(peek: AgentsOverviewBackingViewModel.Peek): HTMLElement {
         peek.loading -> box.appendChild(div("ao-peek-line").also { it.textContent = "…" })
         peek.emptyText != null -> box.appendChild(div("ao-peek-line").also { it.textContent = peek.emptyText })
         else -> peek.lines.forEach { line -> box.appendChild(div("ao-peek-line").also { it.textContent = line }) }
-    }
-    if (peek.background) {
-        // The screen is read-only: the way to type into it is to show its tab.
-        box.appendChild(div("ao-peek-hint").also { it.textContent = "⌘↵ show as tab" })
     }
     return box
 }

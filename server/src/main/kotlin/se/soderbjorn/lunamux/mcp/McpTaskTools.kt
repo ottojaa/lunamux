@@ -19,6 +19,7 @@
 package se.soderbjorn.lunamux.mcp
 
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -28,6 +29,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import se.soderbjorn.lunamux.TaskException
 import se.soderbjorn.lunamux.TaskIndex
+import se.soderbjorn.lunamux.TaskListing
 
 /**
  * Run [block] and turn a [TaskException] into the [McpArgumentException] the MCP layer reports
@@ -97,7 +99,9 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
         McpToolResult.json(buildJsonObject {
             put("taskId", id)
             put("sessions", sessionIds.size)
-            put("ownSession", taskIndex.listing().firstOrNull { it.id == id }?.ownSessionId?.let(::JsonPrimitive) ?: JsonNull)
+            val listed = taskIndex.listing().firstOrNull { it.id == id }
+            put("ownSession", listed?.ownSessionId?.let(::JsonPrimitive) ?: JsonNull)
+            put("mainConversation", mainConversationJson(listed))
         })
     }
 
@@ -162,20 +166,32 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
         description = "Name the session that speaks for a task: the one the person is taken to when " +
             "they open the task in the agents overview. A task starts with the session that made it; " +
             "call this when another session is the one to talk to, for example the one that coordinates " +
-            "the others. Any session of yours or another agent's will do. Returns the taskId and the " +
-            "session now named as ownSession.",
+            "the others. Any session of yours or another agent's will do. Give either sessionId (the " +
+            "pane's \$LUNAMUX_SESSION_ID, turned into the conversation running in it now) or " +
+            "conversationId (the agent's own session id, which a closed conversation still has). " +
+            "Returns the taskId and the mainConversation now named.",
         inputSchema = schemaObject(
             "taskId" to schemaString("The task."),
-            "sessionId" to schemaString("The session that speaks for it (\$LUNAMUX_SESSION_ID of its pane)."),
-            required = listOf("taskId", "sessionId"),
+            "sessionId" to schemaString("The pane whose conversation speaks for it (\$LUNAMUX_SESSION_ID)."),
+            "conversationId" to schemaString("The conversation that speaks for it, as list_tasks shows it."),
+            required = listOf("taskId"),
         ),
     ) { _, args ->
         val taskId = args.requireString("taskId")
-        val sessionId = args.requireString("sessionId")
-        taskCall { taskIndex.setOwnSession(taskId, sessionId) }
+        val sessionId = (args["sessionId"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+        val conversationId = (args["conversationId"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+        if ((sessionId == null) == (conversationId == null)) {
+            throw McpArgumentException("Give exactly one of 'sessionId' and 'conversationId'")
+        }
+        taskCall {
+            if (conversationId != null) taskIndex.setMainConversation(taskId, conversationId)
+            else taskIndex.setOwnSession(taskId, sessionId!!)
+        }
+        val listed = taskIndex.listing().firstOrNull { it.id == taskId }
         McpToolResult.json(buildJsonObject {
             put("taskId", taskId)
-            put("ownSession", sessionId)
+            put("ownSession", listed?.ownSessionId?.let(::JsonPrimitive) ?: JsonNull)
+            put("mainConversation", mainConversationJson(listed))
         })
     }
 
@@ -206,8 +222,9 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
             name = "list_tasks",
             description = "List the tasks there are and the sessions in each, so you can join one " +
                 "instead of making a duplicate. Call this before create_task when you may be continuing " +
-                "work that already has a task. ownSession is the session id of the task's own pane " +
-                "as it is now, or null while that pane is closed.",
+                "work that already has a task. mainConversation is the conversation that speaks for the task: " +
+                "its conversationId, and the sessionId of the pane it runs in now (null while it is closed). " +
+                "ownSession is the same pane's session id, kept for callers that still read it; use mainConversation.",
             inputSchema = schemaObject(),
             requiresWrite = false,
         ) { _, _ ->
@@ -217,6 +234,7 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
                     put("title", t.title)
                     put("source", t.source)
                     put("ownSession", t.ownSessionId?.let(::JsonPrimitive) ?: JsonNull)
+                    put("mainConversation", mainConversationJson(t))
                     put("status", t.status?.let(::JsonPrimitive) ?: JsonNull)
                     put("sessions", buildJsonArray {
                         for (m in t.members) add(buildJsonObject {
@@ -229,4 +247,20 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
             })
         },
     )
+}
+
+/**
+ * The `mainConversation` value of a task as the tools return it: `{conversationId, sessionId}`, with
+ * a null sessionId while the conversation is closed, or null when no conversation was named.
+ *
+ * Called by `create_task`, `set_task_lead` and `list_tasks`.
+ *
+ * @param listed the task's listing, or null when it is not listed.
+ */
+private fun mainConversationJson(listed: TaskListing?): JsonElement {
+    val conversation = listed?.mainConversation ?: return JsonNull
+    return buildJsonObject {
+        put("conversationId", conversation)
+        put("sessionId", listed.ownSessionId?.let(::JsonPrimitive) ?: JsonNull)
+    }
 }

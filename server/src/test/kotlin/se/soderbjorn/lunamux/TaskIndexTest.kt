@@ -50,7 +50,6 @@ class TaskIndexTest {
         leafOfSession = { if (it in knownPanes) "leaf-$it" else null },
         clock = { now },
         newSuffix = { suffixes.next() },
-        sessionOfLeaf = { leaf -> knownPanes.firstOrNull { "leaf-$it" == leaf } },
     )
 
     private fun folder(name: String) = File(work, name).apply { mkdirs() }.canonicalPath
@@ -241,101 +240,7 @@ class TaskIndexTest {
         assertEquals(listOf(true, false), snap.tasks.map { it.hasOpen })
     }
 
-    // ── The task's own session: the pane it ran in, across restarts that renumber terminal ids ──
-
-    private fun onTerminal(id: String, terminal: String, createdAt: Long, state: String = "ended", leafId: String? = "leaf-$id") =
-        rec(id, state = state, createdAt = createdAt, leafId = leafId).copy(terminalSessionId = terminal)
-
-    /** The record [TaskIndex.resolve] gives a task that remembers [leaf] and/or [terminal] as its own session. */
-    private fun ownRecordOf(records: List<AgentSessionRecord>, leaf: String? = null, terminal: String? = null): String? =
-        TaskIndex.resolve(
-            records.map { it.copy(taskId = "t") }, emptyList(), listOf(SettingsRepository.AgentTaskRow("t", "T", 1, 1)),
-            mapOf("t" to SettingsRepository.TaskMetaRow("t", 1, leadSession = terminal, leadLeaf = leaf)),
-        ).tasks.single().leadRecordId
-
-    @Test
-    fun `a pane's running record beats a newer ended one from the same pane`() {
-        // An old conversation resumed in the pane keeps its old start, so it is older than the ended
-        // runs the pane has had since.
-        val records = listOf(
-            onTerminal("old-ended", "s10", createdAt = 2, leafId = "leaf-a"),
-            onTerminal("live", "s10", createdAt = 5, state = "idle", leafId = "leaf-a"),
-            onTerminal("newer-ended", "s10", createdAt = 9, leafId = "leaf-a"),
-            onTerminal("elsewhere", "s11", createdAt = 99, state = "working", leafId = "leaf-b"),
-        )
-        assertEquals("live", ownRecordOf(records, leaf = "leaf-a"))
-    }
-
-    @Test
-    fun `with nothing running in the pane the newest ended record stands for it`() {
-        val records = listOf(
-            onTerminal("old-ended", "s10", createdAt = 2, leafId = "leaf-a"),
-            onTerminal("newer-ended", "s10", createdAt = 9, leafId = "leaf-a"),
-            onTerminal("middle-ended", "s10", createdAt = 5, leafId = "leaf-a"),
-        )
-        assertEquals("newer-ended", ownRecordOf(records, leaf = "leaf-a"))
-    }
-
-    @Test
-    fun `a record in the pane that is not ended wins even when it is the oldest`() {
-        val records = listOf(
-            onTerminal("live-oldest", "s10", createdAt = 1, state = "working", leafId = "leaf-a"),
-            onTerminal("ended-newest", "s10", createdAt = 50, leafId = "leaf-a"),
-        )
-        assertEquals("live-oldest", ownRecordOf(records, leaf = "leaf-a"))
-    }
-
-    @Test
-    fun `a task whose pane no record ran in has no own record`() {
-        assertNull(ownRecordOf(listOf(onTerminal("a", "s1", 1, leafId = "leaf-a")), leaf = "leaf-gone"))
-        assertNull(ownRecordOf(listOf(onTerminal("a", "s1", 1, leafId = "leaf-a"))))
-    }
-
-    @Test
-    fun `after a restart renumbers terminal ids the task follows its pane, not the id`() {
-        // The own session ran in leaf-a as s10. The restart gave leaf-a s9, and s10 now belongs to
-        // leaf-b with an unrelated agent running in it. The task still stores s10.
-        val records = listOf(
-            onTerminal("mine-ended", "s10", createdAt = 3, leafId = "leaf-a"),
-            onTerminal("mine-now", "s9", createdAt = 4, state = "working", leafId = "leaf-a"),
-            onTerminal("stranger", "s10", createdAt = 20, state = "working", leafId = "leaf-b"),
-        )
-        assertEquals("mine-now", ownRecordOf(records, leaf = "leaf-a", terminal = "s10"))
-    }
-
-    @Test
-    fun `when the pane is gone the task points at its own latest run, never at another pane's`() {
-        val records = listOf(
-            onTerminal("mine-old", "s10", createdAt = 3, leafId = "leaf-a"),
-            onTerminal("mine-last", "s10", createdAt = 8, leafId = "leaf-a"),
-            onTerminal("stranger", "s10", createdAt = 20, state = "working", leafId = "leaf-b"),
-            onTerminal("stranger-ended", "s10", createdAt = 30, leafId = "leaf-c"),
-        )
-        assertEquals("mine-last", ownRecordOf(records, leaf = "leaf-a", terminal = "s10"))
-    }
-
-    @Test
-    fun `a task stored with only a terminal id resolves to the record running on it now, else the newest`() {
-        val live = listOf(
-            onTerminal("old-ended", "s10", createdAt = 2),
-            onTerminal("live", "s10", createdAt = 5, state = "idle"),
-            onTerminal("newer-ended", "s10", createdAt = 9),
-        )
-        assertEquals("live", ownRecordOf(live, terminal = "s10"))
-        assertEquals("newer-ended", ownRecordOf(live.filter { it.id != "live" }, terminal = "s10"))
-    }
-
-    @Test
-    fun `a record that is not ended counts as running whether or not its pane snapshot had a leaf`() {
-        // The tracker's own lookup (openRecordOf) asks only that a record is not ended.
-        val records = listOf(
-            onTerminal("running", "s10", createdAt = 1, state = "working", leafId = null),
-            onTerminal("ended-newer", "s10", createdAt = 50),
-        )
-        assertEquals("running", ownRecordOf(records, terminal = "s10"))
-    }
-
-    // ── The same, through the index: what is stored, adopted and reported ──────────────────
+    // ── The task's main conversation: stored as a conversation, found again in whatever pane it runs ──
 
     /** Terminal id to leaf id for the panes the next index under test sees, changed to model a restart. */
     private val panesNow = mutableMapOf<String, String>()
@@ -352,225 +257,139 @@ class TaskIndexTest {
         repo, over, files,
         leafOfSession = { panesNow[it] },
         clock = { now }, newSuffix = { suffixes.next() },
-        sessionOfLeaf = { leaf -> panesNow.entries.firstOrNull { it.value == leaf }?.key },
     )
 
-    private fun ownRecordOf(index: TaskIndex, task: String) = index.state.value.tasks.single { it.id == task }.leadRecordId
+    private fun storedMain(task: String) = repo.loadTaskMeta().single { it.taskId == task }.mainConversation
 
     @Test
-    fun `create_task and set_task_lead store the pane's leaf with the terminal id`() {
+    fun `create_task and set_task_lead turn the pane into its conversation once`() {
         session("s1")
         session("s2")
         val id = index.createTask("Plan", listOf("s1"))
-        assertEquals("leaf-s1", repo.loadTaskMeta().single { it.taskId == id }.leadLeaf)
-        assertEquals("s1", repo.loadTaskMeta().single { it.taskId == id }.leadSession)
+        assertEquals("a-s1", storedMain(id))
 
         index.setOwnSession(id, "s2")
-        assertEquals("leaf-s2", repo.loadTaskMeta().single { it.taskId == id }.leadLeaf)
-        assertEquals("s2", repo.loadTaskMeta().single { it.taskId == id }.leadSession)
+        assertEquals("a-s2", storedMain(id))
+        assertEquals("a-s2", index.listing().single { it.id == id }.mainConversation)
+        assertEquals("s2", index.listing().single { it.id == id }.ownSessionId)
     }
 
     @Test
-    fun `a restart that renumbers terminal ids leaves the task with its own pane`() {
+    fun `the caller's pane, not the first listed pane, is the main conversation when the caller is known`() {
+        session("s1")
+        session("s2")
+        val id = index.createTask("Plan", listOf("s1"), callerSessionId = "s2")
+        assertEquals("a-s2", storedMain(id))
+    }
+
+    @Test
+    fun `set_task_lead with a pane that runs no agent is refused and keeps the old conversation`() {
+        session("s1")
+        val id = index.createTask("Plan", listOf("s1"))
+        pane("s7")
+        assertFailsWith<TaskException> { index.setOwnSession(id, "s7") }
+        assertEquals("a-s1", storedMain(id))
+    }
+
+    @Test
+    fun `set_task_lead takes a conversation id, and refuses one the tracker does not hold`() {
+        session("s1")
+        session("s2")
+        val id = index.createTask("Plan", listOf("s1"))
+        index.setMainConversation(id, "a-s2")
+        assertEquals("a-s2", storedMain(id))
+        assertFailsWith<TaskException> { index.setMainConversation(id, "nobody") }
+        assertEquals("a-s2", storedMain(id))
+    }
+
+    @Test
+    fun `set_task_lead takes the conversation id of a record the database holds but memory does not`() {
+        session("s1")
+        val id = index.createTask("Plan", listOf("s1"))
+        repo.saveAgentSession(
+            AgentSessionRecord(id = "gone", agent = "claude", agentSessionId = "conv-gone", source = "hooks",
+                state = "ended", stateSince = 1, createdAt = 1, endedAt = 1),
+        )
+        index.setMainConversation(id, "conv-gone")
+        assertEquals("conv-gone", storedMain(id))
+    }
+
+    @Test
+    fun `after a restart with reused pane ids list_tasks names the stored conversation and its live pane`() {
         val first = trackerOverRepo()
         first.onHook(paneIn("leaf-a", "s10"), event("SessionStart", "a-mine"))
-        val mine = first.openRecordOf("s10")!!
         val task = indexOver(first).createTask("Plan", listOf("s10"))
         first.endAll(emptyList())
 
-        // The restart: leaf-b is now s10 with another agent in it, leaf-a is s9.
+        // The restart: s10 is another pane with another agent in it, the conversation is closed.
         panesNow.clear()
         val restarted = trackerOverRepo()
         restarted.onHook(paneIn("leaf-b", "s10"), event("SessionStart", "a-stranger"))
         val reopened = indexOver(restarted)
-        paneIn("leaf-a", "s9")
         reopened.recompute()
+        val closed = reopened.listing().single { it.id == task }
+        assertEquals("a-mine", closed.mainConversation, "the conversation is what is stored")
+        assertNull(closed.ownSessionId, "the stranger on s10 is not the task's conversation")
 
-        assertEquals(mine.id, ownRecordOf(reopened, task), "the stranger on s10 is not the task's session")
-        assertEquals("s9", reopened.listing().single { it.id == task }.ownSessionId, "list_tasks names the id the pane has now")
-
-        restarted.onHook(paneIn("leaf-a", "s9"), event("SessionStart", "a-mine"))
-        assertEquals(mine.id, restarted.openRecordOf("s9")!!.id, "the conversation resumed in its own pane")
-        reopened.recompute()
-        assertEquals(mine.id, ownRecordOf(reopened, task))
-        assertEquals("s9", reopened.listing().single { it.id == task }.ownSessionId)
-    }
-
-    @Test
-    fun `when the task's pane is gone list_tasks has no own session and the stranger on its old id is not it`() {
-        val first = trackerOverRepo()
-        first.onHook(paneIn("leaf-a", "s10"), event("SessionStart", "a-mine"))
-        val mine = first.openRecordOf("s10")!!
-        val task = indexOver(first).createTask("Plan", listOf("s10"))
-        first.endAll(emptyList())
-
-        panesNow.clear()
-        val restarted = trackerOverRepo()
-        restarted.onHook(paneIn("leaf-b", "s10"), event("SessionStart", "a-stranger"))
-        val reopened = indexOver(restarted)
-
-        assertEquals(mine.id, ownRecordOf(reopened, task), "its own latest run, ended")
-        assertNull(reopened.listing().single { it.id == task }.ownSessionId)
-    }
-
-    /**
-     * A restart has ended every record. The task's own conversation, [conversation], ran in leaf-a as
-     * s10, after an older conversation had run in the same pane. Returns the restarted tracker and
-     * index, the task, and the id of the record of the own conversation.
-     */
-    private fun restartedWithOwnConversation(conversation: String): Quad {
-        val first = trackerOverRepo()
-        first.onHook(paneIn("leaf-a", "s10"), event("SessionStart", "a-older"))
-        now += 10
-        first.onHook(paneIn("leaf-a", "s10"), event("SessionStart", conversation))
-        val mine = first.openRecordOf("s10")!!
-        val task = indexOver(first).createTask("Plan", listOf("s10"))
-        first.endAll(emptyList())
-        panesNow.clear()
-        val restarted = trackerOverRepo()
-        return Quad(restarted, indexOver(restarted), task, mine.id)
-    }
-
-    private data class Quad(val tracker: AgentSessionTracker, val index: TaskIndex, val task: String, val own: String)
-
-    @Test
-    fun `resuming the own conversation in a new pane moves the task onto it, not onto the older run in the old pane`() {
-        val (restarted, reopened, task, own) = restartedWithOwnConversation("a-mine")
-        paneIn("leaf-a", "s8")
-        reopened.recompute()
-        assertEquals(own, ownRecordOf(reopened, task), "ended, in its own pane")
-
-        // Enter resumes it in a tab of its own: the ended record moves to that pane's leaf.
+        // The conversation resumes in a pane with another id.
         restarted.onHook(paneIn("leaf-c", "s9"), event("SessionStart", "a-mine"))
         reopened.recompute()
-
-        assertEquals(own, restarted.openRecordOf("s9")!!.id)
-        assertEquals("leaf-c", restarted.openRecordOf("s9")!!.leafId)
-        assertEquals(own, ownRecordOf(reopened, task))
-        assertEquals("leaf-c", repo.loadTaskMeta().single { it.taskId == task }.leadLeaf)
-        assertEquals("s9", reopened.listing().single { it.id == task }.ownSessionId)
+        val open = reopened.listing().single { it.id == task }
+        assertEquals("a-mine", open.mainConversation)
+        assertEquals("s9", open.ownSessionId)
+        assertEquals("a-mine", reopened.state.value.tasks.single { it.id == task }.mainConversation)
     }
 
     @Test
-    fun `a resume the screen showed before the hook named it also moves the task`() {
-        val (restarted, reopened, task, own) = restartedWithOwnConversation("a-mine")
-        paneIn("leaf-a", "s8")
+    fun `a resume the screen showed before the hook named it keeps the task's conversation and gives one record`() {
+        val first = trackerOverRepo()
+        first.onHook(paneIn("leaf-a", "s10"), event("SessionStart", "a-mine"))
+        val mine = first.openRecordOf("s10")!!
+        val task = indexOver(first).createTask("Plan", listOf("s10"))
+        first.endAll(emptyList())
+        panesNow.clear()
+        val restarted = trackerOverRepo()
+        val reopened = indexOver(restarted)
 
         // The new tab shows claude on the screen first, then the hook names the conversation.
         val newPane = paneIn("leaf-c", "s9").copy(agent = "claude", state = "working")
         restarted.onPoll(listOf(newPane))
-        reopened.recompute()
-        assertEquals(own, ownRecordOf(reopened, task), "not yet known to be the same conversation")
         restarted.onHook(newPane, event("SessionStart", "a-mine"))
         reopened.recompute()
 
         val running = restarted.openRecordOf("s9")!!
-        assertEquals("a-mine", running.agentSessionId)
-        assertEquals(running.id, ownRecordOf(reopened, task), "the running conversation")
-        assertEquals("leaf-c", repo.loadTaskMeta().single { it.taskId == task }.leadLeaf)
-        assertTrue(own != running.id, "the old record stays ended in the old pane")
+        assertEquals(mine.id, running.id, "the earlier record of the conversation is the one that reopened")
+        assertEquals(1, restarted.summaries.value.count { it.conversationId == "a-mine" && it.state != "ended" })
+        assertEquals("s9", reopened.listing().single { it.id == task }.ownSessionId)
     }
 
     @Test
-    fun `a new agent in the own pane keeps speaking for the task, and the old conversation resumed elsewhere does not take it`() {
-        val (restarted, reopened, task, _) = restartedWithOwnConversation("a-mine")
-        restarted.onHook(paneIn("leaf-a", "s9"), event("SessionStart", "a-other"))
-        val other = restarted.openRecordOf("s9")!!
-        reopened.recompute()
-        assertEquals(other.id, ownRecordOf(reopened, task))
-        assertEquals("a-other", repo.loadTaskMeta().single { it.taskId == task }.leadAgentSession)
-
-        restarted.onHook(paneIn("leaf-c", "s8"), event("SessionStart", "a-mine"))
-        reopened.recompute()
-        assertEquals(other.id, ownRecordOf(reopened, task))
-        assertEquals("leaf-a", repo.loadTaskMeta().single { it.taskId == task }.leadLeaf)
-    }
-
-    @Test
-    fun `naming an own session again forgets the conversation of the old one`() {
-        val (restarted, reopened, task, _) = restartedWithOwnConversation("a-mine")
-        assertEquals("a-mine", repo.loadTaskMeta().single { it.taskId == task }.leadAgentSession)
-        restarted.onHook(paneIn("leaf-d", "s11"), event("SessionStart", "a-new"))
-        reopened.setOwnSession(task, "s11")
-        // Stored with the new pane, and the next recompute remembers its conversation, not the old one.
-        assertEquals("a-new", repo.loadTaskMeta().single { it.taskId == task }.leadAgentSession)
-        assertEquals("leaf-d", repo.loadTaskMeta().single { it.taskId == task }.leadLeaf)
-    }
-
-    @Test
-    fun `a task stored with only a terminal id takes the pane of the session that runs on it, and keeps it`() {
+    fun `a new agent in the old pane does not take over the task, and the old conversation resumed elsewhere is found`() {
         val first = trackerOverRepo()
         first.onHook(paneIn("leaf-a", "s10"), event("SessionStart", "a-mine"))
-        val mine = first.openRecordOf("s10")!!
         val task = indexOver(first).createTask("Plan", listOf("s10"))
         first.endAll(emptyList())
-        // The row as an older version wrote it: a terminal id and no pane.
-        repo.setTaskLead(task, "s10", null)
-
         panesNow.clear()
         val restarted = trackerOverRepo()
         val reopened = indexOver(restarted)
-        assertEquals(mine.id, ownRecordOf(reopened, task), "by terminal id until something runs on it")
-        assertNull(repo.loadTaskMeta().single { it.taskId == task }.leadLeaf, "an ended record proves nothing about the pane")
-
-        restarted.onHook(paneIn("leaf-a", "s10"), event("SessionStart", "a-mine"))
+        restarted.onHook(paneIn("leaf-a", "s9"), event("SessionStart", "a-other"))
         reopened.recompute()
-        assertEquals("leaf-a", repo.loadTaskMeta().single { it.taskId == task }.leadLeaf)
+        assertEquals("a-mine", storedMain(task), "a stranger in the old pane is not the task's conversation")
+        assertNull(reopened.listing().single { it.id == task }.ownSessionId)
 
-        // The next restart swaps the ids; the task now follows the pane.
-        panesNow.clear()
-        val again = trackerOverRepo()
-        again.onHook(paneIn("leaf-b", "s10"), event("SessionStart", "a-stranger"))
-        val third = indexOver(again)
-        paneIn("leaf-a", "s9")
-        assertEquals(mine.id, ownRecordOf(third, task))
-        assertEquals("s9", third.listing().single { it.id == task }.ownSessionId)
+        restarted.onHook(paneIn("leaf-c", "s8"), event("SessionStart", "a-mine"))
+        reopened.recompute()
+        assertEquals("s8", reopened.listing().single { it.id == task }.ownSessionId)
     }
 
     @Test
-    fun `an index loading a reused terminal id points the task at the live session after a restart`() {
-        // A previous run left an ended record, created later than the session that is live now,
-        // on the same terminal id: loaded from the database, it must not take the task's place.
-        repo.saveAgentSession(
-            onTerminal("gone", "s1", createdAt = 900_000, leafId = "leaf-s1").copy(endedAt = 950_000),
-        )
-        val restarted = trackerOverRepo()
-        restarted.onHook(pane("s1"), event("SessionStart", "a-live"))
-        val live = restarted.openRecordOf("s1")!!
-        val reopened = TaskIndex(
-            repo, restarted, files, leafOfSession = { if (it in knownPanes) "leaf-$it" else null },
-            clock = { now }, newSuffix = { suffixes.next() },
-        )
-        val id = reopened.createTask("Plan", listOf("s1"))
-
-        assertEquals(live.id, ownRecordOf(reopened, id))
-        assertTrue(restarted.snapshot().any { it.id == "gone" }, "the ended record is still loaded")
-    }
-
-    @Test
-    fun `a started index moves the task onto the live session when an older record is resumed after a restart`() {
-        // The order the owner saw: the task and its own session exist, the server restarts, a
-        // client is already looking, and only then does the old conversation resume. Its record is
-        // older than an ended one in the same pane, so only a push after the resume can move the
-        // task onto it.
-        val older = session("s1", "a-old")
-        val task = index.createTask("Plan", listOf("s1"))
-        tracker.onSessionDestroyed("s1", "old screen")
-        repo.saveAgentSession(
-            onTerminal("gone", "s1", createdAt = 900_000, leafId = "leaf-s1").copy(endedAt = 950_000),
-        )
-        val restarted = trackerOverRepo()
-        val reopened = TaskIndex(
-            repo, restarted, files, leafOfSession = { if (it in knownPanes) "leaf-$it" else null },
-            clock = { now }, newSuffix = { suffixes.next() },
-        )
-        reopened.start(CoroutineScope(Dispatchers.Unconfined))
-        assertEquals("gone", ownRecordOf(reopened, task), "nothing is live yet")
-
-        restarted.onHook(pane("s1"), event("SessionStart", "a-old"))
-
-        assertEquals(older.id, restarted.openRecordOf("s1")!!.id, "the old record is the one that reopened")
-        assertEquals(older.id, ownRecordOf(reopened, task))
+    fun `a task file's task keeps its main conversation the same way`() {
+        files.value = listOf(file("prog", member("m", title = "Run one")))
+        session("s1", "a-1")
+        index.recompute()
+        index.setOwnSession("prog", "s1")
+        assertEquals("a-1", storedMain("prog"))
+        assertEquals("a-1", index.state.value.tasks.single { it.id == "prog" }.mainConversation)
     }
 
     // ── Resume and the pending pane assignment ──────────────────────────────────────────
@@ -597,8 +416,9 @@ class TaskIndexTest {
         tracker.onPoll(listOf(PaneSnapshot("s2", "leaf-s2", folder("p-s2"), null, agent = "claude", state = "idle", screenText = { "x" })))
         tracker.onHook(PaneSnapshot("s2", "leaf-s2", folder("p-s2"), null, agent = "claude", screenText = { "x" }), event("SessionStart", "a-1"))
         val adopted = tracker.openRecordOf("s2")!!
-        assertTrue(adopted.id != first.id)
         assertEquals(task, adopted.taskId)
+        assertEquals(1, tracker.summaries.value.count { it.conversationId == "a-1" && it.state != "ended" }, "one conversation, one summary")
+        assertTrue(adopted.id == first.id || tracker.snapshot().none { it.id != adopted.id && it.agentSessionId == "a-1" && it.state != "ended" })
     }
 
     @Test

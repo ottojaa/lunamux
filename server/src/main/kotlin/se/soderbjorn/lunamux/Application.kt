@@ -105,8 +105,7 @@ fun main() {
     searchIndexer.runningIn = agentTracker::hasUnidentifiedClaudeIn
     val claudeHooks = ClaudeHooks()
     val taskFiles = TaskFilesWatcher(AppPaths.taskDirs())
-    val taskIndex = TaskIndex(repo, agentTracker, taskFiles.files, leafOfSession = { WindowState.leafIdOfSession(it) },
-        sessionOfLeaf = { WindowState.sessionIdOfLeaf(it) })
+    val taskIndex = TaskIndex(repo, agentTracker, taskFiles.files, leafOfSession = { WindowState.leafIdOfSession(it) })
     // Sessions recorded before search existed get their text now.
     searchIndexer.backfill()
     TerminalSessions.onDestroy = agentTracker::onSessionDestroyed
@@ -115,6 +114,12 @@ fun main() {
     val persistenceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     taskFiles.start(persistenceScope)
     taskIndex.start(persistenceScope)
+    // A background tab shown for a waiting agent goes away again once nothing in it waits.
+    persistenceScope.launch {
+        agentTracker.summaries.collect { list ->
+            WindowState.hideSettledWaitingTabs(list.filter { it.state == "needs_you" }.mapNotNull { it.leafId }.toSet())
+        }
+    }
     val taskPanelStore = TaskPanelStore(repo, taskIndex)
 
     // Claude Code's own transcript history is imported (for search only) whenever

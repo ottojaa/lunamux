@@ -41,6 +41,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import se.soderbjorn.lunula.core.PersistKeys
 import se.soderbjorn.lunamux.auth.DeviceAuth
+import se.soderbjorn.lunamux.persistence.AgentSessionRecord
 import se.soderbjorn.lunamux.persistence.SettingsRepository
 import se.soderbjorn.lunamux.ui.SettingsDialog
 import org.slf4j.LoggerFactory
@@ -864,12 +865,14 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
             val error = if (cmd.connected) hooks.connect() else hooks.disconnect()
             if (error != null) ctx.send(WindowEnvelope.AgentSessionError(null, error))
         }
-        // A window never lists a background tab, so it cannot mean to close one; only the agent
-        // that opened it closes it (the MCP close_tab tool), or the person after taking it over.
+        // A window lists a background tab only while its agent waits on a prompt (a tab shown with
+        // ShowWaitingAgent). That tab is not the person's to close: it hides again by itself once
+        // the agent is answered, and only the agent that opened it closes it (the MCP close_tab tool).
         is WindowCommand.CloseTab -> if (!WindowState.isBackgroundTab(cmd.tabId)) WindowState.closeTab(cmd.tabId)
-        is WindowCommand.TakeOverTab -> {
-            val leaves = WindowState.leafIdsOfTab(cmd.tabId)
-            if (WindowState.takeOverTab(cmd.tabId)) ctx.agentTracker?.clearBackground(leaves)
+        is WindowCommand.ShowWaitingAgent -> {
+            val rec = ctx.agentTracker?.find(cmd.recordId)
+            val leaf = rec?.takeIf { it.background && it.state == "needs_you" }?.leafId
+            if (leaf != null) WindowState.showWaitingAgent(leaf)
         }
         is WindowCommand.RenameTab -> WindowState.renameTab(cmd.tabId, cmd.title)
         is WindowCommand.MoveTab -> WindowState.moveTab(cmd.tabId, cmd.targetTabId, cmd.before)
@@ -1042,6 +1045,28 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
 private fun isPlainSessionId(id: String): Boolean = id.isNotEmpty() && id.length <= 100 && id.all { it.isLetterOrDigit() || it == '-' || it == '_' }
 
 /**
+ * The line that picks a conversation back up, typed into a new tab's shell.
+ *
+ * Called by [resumeAgentSession]. It names the conversation, so it resumes that one and never the
+ * newest conversation of the folder: Claude Code takes `claude --resume <conversationId>`, and
+ * Codex takes `codex resume <id>` when its id is known (a run Lunamux saw only on screen has none,
+ * so it gets plain `codex resume`, which asks which one). Gemini has no resume, and an id with a
+ * character a shell would interpret is refused.
+ *
+ * @param rec the record of the conversation, the newest of its runs.
+ * @return the command line, or null when there is nothing to type: Gemini, or a Claude Code
+ *   conversation with no usable id.
+ */
+internal fun resumeCommandOf(rec: AgentSessionRecord): String? {
+    val id = rec.agentSessionId?.takeIf(::isPlainSessionId)
+    return when (rec.agent) {
+        "claude" -> id?.let { "claude --resume $it" }
+        "codex" -> id?.let { "codex resume $it" } ?: "codex resume"
+        else -> null
+    }
+}
+
+/**
  * Open a new tab for an agent session and start its agent again.
  *
  * Called by [handleWindowCommand] for [WindowCommand.ResumeAgentSession]. The
@@ -1078,10 +1103,10 @@ private suspend fun resumeAgentSession(recordId: String, ctx: WindowConnectionCo
             AgentResumePlanner.resumeFolder(rec, plan)
         }
     }
-    val command = when (rec.agent) {
-        "claude" -> rec.agentSessionId?.takeIf(::isPlainSessionId)?.let { "claude --resume $it" } ?: "claude --continue"
-        "codex" -> "codex resume"
-        else -> null
+    val command = resumeCommandOf(rec)
+    if (command == null && rec.agent != "gemini") {
+        ctx.send(WindowEnvelope.AgentSessionError(recordId, "This conversation has no session id Lunamux can resume."))
+        return
     }
     openTabRunning(cwd, rec.title ?: rec.branch ?: java.io.File(cwd).name, command)
 }

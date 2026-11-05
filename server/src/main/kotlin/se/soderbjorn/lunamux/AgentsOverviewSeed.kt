@@ -8,7 +8,9 @@
  * sessions that say nothing about what the work is (a home folder, a branch named after a run, a
  * detached HEAD), previews written in markdown, a bare code fence, and sessions a server restart
  * ends. It also seeds one agent-made task, "Release 4.2 notes", with its own session, a one-line status
- * and two members that ran out of sight in background tabs (their records stay out of search). It turns the scratch server's MCP endpoint on and adds a read+write MCP token
+ * and two members that ran out of sight in background tabs (their records stay out of search); its
+ * panel holds a progress block, several kinds of link and an activity list long enough to show
+ * "+ N more". It turns the scratch server's MCP endpoint on and adds a read+write MCP token
  * ([MCP_TOKEN]), so `scripts/seed-agents-overview-live.sh` can open tabs and windows and a script
  * can post hook events from panes. It is run by the Gradle task `seedAgentsOverview` (through
  * `scripts/seed-agents-overview.sh`) while the scratch server is stopped, and by a test.
@@ -172,11 +174,11 @@ object AgentsOverviewSeed {
     private val cases = listOf(
         Case("seed-home", null, null, null, inHome = true, prompt = "Why did the nightly backup email never arrive?", lastSaid = "The mail relay rejected it; I resent it.", ago = 3 * HOUR),
         Case("seed-branch-only", null, "lunamux-agent-overview", "aov-21-impl", prompt = "Add the task rows to the overview and keep their order stable", lastSaid = "Done; the rows keep their order.", ago = 5 * HOUR),
-        Case("seed-run-id-title", "aov-11-impl", "lunamux", "aov-11-impl", prompt = "Fix the chip count when two sessions share a pane", lastSaid = "The count now ignores a session that has ended.", ago = 20 * HOUR),
+        Case("seed-run-id-title", "aov-11-impl", "lunamux", "aov-11-impl", prompt = "Fix the waiting count when two sessions share a pane", lastSaid = "The count now ignores a session that has ended.", ago = 20 * HOUR),
         Case("seed-folder-title", "lunamux-agent-overview", "lunamux-agent-overview", "feat/layouts", prompt = "Compare the two layout directions and list what each trades off", lastSaid = "Direction B trades width for a clearer first column.", ago = 1 * DAY),
         Case("seed-markdown", "Owner test follow-up", "lunamux", "main", prompt = "**Plan:** read the owner's notes and `fix` the data first", lastSaid = "**4. Tell me how it went,** then decide whether the panel stays", ago = 4 * HOUR),
         Case("seed-bare-fence", "Show the migration", "billing", "feat/add-column", prompt = "Show me the migration that adds the column", lastSaid = "```", ago = 6 * HOUR),
-        Case("seed-open-idle", "Trace the slow login", "gateway", "fix/slow-login", prompt = "Why is the login call slow on Mondays?", lastSaid = "A missing index on sessions.user_id; I added it.", ago = 2 * DAY, state = "idle"),
+        Case("seed-open-done", "Trace the slow login", "gateway", "fix/slow-login", prompt = "Why is the login call slow on Mondays?", lastSaid = "A missing index on sessions.user_id; I added it.", ago = 2 * DAY, state = "done"),
         Case("seed-open-working", "Rebuild the search index", "billing", "chore/search-index", prompt = "Rebuild the search index with the new analyser", lastSaid = null, ago = 5 * HOUR, state = "working"),
     )
 
@@ -306,7 +308,7 @@ object AgentsOverviewSeed {
         record(2, "Changelog check", "Check every changelog entry against the merged pull requests", 2 * HOUR + 10 * MINUTE, null, background = true)
         record(3, "Screenshot refresh", "Retake the screenshots the notes link to", 2 * HOUR + 20 * MINUTE, null, background = true)
         repo.stampTaskStart("seed-task-notes", now - 3 * HOUR)
-        repo.setTaskLead("seed-task-notes", NOTES_OWN_PANE, NOTES_OWN_LEAF)
+        repo.setTaskMainConversation("seed-task-notes", "5eed0002-0000-4000-8000-000000000001")
         repo.setTaskStatus("seed-task-notes", NOTES_STATUS, NOTES_OWN_PANE, now - 2 * HOUR)
         seedReleaseNotesPanel(repo, now)
     }
@@ -315,48 +317,71 @@ object AgentsOverviewSeed {
     private const val NOTES_WRITER = "release notes agent"
 
     /**
-     * Give the "Release 4.2 notes" task a panel of agent-written blocks: the documents written for
-     * the person (first, so it sits under the sessions list), a status, a count of checks, a
-     * timeline, links, a line with markup that must stay text, and two buttons.
+     * Give the "Release 4.2 notes" task the blocks its panel draws: a progress block (the work in
+     * hand and how far it is), links of every kind (a Slack thread, pull requests, a Claude
+     * artifact, documents, a brief and the person's decisions, each under a block titled for its
+     * kind) and an activity list.
+     *
+     * The links and the activity are longer than the five lines the panel shows, so the seeded
+     * panel shows "+ N more". The activity list holds the awkward cases on purpose: one entry long
+     * enough to wrap to three lines at the panel's narrowest width, directly followed by a
+     * one-line entry (the gap between the two must stay a full line). It carries no test payload:
+     * the seed is what the design screenshots are taken from.
      *
      * Called by [seedReleaseNotes]. The blocks are stored the way the panel store stores them, so
-     * a server that starts on the seeded database shows them as soon as the task's own session is
-     * in a tab. (The static seed has no such session; `scripts/seed-agents-overview-live.sh`
-     * writes the same kinds of block over MCP for the live one.)
+     * a server that starts on the seeded database shows them as soon as the task's main
+     * conversation is in a tab. (The static seed has no such conversation;
+     * `scripts/seed-agents-overview-live.sh` writes the same kinds of block over MCP for the live
+     * one.)
      *
      * @param repo the scratch database.
      * @param now the time the ages are counted back from.
      */
     private fun seedReleaseNotesPanel(repo: SettingsRepository, now: Long) {
         val blocks = listOf(
+            Triple("progress", "Progress", TaskBlockContent.Progress(done = 3, total = 5, label = "Matching the changelog entries to merged pull requests")),
             Triple(
-                "documents", "Documents",
-                TaskBlockContent.Documents(
+                "links", "Links",
+                TaskBlockContent.Links(
                     listOf(
-                        TaskDocument("Release 4.2 notes, first draft", "https://example.com/notes/4.2", now - 3 * MINUTE),
-                        TaskDocument("Changelog check: entries with no merged pull request, and who to ask about them", "https://example.com/changelog/check", now - 35 * MINUTE),
-                        TaskDocument("Screenshot list", "file:///tmp/release-4.2/screenshots.md", now - 26 * HOUR),
-                        TaskDocument("Upgrade guide", "https://example.com/upgrade"),
+                        TaskLink("Release 4.2 notes, first draft", "https://example.com/notes/4.2"),
+                        TaskLink("Release thread", "https://example.slack.com/archives/C0RELEASE/p1730800000"),
+                        TaskLink("Changelog check", "https://github.com/example/lunamux/pull/412"),
+                        TaskLink("Screenshot refresh", "https://github.com/example/lunamux/pull/415"),
+                        TaskLink("Notes preview", "https://claude.ai/artifact/seed-release-notes"),
+                        TaskLink("Upgrade guide", "https://example.com/upgrade"),
+                        TaskLink("Screenshot list", "file:///tmp/release-4.2/screenshots.md"),
+                        TaskLink("Known issues", "https://github.com/example/lunamux/issues/398"),
                     ),
                 ),
             ),
-            Triple("status", "Status", TaskBlockContent.Text("**Drafted**, waiting on the changelog check.\n\n- 14 entries checked\n- 2 still to match")),
-            Triple("checks", "Checks", TaskBlockContent.Progress(done = 3, total = 5, label = "changelog entries")),
             Triple(
-                "history", "Timeline",
+                "brief", "Brief",
+                TaskBlockContent.Links(listOf(TaskLink("Brief: release notes for 4.2", "https://example.com/briefs/release-4.2"))),
+            ),
+            Triple(
+                "decisions", "Decisions",
+                TaskBlockContent.Links(
+                    listOf(
+                        TaskLink("You decided: notes stay one page", "https://example.com/decisions/one-page"),
+                        TaskLink("You decided: screenshots are retaken", "https://example.com/decisions/screenshots"),
+                    ),
+                ),
+            ),
+            Triple(
+                "activity", "Recent activity",
                 TaskBlockContent.Timeline(
                     listOf(
-                        TaskTimelineItem(now - 5 * MINUTE, "Changelog check found two gaps"),
+                        TaskTimelineItem(now - 2 * MINUTE, "Changelog check found two gaps: the entry for the sidebar fix has no merged pull request, and the one for the search change points at a pull request that was closed without merging"),
+                        TaskTimelineItem(now - 5 * MINUTE, "Draft sent for review"),
+                        TaskTimelineItem(now - 12 * MINUTE, "Release thread opened for sign-off"),
+                        TaskTimelineItem(now - 20 * MINUTE, "Screenshot refresh started"),
                         TaskTimelineItem(now - 40 * MINUTE, "Draft written"),
+                        TaskTimelineItem(now - 70 * MINUTE, "Upgrade guide linked"),
+                        TaskTimelineItem(now - 100 * MINUTE, "Notes outline agreed"),
                         TaskTimelineItem(now - 2 * HOUR, "Branch cut"),
                     ),
                 ),
-            ),
-            Triple("links", "Links", TaskBlockContent.Links(listOf(TaskLink("Draft notes", "https://example.com/notes/4.2"), TaskLink("Changelog", "https://example.com/changelog")))),
-            Triple("literal", "Pasted from a log", TaskBlockContent.Text("Kept as text: <img src=x onerror=alert(1)>")),
-            Triple(
-                "actions", "Actions",
-                TaskBlockContent.Actions(listOf(TaskButton("status", "Ask for status", "What is left to do?"), TaskButton("ship", "Ship it", "Publish the notes"))),
             ),
         )
         repo.replaceTaskPanel(
@@ -418,7 +443,7 @@ object AgentsOverviewSeed {
             listOf(
                 member("Role model", "needs_you", 12 * MINUTE, line = "Should admins inherit viewer rights?", links = listOf("ACC-12")),
                 member("Login audit trail", "working", 3 * MINUTE, line = "Writing the audit log migration"),
-                member("Permissions page", "idle", 40 * MINUTE, label = "in review", links = listOf("#212")),
+                member("Permissions page", "done", 40 * MINUTE, label = "in review", links = listOf("#212")),
             ),
             mtimeAgo = 0,
         )
@@ -428,9 +453,9 @@ object AgentsOverviewSeed {
         task(
             "seed-release-train", "Release train", "lunamux",
             listOf(
-                member("Tasks panel", "idle", HOUR, label = "done", links = listOf("#231")),
-                member("Search by task", "idle", 3 * HOUR, label = "done", links = listOf("#232")),
-                member("Seed script", "idle", 5 * HOUR, label = "done", links = listOf("#233")),
+                member("Tasks panel", "done", HOUR, label = "done", links = listOf("#231")),
+                member("Search by task", "done", 3 * HOUR, label = "done", links = listOf("#232")),
+                member("Seed script", "done", 5 * HOUR, label = "done", links = listOf("#233")),
             ),
             mtimeAgo = 0,
         )
@@ -439,8 +464,8 @@ object AgentsOverviewSeed {
         task(
             "seed-billing-cleanup", "Billing cleanup", "billing",
             listOf(
-                member("Refund flow", "idle", 2 * HOUR, label = "in review", links = listOf("#240")),
-                member("Receipt emails", "idle", 6 * HOUR, label = "queued"),
+                member("Refund flow", "done", 2 * HOUR, label = "in review", links = listOf("#240")),
+                member("Receipt emails", "done", 6 * HOUR, label = "queued"),
             ),
             mtimeAgo = 0,
         )

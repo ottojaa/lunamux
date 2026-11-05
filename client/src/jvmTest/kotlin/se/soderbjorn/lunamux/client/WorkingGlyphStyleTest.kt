@@ -2,7 +2,7 @@
  * Holds the box and the weight of the agents overview's working glyph in place by reading its CSS
  * rule out of the web module's `styles.css`.
  *
- * There is no browser test setup for the web module, and what breaks the glyph is a style, not
+ * What breaks the glyph is a style, not
  * code: the glyph is a braille pair drawn in a monospace face with no braille, so the system falls
  * back to Apple Braille, and inheriting the bold weight of the word beside it (the state cell of a
  * working row is bold) picks that font's outlined six-dot face, which draws a ring at every dot

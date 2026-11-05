@@ -1,14 +1,13 @@
 /**
- * The task panel in the web client: a 320px column on the right of the window that shows what the
- * agents of a task wrote about it. It appears only in the tab that holds the task's own session,
- * starting with an "Agents" block (every other session of the task, with its state and age) and
- * followed by the blocks agents added with `set_task_panel`, `upsert_task_block` and
- * `remove_task_block` (a documents block draws one plain row per document, which opens outside
- * the app).
+ * The task panel in the web client: a 320px column on the right of the window that sits beside a
+ * task's main conversation. It has exactly four blocks and no others: Agents (the members working
+ * or waiting on the person), Progress (the current task, a bar and "x of y"), Links (every kind of
+ * link, newest first, each with its kind) and Recent activity (one line per item). A list shows its
+ * first five entries and a "+ N more" line that opens the rest in place; the column scrolls.
  *
  * ⌘I shows and hides the column (as does its ×), and the choice is kept with the other UI
- * settings. A member's line can be focused: ↵ on a background member starts the watch (see
- * [startWatch]), ⌘↵ shows its tab as an ordinary tab, and ↵ on a member in a visible tab jumps to it.
+ * settings. An agent's line can be focused: ↵ or a click jumps to a member in a visible tab, shows
+ * a waiting background member as a marked tab, or attaches to a member Lunamux does not host.
  *
  * All state and behaviour live in the shared [TaskPanelViewModel]; this file draws its state with
  * DOM nodes and text only (an agent's words are never parsed as HTML) and turns clicks and keys
@@ -33,13 +32,12 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.w3c.dom.HTMLElement
+import org.w3c.dom.ParentNode
 import org.w3c.dom.events.Event
 import org.w3c.dom.events.KeyboardEvent
-import se.soderbjorn.lunamux.client.viewmodel.MdBlock
-import se.soderbjorn.lunamux.client.viewmodel.MdInline
 import se.soderbjorn.lunamux.client.viewmodel.TaskPanelViewModel
-import se.soderbjorn.lunamux.client.viewmodel.TaskPanelViewModel.BlockBody
 import se.soderbjorn.lunamux.client.viewmodel.TaskPanelViewModel.MemberAction
+import se.soderbjorn.lunamux.client.viewmodel.TaskPanelViewModel.Section
 import se.soderbjorn.lunula.web.hotkey.Hotkey
 import se.soderbjorn.lunula.web.hotkey.HotkeyActionSpec
 import se.soderbjorn.lunula.web.hotkey.HotkeyBindings
@@ -53,6 +51,13 @@ import se.soderbjorn.lunula.web.shell.AppFrameClassNames
  */
 internal const val TASK_PANEL_HOTKEY_ACTION_ID: String = "Lunamux.taskPanel.toggle"
 
+/**
+ * Attribute that gives an element a stable identity across redraws. The panel rebuilds its rows on
+ * every state push and puts this on the ones a person can focus, so focus goes back to the row
+ * that is drawn again.
+ */
+internal const val FOCUS_KEY_ATTRIBUTE = "data-focus-key"
+
 /** UI-settings key holding whether the person left the panel open (absent means open). */
 private const val KEY_TASK_PANEL_OPEN = "taskPanelOpen"
 
@@ -61,7 +66,7 @@ private const val PANEL_CLOCK_TICK_MS = 30_000
 
 /** The shared view model; created on first use, after the window socket exists. */
 private val taskPanel: TaskPanelViewModel by lazy {
-    TaskPanelViewModel(lunamuxClient.windowState, watchViewModel, send = { windowSocket.send(it) })
+    TaskPanelViewModel(lunamuxClient.windowState, send = { windowSocket.send(it) })
 }
 
 private var taskPanelStarted = false
@@ -158,6 +163,7 @@ private fun renderTaskPanel(state: TaskPanelViewModel.State) {
     if (!state.visible) {
         panelElement?.remove()
         panelElement = null
+        keepWorkingGlyphs("panel:", emptySet())
         keepPanelClockTicking(false)
         return
     }
@@ -173,11 +179,14 @@ private fun renderTaskPanel(state: TaskPanelViewModel.State) {
     while (panel.firstChild != null) panel.removeChild(panel.firstChild!!)
     panel.appendChild(buildHeader(state))
     val content = div("tp-scroll")
-    content.appendChild(buildAgents(state))
-    state.blocks.forEach { content.appendChild(buildBlock(it)) }
-    state.emptyText?.let { content.appendChild(div("tp-empty").also { e -> e.textContent = it }) }
+    val glyphKeys = HashSet<String>()
+    content.appendChild(buildAgents(state.agents, glyphKeys))
+    content.appendChild(buildProgress(state.progress))
+    content.appendChild(buildLinks(state.links))
+    content.appendChild(buildActivity(state.activity))
     panel.appendChild(content)
     content.scrollTop = scroll
+    keepWorkingGlyphs("panel:", glyphKeys)
     focusedKey?.let { key ->
         findByFocusKey(panel, key)?.focus()
     }
@@ -199,11 +208,11 @@ private fun div(cls: String): HTMLElement = (document.createElement("div") as HT
 private fun span(cls: String, text: String): HTMLElement =
     (document.createElement("span") as HTMLElement).also { it.className = cls; it.textContent = text }
 
-/** The column's header: the task's name, the key that hides it, and the close button. */
+/** The column's header: "<title> · ⌘I hides" with the close button at the far end. */
 private fun buildHeader(state: TaskPanelViewModel.State): HTMLElement {
     val head = div("tp-head")
     head.appendChild(span("tp-title", state.title).also { it.title = state.title })
-    head.appendChild(span("tp-hint", "⌘I"))
+    head.appendChild(span("tp-hint", "· ⌘I hides"))
     val close = document.createElement("button") as HTMLElement
     close.asDynamic().type = "button"
     close.className = "tp-close"
@@ -214,43 +223,71 @@ private fun buildHeader(state: TaskPanelViewModel.State): HTMLElement {
     return head
 }
 
-/** A block's header: its title on the left, who wrote it and when (or [right]) on the right. */
-private fun blockHead(title: String?, right: String, rightClass: String): HTMLElement {
-    val head = div("tp-block-head")
-    head.appendChild(span("tp-block-title", title ?: ""))
-    head.appendChild(span(rightClass, right))
-    return head
+/**
+ * A block's heading: its name and nothing else (no writer, no age). The block carries its name in
+ * `data-block` so a check can count the blocks.
+ *
+ * @param name the block's name: "Agents", "Progress", "Links" or "Recent activity".
+ * @return the block's root element with its heading drawn.
+ */
+private fun block(name: String): HTMLElement {
+    val root = div("tp-block")
+    root.setAttribute("data-block", name)
+    root.appendChild(div("tp-block-title").also { it.textContent = name })
+    return root
 }
 
 /**
- * The "Agents" block: one line per other session of the task. A line shows the member's state
- * mark, name and age on the first row and what it is doing (or its state word) under the name.
- * A line with an action can be focused: ↵ or a click runs it, ⌘↵ shows a background member's tab,
- * and a hint row under the name says which keys do what while the line is hovered or focused.
+ * The "+ N more" line under a cut list. A press opens the rest of the list in place.
+ *
+ * @param section which list the line belongs to.
+ * @param more how many entries are not drawn.
+ * @return the button.
+ */
+private fun moreButton(section: Section, more: Int): HTMLElement {
+    val button = document.createElement("button") as HTMLElement
+    button.asDynamic().type = "button"
+    button.className = "tp-more"
+    button.textContent = "+ $more more"
+    button.setAttribute(FOCUS_KEY_ATTRIBUTE, "more:${section.name}")
+    button.addEventListener("click", { _: Event -> taskPanel.showMore(section) })
+    return button
+}
+
+/**
+ * The "Agents" block: one line per member that is working or waiting on the person, the waiting
+ * ones first. A line shows the state mark (a turning glyph while it works, ◆ while it waits), the
+ * name and the age, then what it is doing in words. A line with an action can be focused: ↵ or a
+ * click runs it, and a hint under the name says what that does.
+ *
+ * @param agents the block from the view model.
+ * @param glyphKeys collects the keys of the working glyphs drawn, so unused ones can be dropped.
+ * @return the block element.
  */
 @OptIn(DelicateCoroutinesApi::class)
-private fun buildAgents(state: TaskPanelViewModel.State): HTMLElement {
-    val block = div("tp-block tp-agents")
-    block.appendChild(blockHead("Agents", "live", "tp-byline"))
-    if (state.agents.isEmpty()) {
-        block.appendChild(div("tp-muted").also { it.textContent = "No other agents in this task." })
-        return block
+private fun buildAgents(agents: TaskPanelViewModel.Block<TaskPanelViewModel.AgentLine>, glyphKeys: MutableSet<String>): HTMLElement {
+    val root = block("Agents")
+    if (agents.total == 0) {
+        root.appendChild(div("tp-muted").also { it.textContent = "No agents working." })
+        return root
     }
-    for (line in state.agents) {
-        val row = div("tp-agent tp-state-${line.state}" + if (line.dimmed) " tp-dim" else "")
-        val glyph = when {
-            line.state == "needs_you" -> "◆"
-            line.state == "ended" -> "○"
-            else -> "●"
+    for (line in agents.shown) {
+        val row = div("tp-agent tp-state-${line.state}")
+        val mark = div("tp-glyph")
+        if (line.state == "needs_you") {
+            mark.textContent = "◆"
+        } else {
+            val key = "panel:agent:${line.key}"
+            glyphKeys += key
+            mark.appendChild(workingGlyph(key))
         }
-        row.appendChild(span("tp-glyph", glyph))
+        row.appendChild(mark)
         val text = div("tp-agent-text")
         val top = div("tp-agent-top")
         top.appendChild(span("tp-agent-title", line.title))
         top.appendChild(span("tp-agent-age", line.age))
         text.appendChild(top)
-        val sub = if (line.state == "ended") line.stateWord else line.nowLine ?: line.stateWord
-        text.appendChild(div("tp-agent-now").also { it.textContent = sub })
+        text.appendChild(div("tp-agent-now").also { it.textContent = line.nowLine ?: line.stateWord })
         line.hint?.let { text.appendChild(buildHint(it)) }
         row.appendChild(text)
         if (line.action != MemberAction.NONE) {
@@ -264,22 +301,22 @@ private fun buildAgents(state: TaskPanelViewModel.State): HTMLElement {
                 if (key.key == "Enter") {
                     key.preventDefault()
                     key.stopPropagation()
-                    GlobalScope.launch {
-                        if (key.metaKey || key.ctrlKey) taskPanel.showAsTab(line) else taskPanel.activateMember(line)
-                    }
+                    GlobalScope.launch { taskPanel.activateMember(line) }
                 }
             })
         }
-        block.appendChild(row)
+        root.appendChild(row)
     }
-    return block
+    if (agents.more > 0) root.appendChild(moreButton(Section.AGENTS, agents.more))
+    return root
 }
 
 /**
- * The hint under an agent's line. Each part of "↵ watch · ⌘↵ show as tab" is a key and the words
- * it does; the keys are set in bold.
+ * The hint under an agent's line. Each part of "↵ answer it · opens as a tab until it works on" is
+ * a key and the words it does; the key is set in bold.
  *
  * @param hint the words from [TaskPanelViewModel.AgentLine.hint].
+ * @return the hint element.
  */
 private fun buildHint(hint: String): HTMLElement {
     val host = div("tp-agent-hint")
@@ -292,142 +329,135 @@ private fun buildHint(hint: String): HTMLElement {
     return host
 }
 
-/** One stored block: a header with its title and who wrote it and when, then its body. */
-@OptIn(DelicateCoroutinesApi::class)
-private fun buildBlock(view: TaskPanelViewModel.BlockView): HTMLElement {
-    val block = div("tp-block")
-    block.appendChild(blockHead(view.title, view.byline, "tp-byline"))
-    when (val body = view.body) {
-        is BlockBody.Text -> block.appendChild(buildMarkdown(body.nodes))
-        is BlockBody.Facts -> {
-            val grid = div("tp-facts")
-            for ((label, value) in body.items) {
-                grid.appendChild(span("tp-fact-label", label))
-                grid.appendChild(span("tp-fact-value", value))
-            }
-            block.appendChild(grid)
-        }
-        is BlockBody.Links -> for ((label, url) in body.items) {
-            block.appendChild(buildLink(label, url))
-        }
-        is BlockBody.Documents -> body.items.forEachIndexed { i, doc ->
-            block.appendChild(buildDocument(doc, "doc:${view.id}:$i"))
-        }
-        is BlockBody.Timeline -> for (entry in body.items) {
-            val row = div("tp-tl")
-            row.appendChild(span("tp-tl-age", entry.age))
-            row.appendChild(span("tp-tl-text", entry.text))
-            block.appendChild(row)
-        }
-        is BlockBody.Progress -> {
-            body.fraction?.let { f ->
-                val bar = div("tp-bar")
-                bar.appendChild(div("tp-bar-fill").also { it.style.width = "${(f.coerceIn(0.0, 1.0) * 100).toInt()}%" })
-                block.appendChild(bar)
-            }
-            block.appendChild(div("tp-progress-text").also { it.textContent = body.text })
-            body.label?.let { block.appendChild(div("tp-muted").also { m -> m.textContent = it }) }
-        }
-        is BlockBody.Actions -> {
-            val row = div("tp-actions")
-            for (b in body.buttons) {
-                val button = document.createElement("button") as HTMLElement
-                button.asDynamic().type = "button"
-                button.className = "tp-action"
-                button.textContent = b.label
-                if (!b.enabled) button.asDynamic().disabled = true
-                button.addEventListener("click", { _: Event ->
-                    GlobalScope.launch { taskPanel.press(view.id, b.id) }
-                })
-                row.appendChild(button)
-            }
-            block.appendChild(row)
-        }
-    }
-    return block
-}
-
-/** A link the person can click; it opens only after the address passes [TaskPanelViewModel.linkTarget]. */
-private fun buildLink(label: String, url: String): HTMLElement {
-    val link = span("tp-link", label)
-    link.setAttribute("role", "link")
-    link.setAttribute("tabindex", "0")
-    link.title = url
-    val open: (Event) -> Unit = { taskPanel.linkTarget(url)?.let { target -> openExternalUrl(target) } }
-    link.addEventListener("click", open)
-    link.addEventListener("keydown", { e: Event -> if ((e as KeyboardEvent).key == "Enter") open(e) })
-    return link
-}
-
 /**
- * One document row: a dim document mark, the title, the time, and ↗. The whole row is the link: a
- * click or ↵ opens the address outside the app, after it passes [TaskPanelViewModel.linkTarget].
- * The row keeps focus across a redraw through its focus key.
+ * The "Progress" block: the task in hand above the bar, "x of y" below it.
  *
- * @param doc the row from the view model.
- * @param focusKey the row's key for [FOCUS_KEY_ATTRIBUTE]: its block id and position.
+ * @param progress the view model's progress, or null when no agent wrote one.
+ * @return the block element.
  */
-private fun buildDocument(doc: TaskPanelViewModel.DocumentRow, focusKey: String): HTMLElement {
-    val row = div("tp-doc")
-    row.appendChild(div("tp-doc-mark"))
-    row.appendChild(span("tp-doc-title", doc.title))
-    row.appendChild(span("tp-doc-time", doc.time ?: ""))
-    row.appendChild(span("tp-doc-go", "↗"))
-    row.setAttribute("role", "link")
-    row.setAttribute("tabindex", "0")
-    row.setAttribute(FOCUS_KEY_ATTRIBUTE, focusKey)
-    row.title = doc.url
-    val open: (Event) -> Unit = { taskPanel.linkTarget(doc.url)?.let { target -> openExternalUrl(target) } }
-    row.addEventListener("click", open)
-    row.addEventListener("keydown", { e: Event ->
-        val key = e as KeyboardEvent
-        if (key.key == "Enter") {
-            key.preventDefault()
-            open(e)
-        }
-    })
-    return row
-}
-
-/** Draw parsed markdown as elements; no node is ever made from an agent's text but a text node. */
-private fun buildMarkdown(nodes: List<MdBlock>): HTMLElement {
-    val root = div("tp-md")
-    for (node in nodes) {
-        when (node) {
-            is MdBlock.Paragraph -> root.appendChild(inlineHost("p", "tp-md-p", node.inlines))
-            is MdBlock.Heading -> root.appendChild(inlineHost("div", "tp-md-h tp-md-h${node.level}", node.inlines))
-            is MdBlock.ListBlock -> {
-                val list = document.createElement(if (node.ordered) "ol" else "ul") as HTMLElement
-                list.className = "tp-md-list"
-                node.items.forEach { list.appendChild(inlineHost("li", "", it)) }
-                root.appendChild(list)
-            }
-            is MdBlock.Code -> {
-                val pre = document.createElement("pre") as HTMLElement
-                pre.className = "tp-md-code"
-                pre.textContent = node.text
-                root.appendChild(pre)
-            }
-        }
+private fun buildProgress(progress: TaskPanelViewModel.ProgressView?): HTMLElement {
+    val root = block("Progress")
+    if (progress == null) {
+        root.appendChild(div("tp-muted").also { it.textContent = "No progress written yet." })
+        return root
     }
+    progress.current?.let { root.appendChild(div("tp-progress-current").also { e -> e.textContent = it }) }
+    progress.fraction?.let { f ->
+        val bar = div("tp-bar")
+        bar.appendChild(div("tp-bar-fill").also { it.style.width = "${(f.coerceIn(0.0, 1.0) * 100).toInt()}%" })
+        root.appendChild(bar)
+    }
+    progress.count?.let { root.appendChild(div("tp-progress-text").also { e -> e.textContent = it }) }
     return root
 }
 
-private fun inlineHost(tag: String, cls: String, inlines: List<MdInline>): HTMLElement {
-    val host = document.createElement(tag) as HTMLElement
-    if (cls.isNotEmpty()) host.className = cls
-    appendInlines(host, inlines)
-    return host
+/**
+ * The "Links" block: one row per link, newest first, each with its kind (slack, PR, doc, …), its
+ * words and its clock time. The whole row opens the address outside the app, after the address
+ * passes [TaskPanelViewModel.linkTarget].
+ *
+ * @param links the block from the view model.
+ * @return the block element.
+ */
+private fun buildLinks(links: TaskPanelViewModel.Block<TaskPanelViewModel.LinkRow>): HTMLElement {
+    val root = block("Links")
+    if (links.total == 0) {
+        root.appendChild(div("tp-muted").also { it.textContent = "No links yet." })
+        return root
+    }
+    links.shown.forEachIndexed { i, link ->
+        val row = div("tp-link-row")
+        row.appendChild(span("tp-kind tp-kind-${link.kind.lowercase()}", link.kind))
+        row.appendChild(span("tp-link-title", link.title))
+        row.appendChild(span("tp-link-time", link.time))
+        row.setAttribute("role", "link")
+        row.setAttribute("tabindex", "0")
+        row.setAttribute(FOCUS_KEY_ATTRIBUTE, "link:$i")
+        row.title = link.url
+        val open: (Event) -> Unit = { taskPanel.linkTarget(link.url)?.let { target -> openExternalUrl(target) } }
+        row.addEventListener("click", open)
+        row.addEventListener("keydown", { e: Event ->
+            val key = e as KeyboardEvent
+            if (key.key == "Enter") {
+                key.preventDefault()
+                open(e)
+            }
+        })
+        root.appendChild(row)
+    }
+    if (links.more > 0) root.appendChild(moreButton(Section.LINKS, links.more))
+    return root
 }
 
-private fun appendInlines(parent: HTMLElement, inlines: List<MdInline>) {
-    for (inline in inlines) {
-        when (inline) {
-            is MdInline.Text -> parent.appendChild(document.createTextNode(inline.text))
-            is MdInline.Bold -> parent.appendChild((document.createElement("strong") as HTMLElement).also { appendInlines(it, inline.children) })
-            is MdInline.Italic -> parent.appendChild((document.createElement("em") as HTMLElement).also { appendInlines(it, inline.children) })
-            is MdInline.Code -> parent.appendChild((document.createElement("code") as HTMLElement).also { it.textContent = inline.text })
-            is MdInline.Link -> parent.appendChild(buildLink(inline.label, inline.url))
-        }
+/**
+ * The "Recent activity" block: one spaced line per item, the time on the left and the item in plain
+ * words next to it.
+ *
+ * @param activity the block from the view model.
+ * @return the block element.
+ */
+internal fun buildActivity(activity: TaskPanelViewModel.Block<TaskPanelViewModel.ActivityRow>): HTMLElement {
+    val root = block("Recent activity")
+    if (activity.total == 0) {
+        root.appendChild(div("tp-muted").also { it.textContent = "Nothing yet." })
+        return root
     }
+    for (item in activity.shown) {
+        val row = div("tp-tl")
+        row.appendChild(span("tp-tl-age", item.time))
+        row.appendChild(span("tp-tl-text", item.text))
+        root.appendChild(row)
+    }
+    if (activity.more > 0) root.appendChild(moreButton(Section.ACTIVITY, activity.more))
+    return root
+}
+
+/**
+ * The element under [root] that carries [key] in its [FOCUS_KEY_ATTRIBUTE], or null. Keys can hold
+ * any character (a member's key may be a session id from a task file), so they are compared as
+ * strings, never spliced into a selector, where a quote or backslash would make the query throw.
+ *
+ * @param root the part of the page to search.
+ * @param key the focus key to find.
+ * @return the first element carrying [key], or null when none does.
+ */
+internal fun findByFocusKey(root: ParentNode, key: String): HTMLElement? {
+    val candidates = root.querySelectorAll("[$FOCUS_KEY_ATTRIBUTE]")
+    for (i in 0 until candidates.length) {
+        val candidate = candidates.item(i) as? HTMLElement ?: continue
+        if (candidate.getAttribute(FOCUS_KEY_ATTRIBUTE) == key) return candidate
+    }
+    return null
+}
+
+/** The words on the tag over a background agent's tab that is shown while it waits. */
+internal const val WAITING_TAB_TAG_TEXT = "background agent · hides again once it works on"
+
+private var waitingTabTag: HTMLElement? = null
+
+/**
+ * Show or remove the tag that marks the active tab as a background agent's tab shown while it
+ * waits. The tag floats over the top edge of the window body, centred, and says the tab hides
+ * again once the agent works on. Called whenever the tab list is pushed, with whether the active
+ * tab is such a tab.
+ *
+ * @param shown true while the active tab is a background agent's tab shown while it waits.
+ * @see TabConfig.shownWhileWaiting
+ */
+internal fun updateWaitingTabTag(shown: Boolean) {
+    val body = document.querySelector(".${AppFrameClassNames.BODY}") as? HTMLElement
+    if (!shown || body == null) {
+        waitingTabTag?.remove()
+        waitingTabTag = null
+        return
+    }
+    val tag = waitingTabTag?.takeIf { it.isConnected } ?: div("waiting-tab-tag").also {
+        it.textContent = WAITING_TAB_TAG_TEXT
+        it.setAttribute("role", "status")
+        document.body?.appendChild(it)
+        waitingTabTag = it
+    }
+    val box = body.getBoundingClientRect()
+    tag.style.top = "${box.top + 6}px"
+    tag.style.left = "${box.left + box.width / 2}px"
 }

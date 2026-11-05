@@ -113,8 +113,8 @@ object TabCloseGuard {
         val inTab = sessions.filter { it.state != ENDED && it.leafId in leaves }
         val working = inTab.firstOrNull { it.state == WORKING } ?: return null
 
-        val byId = sessions.associateBy { it.id }
-        val ownTasks = tasks.filter { t -> t.leadRecordId?.let(byId::get)?.let { it.state != ENDED && it.leafId in leaves } == true }
+        val byKey = sessions.associateBy { it.id } + sessions.associateBy { it.conversationId }
+        val ownTasks = tasks.filter { t -> t.mainConversation?.let(byKey::get)?.let { it.state != ENDED && it.leafId in leaves } == true }
         val livePanes = allTabs(cfg).flatMap { t -> t.panes.map { it.leaf.id } }.toSet()
         val keeps = ownTasks.flatMap { t ->
             val memberIds = t.members.mapNotNull { it.recordId }.toSet()

@@ -503,8 +503,8 @@ object McpServer {
                     "Work the person need not watch can run in the background: create_tab, " +
                     "create_window and run_command take background: true, which opens it out of " +
                     "sight (later windows join it by its tabId). Background sessions are still " +
-                    "counted and can still ask for the person; the person takes a tab over from " +
-                    "the overview.",
+                    "counted and can still ask for the person; when one asks, its tab shows for " +
+                    "as long as the question waits.",
             )
         }
         return McpHandled(resultResponse(id, result), newSessionId = session.id)

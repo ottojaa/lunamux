@@ -36,8 +36,7 @@ class TaskPanelStoreTest {
     private var now = 10_000L
     private val tracker = AgentSessionTracker(repo, gitInfo = { GitInfo() }, clock = { now }, newId = { "r${++nextId}" }).also { it.start() }
     private var nextId = 0
-    private var paneGone = false
-    private val index = TaskIndex(repo, tracker, files, leafOfSession = { "leaf-$it" }, clock = { now }, sessionOfLeaf = { if (paneGone) null else it.removePrefix("leaf-") })
+    private val index = TaskIndex(repo, tracker, files, leafOfSession = { "leaf-$it" }, clock = { now })
     private val store = TaskPanelStore(repo, index, clock = { now })
     private val taskId = index.createTask("Release", emptyList())
 
@@ -321,15 +320,6 @@ class TaskPanelStoreTest {
             buildJsonObject { put("hook_event_name", "SessionEnd"); put("session_id", "a-own") },
         )
         assertTrue("own" in live, "the terminal is still alive: it is now a bare shell")
-        assertFalse(press())
-        assertTrue(written.isEmpty())
-    }
-
-    @Test
-    fun `an own session whose pane is gone is refused, even though its old terminal id is still alive`() {
-        openAgentIn("own"); index.setOwnSession(taskId, "own"); withButton()
-        paneGone = true
-        assertTrue("own" in live, "the old terminal id may now belong to another pane")
         assertFalse(press())
         assertTrue(written.isEmpty())
     }

@@ -1,6 +1,6 @@
 /**
  * Tests for [AgentsOverviewBackingViewModel]: how the server's session list
- * becomes NOW and EARLIER rows, the chip counts, the title chain, the
+ * becomes NOW and EARLIER rows, the title chain, the
  * search over every session (match mode, stale answers, resume notes), the
  * keyboard selection, the peek, the close confirmation, and the commands that
  * jump, resume, search, inspect and close send.
@@ -37,7 +37,7 @@ class AgentsOverviewBackingViewModelTest {
 
     private val sent = mutableListOf<WindowCommand>()
     private val windowState = WindowStateRepository()
-    // A fixed clock well past the idle grace, so the sessions built with small `since` values are
+    // A fixed clock well past a few minutes, so the sessions built with small `since` values are
     // old enough for EARLIER and young enough for its first band.
     private val now = 1_000_000L
     private val vm = AgentsOverviewBackingViewModel(windowState, clock = { now }) { sent += it }
@@ -51,7 +51,7 @@ class AgentsOverviewBackingViewModelTest {
         id = id, agent = agent, state = state, stateSince = since, title = title, links = emptyList(),
         repo = repo, branch = branch, cwd = cwd, nowLine = nowLine, question = question, leafId = leaf, endedAt = endedAt,
         firstPrompt = firstPrompt, lastSaid = lastSaid, cwdHome = cwdHome, taskId = taskId,
-        // A working session is moving (not quiet) unless a test says otherwise, as the chip counts only those.
+        // A working session is moving (not quiet) unless a test says otherwise, as the footer counts only those.
         lastActivityAt = lastActivityAt ?: if (state == "working") now - 1_000 else null,
     )
 
@@ -128,7 +128,7 @@ class AgentsOverviewBackingViewModelTest {
 
     @Test
     fun earlierListsOpenIdleAndClosedSessionsTogetherNewestFirstAndCutsAfterTheNewestFive() {
-        val rows = (1..7).map { session("e$it", if (it % 2 == 0) "idle" else "ended", since = it * 1_000L, endedAt = it * 1_000L) }
+        val rows = (1..7).map { session("e$it", if (it % 2 == 0) "done" else "ended", since = it * 1_000L, endedAt = it * 1_000L) }
         windowState.updateAgentSessions(rows, false)
         assertEquals(listOf("e7", "e6", "e5", "e4", "e3"), vm.state.recent.map { it.id }, "the newest five show")
         assertTrue(vm.state.fortnight.isEmpty())
@@ -153,39 +153,23 @@ class AgentsOverviewBackingViewModelTest {
     }
 
     @Test
-    fun chipCountsEqualTheNowSection() {
+    fun theFooterCountsAreTheNumbersTheOverviewShows() {
         hosted("a", "b", "c", "d")
-        windowState.updateAgentSessions(
-            listOf(session("a", "needs_you"), session("b", "working"), session("c", "working"), session("d", "idle")),
-            true,
-        )
+        val rows = listOf(session("a", "needs_you"), session("b", "working"), session("c", "working"), session("d", "done"))
+        windowState.updateAgentSessions(rows, true)
         val s = vm.state
         assertEquals(1, s.needYouCount)
         assertEquals(2, s.workingCount)
-        assertEquals(s.now.size, s.needYouCount + s.workingCount)
-        assertTrue(s.chipVisible)
+        val counts = AgentCounts.of(rows, emptyList(), now)
+        assertEquals(s.needYouCount, counts.waiting, "the footer and the overview count waiting conversations the same way")
+        assertEquals(s.workingCount, counts.working)
     }
 
     @Test
-    fun chipStaysWhenAllAgentsAreIdleAndSaysSoAndOnlyHidesWithNoSessionsAtAll() {
-        assertFalse(vm.state.chipVisible)
-        windowState.updateAgentSessions(listOf(session("d", "idle"), session("e", "ended", endedAt = 5)), true)
-        assertTrue(vm.state.chipVisible)
-        assertNull(vm.state.chipNeeds)
-        assertEquals("agents idle", vm.state.chipRest)
-    }
-
-    @Test
-    fun chipWordingFollowsTheCounts() {
-        hosted("a", "b", "c")
-        fun chip(vararg rows: AgentSessionSummary): Pair<String?, String?> {
-            windowState.updateAgentSessions(rows.toList(), true)
-            return vm.state.chipNeeds to vm.state.chipRest
-        }
-        assertEquals("2 need you" to "1 working", chip(session("a", "needs_you"), session("b", "needs_you"), session("c", "working")))
-        assertEquals("1 needs you" to null, chip(session("a", "needs_you")))
-        assertEquals(null to "3 working", chip(session("a", "working"), session("b", "working"), session("c", "working")))
-        assertEquals(null to "agents idle", chip(session("a", "idle")))
+    fun noConversationsAreCountedAsNothing() {
+        assertEquals(AgentCounts.Counts(0, 0), AgentCounts.of(emptyList(), emptyList(), now))
+        val ended = listOf(session("e", "ended", endedAt = 5))
+        assertEquals(AgentCounts.Counts(0, 0), AgentCounts.of(ended, emptyList(), now))
     }
 
     @Test
@@ -240,26 +224,25 @@ class AgentsOverviewBackingViewModelTest {
         val clockNow = 100 * day
         val vmAtDay100 = AgentsOverviewBackingViewModel(windowState, clock = { clockNow }) { sent += it }
         // "stale" entered its state a minute ago but its last sign of life was two days ago (the
-        // state time was refreshed without the session doing anything); "fresh" is inside the idle
-        // grace; "justDone" ended a minute ago and gets the same grace; "done" ended three hours
+        // state time was refreshed without the session doing anything); "fresh" is a conversation
+        // that just finished; "justDone" ended a minute ago; "done" ended three hours
         // ago. The heading a row sits under and the age it shows are read from the same moment.
         // The two idle ones are in open tabs; the ended ones have no pane.
         layout(leaf("leaf-stale"), leaf("leaf-fresh"))
         windowState.updateAgentSessions(
             listOf(
-                session("stale", "idle", since = clockNow - 60_000, lastActivityAt = clockNow - 2 * day),
-                session("fresh", "idle", since = clockNow - 60_000, lastActivityAt = clockNow - 30_000),
+                session("stale", "done", since = clockNow - 60_000, lastActivityAt = clockNow - 2 * day),
+                session("fresh", "done", since = clockNow - 60_000, lastActivityAt = clockNow - 30_000),
                 session("done", "ended", endedAt = clockNow - 3 * hour, since = clockNow - 3 * hour),
                 session("justDone", "ended", endedAt = clockNow - 60_000, since = clockNow - 60_000),
             ),
             true,
         )
         val s = vmAtDay100.state
-        assertEquals(setOf("fresh", "justDone"), s.now.map { it.id }.toSet(), "a session that ended a minute ago is not under a days heading")
-        assertEquals(listOf("done", "stale"), s.recent.map { it.id })
+        assertEquals(setOf("fresh", "stale"), s.now.map { it.id }.toSet(), "a done conversation in an open pane is in NOW")
+        assertEquals(listOf("justDone", "done"), s.recent.map { it.id }, "ended ones are EARLIER, newest first")
         assertEquals(clockNow - 3 * hour, s.recent.first { it.id == "done" }.sinceMillis)
-        assertEquals(clockNow - 2 * day, s.recent.first { it.id == "stale" }.sinceMillis, "its age is when it was last active, not a minute")
-        s.recent.forEach { assertTrue(clockNow - it.sinceMillis >= hour, "${it.id} is under a days heading but reads as a few minutes old") }
+        assertEquals(clockNow - 2 * day, s.now.first { it.id == "stale" }.sinceMillis, "its age is when it was last active, not a minute")
     }
 
     @Test
@@ -267,7 +250,7 @@ class AgentsOverviewBackingViewModelTest {
         val day = 24L * 60 * 60 * 1000
         val clockNow = 100 * day
         val vmAtDay100 = AgentsOverviewBackingViewModel(windowState, clock = { clockNow }) { sent += it }
-        val stale = session("stale", "idle", since = clockNow - 60_000, lastActivityAt = clockNow - 2 * day)
+        val stale = session("stale", "done", since = clockNow - 60_000, lastActivityAt = clockNow - 2 * day)
         windowState.updateAgentSessions(listOf(stale), true)
         val browsed = vmAtDay100.state.recent.single().sinceMillis
         vmAtDay100.setQuery("needle")
@@ -394,7 +377,7 @@ class AgentsOverviewBackingViewModelTest {
     }
 
     @Test
-    fun theChipCountsAreNotNarrowedByTheQuery() {
+    fun theFooterCountsAreNotNarrowedByTheQuery() {
         hosted("a", "b")
         windowState.updateAgentSessions(listOf(session("a", "working"), session("b", "working")), true)
         vm.setQuery("zzz")
@@ -497,7 +480,7 @@ class AgentsOverviewBackingViewModelTest {
     @Test
     fun enterOnTheFocusedCancelKeepsTheSessionAndEnterOnCloseClosesIt() = runNow {
         layout(leaf("leaf-a"))
-        windowState.updateAgentSessions(listOf(session("a", "idle")), true)
+        windowState.updateAgentSessions(listOf(session("a", "done")), true)
         vm.open()
         vm.requestClose()
         vm.activateSelected()
@@ -515,7 +498,7 @@ class AgentsOverviewBackingViewModelTest {
     @Test
     fun escStepsBackFromConfirmThenPeekThenTheOverlay() = runNow {
         layout(leaf("leaf-a"))
-        windowState.updateAgentSessions(listOf(session("a", "idle")), true)
+        windowState.updateAgentSessions(listOf(session("a", "done")), true)
         vm.open()
         vm.peek()
         vm.requestClose()
@@ -534,10 +517,10 @@ class AgentsOverviewBackingViewModelTest {
     @Test
     fun theKeyboardCloseIsIgnoredWhileTypingButTheButtonStillWorks() = runNow {
         layout(leaf("leaf-a"))
-        windowState.updateAgentSessions(listOf(session("a", "idle", title = "alpha")), true)
+        windowState.updateAgentSessions(listOf(session("a", "done", title = "alpha")), true)
         vm.open()
         vm.setQuery("al")
-        answer("al", AgentSessionMatch(session("a", "idle", title = "alpha"), "title", null, 0, 2, null))
+        answer("al", AgentSessionMatch(session("a", "done", title = "alpha"), "title", null, 0, 2, null))
         vm.requestClose(fromKeyboard = true)
         assertNull(vm.state.confirm)
         vm.requestClose()
@@ -649,25 +632,24 @@ class AgentsOverviewBackingViewModelTest {
     }
 
     @Test
-    fun aWorkingSessionOutsideEveryOpenTabIsInABandNotInNowAndTheChipLeavesItOut() {
+    fun aWorkingSessionOutsideEveryOpenTabIsInABandNotInNowButTheFooterCountsIt() {
         hosted("in")
         windowState.updateAgentSessions(listOf(session("in", "working"), session("out", "working", leaf = "gone")), true)
         assertEquals(listOf("in"), vm.state.now.map { it.id })
         assertEquals(listOf("out"), vm.state.recent.map { it.id })
         assertEquals("working", vm.state.recent.single().stateWord, "a lone session in a band keeps its real state")
-        assertEquals(1, vm.state.workingCount)
+        assertEquals(2, vm.state.workingCount, "the footer counts every moving conversation")
     }
 
     @Test
-    fun aSessionThatNeedsYouStaysInNowWhereverItRunsAndIsCounted() {
+    fun aSessionThatNeedsYouWithNoPaneInTheLayoutIsNotInNowButIsCounted() {
         hosted("in")
         windowState.updateAgentSessions(
             listOf(session("in", "needs_you", since = 2_000), session("out", "needs_you", since = 1_000, leaf = "gone")),
             true,
         )
-        assertEquals(listOf("out", "in"), vm.state.now.map { it.id }, "the question outside every tab is not hidden in a band")
-        assertEquals(2, vm.state.needYouCount)
-        assertTrue(vm.state.recent.isEmpty())
+        assertEquals(listOf("in"), vm.state.now.map { it.id }, "a conversation with no pane in the layout is not in NOW")
+        assertEquals(2, vm.state.needYouCount, "the footer counts it")
     }
 
     @Test
@@ -675,8 +657,8 @@ class AgentsOverviewBackingViewModelTest {
         hosted("in")
         windowState.updateAgentSessions(
             listOf(
-                session("in", "idle", since = now - 1_000).copy(lastActivityAt = now - 1_000),
-                session("out", "idle", since = now - 1_000, leaf = "gone").copy(lastActivityAt = now - 1_000),
+                session("in", "done", since = now - 1_000).copy(lastActivityAt = now - 1_000),
+                session("out", "done", since = now - 1_000, leaf = "gone").copy(lastActivityAt = now - 1_000),
             ),
             true,
         )

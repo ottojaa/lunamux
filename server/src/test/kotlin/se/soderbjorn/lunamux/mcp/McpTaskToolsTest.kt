@@ -372,6 +372,6 @@ class McpTaskToolsTest {
             .single { it["taskId"]!!.jsonPrimitive.content == id }
         val s = task["sessions"]!!.jsonArray.single().jsonObject
         assertEquals("s1", s["sessionId"]!!.jsonPrimitive.content)
-        assertEquals("idle", s["state"]!!.jsonPrimitive.content)
+        assertEquals("done", s["state"]!!.jsonPrimitive.content)
     }
 }

@@ -65,9 +65,9 @@ class AgentsOverviewSeedTest {
     @Test
     fun `two sessions are left open with an old state for a restart to end`() {
         AgentsOverviewSeed.seed(db, tasksDir, now)
-        val open = listOf("seed-open-idle", "seed-open-working").map { repo().findAgentSessionById(it)!! }
+        val open = listOf("seed-open-done", "seed-open-working").map { repo().findAgentSessionById(it)!! }
         assertTrue(open.all { it.state != "ended" && it.endedAt == null })
-        assertEquals(2 * day, now - open.first { it.id == "seed-open-idle" }.stateSince)
+        assertEquals(2 * day, now - open.first { it.id == "seed-open-done" }.stateSince)
     }
 
     @Test
@@ -85,7 +85,7 @@ class AgentsOverviewSeedTest {
         AgentsOverviewSeed.seed(db, tasksDir, now)
         val repo = repo()
         val meta = repo.loadTaskMeta().single { it.taskId == "seed-task-notes" }
-        assertEquals("seed-pty-notes", meta.leadSession)
+        assertEquals("5eed0002-0000-4000-8000-000000000001", meta.mainConversation)
         assertEquals("Notes drafted, waiting on the changelog check", meta.status)
         val members = repo.loadRecentEndedAgentSessions(0, 300).filter { it.taskId == "seed-task-notes" }
         assertEquals(3, members.size)
@@ -103,11 +103,14 @@ class AgentsOverviewSeedTest {
     fun `the seeded task has a panel of every useful kind, all written by one agent, that a restart keeps`() {
         AgentsOverviewSeed.seed(db, tasksDir, now)
         val rows = repo().loadTaskPanelRows().filter { it.taskId == "seed-task-notes" }
-        assertEquals(listOf("documents", "status", "checks", "history", "links", "literal", "actions"), rows.map { it.blockId })
-        assertEquals(setOf("text", "progress", "timeline", "links", "documents", "actions"), rows.map { it.kind }.toSet())
+        assertEquals(listOf("progress", "links", "brief", "decisions", "activity"), rows.map { it.blockId })
+        assertEquals(setOf("progress", "links", "timeline"), rows.map { it.kind }.toSet())
         assertEquals(setOf("release notes agent"), rows.map { it.writtenBy }.toSet())
-        val literal = rows.single { it.blockId == "literal" }
-        assertTrue("<img src=x onerror=alert(1)>" in literal.body, "markup is stored as the text it is")
+        val activity = rows.single { it.blockId == "activity" }
+        assertTrue("Release thread opened for sign-off" in activity.body, "the activity holds ordinary lines only: ${activity.body}")
+        assertTrue("onerror" !in activity.body, "no test payload in the seed the screenshots are taken from")
+        val shown = rows.filter { it.kind == "links" }.sumOf { r -> r.body.split("\"url\"").size - 1 }
+        assertTrue(shown > 5, "the links are more than the five the panel shows, so it says \"+ N more\": $shown")
         // Reading it back through the store, as a server start does, gives the same blocks.
         val index = TaskIndex(repo(), AgentSessionTracker(repo()), MutableStateFlow(emptyList()), { null }, { now })
         val stored = TaskPanelStore(repo(), index, { now }).blocksOf("seed-task-notes")
@@ -117,6 +120,27 @@ class AgentsOverviewSeedTest {
         stored.forEach { TaskPanelLimits.check(it) }
         AgentsOverviewSeed.seed(db, tasksDir, now + day)
         assertEquals(rows.size, repo().loadTaskPanelRows().count { it.taskId == "seed-task-notes" }, "seeding again replaces, never adds")
+    }
+
+    @Test
+    fun `an activity entry holding markup is stored and read back as the text it is`() {
+        AgentsOverviewSeed.seed(db, tasksDir, now)
+        val markup = "Pasted from a log: <img src=x onerror=alert(1)>"
+        val index = TaskIndex(repo(), AgentSessionTracker(repo()), MutableStateFlow(emptyList()), { null }, { now })
+        val block = TaskPanelBlock(
+            id = "activity", title = "Recent activity", writtenBy = "release notes agent", writtenAtMillis = now,
+            content = TaskBlockContent.Timeline(listOf(TaskTimelineItem(now, markup))),
+        )
+        TaskPanelLimits.check(block)
+        val rows = listOf(
+            SettingsRepository.TaskPanelRow(
+                taskId = "seed-task-notes", blockId = block.id, position = 0, kind = block.content.kindName, title = block.title,
+                body = windowJson.encodeToString(TaskBlockContent.serializer(), block.content), writtenBy = block.writtenBy, writtenAt = now,
+            ),
+        )
+        repo().replaceTaskPanel("seed-task-notes", rows)
+        val back = TaskPanelStore(repo(), index, { now }).blocksOf("seed-task-notes").single().content as TaskBlockContent.Timeline
+        assertEquals(markup, back.items.single().text, "markup is kept character for character, never turned into anything else")
     }
 
     @Test

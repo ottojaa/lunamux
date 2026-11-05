@@ -45,7 +45,6 @@ class McpTaskMetaTest {
     private val index = TaskIndex(
         repo, tracker, files, leafOfSession = { if (it in panes) "leaf-$it" else WindowState.leafIdOfSession(it) },
         clock = { now },
-        sessionOfLeaf = { leaf -> panes.firstOrNull { "leaf-$it" == leaf } ?: WindowState.sessionIdOfLeaf(leaf) },
     )
 
     init {
@@ -101,18 +100,19 @@ class McpTaskMetaTest {
     }
 
     @Test
-    fun `set_task_lead names a pane, answers with it and resolves to the record running in that pane`() {
+    fun `set_task_lead names a pane, answers with its conversation and the pane it runs in`() {
         session("a"); session("b")
         val id = create("Work", """["a"]""")["taskId"]!!.jsonPrimitive.content
-        val first = taskInState(id).leadRecordId
-        assertEquals(tracker.openRecordOf("a")!!.id, first)
+        assertEquals("a-a", taskInState(id).mainConversation)
 
         val set = call("set_task_lead", """{"taskId":"$id","sessionId":"b"}""")
         assertTrue(!isError(set), textOf(set))
-        assertEquals("b", payload(set)["ownSession"]!!.jsonPrimitive.content)
-        assertEquals(tracker.openRecordOf("b")!!.id, taskInState(id).leadRecordId)
+        val named = payload(set)["mainConversation"]!!.jsonObject
+        assertEquals("a-b", named["conversationId"]!!.jsonPrimitive.content)
+        assertEquals("b", named["sessionId"]!!.jsonPrimitive.content)
+        assertEquals("a-b", taskInState(id).mainConversation)
 
-        // The same pane starts another run: the newest record of that pane speaks for the task.
+        // The pane starts another run: the task keeps speaking through the conversation it named.
         tracker.onHook(
             PaneSnapshot("b", "leaf-b", "/work/b", null, screenText = { "x" }),
             buildJsonObject { put("hook_event_name", "SessionEnd"); put("session_id", "a-b") },
@@ -123,8 +123,36 @@ class McpTaskMetaTest {
             buildJsonObject { put("hook_event_name", "SessionStart"); put("session_id", "a-b2") },
         )
         index.recompute()
-        assertEquals("r3", tracker.openRecordOf("b")!!.id)
-        assertEquals("r3", taskInState(id).leadRecordId)
+        assertEquals("a-b", taskInState(id).mainConversation)
+        assertNull(index.listing().single { it.id == id }.ownSessionId, "the new run is another conversation")
+    }
+
+    @Test
+    fun `set_task_lead takes a conversationId and wants exactly one of it and a pane`() {
+        session("a"); session("b")
+        val id = create("Work", """["a"]""")["taskId"]!!.jsonPrimitive.content
+        val set = call("set_task_lead", """{"taskId":"$id","conversationId":"a-b"}""")
+        assertTrue(!isError(set), textOf(set))
+        assertEquals("a-b", payload(set)["mainConversation"]!!.jsonObject["conversationId"]!!.jsonPrimitive.content)
+        assertTrue(isError(call("set_task_lead", """{"taskId":"$id"}""")))
+        assertTrue(isError(call("set_task_lead", """{"taskId":"$id","sessionId":"a","conversationId":"a-b"}""")))
+        assertTrue(isError(call("set_task_lead", """{"taskId":"$id","conversationId":"nobody"}""")))
+        assertEquals("a-b", taskInState(id).mainConversation)
+    }
+
+    @Test
+    fun `list_tasks gives mainConversation with its conversation id and live pane, null pane when closed`() {
+        session("a")
+        val id = create("Work", """["a"]""")["taskId"]!!.jsonPrimitive.content
+        val open = payload2(call("list_tasks")).single { it["taskId"]!!.jsonPrimitive.content == id }["mainConversation"]!!.jsonObject
+        assertEquals("a-a", open["conversationId"]!!.jsonPrimitive.content)
+        assertEquals("a", open["sessionId"]!!.jsonPrimitive.content)
+
+        tracker.onSessionDestroyed("a", null)
+        index.recompute()
+        val closed = payload2(call("list_tasks")).single { it["taskId"]!!.jsonPrimitive.content == id }["mainConversation"]!!.jsonObject
+        assertEquals("a-a", closed["conversationId"]!!.jsonPrimitive.content)
+        assertEquals("null", closed["sessionId"].toString())
     }
 
     @Test
@@ -147,7 +175,7 @@ class McpTaskMetaTest {
         files.value = listOf(TaskFile("file-task", "From a file", null, null, emptyList(), 100L))
         val set = call("set_task_lead", """{"taskId":"file-task","sessionId":"a"}""")
         assertTrue(!isError(set), textOf(set))
-        assertEquals(tracker.openRecordOf("a")!!.id, taskInState("file-task").leadRecordId)
+        assertEquals("a-a", taskInState("file-task").mainConversation)
     }
 
     @Test
@@ -175,7 +203,7 @@ class McpTaskMetaTest {
         call("set_task_status", """{"taskId":"$id","text":"halfway"}""")
         val listed = payload2(call("list_tasks")).single { it["taskId"]!!.jsonPrimitive.content == id }
         assertEquals("halfway", listed["status"]!!.jsonPrimitive.content)
-        assertEquals("a", listed["ownSession"]!!.jsonPrimitive.content)
+        assertEquals("a", listed["mainConversation"]!!.jsonObject["sessionId"]!!.jsonPrimitive.content)
 
         call("set_task_status", """{"taskId":"$id","text":"  \n "}""")
         assertNull(taskInState(id).status)
@@ -200,16 +228,15 @@ class McpTaskMetaTest {
         val reopened = TaskIndex(repo, tracker, files, leafOfSession = { null }, clock = { now })
         val after = reopened.state.value.tasks.single { it.id == id }
         assertEquals("kept", after.status)
-        assertEquals(before.leadRecordId, after.leadRecordId)
+        assertEquals(before.mainConversation, after.mainConversation)
         assertEquals(before.startedAtMillis, after.startedAtMillis)
     }
 
     @Test
-    fun `after a server restart the own session resolves to its ended record, so enter resumes it`() {
+    fun `after a server restart the main conversation is still the stored one, closed, so enter resumes it`() {
         session("boss")
         val id = create("Work", "[\"boss\"]")["taskId"]!!.jsonPrimitive.content
-        val record = taskInState(id).leadRecordId
-        assertNotNull(record)
+        assertEquals("a-boss", taskInState(id).mainConversation)
 
         // A restart: the tracker ends the records the old process left open and loads them again.
         now += 60_000
@@ -220,8 +247,9 @@ class McpTaskMetaTest {
         val reopened = TaskIndex(repo, restarted, files, leafOfSession = { null }, clock = { now })
 
         val after = reopened.state.value.tasks.single { it.id == id }
-        assertEquals(record, after.leadRecordId, "the ended record is found by the pane the task remembers")
-        assertEquals("ended", restarted.snapshot().single { it.id == record }.state)
+        assertEquals("a-boss", after.mainConversation)
+        assertEquals("ended", restarted.snapshot().single { it.agentSessionId == "a-boss" }.state)
+        assertNull(reopened.listing().single { it.id == id }.ownSessionId)
     }
 
     @Test
