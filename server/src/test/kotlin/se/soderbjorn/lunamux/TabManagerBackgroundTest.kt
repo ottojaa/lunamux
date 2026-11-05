@@ -64,13 +64,34 @@ class TabManagerBackgroundTest {
     }
 
     @Test
-    fun `taking a tab over makes it a normal active tab`() {
+    fun `showing a waiting background tab lists it, activates it and keeps it a background tab`() {
         val cfg = config(tab("a"), tab("bg", background = true))
-        val taken = TabManager.takeOverTab(cfg, "bg")!!
-        assertEquals("bg", taken.activeTabId)
-        assertFalse(taken.tabs.single { it.id == "bg" }.isBackground)
-        assertEquals(listOf("a", "bg"), taken.listedTabs.map { it.id })
-        assertNull(TabManager.takeOverTab(cfg, "missing"))
+        val shown = TabManager.showWaitingTab(cfg, "bg")!!
+        assertEquals("bg", shown.activeTabId)
+        assertTrue(shown.tabs.single { it.id == "bg" }.isBackground, "still a background tab")
+        assertTrue(shown.tabs.single { it.id == "bg" }.shownWhileWaiting)
+        assertEquals(listOf("a", "bg"), shown.listedTabs.map { it.id })
+        assertNull(TabManager.showWaitingTab(cfg, "missing"))
+        assertNull(TabManager.showWaitingTab(shown, "bg"), "already shown and active")
+    }
+
+    @Test
+    fun `hiding a settled waiting tab unlists it and returns to the tab that was active`() {
+        val cfg = config(tab("a"), tab("b"), tab("bg", background = true))
+        val shown = TabManager.showWaitingTab(cfg, "bg")!!
+        val hidden = TabManager.hideWaitingTab(shown, "bg", returnTo = "b")!!
+        assertEquals("b", hidden.activeTabId)
+        assertEquals(listOf("a", "b"), hidden.listedTabs.map { it.id })
+        assertFalse(hidden.tabs.single { it.id == "bg" }.shownWhileWaiting)
+        assertNull(TabManager.hideWaitingTab(hidden, "bg", "b"), "nothing to hide")
+        assertEquals("a", TabManager.hideWaitingTab(shown, "bg", returnTo = "gone")!!.activeTabId, "falls back to the first listed tab")
+    }
+
+    @Test
+    fun `hiding a waiting tab the person is not on leaves the active tab alone`() {
+        val cfg = config(tab("a"), tab("bg", background = true))
+        val shown = TabManager.showWaitingTab(cfg, "bg")!!.copy(activeTabId = "a")
+        assertEquals("a", TabManager.hideWaitingTab(shown, "bg", returnTo = "a")!!.activeTabId)
     }
 
     @Test

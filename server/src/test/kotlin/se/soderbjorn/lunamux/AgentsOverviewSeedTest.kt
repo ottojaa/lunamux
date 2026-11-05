@@ -85,7 +85,7 @@ class AgentsOverviewSeedTest {
         AgentsOverviewSeed.seed(db, tasksDir, now)
         val repo = repo()
         val meta = repo.loadTaskMeta().single { it.taskId == "seed-task-notes" }
-        assertEquals("seed-pty-notes", meta.leadSession)
+        assertEquals("5eed0002-0000-4000-8000-000000000001", meta.mainConversation)
         assertEquals("Notes drafted, waiting on the changelog check", meta.status)
         val members = repo.loadRecentEndedAgentSessions(0, 300).filter { it.taskId == "seed-task-notes" }
         assertEquals(3, members.size)

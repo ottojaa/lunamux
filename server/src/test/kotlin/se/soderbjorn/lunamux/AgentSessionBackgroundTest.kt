@@ -78,7 +78,7 @@ class AgentSessionBackgroundTest {
     }
 
     @Test
-    fun `search skips background sessions by title and prompt until the tab is taken over`() {
+    fun `search skips background sessions by title and prompt`() {
         val t = tracker()
         t.onPoll(listOf(pane("s1", background = true), pane("s2", background = false)))
         now = 2_000
@@ -87,10 +87,7 @@ class AgentSessionBackgroundTest {
         assertEquals(listOf("r2"), found())
         // Stored copies are skipped too, not only the in-memory ones.
         assertEquals(listOf("r2"), repo.searchAgentSessions("Refactor").map { it.record.id })
-
-        t.clearBackground(listOf("leaf-s1"))
-        assertFalse(repo.findAgentSessionById("r1")!!.background)
-        assertEquals(setOf("r1", "r2"), found().toSet())
+        assertTrue(repo.findAgentSessionById("r1")!!.background, "a background record stays one")
     }
 
     @Test

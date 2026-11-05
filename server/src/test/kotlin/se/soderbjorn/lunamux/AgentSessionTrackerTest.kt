@@ -74,7 +74,7 @@ class AgentSessionTrackerTest {
         assertEquals("Fix flaky test", row.title, "the title freezes at the first working state")
 
         t.onPoll(listOf(pane(agent = "codex", state = null)))
-        assertEquals("idle", t.summaries.value.single().state)
+        assertEquals("done", t.summaries.value.single().state)
     }
 
     @Test
@@ -120,7 +120,7 @@ class AgentSessionTrackerTest {
         val t = tracker()
         val p = pane(title = "Refactor tracker")
         t.onHook(p, event("SessionStart", "a-1", "transcript_path" to "/t/a-1.jsonl"))
-        assertEquals("idle", t.summaries.value.single().state)
+        assertEquals("done", t.summaries.value.single().state)
 
         t.onHook(p, event("UserPromptSubmit", "a-1", "prompt" to "please run the tests"))
         t.onHook(p, event("PreToolUse", "a-1", "tool_name" to "Bash"))
@@ -147,52 +147,37 @@ class AgentSessionTrackerTest {
     }
 
     @Test
-    fun `stop asks when the last message ends with a question mark and idles otherwise`() {
+    fun `stop means done, whatever the last message ends with`() {
         val t = tracker()
         val p = pane()
         t.onHook(p, event("Stop", "a-1", "last_assistant_message" to "Done.\n\nShall I also update the docs?"))
         var row = t.summaries.value.single()
-        assertEquals("needs_you", row.state)
-        assertEquals("Shall I also update the docs?", row.question)
+        assertEquals("done", row.state)
+        assertNull(row.question, "a closing question is not a prompt the person has to answer")
+        assertEquals("Shall I also update the docs?", row.lastSaid, "what it said stays readable")
 
         t.onHook(p, event("UserPromptSubmit", "a-1", "prompt" to "yes"))
         t.onHook(p, event("Stop", "a-1", "last_assistant_message" to "All done."))
         row = t.summaries.value.single()
-        assertEquals("idle", row.state)
+        assertEquals("done", row.state)
         assertNull(row.question)
     }
 
     @Test
-    fun `a closing question with a colon or an abbreviation is still one question`() {
-        val t = tracker()
-        val p = pane()
-        val questions = listOf(
-            "Which do you want: the alias or the rename?",
-            "Should I keep the alias (e.g. the old name) or remove it?",
-        )
-        for (q in questions) {
-            t.onHook(p, event("UserPromptSubmit", "a-1", "prompt" to "go"))
-            t.onHook(p, event("Stop", "a-1", "last_assistant_message" to "Done.\n\n$q"))
-            val row = t.summaries.value.single()
-            assertEquals("needs_you", row.state, q)
-            assertEquals(q, row.question)
-        }
-    }
-
-    @Test
-    fun `a finished turn that ends in a reply is idle even when the reply closes with an offer`() {
+    fun `a finished turn that ends in a reply is done even when the reply closes with an offer`() {
         val t = tracker()
         val p = pane()
         val replies = listOf(
             "I'd do 1 and skip 2, since your CLAUDE.md already covers it. Want me to go ahead?",
             "Both options work.\n\nThe first is smaller.\nThe second is safer, shall I take it?",
             "All done. Shall I also update the docs?",
+            "Which do you want: the alias or the rename?",
         )
         for (reply in replies) {
             t.onHook(p, event("UserPromptSubmit", "a-1", "prompt" to "go"))
             t.onHook(p, event("Stop", "a-1", "last_assistant_message" to reply))
             val row = t.summaries.value.single()
-            assertEquals("idle", row.state, reply)
+            assertEquals("done", row.state, reply)
             assertNull(row.question, reply)
         }
     }
@@ -203,7 +188,7 @@ class AgentSessionTrackerTest {
         val p = pane()
         t.onHook(p, event("Stop", "a-1", "last_assistant_message" to "Done."))
         t.onHook(p, event("Notification", "a-1", "notification_type" to "auth_success", "message" to "Signed in"))
-        assertEquals("idle", t.summaries.value.single().state)
+        assertEquals("done", t.summaries.value.single().state)
         t.onHook(p, event("Notification", "a-1", "notification_type" to "permission_prompt", "message" to "Claude needs your permission to use Bash"))
         val row = t.summaries.value.single()
         assertEquals("needs_you", row.state)
@@ -259,16 +244,6 @@ class AgentSessionTrackerTest {
     }
 
     @Test
-    fun `a closing question of one sentence asks for you and shows the question as its line`() {
-        val t = tracker()
-        val p = pane()
-        t.onHook(p, event("Stop", "a-1", "last_assistant_message" to "Two runs are ready.\n\nWhich of the two should I merge first?"))
-        val row = t.summaries.value.single()
-        assertEquals("needs_you", row.state)
-        assertEquals("Which of the two should I merge first?", row.question)
-    }
-
-    @Test
     fun `stop remembers the first line of the last paragraph, for questions too`() {
         val t = tracker()
         val p = pane()
@@ -278,7 +253,7 @@ class AgentSessionTrackerTest {
         t.onHook(p, event("UserPromptSubmit", "a-1", "prompt" to "go"))
         t.onHook(p, event("Stop", "a-1", "last_assistant_message" to "Which of the two should I merge first?"))
         val row = t.summaries.value.single()
-        assertEquals("needs_you", row.state)
+        assertEquals("done", row.state)
         assertEquals("Which of the two should I merge first?", row.lastSaid)
 
         t.onHook(p, event("UserPromptSubmit", "a-1", "prompt" to "the first"))
@@ -292,7 +267,7 @@ class AgentSessionTrackerTest {
         val p = pane()
         t.onHook(p, event("Stop", "a-1", "last_assistant_message" to "Done."))
         t.onHook(p, event("Notification", "a-1", "notification_type" to "idle_prompt", "message" to "Claude is waiting for your input"))
-        assertEquals("idle", t.summaries.value.single().state)
+        assertEquals("done", t.summaries.value.single().state)
     }
 
     @Test
@@ -301,7 +276,7 @@ class AgentSessionTrackerTest {
         val p = pane()
         t.onHook(p, event("Stop", "a-1", "last_assistant_message" to "Done."))
         t.onHook(p, event("Notification", "a-1", "message" to "Claude is waiting for your input"))
-        assertEquals("idle", t.summaries.value.single().state)
+        assertEquals("done", t.summaries.value.single().state)
         t.onHook(p, event("Notification", "a-1", "message" to "Claude needs your permission to use Bash"))
         assertEquals("needs_you", t.summaries.value.single().state)
     }
@@ -425,7 +400,7 @@ class AgentSessionTrackerTest {
         t.onHook(pane("s9"), event("SessionStart", "a-1"))
         val row = t.summaries.value.single()
         assertEquals(id, row.id)
-        assertEquals("idle", row.state)
+        assertEquals("done", row.state)
         assertNull(row.endedAt)
         assertEquals("leaf-s9", row.leafId)
     }
@@ -537,10 +512,10 @@ class AgentSessionTrackerTest {
     }
 
     @Test
-    fun `a Bash call without a description says it is running the first word of the command`() {
-        assertEquals("Running cat", toolLine(call("Bash", """{"command":"cat > /tmp/aov45-desc.txt 2>/dev/null; D=/private/x"}""")))
-        assertEquals("Running gradlew", toolLine(call("Bash", """{"command":"./gradlew test\nsecond"}""")))
-        assertEquals("Running git", toolLine(call("Bash", """{"command":"GIT_PAGER=cat LC_ALL=C /usr/bin/git log"}""")))
+    fun `a Bash call without a description says it is running a command, never the program name`() {
+        assertEquals("Running a command", toolLine(call("Bash", """{"command":"cat > /tmp/aov45-desc.txt 2>/dev/null; D=/private/x"}""")))
+        assertEquals("Running a command", toolLine(call("Bash", """{"command":"./gradlew test\nsecond"}""")))
+        assertEquals("Running a command", toolLine(call("Bash", """{"command":"GIT_PAGER=cat LC_ALL=C /usr/bin/git log"}""")))
         assertEquals("Running a command", toolLine(call("Bash", """{"command":"   "}""")))
         assertEquals("Running a command", toolLine(call("Bash", """{"description":"  "}""")))
     }
