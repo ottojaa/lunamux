@@ -97,7 +97,7 @@ class SidebarUnaffectedByTasksTest {
             true,
         )
         windowState.updateAgentTasks(
-            listOf(AgentTask(id = "g1", title = "Release", repo = "proj", source = "agents", hasOpen = false, members = emptyList(), leadRecordId = "lead")),
+            listOf(AgentTask(id = "g1", title = "Release", repo = "proj", source = "agents", hasOpen = false, members = emptyList(), mainConversation = "lead")),
         )
 
         assertEquals(listOf("task:g1"), vm.state.rows.map { it.id }, "the overview folds them into one row")

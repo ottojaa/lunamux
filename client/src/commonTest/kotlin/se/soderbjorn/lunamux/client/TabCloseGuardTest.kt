@@ -41,13 +41,13 @@ class TabCloseGuardTest {
     private fun task(lead: String?, vararg members: String) = AgentTask(
         id = "g1", title = "Release notes", repo = null, source = "agents", hasOpen = false,
         members = members.mapIndexed { i, id -> AgentTaskMember(key = "#$i", title = id, state = "working", recordId = id) },
-        refreshedAtMillis = null, leadRecordId = lead,
+        refreshedAtMillis = null, mainConversation = lead,
     )
 
     @Test
     fun aTabWithNothingWorkingInItClosesWithoutAsking() {
         val cfg = config(tab("t1", "one", "leaf-a", "leaf-b"), tab("t2", "two", "leaf-c"))
-        val sessions = listOf(session("a", "needs_you"), session("b", "idle"), session("c", "working"))
+        val sessions = listOf(session("a", "needs_you"), session("b", "done"), session("c", "working"))
         assertNull(TabCloseGuard.check("t1", cfg, sessions, emptyList()))
         assertNull(TabCloseGuard.check("missing", cfg, sessions, emptyList()))
         assertNull(TabCloseGuard.check("t1", null, sessions, emptyList()))
@@ -92,7 +92,7 @@ class TabCloseGuardTest {
     @Test
     fun oneBackgroundAgentReadsInTheSingular() {
         val cfg = config(tab("t1", "one", "leaf-lead"), tab("bg", "agents", "leaf-b1", background = true))
-        val sessions = listOf(session("lead", "working"), session("b1", "idle", background = true, taskId = "g1"))
+        val sessions = listOf(session("lead", "working"), session("b1", "done", background = true, taskId = "g1"))
         val check = TabCloseGuard.check("t1", cfg, sessions, listOf(task("lead")))!!
         assertEquals("The agent it started keeps running in the background:", check.keepsRunningIntro)
     }
@@ -100,7 +100,7 @@ class TabCloseGuardTest {
     @Test
     fun aTaskThatIsNotThisTabsDoesNotListItsBackgroundAgentsOrNameItsTitle() {
         val cfg = config(tab("t1", "one", "leaf-a"), tab("t2", "two", "leaf-lead"), tab("bg", "agents", "leaf-b1", background = true))
-        val sessions = listOf(session("a", "working"), session("lead", "idle"), session("b1", "working", background = true, taskId = "g1"))
+        val sessions = listOf(session("a", "working"), session("lead", "done"), session("b1", "working", background = true, taskId = "g1"))
         val check = TabCloseGuard.check("t1", cfg, sessions, listOf(task("lead")))!!
         assertTrue(check.keepsRunning.isEmpty())
         assertNull(check.pickUp)

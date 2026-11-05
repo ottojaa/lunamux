@@ -1195,10 +1195,11 @@ class AgentsOverviewBackingViewModel(
      *
      * A live main conversation is jumped to, unless a background conversation of the task waits for
      * the person and the main one does not: that one is opened as a marked tab. With the main
-     * conversation closed, a waiting background conversation is opened as a marked tab, else a live
-     * conversation in a listed tab is jumped to (the one waiting longest on the person, else the
-     * busiest), else the closed main conversation is resumed, else the task's `open` action runs,
-     * else the newest conversation it has a record of is resumed, else nothing is offered.
+     * conversation closed, a waiting background conversation is opened as a marked tab, else the
+     * closed main conversation is resumed (a conversation the task has in a listed tab does not
+     * replace it), else a live conversation in a listed tab is jumped to (the one waiting longest
+     * on the person, else the busiest), else the task's `open` action runs, else the newest
+     * conversation it has a record of is resumed, else nothing is offered.
      *
      * @param t the task.
      * @param main the main conversation, or null.
@@ -1229,8 +1230,8 @@ class AgentsOverviewBackingViewModel(
         val newest = runs.mapNotNull { it.session }.maxByOrNull(::activityOf)
         return when {
             mainLive -> Enter.JUMP to main
-            listed != null -> Enter.JUMP to listed.session
             main != null -> Enter.RESUME to main
+            listed != null -> Enter.JUMP to listed.session
             t.hasOpen -> Enter.OPEN to null
             newest != null -> Enter.RESUME to newest
             else -> Enter.NONE to null
