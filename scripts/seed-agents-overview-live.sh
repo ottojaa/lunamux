@@ -24,9 +24,11 @@
 #                    task a status line, and two agents that session started out of sight (create_window
 #                    with background and the task's id), in background tabs that no tab strip lists:
 #                    "Changelog check" and "Screenshot refresh", both working. The task's row counts the
-#                    two background ones as its "2 working" and lists neither.
+#                    two background ones as its "2 working" and lists neither. Three more helpers
+#                    ("Link check", "Contributor list", "Upgrade steps") ran and have finished.
 #                    The task also has a panel of blocks (documents, status, checks and so on) written by "release notes agent": in this tab ⌘I
-#                    shows it (the agents block first, both helpers listed and working), in any other tab
+#                    shows it (the agents block first: a "3 finished · done" line that ▸ opens, the two working
+#                    helpers under it), in any other tab
 #                    there is no panel. ↵ on a helper watches its terminal read-only; ⌘↵ shows its tab as an ordinary tab.
 #
 # What to look at (⌘⇧A):
@@ -152,6 +154,17 @@ SES7="$(field "$(call create_window "$ARGS")" 'd["sessionId"]')"
 title "$SES7" "Screenshot refresh"
 hook "$SES7" live-screens '{"hook_event_name":"UserPromptSubmit","prompt":"Retake the screenshots the notes link to"}'
 hook "$SES7" live-screens '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"scripts/take-screenshots.sh","description":"Retake the release screenshots"}}'
+# Three helpers that have already finished: the panel folds them into one "3 finished · done" line.
+for helper in "Link check|Open every link in the notes and list the ones that no longer answer" \
+              "Contributor list|Collect the names of everyone who merged a change into 4.3" \
+              "Upgrade steps|Write the steps for upgrading from 4.2 and try them on a clean install"; do
+    HELPER_TITLE="${helper%%|*}"
+    ARGS="{\"background\":true,\"taskId\":\"$NOTES\",\"title\":\"$HELPER_TITLE\"}"
+    SESF="$(field "$(call create_window "$ARGS")" 'd["sessionId"]')"
+    title "$SESF" "$HELPER_TITLE"
+    hook "$SESF" "live-done-${HELPER_TITLE// /-}" "$(python3 -I -c 'import json,sys; print(json.dumps({"hook_event_name":"UserPromptSubmit","prompt":sys.argv[1]}))' "${helper#*|}")"
+    hook "$SESF" "live-done-${HELPER_TITLE// /-}" '{"hook_event_name":"SessionEnd"}'
+done
 sleep 1
 call set_task_lead "{\"taskId\":\"$NOTES\",\"sessionId\":\"$SES5\"}" >/dev/null
 call set_task_status "{\"taskId\":\"$NOTES\",\"text\":\"Notes drafted, waiting on the changelog check\"}" >/dev/null
@@ -176,7 +189,7 @@ print(json.dumps({"taskId": sys.argv[1], "by": "release notes agent", "blocks": 
   {"id": "actions", "type": "actions", "title": "Actions", "buttons": [
     {"id": "status", "label": "Ask for status", "text": "What is left to do?"}]},
 ]}))' "$NOTES")" >/dev/null
-echo "task \"Release notes\" ($NOTES): own session in tab $TAB3, two background tabs, status and panel set"
+echo "task \"Release notes\" ($NOTES): own session in tab $TAB3, five background tabs (two working, three finished), status and panel set"
 
 # The second window of the task, made with no tabId while "Docs" is the active tab.
 ARGS="{\"taskId\":\"$TASK\"}"

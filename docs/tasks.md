@@ -391,7 +391,12 @@ a terminal reads as Tab; rebind it there if that gets in the way.)
 The column starts with an **Agents** block, marked *live*: every other session of the task with its
 state mark (● working or waiting, ◆ needs you, ○ finished), its name, its age
 at the right and, under the name, what it is doing, or its state word when it is not doing anything.
-A finished session is dimmed and reads "exited". A member that only the task file lists (one
+The finished ones are folded into a single line on top, "3 finished · done ▸", with the live ones
+listed under it. ↵ or a click on that line lists the finished sessions above the live ones, dimmed (the mark turns
+to ▾), and the same again folds them away (▸); a task with many finished runs thus keeps the blocks under
+the agents in view. The line counts every finished member, the ones a task file lists and the
+hosted sessions it does not, and is kept for each task while the window is open. A finished
+session reads "exited". A member that only the task file lists (one
 Lunamux does not host) shows the file's own label for it when it gives one: in place of the state
 word while it is not finished (for example "reviewing"), and after "exited" once it is (for example
 "exited · merged"). Each line is a row you can reach and press: click the panel, then Tab to move

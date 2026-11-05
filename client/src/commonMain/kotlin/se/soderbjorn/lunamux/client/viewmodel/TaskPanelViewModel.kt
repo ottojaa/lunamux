@@ -7,8 +7,9 @@
  * as a tab, jump to a listed one, attach to an unhosted one, press a button).
  *
  * Contains [TaskPanelViewModel] with its state types ([TaskPanelViewModel.State],
- * [TaskPanelViewModel.AgentLine], [TaskPanelViewModel.BlockView]). Web draws it today; another
- * client can draw the same state.
+ * [TaskPanelViewModel.AgentLine], [TaskPanelViewModel.AgentFold], [TaskPanelViewModel.BlockView]).
+ * The agents block folds the task's finished members into one line so a task with many finished
+ * runs keeps the blocks under it in view. Web draws it today; another client can draw the same state.
  *
  * @see PanelMarkdown
  * @see WatchViewModel
@@ -89,7 +90,7 @@ class TaskPanelViewModel(
      *   `exited · label`.
      * @property age how long the member has been in [state], as `now`, `5m`, `3h` or `2d`.
      * @property nowLine what it is doing or asking, or null.
-     * @property dimmed true for a finished member, which stays in the list but recedes.
+     * @property dimmed true for a finished member: it recedes, and it is counted by [State.fold] and listed only while that is expanded.
      * @property action what a click does.
      * @property recordId the session record behind the line, or null for an unhosted member.
      * @property hint the keys that act on the line while it is selected, or null when none does:
@@ -107,6 +108,20 @@ class TaskPanelViewModel(
         val recordId: String?,
         val hint: String?,
     )
+
+    /**
+     * The one line that stands for a task's finished members, drawn above the live ones.
+     *
+     * @property count how many lines are finished: file members and unlisted records alike, never
+     *   the session the panel sits beside.
+     * @property expanded true while the finished lines are listed, false while they are folded.
+     * @see State.fold
+     * @see toggleFinished
+     */
+    data class AgentFold(val count: Int, val expanded: Boolean) {
+        /** The words on the line: "3 finished · done". */
+        val text: String get() = "$count finished · done"
+    }
 
     /**
      * One row of a documents block.
@@ -177,8 +192,11 @@ class TaskPanelViewModel(
      * @property visible whether to draw the column: [open] and a task whose own session is in the active tab.
      * @property taskId the task being shown, or null when [visible] is false for lack of one.
      * @property title the task's name.
-     * @property agents the agents block's lines, in the task's member order, without the session the
-     *   panel sits beside; empty when the task has no other members.
+     * @property agents every line of the agents block, in the task's member order, without the
+     *   session the panel sits beside; empty when the task has no other members.
+     * @property fold the line that folds the finished lines, or null when no line is finished.
+     * @property shown the lines to draw under [fold]: while it is folded, the live lines in member
+     *   order; while it is expanded, the finished lines in member order, then the live ones.
      * @property blocks the stored blocks, in the order the agents gave.
      * @property emptyText the sentence to show when there is nothing besides the agents, else null.
      */
@@ -188,12 +206,17 @@ class TaskPanelViewModel(
         val taskId: String? = null,
         val title: String = "",
         val agents: List<AgentLine> = emptyList(),
+        val fold: AgentFold? = null,
+        val shown: List<AgentLine> = emptyList(),
         val blocks: List<BlockView> = emptyList(),
         val emptyText: String? = null,
     )
 
-    /** What the person has chosen: whether the panel is shown. */
-    private data class Ui(val open: Boolean = true)
+    /**
+     * What the person has chosen: whether the panel is shown, and the tasks whose finished lines
+     * they have unfolded. Kept while the window lives, never stored.
+     */
+    private data class Ui(val open: Boolean = true, val expanded: Set<String> = emptySet())
 
     private val ui = MutableStateFlow(Ui())
     private val clockTick = MutableStateFlow(0)
@@ -236,6 +259,18 @@ class TaskPanelViewModel(
 
     /** Flip [State.open]. Called for ⌘I and the panel's ×. */
     fun toggle() = ui.update { it.copy(open = !it.open) }
+
+    /**
+     * Fold or unfold the finished lines of the task being shown. The choice is the task's own, so
+     * another task's panel starts folded. Called for a click or ↵ on the fold line; does nothing
+     * while no panel is shown.
+     *
+     * @see State.fold
+     */
+    fun toggleFinished() {
+        val taskId = state.taskId ?: return
+        ui.update { it.copy(expanded = if (taskId in it.expanded) it.expanded - taskId else it.expanded + taskId) }
+    }
 
     /**
      * Do what ↵ or a click on [line] does: watch a background member, jump to a listed one,
@@ -321,6 +356,9 @@ class TaskPanelViewModel(
         val now = clock()
         val live = own.state != ENDED
         val agents = linesOf(task, sessions, byId, config, own.id, now)
+        val (finished, running) = agents.partition { it.dimmed }
+        val fold = finished.takeIf { it.isNotEmpty() }?.let { AgentFold(it.size, task.id in ui.expanded) }
+        val shown = if (fold?.expanded == true) finished + running else running
         val blocks = (panels[task.id] ?: emptyList()).map { viewOf(it, live, now) }
         return State(
             open = ui.open,
@@ -328,6 +366,8 @@ class TaskPanelViewModel(
             taskId = task.id,
             title = task.title,
             agents = agents,
+            fold = fold,
+            shown = shown,
             blocks = blocks,
             emptyText = EMPTY_TEXT.takeIf { blocks.isEmpty() },
         )

@@ -3838,6 +3838,11 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-agent-active:hover, .tp-agent-active:focus-visible { background: color-mix(in srgb, var(--tp-text) 7%, transparent); outline: none; }
 .tp-agent-active:focus-visible { box-shadow: inset 2px 0 0 var(--tp-accent); }
 .tp-agent-active:hover .tp-agent-hint, .tp-agent-active:focus-visible .tp-agent-hint { display: block; }
+/* The fold line is as tall as an agent's line (a two-row line is 41px with its padding), shows its words
+   on the one row, and keeps the ▸ / ▾ mark dim at the right where a line shows its age. */
+.tp-fold { align-items: center; box-sizing: border-box; min-height: 41px; }
+.tp-fold-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-fold-mark { flex: none; color: var(--tp-dim); }
 .tp-action {
     border: 1px solid var(--tp-line); background: transparent; color: inherit; font: inherit; font-size: 11px;
     padding: 2px 8px; cursor: pointer;
