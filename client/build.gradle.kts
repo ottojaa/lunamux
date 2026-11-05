@@ -102,6 +102,16 @@ tasks.named<Test>("jvmTest") {
     val glyphSource = rootProject.layout.projectDirectory.file("web/src/jsMain/kotlin/se/soderbjorn/lunamux/WorkingGlyph.kt")
     inputs.file(glyphSource).withPropertyName("workingGlyphSource")
     systemProperty("lunamux.workingGlyphSource", glyphSource.asFile.absolutePath)
+    // SpinnerNeverRestartsTest reads the files that draw the spinner.
+    for ((property, name) in mapOf(
+        "lunamux.agentsOverviewSource" to "AgentsOverview.kt",
+        "lunamux.taskPanelSource" to "TaskPanel.kt",
+        "lunamux.toolkitBootstrapSource" to "LunamuxToolkitBootstrap.kt",
+    )) {
+        val file = rootProject.layout.projectDirectory.file("web/src/jsMain/kotlin/se/soderbjorn/lunamux/$name")
+        inputs.file(file).withPropertyName(property)
+        systemProperty(property, file.asFile.absolutePath)
+    }
 }
 
 // Connects to a running server as a read-only client and prints whether the overview, the footer

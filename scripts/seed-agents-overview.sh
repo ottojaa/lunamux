@@ -25,12 +25,13 @@
 #
 # Open https://localhost:8471, press ⌘⇧A and look at:
 #
-#   NOW              "Access control" only, as a ◆ row reading "needs you" with the question in quotes: one of
-#                    its members needs you, and a question stays in NOW wherever it runs. NOW is the sessions in open tabs, and nothing here is in a tab.
-#                    "Nightly sync" (its file is 25 minutes old, so its worker reads "stale 25m") and
-#                    "Billing cleanup" (a session in review, one queued) have no session in an open tab,
-#                    so they are in the first EARLIER band. Run scripts/seed-agents-overview-live.sh to
-#                    put live sessions in the tabs and see them in NOW.
+#   NOW              "Access control" only: its main conversation is closed and one of its background agents
+#                    waits on a question, so the row says a question waits and counts in the footer once
+#                    that conversation is resumed (↵ asks first, then resumes). NOW is the live conversations
+#                    in open tabs, and nothing here is in a tab. "Nightly sync" (its file is 25 minutes old)
+#                    and "Billing cleanup" have no conversation in an open tab, so they are in the first
+#                    EARLIER band. Run scripts/seed-agents-overview-live.sh to put live conversations in the
+#                    tabs and see them in NOW.
 #   LAST FEW DAYS    everything finished within 3 days, newest first: "Release train",
 #                    a file task whose three sessions are all done but none has ended; today's two
 #                    sessions, "Rate limiter rewrite" and "Auth token refresh" (a session from
@@ -50,13 +51,14 @@
 #   A restart        "Trace the slow login" (open, idle for 2 days) and "Rebuild the search index"
 #                    (open, working for 5 hours) are ended by the server when it starts. They are
 #                    aged from when they last did anything (2d and 5h), not from the restart.
-#   Release 4.2 notes  an agent-made task with its own session, the status "Notes drafted, waiting on the
-#                    changelog check" and two members that ran in background tabs, all ended, so it is
-#                    one "finished" row in the first EARLIER band. Search finds its own session but never the two background
-#                    ones. Run scripts/seed-agents-overview-live.sh for the live version in NOW.
-#                    It also holds a panel of blocks (status, checks, timeline, links, a line of markup that
-#                    stays text, two buttons) written by "release notes agent"; the panel shows once the
-#                    task's own session is in a tab, which the live script arranges for its own task.
+#   Release 4.2 notes  a task with its own conversation, the status "Notes drafted, waiting on the
+#                    changelog check" and two agents that ran in background tabs, all ended, so it is one
+#                    "finished" row in the first EARLIER band. Search finds its own conversation but never the
+#                    two background ones. Run scripts/seed-agents-overview-live.sh for the live version in NOW.
+#                    It also holds the panel's four blocks (Agents, Progress, Links, Recent activity),
+#                    each listing five and then "+ N more", and a long activity entry followed by a short one
+#                    to show the gap between them at the panel's narrowest width. The panel shows once the
+#                    task's own conversation is in a tab, which the live script arranges for its own task.
 #   Search           type "invoice": three sessions of "Invoice export migration", 30 days old,
 #                    found only through their task's title ("in task Invoice export migration").
 #                    "token" also matches by task; "limiter" matches by title first.
