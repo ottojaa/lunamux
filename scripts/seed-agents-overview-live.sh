@@ -169,7 +169,7 @@ call set_task_status "{\"taskId\":\"$NOTES\",\"text\":\"Notes drafted, waiting o
 # links are several kinds (a Slack thread, pull requests, a Claude artifact, documents, a brief and
 # the decisions, each under a block titled for its kind) and more than five, so the panel says
 # "+ N more". One activity line wraps to three lines at the narrowest width and is followed by a
-# one-line entry; one holds markup that must stay text.
+# one-line entry.
 call set_task_panel "$(python3 -I -c 'import json,sys
 import time
 now = int(time.time() * 1000)
@@ -192,7 +192,7 @@ print(json.dumps({"taskId": sys.argv[1], "by": "release notes agent", "blocks": 
   {"id": "activity", "type": "timeline", "title": "Recent activity", "items": [
     {"at": now - 120000, "text": "Changelog check found two gaps: the entry for the sidebar fix has no merged pull request, and the one for the search change points at a pull request that was closed without merging"},
     {"at": now - 300000, "text": "Draft sent for review"},
-    {"at": now - 720000, "text": "Pasted from a log: <img src=x onerror=alert(1)>"},
+    {"at": now - 720000, "text": "Release thread opened for sign-off"},
     {"at": now - 1200000, "text": "Screenshot refresh started"},
     {"at": now - 2400000, "text": "Draft written"},
     {"at": now - 4200000, "text": "Upgrade guide linked"},

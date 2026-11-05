@@ -325,8 +325,8 @@ object AgentsOverviewSeed {
      * The links and the activity are longer than the five lines the panel shows, so the seeded
      * panel shows "+ N more". The activity list holds the awkward cases on purpose: one entry long
      * enough to wrap to three lines at the panel's narrowest width, directly followed by a
-     * one-line entry (the gap between the two must stay a full line), and one with markup that must
-     * stay text.
+     * one-line entry (the gap between the two must stay a full line). It carries no test payload:
+     * the seed is what the design screenshots are taken from.
      *
      * Called by [seedReleaseNotes]. The blocks are stored the way the panel store stores them, so
      * a server that starts on the seeded database shows them as soon as the task's main
@@ -374,7 +374,7 @@ object AgentsOverviewSeed {
                     listOf(
                         TaskTimelineItem(now - 2 * MINUTE, "Changelog check found two gaps: the entry for the sidebar fix has no merged pull request, and the one for the search change points at a pull request that was closed without merging"),
                         TaskTimelineItem(now - 5 * MINUTE, "Draft sent for review"),
-                        TaskTimelineItem(now - 12 * MINUTE, "Pasted from a log: <img src=x onerror=alert(1)>"),
+                        TaskTimelineItem(now - 12 * MINUTE, "Release thread opened for sign-off"),
                         TaskTimelineItem(now - 20 * MINUTE, "Screenshot refresh started"),
                         TaskTimelineItem(now - 40 * MINUTE, "Draft written"),
                         TaskTimelineItem(now - 70 * MINUTE, "Upgrade guide linked"),
