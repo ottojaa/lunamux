@@ -128,7 +128,7 @@ class OverviewChecksTest {
         val wrong = s.overview.now.map { if (it.taskId == "g1") it.copy(recordId = "solo") else it }
         val c4 = OverviewChecks.evaluate(s.copy(overview = s.overview.copy(now = wrong))).first { it.id == "C4" }
         assertFalse(c4.ok)
-        assertTrue(c4.problems.single().contains("not the main one main"))
+        assertTrue(c4.problems.single().contains("neither the main one main nor one that asks"))
     }
 
     @Test
@@ -158,10 +158,61 @@ class OverviewChecksTest {
     }
 
     @Test
+    fun aWaitingMemberInAListedTabWhileTheMainConversationWorksPassesEveryCheck() {
+        layout(WindowConfig(tabs = listOf(TabConfig(id = "tab-1", title = "one", panes = panes(listOf("leaf-main", "leaf-w")))), activeTabId = "tab-1"))
+        windowState.updateAgentSessions(listOf(conversation("main", "working", taskId = "g1"), conversation("w", "needs_you", taskId = "g1")), true)
+        windowState.updateAgentTasks(listOf(task("main")))
+        val row = snapshot().overview.now.single { it.taskId == "g1" }
+        assertEquals(AgentsOverviewBackingViewModel.Enter.JUMP, row.enter)
+        assertEquals("w", row.recordId, "Return goes to the question, not to the main conversation")
+        val checks = OverviewChecks.evaluate(snapshot())
+        assertEquals(emptyList(), failed(checks), OverviewChecks.render(checks))
+    }
+
+    @Test
+    fun aMainConversationInABackgroundTabThatAsksNeedsItsTabShownNotAJump() {
+        layout(
+            WindowConfig(
+                tabs = listOf(
+                    TabConfig(id = "tab-1", title = "one", panes = panes(listOf("leaf-solo"))),
+                    TabConfig(id = "tab-bg", title = "agents", panes = panes(listOf("leaf-main")), isBackground = true),
+                ),
+                activeTabId = "tab-1",
+            ),
+        )
+        windowState.updateAgentSessions(listOf(conversation("main", "needs_you", taskId = "g1", background = true), conversation("solo", "done")), true)
+        windowState.updateAgentTasks(listOf(task("main")))
+        val s = snapshot()
+        val row = s.overview.now.single { it.taskId == "g1" }
+        assertEquals(AgentsOverviewBackingViewModel.Enter.SHOW_WAITING, row.enter)
+        assertEquals(emptyList(), failed(OverviewChecks.evaluate(s)), OverviewChecks.render(OverviewChecks.evaluate(s)))
+        val jumping = s.overview.now.map { if (it.taskId == "g1") it.copy(enter = AgentsOverviewBackingViewModel.Enter.JUMP) else it }
+        val c5 = OverviewChecks.evaluate(s.copy(overview = s.overview.copy(now = jumping))).first { it.id == "C5" }
+        assertFalse(c5.ok)
+        assertTrue(c5.problems.single().contains("jumps instead of showing the tab"))
+    }
+
+    @Test
+    fun aMainConversationInABackgroundTabThatDoesNotAskPassesTheReturnCheckWithNothingToOpen() {
+        layout(
+            WindowConfig(
+                tabs = listOf(
+                    TabConfig(id = "tab-1", title = "one", panes = panes(listOf("leaf-solo"))),
+                    TabConfig(id = "tab-bg", title = "agents", panes = panes(listOf("leaf-main")), isBackground = true),
+                ),
+                activeTabId = "tab-1",
+            ),
+        )
+        windowState.updateAgentSessions(listOf(conversation("main", "working", taskId = "g1", background = true), conversation("solo", "done")), true)
+        windowState.updateAgentTasks(listOf(task("main")))
+        assertEquals(emptyList(), failed(OverviewChecks.evaluate(snapshot())), OverviewChecks.render(OverviewChecks.evaluate(snapshot())))
+    }
+
+    @Test
     fun aRowWhoseReturnOpensAnotherConversationThanTheOneThatAsksFailsTheQuestionCheck() {
         usualCase(bgState = "needs_you")
         val s = snapshot()
-        val wrong = s.overview.now.map { if (it.taskId == "g1") it.copy(recordId = "main", enter = AgentsOverviewBackingViewModel.Enter.JUMP) else it }
+        val wrong = s.overview.now.map { if (it.taskId == "g1") it.copy(recordId = "main", enter = AgentsOverviewBackingViewModel.Enter.SHOW_WAITING) else it }
         val c5 = OverviewChecks.evaluate(s.copy(overview = s.overview.copy(now = wrong))).first { it.id == "C5" }
         assertFalse(c5.ok)
         assertTrue(c5.problems.single().contains("which does not ask"))

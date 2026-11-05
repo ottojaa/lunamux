@@ -96,18 +96,24 @@ since that is what the person is asked to allow.
   `set_task_lead`. It is stored by the agent's own session id, which a restart and a resume keep, and
   never by the pane it ran in (pane ids are handed out again at every start). Return does the first
   of these that applies:
-  1. **The main conversation is live in a tab of the strip:** jump to its pane. The footer reads "↵ open".
-  2. **A background agent waits and the main conversation does not:** the tab of that agent is
+  1. **A conversation of the task waits for you, and the main conversation does not:** the oldest
+     waiting one is reached. In a tab of the strip ↵ jumps to its pane; in a hidden tab the tab is
      shown (see "A waiting agent in a hidden tab" below). The row's hint reads "↵ answer it · opens as
-     a tab until it works on".
-  3. **The main conversation is closed:** ask "conversation closed / Resume it in a new tab?"; a
+     a tab until it works on". A working main conversation never hides a waiting member this way.
+  2. **The main conversation is live in a tab of the strip:** jump to its pane. The footer reads "↵ open".
+  3. **The main conversation is live in a hidden tab:** while it asks, its tab is shown as in 1. While it
+     does not ask there is nothing to answer there and no tab to jump to, so ↵ goes to a conversation
+     of the task in a tab of the strip, else offers nothing.
+  4. **The main conversation is closed:** ask "conversation closed / Resume it in a new tab?"; a
      second ↵ runs `claude --resume <conversation id>` in a new tab in its own folder (`codex resume
-     <id>` for a Codex conversation whose id is known). `claude --continue` is never used: it picks the
-     newest conversation of the folder, not this one.
-  4. **There is no conversation:** ask "no conversation / Start one in a new tab?"; a second ↵ runs the
+     <id>` for a Codex conversation whose id is known). The same holds when the server no longer keeps
+     a summary of the conversation: it is resumed by the id the task stores. `claude --continue` is
+     never used: it picks the newest conversation of the folder, not this one.
+  5. **There is no conversation:** ask "no conversation / Start one in a new tab?"; a second ↵ runs the
      task file's `open` action.
-  A row for a conversation that is in no task does 1 or 3 for itself. A resumed conversation is the
-  task's main conversation again, in the same row.
+  A row for a conversation that is in no task does the same for itself: it jumps to a live one in a tab
+  of the strip, shows the tab of a waiting one in a hidden tab, and resumes a closed one. A resumed
+  conversation is the task's main conversation again, in the same row.
   `list_tasks` reports `mainConversation: {conversationId, sessionId?}`; the `sessionId` is the pane
   the conversation runs in now and is missing while it is closed.
 - **A question before a resume.** When the conversation ↵ would go to is not running, the first ↵
@@ -181,7 +187,13 @@ single pane is not asked about, and an agent's `close_tab` never asks.
 
 Sessions of Claude Code report their state through hooks: a prompt that asks for permission or
 elicits an answer is **needs you**, a finished turn is **done**, and nothing is guessed from the text of
-a reply. For Codex and Gemini the state comes from reading the screen, so it is a best guess and lags a
+a reply. Claude Code sends no event when a permission prompt is answered or refused, so the screen
+ends the wait: once Lunamux has seen the prompt on screen, work on screen means it was approved (the
+row is working) and a screen with neither the prompt nor work means it was refused (the row is done).
+A prompt refused before Lunamux's next look at the screen (about three seconds) was never seen, so the
+row keeps waiting until the conversation's next event; Lunamux does not clear it on a timer, because a
+question it failed to recognise on screen would then vanish from the count while still unanswered.
+For Codex and Gemini the state comes from reading the screen, so it is a best guess and lags a
 little. Codex is its own conversation per session: its own conversation id has not been confirmed
 against a real session, so a resumed Codex session may show as a new row.
 
@@ -225,8 +237,10 @@ server already trusts as a device (not the tool-endpoint token). It checks that:
 2. every live conversation in a visible tab is in NOW exactly once, and a background agent has a row only while it waits for you;
 3. no two rows are the same conversation;
 4. Return on a task's row reaches or resumes its main conversation by conversation id (`-Pmain` names
-   the conversation a task must have);
-5. every needs-you leads to a visible question;
+   the conversation a task must have), or leads to another conversation of the task that asks, or, when
+   the main conversation runs in a hidden tab and does not ask, to one in a tab of the strip;
+5. every needs-you leads to a visible question: the row's Return opens a conversation that asks, and
+   shows the tab when the conversation is in a hidden one;
 6. no hidden tab appears on its own: with `-Pwatch` the checker keeps watching the layout, and a tab
    that becomes listed without a mark, or stays listed after nothing in it waits, fails;
 7. the panel's agents are only working or waiting ones; and the panel is four blocks with at most five

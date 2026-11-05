@@ -1449,6 +1449,43 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
+    fun aMainConversationInABackgroundTabThatAsksIsShownAsItsTabNotJumpedTo() = runNow {
+        layoutWithBackground(listOf("leaf-listed"), listOf("leaf-main"))
+        show(
+            listOf(hostedTask(main = "main")),
+            session("main", "needs_you", taskId = "g1", background = true),
+            session("listed", "working", lastActivityAt = now - 1_000),
+        )
+        val r = row("task:g1")
+        assertEquals(Enter.SHOW_WAITING, r.enter, "an unlisted tab cannot be jumped to")
+        assertEquals("main", r.recordId)
+        vm.activate(r)
+        assertEquals(listOf<WindowCommand>(WindowCommand.ShowWaitingAgent("main")), sent)
+    }
+
+    @Test
+    fun aMainConversationInABackgroundTabThatWorksJumpsToAListedMemberElseOffersNothing() = runNow {
+        layoutWithBackground(listOf("leaf-listed"), listOf("leaf-main"))
+        show(
+            listOf(hostedTask(main = "main")),
+            session("main", "working", taskId = "g1", background = true, lastActivityAt = now - 1_000),
+            session("listed", "working", taskId = "g1", lastActivityAt = now - 1_000),
+        )
+        var r = row("task:g1")
+        assertEquals(Enter.JUMP, r.enter)
+        assertEquals("listed", r.recordId)
+        show(
+            listOf(hostedTask(main = "main")),
+            session("main", "working", taskId = "g1", background = true, lastActivityAt = now - 1_000),
+        )
+        r = row("task:g1")
+        assertEquals(Enter.NONE, r.enter, "there is nothing to answer and no tab to jump to")
+        sent.clear()
+        vm.activate(r)
+        assertEquals(emptyList<WindowCommand>(), sent)
+    }
+
+    @Test
     fun aMainConversationNoSummaryHoldsAnyMoreIsResumedByItsStoredIdNotReplacedByAnotherSession() = runNow {
         layout("leaf-m")
         show(

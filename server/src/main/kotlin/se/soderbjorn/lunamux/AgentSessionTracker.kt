@@ -234,6 +234,9 @@ class AgentSessionTracker(
                 // the prompt nor work means the prompt is gone without a go-ahead (a No): done.
                 // The poller already holds the last state for a few polls, so one poll without
                 // the prompt is a prompt that has left. A later hook moves the row on again.
+                // Known gap: a prompt answered before any poll saw it is never cleared here, since
+                // a screen without a prompt cannot tell a missed prompt from one the detector does
+                // not recognise, and clearing on a timer would hide an unanswered question.
                 if (rec.state != NEEDS_YOU) promptSeen.remove(rec.id)
                 else if (pane.state == "waiting") promptSeen.add(rec.id)
                 else if (promptSeen.remove(rec.id)) {

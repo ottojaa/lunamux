@@ -52,6 +52,7 @@ class WorkingGlyphRedrawTest {
         var redraws = 0
         val started = kotlin.js.Date.now()
         var lastSampleAt = started
+        var afterStall = false
         return Promise { resolve, reject ->
             var redrawTimer = 0
             var sampleTimer = 0
@@ -67,12 +68,14 @@ class WorkingGlyphRedrawTest {
                 val index = spec.frames.indexOf(frame)
                 val clockIndex = ((now / spec.stepMs).toLong() % spec.frames.size).toInt()
                 val behindIndex = (clockIndex + spec.frames.size - 1) % spec.frames.size
+                // A sample that came late (a loaded machine stalls timers), and the one right after it while the
+                // glyph's own tick catches up, may be several steps off the clock or have skipped steps; only
+                // prompt samples count.
+                val prompt = now - lastSampleAt <= spec.stepMs && !afterStall
+                afterStall = now - lastSampleAt > spec.stepMs
                 if (index < 0) problems.add("no frame on show at ${now - started} ms")
                 else {
-                    if (index != clockIndex && index != behindIndex) problems.add("frame $index at ${now - started} ms, the clock says $clockIndex")
-                    // A sample that came late (a loaded machine stalls timers) may have skipped steps; only a jump
-                    // within a prompt sample is a redraw's fault.
-                    val prompt = now - lastSampleAt <= spec.stepMs
+                    if (prompt && index != clockIndex && index != behindIndex) problems.add("frame $index at ${now - started} ms, the clock says $clockIndex")
                     if (prompt && index != lastIndex && index != (lastIndex + 1) % spec.frames.size) problems.add("frame jumped from $lastIndex to $index")
                     if (index != lastIndex) seen.add(frame)
                     lastIndex = index

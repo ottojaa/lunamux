@@ -117,10 +117,8 @@ class AgentsOverviewMomentsTest {
         assertEquals("◆", row("task:g1").marker)
         assertEquals(1, vm.state.needYouCount)
         assertEquals(1, AgentCounts.of(windowState.agentSessions.value, windowState.agentTasks.value, now).waiting)
-        // The tab strip's dot is the waiting state of the panes in the tab; the pane of the main conversation sits in tab-1.
-        windowState.updateStates(mapOf("s-leaf-main" to "waiting"))
-        val tab = windowState.config.value!!.tabs.single { it.id == "tab-1" }
-        assertTrue(tab.panes.any { windowState.states.value[it.leaf.sessionId] == "waiting" }, "the tab holding the asking conversation shows the waiting dot")
+        // The tab strip's dot is drawn by the web page from the terminal state of the panes in the tab, which is
+        // not part of this view model, so it is not asserted here: the moment's screenshot on the live check shows it.
     }
 
     /** Moment 4: a background member asks; the tab stays hidden. */

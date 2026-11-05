@@ -162,7 +162,14 @@ object OverviewChecks {
         return Check("C3", "no two rows are the same conversation", problems)
     }
 
-    /** C4: Return on a task's row reaches or resumes its main conversation, by conversation id. */
+    /**
+     * C4: Return on a task's row reaches or resumes its main conversation, by conversation id.
+     *
+     * Two things may stand in for the main conversation: another conversation of the task that asks
+     * for the person (the row then leads to the question), and, when the main conversation runs in
+     * a background tab and does not ask, a conversation of the task in a listed tab, since that
+     * background tab cannot be jumped to.
+     */
     private fun returnReachesMain(s: Snapshot): Check {
         val problems = mutableListOf<String>()
         for (task in s.tasks) {
@@ -177,17 +184,24 @@ object OverviewChecks {
                     // A main conversation older than the summaries kept is resumed by the id the task stores.
                     if (target == null && row.enter == AgentsOverviewBackingViewModel.Enter.RESUME && row.recordId == main) Unit
                     else if (target == null) problems += "↵ on \"${row.title}\" names no conversation"
-                    else if (target.conversationId != main) problems += "↵ on \"${row.title}\" goes to conversation ${target.conversationId}, not the main one $main"
+                    else if (target.conversationId != main && target.state != NEEDS_YOU && !mainIsUnreachableBackground(s, main)) {
+                        problems += "↵ on \"${row.title}\" goes to conversation ${target.conversationId}, which is neither the main one $main nor one that asks"
+                    }
                 }
                 AgentsOverviewBackingViewModel.Enter.SHOW_WAITING -> {
                     val own = s.sessions.firstOrNull { it.conversationId == main }
-                    if (own != null && own.state == NEEDS_YOU) problems += "↵ on \"${row.title}\" opens a background agent while the main conversation waits"
+                    val target = s.sessions.firstOrNull { it.id == row.recordId || it.conversationId == row.recordId }
+                    if (own != null && own.state == NEEDS_YOU && target?.conversationId != main) problems += "↵ on \"${row.title}\" opens a background agent while the main conversation waits"
                 }
                 else -> Unit
             }
         }
         return Check("C4", "Return on a task's row reaches or resumes the main conversation by conversation id", problems)
     }
+
+    /** Whether the main conversation [main] is open in a background tab, which Return cannot jump to. */
+    private fun mainIsUnreachableBackground(s: Snapshot, main: String): Boolean =
+        s.sessions.firstOrNull { it.conversationId == main }?.let { it.background && it.state != ENDED } == true
 
     /** C5: every conversation that needs you has a question on screen, or one Return can show. */
     private fun everyNeedsYouHasAQuestion(s: Snapshot): Check {
@@ -200,6 +214,9 @@ object OverviewChecks {
             if (row == null) problems += "\"${c.title ?: c.id}\" needs you and no row leads to it"
             else if (row.enter != AgentsOverviewBackingViewModel.Enter.JUMP && row.enter != AgentsOverviewBackingViewModel.Enter.SHOW_WAITING) {
                 problems += "\"${c.title ?: c.id}\" needs you but ↵ on its row \"${row.title}\" does not open it"
+            } else if (!place.tab.isListed && row.enter != AgentsOverviewBackingViewModel.Enter.SHOW_WAITING) {
+                // A jump to a tab that is not listed shows nothing: only the marked tab reaches it.
+                problems += "\"${c.title ?: c.id}\" needs you in a background tab but ↵ on its row \"${row.title}\" jumps instead of showing the tab"
             } else {
                 // Opening something is not enough: the conversation Return opens must be one that asks.
                 val target = s.sessions.firstOrNull { it.id == row.recordId || it.conversationId == row.recordId }

@@ -1203,8 +1203,10 @@ class AgentsOverviewBackingViewModel(
      *
      * A live main conversation is jumped to, unless another open conversation of the task waits for
      * the person and the main one does not: that one is jumped to, or opened as a marked tab when it
-     * is a background one. With the main conversation closed, a waiting open conversation is
-     * reached the same way, else the
+     * is a background one. A main conversation in a background tab has no tab to jump to: it is
+     * opened as a marked tab while it asks, and otherwise ↵ goes to a conversation of the task in a
+     * listed tab, else offers nothing, since there is nothing to answer there. With the main
+     * conversation closed, a waiting open conversation is reached the same way, else the
      * closed main conversation is resumed (a conversation the task has in a listed tab does not
      * replace it), else a live conversation in a listed tab is jumped to (the one waiting longest
      * on the person, else the busiest), else the task's `open` action runs, else the newest
@@ -1230,8 +1232,13 @@ class AgentsOverviewBackingViewModel(
     ): Pair<Enter, AgentSessionSummary?> {
         val asking = open.filter { it.member.state == NEEDS_YOU }.minByOrNull { it.member.sinceMillis }?.session
         val mainAsks = main != null && main.state == NEEDS_YOU
-        if (mainLive && (asking == null || mainAsks)) return Enter.JUMP to main
-        if (asking != null) return (if (asking.background) Enter.SHOW_WAITING else Enter.JUMP) to asking
+        if (mainLive && main != null && (asking == null || mainAsks)) {
+            if (!main.background) return Enter.JUMP to main
+            // A background tab is not listed, so a jump would show nothing: only its marked tab can be reached.
+            if (mainAsks) return Enter.SHOW_WAITING to main
+        } else if (asking != null) {
+            return (if (asking.background) Enter.SHOW_WAITING else Enter.JUMP) to asking
+        }
         // The conversation that most needs the person comes first: the ◆ that has waited longest, then
         // the working one with the freshest sign of life, then any other open one.
         val urgency = compareBy<Run>(
@@ -1241,7 +1248,9 @@ class AgentsOverviewBackingViewModel(
         val listed = open.filter { !it.session!!.background }.minWithOrNull(urgency)
         val newest = runs.mapNotNull { it.session }.maxByOrNull(::activityOf)
         return when {
-            mainLive -> Enter.JUMP to main
+            mainLive && main != null && !main.background -> Enter.JUMP to main
+            mainLive && listed != null -> Enter.JUMP to listed.session
+            mainLive -> Enter.NONE to null
             main != null -> Enter.RESUME to main
             resumeId != null -> Enter.RESUME to null
             listed != null -> Enter.JUMP to listed.session
