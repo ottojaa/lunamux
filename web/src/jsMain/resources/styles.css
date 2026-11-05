@@ -3873,16 +3873,18 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-md code, .tp-md-code { background: color-mix(in srgb, var(--tp-text) 8%, transparent); padding: 0 3px; }
 .tp-md-code { display: block; margin: 0 0 6px; padding: 6px 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
 
-/* The watch: the read-only live view of a background agent, laid over the panes. */
+/* The watch: the read-only live view of a background agent, laid over the panes. It never draws
+   outside the pane it lies over (a pane can be narrower than the header's words), so the header wraps
+   by words and the name line cuts with an ellipsis instead of running into the task panel. */
 .watch {
-    position: fixed; z-index: 50; display: flex; flex-direction: column;
+    position: fixed; z-index: 50; display: flex; flex-direction: column; overflow: hidden;
     background: var(--dt-window-bg, var(--t-surface, #0c1a1e)); color: var(--t-text, #cfe3e2);
     font: 12px/1.4 var(--dt-font-mono, ui-monospace, Menlo, monospace);
 }
-.watch-bar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; padding: 8px 12px; border-bottom: 1px solid var(--t-border, #1b3136); }
-.watch-head { flex: none; color: var(--t-accent, #5fd4d0); white-space: nowrap; }
-.watch-who { display: flex; flex: 1 1 8em; justify-content: flex-end; min-width: 0; color: var(--t-text-dim, #6f8f92); white-space: pre; }
-.watch-who-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.watch-bar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; min-width: 0; padding: 8px 12px; border-bottom: 1px solid var(--t-border, #1b3136); }
+.watch-head { flex: 0 1 auto; min-width: 0; color: var(--t-accent, #5fd4d0); overflow-wrap: anywhere; }
+.watch-who { display: flex; flex: 1 1 8em; min-width: 0; overflow: hidden; color: var(--t-text-dim, #6f8f92); white-space: pre; }
+.watch-who-title { min-width: 0; margin-left: auto; overflow: hidden; text-overflow: ellipsis; }
 .watch-who-esc { flex: none; }
 .watch-screen { flex: 1; min-height: 0; overflow: hidden; padding: 6px; }
 .watch-empty { color: var(--t-text-dim, #6f8f92); }
