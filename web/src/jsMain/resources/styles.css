@@ -3640,7 +3640,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
    columns line up in every row. */
 .ao-row {
     display: grid;
-    grid-template-columns: 14px minmax(20ch, 2fr) 16ch 14ch minmax(0, 3fr) 36px;
+    grid-template-columns: 14px minmax(20ch, 2fr) 16ch 15ch minmax(0, 3fr) 36px;
     gap: 0 12px;
     align-items: start;
     padding: 3px 14px;
@@ -3667,15 +3667,71 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-sw-done { color: var(--ao-done); }
 .ao-age { text-align: right; color: var(--ao-dim); }
 .ao-n-error { color: var(--ao-error); }
-.ao-tab { color: var(--ao-dim); }
 
-/* The selected row's own line: the full text and where ↵ goes, under the columns after the marker. */
+/* The selected row's own block under the columns after the marker: the status in full, the chips, any extra
+   text, and in place of the status the question the first enter asks. */
 .ao-focus {
     grid-column: 2 / -1;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+    gap: 7px;
     white-space: normal;
     font-size: 12px;
     color: var(--ao-muted);
-    padding: 1px 0 5px;
+    padding: 3px 0 6px;
+}
+.ao-full { line-height: 1.5; }
+.ao-xtra { line-height: 1.5; }
+.ao-chips { display: flex; flex-wrap: wrap; gap: 8px; line-height: 1; min-width: 0; }
+.ao-pill {
+    display: inline-block;
+    padding: 4px 9px;
+    border-radius: 999px;
+    white-space: nowrap;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.ao-pill-dir { border: 1px solid var(--ao-line); color: var(--ao-dim); background: var(--ao-surface); }
+.ao-pill-tab {
+    color: var(--ao-accent);
+    background: color-mix(in srgb, var(--ao-accent) 12%, var(--ao-surface));
+    border: 1px solid color-mix(in srgb, var(--ao-accent) 35%, transparent);
+}
+
+/* The question the first enter asks before it resumes or starts anything. */
+.ao-ask {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 6px 16px;
+    padding: 7px 10px;
+    border: 1px solid color-mix(in srgb, var(--ao-accent) 55%, transparent);
+    border-radius: 5px;
+    background: color-mix(in srgb, var(--ao-accent) 7%, var(--ao-surface));
+    cursor: default;
+}
+.ao-ask-q { color: var(--ao-text); }
+.ao-ask-tag {
+    display: inline-block;
+    margin-right: 10px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--ao-line);
+    color: var(--ao-dim);
+    font-size: 11px;
+}
+.ao-ask-keys { color: var(--ao-dim); white-space: nowrap; }
+.ao-ask-key { cursor: pointer; margin-left: 8px; }
+.ao-kbd {
+    font: 600 11px/1 var(--ao-mono);
+    color: var(--ao-text);
+    border: 1px solid var(--ao-line);
+    border-radius: 3px;
+    padding: 2px 5px;
+    margin-right: 3px;
 }
 
 /* Earlier and finished rows recede. */
@@ -3710,7 +3766,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-work-layer { position: absolute; inset: 0; opacity: 0; }
 .ao-more .ao-t { color: var(--ao-dim); }
 
-/* Footer: the same three keys for every selection; keys in the text colour, words dim. */
+/* Footer: the keys the view model names for the selection or the question; keys in the accent, words dim. */
 .ao-foot {
     display: flex;
     align-items: center;
@@ -3729,7 +3785,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 
 /* Narrow panels: the folder and the detail give way, the extra line then carries the detail. */
 @container ao (max-width: 700px) {
-    .ao-row { grid-template-columns: 14px minmax(0, 1fr) 14ch 36px; }
+    .ao-row { grid-template-columns: 14px minmax(0, 1fr) 15ch 36px; }
     .ao-row > .ao-w, .ao-row > .ao-n { display: none; }
     .ao-focus { grid-column: 2 / -1; }
 }

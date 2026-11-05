@@ -20,19 +20,19 @@
 #                    tab "Docs" is the active one. The second window lands in "Checkout", beside the
 #                    first, and its session joins the task: the script prints the tab it landed in.
 #   tab "Docs"       a working session "Docs sweep" and a session that needs you ("Which branch?").
-#   tab "Release notes"  a session that owns a task of the same name, has finished its turn and gives the
+#   tab "Release notes"  a session that owns a task of the same name, is still working and gives the
 #                    task a status line, and two agents that session started out of sight (create_window
 #                    with background and the task's id), in background tabs that no tab strip lists:
 #                    "Changelog check" and "Screenshot refresh", both working. The task's row counts the
-#                    two background ones as its "2 working" and lists neither.
+#                    three sessions, its own and the two background ones, as its "3 working" and lists none.
 #                    The task also has a panel of blocks written by "release notes agent": in this tab ⌘I
 #                    shows it (the agents block first, both helpers listed and working), in any other tab
 #                    there is no panel. ↵ on a helper watches its terminal read-only; ⌘↵ shows its tab as an ordinary tab.
 #
 # What to look at (⌘⇧A):
 #
-#   NOW              "Rate limiter" (the two Checkout sessions, "2 working"), "Release notes" ("2 working":
-#                    its two background agents, with its status as the detail), "Docs sweep" and the ◆
+#   NOW              "Rate limiter" (the two Checkout sessions, "2 working"), "Release notes" ("3 working":
+#                    its own session and its two background agents, with its status as the detail), "Docs sweep" and the ◆
 #                    "needs you" row with its question in quotes. Each working row says what the tool call
 #                    does in words ("Editing TokenBucket.kt", "Reading CHANGELOG.md"); "Docs sweep" runs a
 #                    shell command and shows the call's description, long enough that the row cuts it, so
@@ -40,11 +40,13 @@
 #                    "Nightly sync" and "Billing cleanup" (task files whose members are not in any
 #                    open tab) are in EARLIER, not NOW. "Access control" stays in NOW because one of
 #                    its members needs you, wherever it runs.
-#   Release notes    the selected row's second line reads "tab n", the tab of the task's own session,
-#                    which ↵ jumps to (its status fits the row, so it is not repeated). Close
-#                    the "Release notes" tab in the app to see the question that lists the two
-#                    agents that keep running; after that the row still counts them as working,
-#                    and ↵ on it resumes the task's own session.
+#   Release notes    ↵ on the row goes to the pane of the task's own session (its tab is open, the
+#                    footer reads "↵ open"); the row's second line shows the working folder of that
+#                    session as a chip, and a tab chip only when the tab's name lacks a word of the
+#                    task's title. Close the "Release notes" tab in the app to see the question that
+#                    lists the two agents that keep running; after that the row still counts them as
+#                    working, and ↵ on it asks "Resume it in a new tab?" (tag "conversation closed")
+#                    before a second ↵ resumes the task's own session.
 #   Close "Docs"     close the tab in the app: its panes close and their sessions end. A session that
 #                    has just ended stays in NOW for ten minutes, so "Docs sweep" and the question are
 #                    still listed (as ended) right after the close and the chip drops by one working and
@@ -137,7 +139,6 @@ SES5="$(field "$LAYOUT" '[w for t in d["tabs"] if t["tabId"]=="'"$TAB3"'" for w 
 title "$SES5" "Release notes"
 hook "$SES5" live-notes '{"hook_event_name":"UserPromptSubmit","prompt":"Write the release notes for 4.3 and split the checks between two agents"}'
 hook "$SES5" live-notes '{"hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"docs/release-notes.md"}}'
-hook "$SES5" live-notes '{"hook_event_name":"Stop"}'
 # The task first, from the tab that holds its own session; then the two helpers join it as
 # background windows, the way an agent that fans work out would open them.
 ARGS="{\"title\":\"Release notes\",\"sessionIds\":[\"$SES5\"]}"

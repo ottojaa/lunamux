@@ -99,4 +99,7 @@ tasks.named<Test>("jvmTest") {
     val stylesCss = rootProject.layout.projectDirectory.file("web/src/jsMain/resources/styles.css")
     inputs.file(stylesCss).withPropertyName("stylesCss")
     systemProperty("lunamux.stylesCss", stylesCss.asFile.absolutePath)
+    val glyphSource = rootProject.layout.projectDirectory.file("web/src/jsMain/kotlin/se/soderbjorn/lunamux/WorkingGlyph.kt")
+    inputs.file(glyphSource).withPropertyName("workingGlyphSource")
+    systemProperty("lunamux.workingGlyphSource", glyphSource.asFile.absolutePath)
 }

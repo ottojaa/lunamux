@@ -9,13 +9,16 @@
  * and colour follow the state: a working or needs-you row has a bright title, a done one a
  * mid-grey title, and a finished one in EARLIER a dim row (a task in EARLIER whose agent still moves stays bright, with the glyph). The state word is cyan with the app's working glyph in
  * front while an agent moves ([workingGlyph]), yellow when the task needs the person, a muted
- * green when it is done. The selected row carries one more line under it with the tab its session
- * sits in and the like, and the detail's full text when (and only when) the row cut it short or
- * hides it in a narrow panel; it has none when there is nothing to put on it. ↵ opens the row, ⌘↵ takes a
- * background tab over, → peeks at the session ↵ would open, and ⌘⌫ closes a live one after an
- * inline confirmation. Typing two or more characters swaps the lists for search results over every
- * task ever run, one row per task. EARLIER shows its newest five rows and a "+ N more" line for
- * the rest. The footer is the same for every selection.
+ * green when it is done. The selected row carries more under it: the status in full when (and only when)
+ * the row cut it short or hides it in a narrow panel, any text the model put on the row (where a
+ * search matched, a failed resume), then chips: the working folder of the session ↵ goes to and,
+ * when it tells something the title does not, the tab that session is in. ↵ opens the row (a
+ * session in a background tab is watched, and one that is not running is resumed only after a
+ * question under the row, answered by a second ↵), ⌘↵ takes a background tab over, → peeks at the
+ * session ↵ would open, and ⌘⌫ closes a live one after an inline confirmation. Typing two or more
+ * characters swaps the lists for search results over every task ever run, one row per task.
+ * EARLIER shows its newest five rows and a "+ N more" line for the rest. The footer's keys come
+ * from the model, so they follow the selection and the question.
  *
  * All state and behaviour live in the shared [AgentsOverviewBackingViewModel]; this file only
  * draws its state as plain DOM and turns key presses and clicks into calls on it. Rows are found
@@ -56,13 +59,15 @@ internal const val AGENTS_OVERVIEW_HOTKEY_ACTION_ID: String = "Lunamux.agentsOve
 
 /** The shared view model; created on first use, after the window socket exists. */
 private val agentsOverview: AgentsOverviewBackingViewModel by lazy {
-    AgentsOverviewBackingViewModel(lunamuxClient.windowState) { windowSocket.send(it) }
+    AgentsOverviewBackingViewModel(lunamuxClient.windowState, watch = watchViewModel::watch) { windowSocket.send(it) }
 }
 
 private var chipElement: HTMLElement? = null
 private var overlayElement: HTMLElement? = null
 private var searchInput: HTMLInputElement? = null
 private var listElement: HTMLElement? = null
+private var footerElement: HTMLElement? = null
+private var footerShown: String? = null
 private var shownRows: Map<String, Row> = emptyMap()
 private var searchTimer: Int? = null
 private var peekTimer: Int? = null
@@ -77,9 +82,6 @@ private const val PEEK_REFRESH_MS = 2_000
 
 /** How often the open list redraws on its own, so ages move and a working row that has gone quiet stops moving. */
 private const val CLOCK_TICK_MS = 30_000
-
-/** The footer's keys and what they do. It is the same for every selection. */
-private val FOOTER = listOf("↵" to "open", "↑↓" to "move", "esc" to "close")
 
 /**
  * Register the configurable **agents overview** hotkey (default ⌘⇧A) with the
@@ -134,6 +136,7 @@ private fun renderAgentsOverview(state: AgentsOverviewBackingViewModel.State) {
     renderChip(state)
     if (state.open) {
         ensureOverlay(state.query)
+        renderFooter(state)
         renderList(state)
     } else {
         closeOverlayElement()
@@ -252,13 +255,6 @@ private fun ensureOverlay(query: String) {
         val key = ((e.target as? HTMLElement)?.closest(".ao-seg") as? HTMLElement)?.getAttribute("data-key")
         if (!key.isNullOrEmpty()) onFooterKey(key)
     })
-    FOOTER.forEach { (key, word) ->
-        val seg = span("ao-seg", "")
-        seg.setAttribute("data-key", key)
-        seg.appendChild(span("ao-k", key))
-        seg.appendChild(document.createTextNode(word))
-        foot.appendChild(seg)
-    }
 
     panel.appendChild(line)
     panel.appendChild(list)
@@ -268,8 +264,31 @@ private fun ensureOverlay(query: String) {
     overlayElement = backdrop
     searchInput = input
     listElement = list
+    footerElement = foot
+    footerShown = null
     kotlinx.browser.window.addEventListener("resize", resizeListener)
     input.focus()
+}
+
+/**
+ * Draw the footer's keys from [state]: the model says which keys apply (the default three, or
+ * "↵ resume · esc cancel" while a question is asked). It is rebuilt only when the keys changed.
+ *
+ * @param state the view model's current state.
+ */
+private fun renderFooter(state: AgentsOverviewBackingViewModel.State) {
+    val foot = footerElement ?: return
+    val shown = state.footer.joinToString("|") { "${it.key} ${it.label}" }
+    if (shown == footerShown) return
+    footerShown = shown
+    foot.textContent = ""
+    state.footer.forEach { key ->
+        val seg = span("ao-seg", "")
+        seg.setAttribute("data-key", key.key)
+        seg.appendChild(span("ao-k", key.key))
+        seg.appendChild(document.createTextNode(key.label))
+        foot.appendChild(seg)
+    }
 }
 
 /** Re-checks whether the selected row cuts its detail when the window, and so the panel, changes size. */
@@ -284,6 +303,8 @@ private fun closeOverlayElement() {
     overlayElement = null
     searchInput = null
     listElement = null
+    footerElement = null
+    footerShown = null
     shownRows = emptyMap()
 }
 
@@ -318,11 +339,12 @@ private fun onFooterKey(key: String) {
 /**
  * Turn a key press in the search box into a view-model call.
  *
- * ↑ and ↓ move the selection (which also closes a peek or a confirmation). → peeks at the session
+ * ↑ and ↓ move the selection (which also cancels a question, a peek or a confirmation). → peeks at the session
  * ↵ would open when the caret is at the end of the text, and ← goes back out of the peek. ⌘⌫ asks
  * to close the selected session (only while the box is empty and the row is one live session),
  * ⌘↵ takes the selected session's background tab over (in the list and in its peek), and esc steps
- * back one level: the peek, then the question, then the overlay. Space types into the search.
+ * back one level: the question the first ↵ asks, then a close confirmation, then the peek, then
+ * the overlay. Space types into the search.
  *
  * @param e the key press in the search box.
  */
@@ -418,32 +440,24 @@ private fun detailIsCut(el: HTMLElement): Boolean {
 }
 
 /**
- * Put the detail's full text on the selected row's second line when the row cut it, and take it off
- * again when it no longer does (a wider panel).
+ * Tell the view model whether the selected row cut its detail short, so it can set
+ * [Row.statusFull] and the row repeats the status in full under itself, and stop when it no longer
+ * does (a wider panel).
  *
- * The row is drawn first without the repeat and measured once it is in the page; only when the
- * answer differs from what the row shows does its second line change, so the call is cheap and
- * cannot loop. A selected row whose detail fits keeps a second line only for what the view model
- * put in [Row.extra], and none when that is empty.
+ * The row is drawn first and measured once it is in the page. The model keeps the answer, so an
+ * answer that has not changed changes nothing and the draw settles after one more pass.
  *
  * Called at the end of [renderList] and from the window's resize event.
  *
- * @see buildFocus
  * @see detailIsCut
+ * @see AgentsOverviewBackingViewModel.setDetailCut
  */
 private fun fitSelectedFocus() {
     val list = listElement ?: return
     val el = list.querySelector(".ao-sel") as? HTMLElement ?: return
     if (list.clientWidth == 0) return
-    val row = el.getAttribute("data-id")?.let { shownRows[it] } ?: return
-    val cut = detailIsCut(el)
-    if (cut == el.hasAttribute("data-cut")) return
-    if (cut) el.setAttribute("data-cut", "1") else el.removeAttribute("data-cut")
-    (el.querySelector(".ao-focus") as? HTMLElement)?.remove()
-    buildFocus(row, repeatDetail = cut)?.let { focus ->
-        val peek = el.querySelector(".ao-peek")
-        if (peek != null) el.insertBefore(focus, peek) else el.appendChild(focus)
-    }
+    val id = el.getAttribute("data-id") ?: return
+    agentsOverview.setDetailCut(id, detailIsCut(el))
 }
 
 /**
@@ -478,9 +492,8 @@ private fun highlighted(text: String, start: Int, length: Int): org.w3c.dom.Docu
  * `ao-done` for one that is done in NOW, `ao-old` for one that finished and sits in EARLIER; a
  * working row in EARLIER is live, because the state wins over the band. The state word carries
  * the state's colour, and "working" has the working glyph in front. The selected row has
- * one more line under it, spanning the columns after the marker, with the tab ↵ opens and the like
- * (and the detail's full text when the row cut it, which [fitSelectedFocus] finds out), when there is any; a failed resume or open shows in the error colour inside it. An open
- * peek follows.
+ * more under it, spanning the columns after the marker (see [buildFocus]); the question the first
+ * ↵ asks takes the place of the text there. An open peek follows.
  *
  * @param row the row to draw.
  * @param state the view model's state, for the open peek.
@@ -515,7 +528,7 @@ private fun buildRow(row: Row, state: AgentsOverviewBackingViewModel.State, sele
 
     el.appendChild(span("ao-age", if (row.sinceMillis <= 0) "" else formatAge(row.sinceMillis)))
 
-    if (selected) buildFocus(row, repeatDetail = false)?.let { el.appendChild(it) }
+    if (selected) buildFocus(row, state.ask?.takeIf { it.rowId == row.id })?.let { el.appendChild(it) }
     state.peek?.takeIf { selected }?.let { el.appendChild(buildPeek(it)) }
     return el
 }
@@ -550,53 +563,90 @@ private fun buildState(row: Row): HTMLElement {
 }
 
 /**
- * The selected row's extra line: the detail's full text when the row cut it, then what the view
- * model put in [Row.extra] (where a search matched, a resume note), then the tab the session sits
- * in. The tab at the end is drawn dimmer than the text before it, and a failed resume or open in
- * the error colour, never dimmed. The parts are joined by " · ".
+ * What the selected row shows under its columns: the status in full when the row cut it, then the
+ * chips ([Row.chips]): the folder, and the tab when it tells something, then any text the model put
+ * in [Row.extra] (where a search matched, a failed resume or open in the error colour).
  *
- * Called by [buildRow] without the repeat, and by [fitSelectedFocus] with it once the row is known
- * to cut its detail.
+ * While a question is asked ([ask]) the bar with the question stands in place of the status and the
+ * text, and the chips stay under it. Called by [buildRow] for the selected row.
  *
  * @param row the selected row.
- * @param repeatDetail whether to start the line with [Row.detail] (the row's own cell cut it short
- *   or hides it). A search match in that text keeps its underline.
- * @return the line, spanning every column after the marker; null when there is nothing to put on
+ * @param ask the question asked about this row, or null.
+ * @return the block, spanning every column after the marker; null when there is nothing to put on
  *   it, so the selected row never carries an empty line.
- * @see Row.tab
+ * @see Row.statusFull
+ * @see Row.chips
  * @see Row.error
  */
-private fun buildFocus(row: Row, repeatDetail: Boolean): HTMLElement? {
+private fun buildFocus(row: Row, ask: AgentsOverviewBackingViewModel.Ask?): HTMLElement? {
     val focus = div("ao-focus")
-    fun join(node: org.w3c.dom.Node) {
-        if (focus.hasChildNodes()) focus.appendChild(document.createTextNode(" · "))
-        focus.appendChild(node)
-    }
-    if (repeatDetail && row.detail.isNotBlank()) {
-        join(
-            if (row.matchInSnippet) highlighted(row.detail, row.matchStart, row.matchLength)
-            else document.createTextNode(row.detail),
+    val full = row.statusFull
+    if (ask != null) {
+        focus.appendChild(buildAsk(ask))
+    } else if (full != null) {
+        focus.appendChild(
+            div("ao-full").also {
+                if (row.matchInSnippet) it.appendChild(highlighted(full, row.matchStart, row.matchLength))
+                else it.textContent = full
+            },
         )
     }
-    val tab = row.tab
-    // The tab note is the last part of the extra line; what it is joined to by " · " belongs to the dim part.
-    val tabStart = if (tab.isNotEmpty() && row.extra.endsWith(tab)) row.extra.length - tab.length else -1
-    val main = if (tabStart >= 0) row.extra.substring(0, tabStart).removeSuffix(" · ") else row.extra
-    val error = row.error
-    val at = if (error != null) main.indexOf(error) else -1
-    if (main.isNotEmpty()) {
-        val part = document.createDocumentFragment()
-        if (error != null && at >= 0) {
-            part.appendChild(document.createTextNode(main.substring(0, at)))
-            part.appendChild(span("ao-n-error", error))
-            part.appendChild(document.createTextNode(main.substring(at + error.length)))
-        } else {
-            part.appendChild(document.createTextNode(main))
+    if (row.chips.isNotEmpty()) {
+        val chips = div("ao-chips")
+        // While a question is up only its own keys answer it: a click on a chip is not an answer.
+        if (ask != null) chips.addEventListener("click", { e: Event -> e.stopPropagation() })
+        row.chips.forEach { chip ->
+            val kind = if (chip.kind == AgentsOverviewBackingViewModel.ChipKind.TAB) "ao-pill-tab" else "ao-pill-dir"
+            chips.appendChild(span("ao-pill $kind", chip.text))
         }
-        join(part)
+        focus.appendChild(chips)
     }
-    if (tabStart >= 0) focus.appendChild(span("ao-tab", if (focus.hasChildNodes()) " · $tab" else tab))
+    if (ask == null && row.extra.isNotEmpty()) {
+        val line = div("ao-xtra")
+        val error = row.error
+        val at = if (error != null) row.extra.indexOf(error) else -1
+        if (error != null && at >= 0) {
+            line.appendChild(document.createTextNode(row.extra.substring(0, at)))
+            line.appendChild(span("ao-n-error", error))
+            line.appendChild(document.createTextNode(row.extra.substring(at + error.length)))
+        } else {
+            line.textContent = row.extra
+        }
+        focus.appendChild(line)
+    }
     return if (focus.hasChildNodes()) focus else null
+}
+
+/**
+ * The question bar under a row: a dim tag naming what is missing, the question, and the keys that
+ * answer it. Clicking a key does what the key does; a click anywhere else in the bar does nothing,
+ * so it is never taken for an answer.
+ *
+ * @param ask the question from the view model.
+ * @return the bar.
+ * @see AgentsOverviewBackingViewModel.Ask
+ */
+private fun buildAsk(ask: AgentsOverviewBackingViewModel.Ask): HTMLElement {
+    val bar = div("ao-ask")
+    bar.addEventListener("click", { e: Event ->
+        e.stopPropagation()
+        val key = ((e.target as? HTMLElement)?.closest(".ao-ask-key") as? HTMLElement)?.getAttribute("data-key")
+        if (!key.isNullOrEmpty()) onFooterKey(key)
+    })
+    val q = span("ao-ask-q", "")
+    q.appendChild(span("ao-ask-tag", ask.tag))
+    q.appendChild(document.createTextNode(ask.question))
+    bar.appendChild(q)
+    val keys = span("ao-ask-keys", "")
+    ask.keys.forEach { k ->
+        val key = span("ao-ask-key", "")
+        key.setAttribute("data-key", k.key)
+        key.appendChild(span("ao-kbd", k.key))
+        key.appendChild(document.createTextNode(k.label))
+        keys.appendChild(key)
+    }
+    bar.appendChild(keys)
+    return bar
 }
 
 /**

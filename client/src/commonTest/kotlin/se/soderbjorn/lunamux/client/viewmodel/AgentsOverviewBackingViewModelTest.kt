@@ -605,6 +605,8 @@ class AgentsOverviewBackingViewModelTest {
         vm.open()
         assertEquals(AgentsOverviewBackingViewModel.Enter.RESUME, vm.state.rows.single().enter)
         vm.activateSelected()
+        assertTrue(sent.isEmpty(), "the first enter only asks")
+        vm.activateSelected()
         assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("old")), sent)
         assertTrue(vm.state.open)
 
@@ -618,6 +620,7 @@ class AgentsOverviewBackingViewModelTest {
         windowState.updateAgentSessions(listOf(session("old", "ended", leaf = null, endedAt = 9)), true)
         vm.open()
         vm.activateSelected()
+        vm.activateSelected()
         windowState.updateConfig(WindowConfig(tabs = listOf(TabConfig("tab-1", "one"), TabConfig("tab-2", "two")), activeTabId = "tab-2"))
         assertFalse(vm.state.open)
 
@@ -630,6 +633,7 @@ class AgentsOverviewBackingViewModelTest {
         layout(leaf("leaf-x"))
         windowState.updateAgentSessions(listOf(session("old", "ended", leaf = null, endedAt = 9)), true)
         vm.open()
+        vm.activateSelected()
         vm.activateSelected()
         windowState.setAgentSessionError("folder no longer exists")
         assertEquals("folder no longer exists", vm.state.rows.single().error)

@@ -65,27 +65,33 @@ shell commands tells nobody anything at a glance. Lunamux words each tool call a
 A permission prompt is the exception: "Allow Bash ./gradlew test?" still names the exact command,
 since that is what the person is asked to allow.
 
-- **The selected row has a second line** that says **tab 2** (the place of the session ↵ opens in
-  the tab strip, **tab 2 in Work** when it is in another world). A session in a background tab has
-  no tab number, so that part is left out. The line starts with the whole detail only when the row
-  cut it short (it ends in "…") or hides it in a panel narrower than 700px, so the same words are
-  never shown twice. The line also carries the resume
-  note, "nothing to jump to: this session is not in a Lunamux pane", and the message of a resume
-  that failed. A row that has nothing to put there has no second line, never an empty one.
+- **The selected row has more under it.** In this order: the whole status, only when the row cut
+  it short (it ends in "…") or hides it in a panel narrower than 700px, so the same words are
+  never shown twice; then up to two chips about the session ↵ goes to; then any text the model
+  put on the row (where a search matched, the message of a resume that failed, "nothing to jump to:
+  this session is not in a Lunamux pane"). The **folder chip** is that session's working folder, the
+  home folder written `~`. The **tab chip** names the session's tab, and shows only when the
+  tab's name does not already contain every word of the row's title (a word is a run of letters
+  and digits; case and punctuation are ignored; whole words only, no fuzzy matching); a tab in
+  another world adds the world's name after it ("Checkout · Work"). A session in a background tab has no tab chip. There is no other chip, and
+  a row with nothing to put under it has no extra line, never an empty one.
 - **↵ opens the task's own session.** Every task can have one session that speaks for it: the one
-  that made the task, or the one an agent names with `set_task_lead`. ↵ jumps to its pane. When it
-  runs in a background tab (see below) ↵ opens its read-only peek instead. When it is gone, ↵ runs
-  the task's `open` action if it has one and otherwise resumes the session. A task with no such
+  that made the task, or the one an agent names with `set_task_lead`. That session is one of the
+  task's sessions, so it is counted in the state word ("3 working") and never gets a row of its
+  own. When it runs in a tab of the strip, ↵ jumps to its pane and the footer reads "↵ open".
+  When it runs in a background tab (see below), ↵ opens its read-only watch and the footer reads
+  "↵ watch". When it is not running, ↵ asks first (below), and only a second ↵ acts: it resumes
+  that conversation in a tab of its own, in its own folder, or, when there is nothing to resume,
+  runs the task's `open` action (which starts a new conversation). A task with no such
   session takes the first of these that applies: jump to a live session in a listed tab (the ◆ that
   has waited longest, else the working session with the freshest sign of life); run the `open`
-  action; peek a live background session; resume the newest session. A background session is never
-  chosen while a session in a listed tab is live, and a row never does nothing unless no session of
-  it is known and it has no `open` action. A session that is a task of one jumps, peeks when it is in the
-  background, or resumes. The session is remembered by the pane it ran in (the pane's layout id,
+  action; watch a live background session; resume the newest session (after the question). A
+  background session is never chosen while a session in a listed tab is live, and a row never does
+  nothing unless no session of it is known and it has no `open` action. The session is remembered by the pane it ran in (the pane's layout id,
   which a restart keeps; the terminal session id is renumbered at every start and would name a
   different pane). It is looked up as the session running in that pane now; only when none is
   running does it stand for the newest ended session that ran in that pane, never another pane's.
-  A server restart keeps it: the session is then an ended one and ↵ resumes it. A resume opens a
+  A server restart keeps it: the session is then an ended one and ↵ asks, then resumes it. A resume opens a
   tab of its own, so the task also remembers the Claude conversation of its session, and when
   that conversation runs in another pane while nothing runs in the remembered one, the task moves
   to that pane. It does so once the conversation is known there (a resumed session is named by its
@@ -100,13 +106,22 @@ since that is what the person is asked to allow.
   terminal session id, and the first running session found on that id fixes the pane. This is a
   guess: ids are handed out again at every start, so it can be a pane the task never had, and
   `set_task_lead` corrects it.
-- **Three keys are not hinted.** **⌘↵** takes over the background session ↵ would peek: its tab
+- **A question before a resume.** When the session ↵ would go to is not running, the first ↵
+  turns the selected row's extra part into a question: a dim tag, "Resume it in a new tab?", and
+  "↵ resume · esc cancel" (the footer reads the same). The tag says what is missing and never
+  sounds like the state of the whole task: "conversation closed" for the task's own session,
+  "session closed" for any other ended session. When there is no conversation at all the tag is
+  "no conversation" and the question "Start one in a new tab?" (↵ start). A second ↵ does it: the
+  resumed conversation is the task's own session again, in the same row. esc, ↑ or ↓, a change to
+  the search text, or a refresh that changes what ↵ would do, cancels the question.
+- **Three keys are not hinted.** **⌘↵** takes over the background session ↵ would watch: its tab
   becomes an ordinary tab and the app switches to it. **→** at the end of the search text peeks
   the session ↵ would open (**←** or esc goes back). **⌘⌫** asks to close a row that is one
   session, live in a pane; it never closes a task of several sessions, and does nothing while
   the search box has text. The question is the same as
-  for closing a tab that is working. The footer is always `↵ open · ↑↓ move · esc close`. esc
-  closes the peek, then the question, then the overlay.
+  for closing a tab that is working. The footer is `↵ open · ↑↓ move · esc close` (`↵ watch` for a
+  session in a background tab, `↵ resume · esc cancel` while the question is up). esc
+  closes the question, then the confirmation, then the peek, then the overlay.
 - **A task has a one-line status.** An agent sets it with `set_task_status` and the row shows it as
   its detail. Line breaks become spaces, the ends are trimmed, and at most 120 characters are
   kept. An empty text clears it.
@@ -125,7 +140,7 @@ since that is what the person is asked to allow.
   sessions are still sessions: they are in NOW (a background pane counts as open), they count in
   the topbar chip and in their task's state word, and a ◆ in one still asks for the person. They
   are counted, not listed: a background session of a task is no row of its own. A background
-  session that is in no task is a row, and ↵ on it opens the read-only peek of its screen, **⌘↵**
+  session that is in no task is a row, and ↵ on it opens its read-only watch, **⌘↵**
   takes the tab over. A search never finds a background session while it is out of sight, live or
   closed. A background tab is in no tab list, so the agent that opened it closes it with
   `close_tab` when its work is done; a server restart closes every background tab, as the agents
@@ -331,8 +346,8 @@ fixed version of the file is picked up within about three seconds.
 
 `open` is optional. With it, ↵ on a row whose own session is gone, or that has no session in a
 listed tab, types `open.command` into a new tab started in `open.folder`. The tab is named like
-the task. Without it, ↵ peeks a live background session or resumes the newest session, and does
-nothing only for a task none of whose sessions Lunamux knows.
+the task. Without it, ↵ watches a live background session or resumes the newest session (after the
+question), and does nothing only for a task none of whose sessions Lunamux knows.
 
 ### Matching members to real sessions
 

@@ -363,6 +363,9 @@ sealed class WindowEnvelope {
  * @param cwd folder the agent ran in.
  * @param cwdHome true when [cwd] is the home folder of the user running the server; the overview
  *   shows such a row's folder as "~" (a client cannot tell, because it does not know the home path).
+ * @param cwdShown [cwd] as a person reads it, with the home folder written `~` ("~/code/lunamux"),
+ *   or null when the folder is unknown or the server predates the field. The overview's folder chip
+ *   draws it as it is and draws nothing when it is null, because a client cannot shorten a path itself.
  * @param nowLine what the last tool call does in words ("Running the server tests"), or null.
  * @param question what the agent is asking while [state] is `needs_you`.
  * @param leafId the pane the agent runs in (meaningful while the record is open).
@@ -398,6 +401,7 @@ data class AgentSessionSummary(
     val branch: String? = null,
     val cwd: String? = null,
     val cwdHome: Boolean = false,
+    val cwdShown: String? = null,
     val nowLine: String? = null,
     val question: String? = null,
     val leafId: String? = null,
