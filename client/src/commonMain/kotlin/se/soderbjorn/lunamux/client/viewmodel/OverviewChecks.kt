@@ -169,7 +169,9 @@ object OverviewChecks {
      * conversation that asks for the person (the row then leads to the question), and, when the main
      * conversation runs in a background tab and does not ask, a conversation in a listed tab, since
      * that background tab cannot be jumped to. A jump to any conversation in a tab that is not
-     * listed, the main one included, fails: it would show nothing.
+     * listed, the main one included, fails: it would show nothing. A row that shows a tab must show
+     * the tab of a conversation of the task. A row that opens nothing (NONE, or OPEN) is right only
+     * when the main conversation runs in a background tab.
      */
     private fun returnReachesMain(s: Snapshot): Check {
         val problems = mutableListOf<String>()
@@ -201,6 +203,17 @@ object OverviewChecks {
                     val own = s.sessions.firstOrNull { it.conversationId == main }
                     val target = s.sessions.firstOrNull { it.id == row.recordId || it.conversationId == row.recordId }
                     if (own != null && own.state == NEEDS_YOU && target?.conversationId != main) problems += "↵ on \"${row.title}\" opens a background agent while the main conversation waits"
+                    // The tab that is shown must be a conversation of this task, never another task's agent.
+                    if (target == null) problems += "↵ on \"${row.title}\" names no conversation"
+                    else if (target.conversationId != main && target.conversationId !in conversationsOf(row, s)) {
+                        problems += "↵ on \"${row.title}\" shows the tab of conversation ${target.conversationId}, which is not a conversation of the task"
+                    }
+                }
+                AgentsOverviewBackingViewModel.Enter.NONE, AgentsOverviewBackingViewModel.Enter.OPEN -> {
+                    // A task with a main conversation has nothing to open only while that conversation sits in a background tab.
+                    if (!mainIsUnreachableBackground(s, main)) {
+                        problems += "↵ on \"${row.title}\" does nothing (${row.enter}) although its main conversation $main can be reached"
+                    }
                 }
                 else -> Unit
             }

@@ -145,6 +145,32 @@ class OverviewChecksTest {
     }
 
     @Test
+    fun aShownTabMustBeAConversationOfTheTask() {
+        usualCase(bgState = "needs_you")
+        val s = snapshot()
+        val row = s.overview.now.single { it.taskId == "g1" }
+        assertEquals(AgentsOverviewBackingViewModel.Enter.SHOW_WAITING, row.enter)
+        assertEquals(emptyList(), failed(OverviewChecks.evaluate(s)), "the real row passes")
+        // The same decision aimed at an agent that no task holds.
+        val foreign = s.overview.now.map { if (it.taskId == "g1") it.copy(recordId = "solo") else it }
+        val c4 = OverviewChecks.evaluate(s.copy(overview = s.overview.copy(now = foreign))).first { it.id == "C4" }
+        assertFalse(c4.ok)
+        assertTrue(c4.problems.single().contains("not a conversation of the task"))
+    }
+
+    @Test
+    fun aRowThatOpensNothingIsRightOnlyWhileTheMainConversationIsInAHiddenTab() {
+        usualCase()
+        val s = snapshot()
+        for (enter in listOf(AgentsOverviewBackingViewModel.Enter.NONE, AgentsOverviewBackingViewModel.Enter.OPEN)) {
+            val dead = s.overview.now.map { if (it.taskId == "g1") it.copy(enter = enter) else it }
+            val c4 = OverviewChecks.evaluate(s.copy(overview = s.overview.copy(now = dead))).first { it.id == "C4" }
+            assertFalse(c4.ok, "$enter on a task whose main conversation is in a listed tab is a dead Return")
+            assertTrue(c4.problems.single().contains("does nothing"))
+        }
+    }
+
+    @Test
     fun theMainConversationMustBeTheOneTheRunExpects() {
         usualCase()
         assertTrue(OverviewChecks.evaluate(snapshot(mapOf("g1" to "ma"))).first { it.id == "C4" }.ok)

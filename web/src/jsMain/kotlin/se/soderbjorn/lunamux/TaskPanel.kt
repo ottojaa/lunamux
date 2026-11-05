@@ -208,11 +208,11 @@ private fun div(cls: String): HTMLElement = (document.createElement("div") as HT
 private fun span(cls: String, text: String): HTMLElement =
     (document.createElement("span") as HTMLElement).also { it.className = cls; it.textContent = text }
 
-/** The column's header: the task's name, the key that hides it, and the close button. */
+/** The column's header: "<title> · ⌘I hides" with the close button at the far end. */
 private fun buildHeader(state: TaskPanelViewModel.State): HTMLElement {
     val head = div("tp-head")
     head.appendChild(span("tp-title", state.title).also { it.title = state.title })
-    head.appendChild(span("tp-hint", "⌘I"))
+    head.appendChild(span("tp-hint", "· ⌘I hides"))
     val close = document.createElement("button") as HTMLElement
     close.asDynamic().type = "button"
     close.className = "tp-close"

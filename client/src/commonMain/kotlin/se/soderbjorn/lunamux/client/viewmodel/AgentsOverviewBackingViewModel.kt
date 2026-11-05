@@ -1382,7 +1382,13 @@ class AgentsOverviewBackingViewModel(
             detail = detail,
             extra = extraOf(
                 c.noteOf(target?.id),
-                (if (target != null) HIDDEN_MAIN_NOTE else NOTHING_TO_JUMP).takeIf { u.enter == Enter.NONE },
+                (
+                    when {
+                        target == null -> NOTHING_TO_JUMP
+                        target.state == WORKING -> HIDDEN_MAIN_NOTE
+                        else -> HIDDEN_MAIN_DONE_NOTE
+                    }
+                ).takeIf { u.enter == Enter.NONE },
                 error,
             ),
             chips = chipsOf(t.title, target, c),
@@ -1717,6 +1723,13 @@ class AgentsOverviewBackingViewModel(
          * background tab, which ↵ cannot jump to, and nothing else of the task is in a listed tab.
          */
         const val HIDDEN_MAIN_NOTE = "it works in a background tab: ↵ has nothing to open until it asks"
+
+        /**
+         * What the selected row's extra line says when the task's main conversation has finished its
+         * turn in a background tab. It will not ask for the person unless something types to it, and
+         * ↵ opens a hidden tab only for a waiting agent, so → (peek) is the way to read it.
+         */
+        const val HIDDEN_MAIN_DONE_NOTE = "it has finished in a background tab: ↵ has nothing to open, → shows what it said"
 
         /** How many of the newest EARLIER rows show before "+ N more". */
         const val EARLIER_LIMIT = 5

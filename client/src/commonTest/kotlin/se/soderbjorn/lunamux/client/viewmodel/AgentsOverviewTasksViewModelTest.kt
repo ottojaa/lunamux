@@ -1490,6 +1490,21 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
+    fun aMainConversationThatFinishedInABackgroundTabSaysSoAndPointsToThePeek() = runNow {
+        layoutWithBackground(listOf("leaf-listed"), listOf("leaf-main"))
+        show(
+            listOf(hostedTask(main = "main")),
+            session("main", "done", taskId = "g1", background = true, lastActivityAt = now - 1_000),
+        )
+        val r = row("task:g1")
+        assertEquals(Enter.NONE, r.enter, "a hidden tab opens only for a waiting agent")
+        assertEquals("main", r.recordId, "the hidden conversation keeps its id so the row can be peeked at")
+        assertTrue(r.extra.contains(AgentsOverviewBackingViewModel.HIDDEN_MAIN_DONE_NOTE))
+        assertFalse(r.extra.contains("it works"), "a finished conversation is not described as working")
+        assertEquals(null, AgentsOverviewBackingViewModel.defaultFooter(Enter.NONE).firstOrNull { it.key == "↵" })
+    }
+
+    @Test
     fun aMainConversationNoSummaryHoldsAnyMoreIsResumedByItsStoredIdNotReplacedByAnotherSession() = runNow {
         layout("leaf-m")
         show(

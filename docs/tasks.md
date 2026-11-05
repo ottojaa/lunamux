@@ -98,14 +98,18 @@ since that is what the person is asked to allow.
   of these that applies:
   1. **A conversation of the task waits for you, and the main conversation does not:** the oldest
      waiting one is reached. In a tab of the strip ↵ jumps to its pane; in a hidden tab the tab is
-     shown (see "A waiting agent in a hidden tab" below). The row's hint reads "↵ answer it · opens as
-     a tab until it works on". A working main conversation never hides a waiting member this way.
+     shown (see "A waiting agent in a hidden tab" below). A jump is the ordinary "↵ open"; only a shown
+     tab has the hint "↵ answer it · opens as a tab until it works on". A working main conversation
+     never hides a waiting member this way.
   2. **The main conversation is live in a tab of the strip:** jump to its pane. The footer reads "↵ open".
   3. **The main conversation is live in a hidden tab:** while it asks, its tab is shown as in 1. While it
      does not ask there is nothing to answer there and no tab to jump to, so ↵ goes to a conversation
      of the task in a tab of the strip (the one with the freshest sign of life), else offers nothing:
-     the row says "it works in a background tab: ↵ has nothing to open until it asks", the footer
-     leaves ↵ out, and → still peeks at the conversation.
+     the row says "it works in a background tab: ↵ has nothing to open until it asks" while the
+     conversation works, and "it has finished in a background tab: ↵ has nothing to open, → shows
+     what it said" once it is done; the footer leaves ↵ out, and → peeks at the conversation. A
+     hidden tab opens only for a waiting agent, so a finished main conversation in a hidden tab
+     can be read by the peek but not opened by ↵; nothing here changes that.
   4. **The main conversation is closed:** ask "conversation closed / Resume it in a new tab?"; a
      second ↵ runs `claude --resume <conversation id>` in a new tab in its own folder (`codex resume
      <id>` for a Codex conversation whose id is known). The same holds when the server no longer keeps
@@ -244,7 +248,7 @@ server already trusts as a device (not the tool-endpoint token). It checks that:
 4. Return on a task's row reaches or resumes its main conversation by conversation id (`-Pmain` names
    the conversation a task must have), or leads to another conversation of the task that asks, or, when
    the main conversation runs in a hidden tab and does not ask, to one in a tab of the strip. A
-   conversation Return jumps to is never in a hidden tab, and every target belongs to the task;
+   conversation Return jumps to is never in a hidden tab, every target (a shown tab included) belongs to the task, and a row that opens nothing is right only while the main conversation is in a hidden tab;
 5. every needs-you leads to a visible question: the row's Return opens a conversation that asks, and
    shows the tab when that conversation is in a hidden one. When two conversations wait on one row,
    Return opens one (the main conversation first) and the other is reached once it is answered;
@@ -440,7 +444,7 @@ a member is built by the server from the member's `sessionId` alone.
 
 A task can have a panel: a 320px column on the right of the window that shows what its agents
 wrote about it. It appears only in the tab where the task's main conversation is live (a task with
-none has no panel), and in no other tab. ⌘I shows and hides it, and so does its ×; the choice is
+none has no panel), and in no other tab. Its header reads "<task title> · ⌘I hides" with the × at the far end. ⌘I shows and hides it, and so does its ×; the choice is
 kept with the other UI settings. The shortcut is listed in the Keyboard-shortcuts sidebar and can be
 rebound there. (Off macOS the default chord is Ctrl+I, which a terminal reads as Tab; rebind it there
 if that gets in the way.)

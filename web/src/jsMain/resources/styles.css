@@ -3853,9 +3853,9 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 }
 /* The header stays put above the scrolling blocks: it sits outside .tp-scroll. */
 .tp-head { flex: none; display: flex; align-items: center; gap: 8px; min-height: 44px; box-sizing: border-box; padding: 0 8px 0 var(--tp-pad); border-bottom: 1px solid var(--tp-line); }
-.tp-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 13px; }
-.tp-hint { color: var(--tp-dim); font-size: 11px; }
-.tp-close { border: 0; border-radius: 4px; background: transparent; color: var(--tp-dim); font: inherit; font-size: 16px; line-height: 1; cursor: pointer; padding: 4px 6px; }
+.tp-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 13px; }
+.tp-hint { flex: none; white-space: nowrap; color: var(--tp-dim); font-size: 11px; }
+.tp-close { margin-left: auto; border: 0; border-radius: 4px; background: transparent; color: var(--tp-dim); font: inherit; font-size: 16px; line-height: 1; cursor: pointer; padding: 4px 6px; }
 .tp-close:hover, .tp-close:focus-visible { color: var(--tp-text); background: var(--tp-hover); outline: none; }
 .tp-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 0 16px; }
 .tp-block { padding: 14px var(--tp-pad) 12px; border-bottom: 1px solid var(--tp-line); overflow-wrap: anywhere; }
