@@ -973,7 +973,7 @@ private fun buildSidebarFooter(): HTMLElement {
  *                    "Agents" for the total of a layout with one, else the world's display name.
  * @property accent  the world's resolved theme accent as a CSS colour string (the line's dot), or
  *   null for the total line.
- * @property working how many conversations work and are moving.
+ * @property working how many conversations are working.
  * @property waiting how many conversations wait for the person.
  * @see computeAgentStatusRows
  */
@@ -999,7 +999,7 @@ private class WorldStatusRow(
 private fun computeAgentStatusRows(): List<WorldStatusRow> {
     val sessions = lunamuxClient.windowState.agentSessions.value
     val cfg = latestWindowConfig
-    val tally = AgentCounts.of(sessions, cfg, kotlin.js.Date.now().toLong())
+    val tally = AgentCounts.of(sessions, cfg)
     val total = tally.total
     if (total.waiting == 0 && total.working == 0) return emptyList()
     val several = cfg != null && cfg.worlds.size >= 2
@@ -1019,7 +1019,7 @@ private fun computeAgentStatusRows(): List<WorldStatusRow> {
  * "N working" in the working colour, omitting a half that is zero. The waiting half pulses on the
  * shared global pulse loop ([startPulse]) and the working half carries the app's working glyph,
  * built by [workingGlyph] under [glyphKey] so the footer's rebuild on every state push puts the
- * same moving glyph back and its motion never starts over.
+ * same working glyph back and its motion never starts over.
  *
  * @param host      the line's count container to populate (assumed empty).
  * @param working   the working count.
@@ -1053,8 +1053,7 @@ private fun appendWorldStatusCounts(host: HTMLElement, working: Int, waiting: In
 /**
  * Repaints the sidebar's agent block from the conversations the server pushed. Called from
  * [updateStateIndicators] (every config and state push routes through it), from the agents
- * overview when sessions or tasks change, and on a slow clock so a quiet agent stops counting as
- * working.
+ * overview when sessions or tasks change.
  *
  * When nothing waits and nothing works the block collapses to nothing (via `world-status-empty`,
  * which zeroes its padding) so an idle footer shows only the usage bar. The whole block is

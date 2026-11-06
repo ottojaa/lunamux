@@ -1,0 +1,2 @@
+{"at": 1793958388406, "event": {"hook_event_name": "SessionStart", "session_id": "b124a2f2-ee37-4acf-b81b-e7af7aa51559"}}
+{"at": 1793958392956, "event": {"hook_event_name": "UserPromptSubmit", "session_id": "b124a2f2-ee37-4acf-b81b-e7af7aa51559", "prompt": "Without using any tools, write the numbers from 1 to 400, on"}}

@@ -629,6 +629,19 @@ object WindowState {
     }
 
     /**
+     * [hideSettledWaitingTabs] for the agent records as the tracker publishes them: the agents
+     * whose state is `needs_you` are the ones that still wait.
+     *
+     * Called by the server's start-up code whenever the tracker's rows change, and by the tests
+     * that follow a refused prompt from its record to its tab.
+     *
+     * @param summaries every agent row the tracker published.
+     * @see hideSettledWaitingTabs
+     */
+    fun hideSettledWaitingTabsFor(summaries: List<AgentSessionSummary>) =
+        hideSettledWaitingTabs(summaries.filter { it.state == "needs_you" }.mapNotNull { it.leafId }.toSet())
+
+    /**
      * Hide every background tab that is shown while its agent waits and no longer has a waiting
      * agent in it, and bring back the tab and the world the person was on, if they are still on
      * the shown tab.

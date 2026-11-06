@@ -117,7 +117,7 @@ fun main() {
     // A background tab shown for a waiting agent goes away again once nothing in it waits.
     persistenceScope.launch {
         agentTracker.summaries.collect { list ->
-            WindowState.hideSettledWaitingTabs(list.filter { it.state == "needs_you" }.mapNotNull { it.leafId }.toSet())
+            WindowState.hideSettledWaitingTabsFor(list)
         }
     }
     val taskPanelStore = TaskPanelStore(repo, taskIndex)

@@ -116,7 +116,7 @@ class AgentsOverviewMomentsTest {
         assertEquals("needs you", row("task:g1").stateWord)
         assertEquals("◆", row("task:g1").marker)
         assertEquals(1, vm.state.needYouCount)
-        assertEquals(1, AgentCounts.of(windowState.agentSessions.value, windowState.config.value, now).total.waiting)
+        assertEquals(1, AgentCounts.of(windowState.agentSessions.value, windowState.config.value).total.waiting)
         // The tab strip's dot is drawn by the web page from the terminal state of the panes in the tab, which is
         // not part of this view model, so it is not asserted here: the moment's screenshot on the live check shows it.
     }
@@ -136,7 +136,7 @@ class AgentsOverviewMomentsTest {
         assertEquals("done", row("task:g1").stateWord)
         assertEquals("Which database should the migration use?", row("task:g1").detail)
         assertEquals(0, vm.state.needYouCount, "no conversation is waiting, so the footer does not count it")
-        assertEquals(0, AgentCounts.of(windowState.agentSessions.value, windowState.config.value, now).total.waiting)
+        assertEquals(0, AgentCounts.of(windowState.agentSessions.value, windowState.config.value).total.waiting)
         assertEquals(Enter.RESUME, row("task:g1").enter)
         vm.open(); vm.select("task:g1")
         vm.activateSelected()
@@ -249,6 +249,24 @@ class AgentsOverviewMomentsTest {
         assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("main")), sent, "still by conversation, not by pane")
     }
 
+    /**
+     * A working conversation counts as working until a hook or the screen says otherwise: one whose
+     * last sign of life is a six minute test run old is still counted, in the total and per world.
+     */
+    @Test
+    fun aWorkingConversationIsCountedHoweverLongItHasBeenSilent() {
+        val config = WindowConfig(
+            worlds = listOf(WorldConfig("w1", "Home", tabs = listOf(TabConfig("t0", "t0", panes = panes(listOf("leaf-a")))))),
+            activeWorldId = "w1",
+        )
+        val silent = conversation("a", "working").copy(lastActivityAt = now - 6 * 60_000L)
+        val tally = AgentCounts.of(listOf(silent), config)
+        assertEquals(AgentCounts.Counts(0, 1), tally.total)
+        assertEquals(AgentCounts.Counts(0, 1), tally.byWorld["w1"])
+        val aDayLater = silent.copy(lastActivityAt = now - 24 * 60 * 60_000L)
+        assertEquals(AgentCounts.Counts(0, 1), AgentCounts.of(listOf(aDayLater), config).total)
+    }
+
     /** The footer's per-world split leaves out a conversation with no pane in the layout. */
     @Test
     fun countsByWorldSplitByThePaneAndLeaveOutAConversationWithNoPane() {
@@ -267,7 +285,7 @@ class AgentsOverviewMomentsTest {
                 conversation("gone", "working", ended = false).copy(leafId = null),
                 conversation("old", "ended", ended = true),
             ),
-            config, now,
+            config,
         ).byWorld
         assertEquals(AgentCounts.Counts(1, 0), counts["w1"])
         assertEquals(AgentCounts.Counts(0, 2), counts["w2"])
@@ -302,7 +320,7 @@ class AgentsOverviewMomentsTest {
             conversation("gone", "working").copy(leafId = null),
             conversation("old", "ended", taskId = "g1", ended = true),
         )
-        val tally = AgentCounts.of(sessions, config, now)
+        val tally = AgentCounts.of(sessions, config)
         assertEquals(AgentCounts.Counts(2, 2), tally.total, "a live session counts once, however many windows the task spans")
         assertEquals(
             tally.total,

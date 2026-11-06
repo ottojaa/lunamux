@@ -104,8 +104,8 @@ private data class PaneLocation(
  * @param scope where the fire-and-forget inspection requests (sent when the
  *   selection changes) run. The default runs them in place until they suspend,
  *   so a `send` that returns at once is observable immediately.
- * @param clock the current epoch millis, read whenever the state is built; it decides which
- *   working sessions have gone quiet. Tests pass a fixed one.
+ * @param clock the current epoch millis, read whenever the state is built; it decides which rows
+ *   are recent and which fall out of the fortnight, and what age a row shows. Tests pass a fixed one.
  * @param send sends a command to the server, normally `windowSocket::send`.
  */
 class AgentsOverviewBackingViewModel(
@@ -151,11 +151,11 @@ class AgentsOverviewBackingViewModel(
      * @property marker "◆" when the task needs the person, else empty. The view draws ▸ over it
      *   on the selected row.
      * @property stateWord exactly one of [STATE_NEEDS_YOU] (one conversation waits on the person),
-     *   "N need you" (two or more do), "N working" (two or more conversations are moving,
-     *   background ones included), [STATE_WORKING] (one is moving), [STATE_DONE] (in NOW, nothing
-     *   moving or waiting) or [STATE_FINISHED] (in EARLIER, nothing moving or waiting).
+     *   "N need you" (two or more do), "N working" (two or more conversations are working,
+     *   background ones included), [STATE_WORKING] (one is working), [STATE_DONE] (in NOW, nothing
+     *   working or waiting) or [STATE_FINISHED] (in EARLIER, nothing working or waiting).
      * @property detail what the row says after its state word: the task's status; without one the
-     *   question a session asks, in quotes, else the line a moving session last reported, else
+     *   question a session asks, in quotes, else the line a working session last reported, else
      *   empty. A lone session has no status. In a search result it is the text around the match.
      * @property extra the text lines under the selected row, without [detail]: as they apply, what
      *   Resume will do when it is not the plain case ("2 uncommitted changes · 1 unpushed commit"),
@@ -323,8 +323,8 @@ class AgentsOverviewBackingViewModel(
      *   whatever this holds.
      * @property needYouCount conversations asking for the user, background ones included; the
      *   footer's "waiting" number (see [AgentCounts]).
-     * @property workingCount conversations that work and are moving (not quiet, see
-     *   [isMoving]), background ones included; the footer's spinner number.
+     * @property workingCount conversations that work, background ones included; the footer's
+     *   spinner number (see [AgentCounts]).
      * @property selectedId the id of the highlighted row, or null when there are no rows.
      * @property peek the screen popover, or null while it is closed.
      * @property confirm the close confirmation, or null while none is asked.
@@ -414,10 +414,8 @@ class AgentsOverviewBackingViewModel(
     /**
      * Build the state again against the current time.
      *
-     * Called by the web view's periodic redraw: a working session goes quiet once five minutes pass
-     * without a sign of life, which no server message announces.
-     *
-     * @see QUIET_AFTER_MS
+     * Called by the web view's periodic redraw: the ages on the rows grow with the clock, which no
+     * server message announces.
      */
     fun tick() = clockTick.update { it + 1 }
 
@@ -1034,7 +1032,7 @@ class AgentsOverviewBackingViewModel(
         // Once a resume has switched to the new tab the overlay has done its job;
         // settleResume then resets the inputs so it stays closed.
         val resumed = ui.resumingId != null && config?.effectiveActiveTabId != ui.resumeFromTab
-        val counts = AgentCounts.of(sessions, config, nowMillis).total
+        val counts = AgentCounts.of(sessions, config).total
         return State(
             open = ui.open && !resumed,
             query = ui.query,
@@ -1281,21 +1279,21 @@ class AgentsOverviewBackingViewModel(
         val t = u.task
         val id = "$TASK_PREFIX${t.id}"
         // The row counts the conversations the footer counts, by the same functions.
-        val moving = u.sessions.filter { AgentCounts.isWorking(it, c.config, c.nowMillis) }
+        val working = u.sessions.filter { AgentCounts.isWorking(it, c.config) }
         val waiting = u.waiting.minByOrNull { it.stateSince }
         // Something that moves is working, wherever the task is filed; a task that only rests reads done in NOW and finished in EARLIER.
         val stateWord = when {
             u.waiting.size >= 2 -> needYouText(u.waiting.size)
             waiting != null -> STATE_NEEDS_YOU
-            moving.size >= 2 -> "${moving.size} $STATE_WORKING"
-            moving.size == 1 -> STATE_WORKING
+            working.size >= 2 -> "${working.size} $STATE_WORKING"
+            working.size == 1 -> STATE_WORKING
             u.inEarlier -> STATE_FINISHED
             else -> STATE_DONE
         }
         val status = t.status?.trim()?.takeIf { it.isNotEmpty() }
         val detail = status
             ?: waiting?.let(::lineOf)?.let(::quoted)
-            ?: moving.sortedByDescending { it.lastActivityAt ?: it.stateSince }.firstNotNullOfOrNull(::lineOf)
+            ?: working.sortedByDescending { it.lastActivityAt ?: it.stateSince }.firstNotNullOfOrNull(::lineOf)
             ?: ""
         val target = u.target
         val live = target != null && c.live(target)
@@ -1348,11 +1346,11 @@ class AgentsOverviewBackingViewModel(
         val id = if (taskTitle != null) "$TASK_PREFIX${s.taskId}" else s.conversationId
         // The same rule as the footer: a conversation waits or moves on a row only while its pane is in the layout.
         val needs = AgentCounts.isWaiting(s, c.config)
-        val moving = AgentCounts.isWorking(s, c.config, c.nowMillis)
+        val working = AgentCounts.isWorking(s, c.config)
         val nowLine = s.nowLine?.trim()?.takeIf { it.isNotEmpty() }
         val detail = when {
             needs -> (AgentSessionText.previewOf(s.question) ?: nowLine)?.let(::quoted) ?: ""
-            moving -> nowLine ?: ""
+            working -> nowLine ?: ""
             else -> ""
         }
         val enter = when {
@@ -1370,7 +1368,7 @@ class AgentsOverviewBackingViewModel(
             marker = if (needs) MARKER else "",
             stateWord = when {
                 needs -> STATE_NEEDS_YOU
-                moving -> STATE_WORKING
+                working -> STATE_WORKING
                 earlier -> STATE_FINISHED
                 else -> STATE_DONE
             },
@@ -1627,13 +1625,13 @@ class AgentsOverviewBackingViewModel(
         /** The state word of a task that has a session waiting on the person. */
         const val STATE_NEEDS_YOU = "needs you"
 
-        /** The state word of a task with one moving session; with several it reads "N working". */
+        /** The state word of a task with one working session; with several it reads "N working". */
         const val STATE_WORKING = "working"
 
-        /** The state word of a task in NOW with nothing moving and nothing waiting. */
+        /** The state word of a task in NOW with nothing working and nothing waiting. */
         const val STATE_DONE = "done"
 
-        /** The state word of a task in EARLIER with nothing moving. */
+        /** The state word of a task in EARLIER with nothing working. */
         const val STATE_FINISHED = "finished"
 
         /** The mark in the first column of a row that needs the person. */
@@ -1691,62 +1689,12 @@ class AgentsOverviewBackingViewModel(
         const val MIN_QUERY = 2
 
         /**
-         * How long a working session may show no sign of life before the overview stops
-         * counting it as moving. Hook events arrive around every tool call, so five minutes
-         * without one means a hung session or one inside a single very long tool call.
-         */
-        const val QUIET_AFTER_MS = 5L * 60_000L
-
-        /**
-         * Whether a working session has gone quiet: nothing has been heard from it for
-         * [QUIET_AFTER_MS]. A pure function of the clock so the view and the tests agree.
-         *
-         * @param activityMillis epoch millis of the session's last sign of life.
-         * @param nowMillis the current epoch millis.
-         * @return true when the gap is at least [QUIET_AFTER_MS].
-         */
-        fun isQuiet(activityMillis: Long, nowMillis: Long): Boolean = nowMillis - activityMillis >= QUIET_AFTER_MS
-
-        /**
          * "2 need you" / "1 needs you": the plural form of a row's state word.
          *
          * @param n how many need the user.
          * @return the count and the right verb.
          */
         fun needYouText(n: Int): String = if (n == 1) "1 needs you" else "$n need you"
-
-        /**
-         * The prefix of a working session's status when its sign of life is old: "quiet 6m · " once
-         * [QUIET_AFTER_MS] has passed; empty otherwise.
-         *
-         * Called by [isMoving], so the rule that decides what counts as working lives in one place.
-         *
-         * @param working whether the session's state is working; any other state has no prefix.
-         * @param activityMillis epoch millis of the last sign of life; null when there is none.
-         * @param nowMillis the current epoch millis.
-         * @return "quiet 6m · " or an empty string.
-         */
-        fun agePrefixOf(working: Boolean, activityMillis: Long?, nowMillis: Long): String {
-            if (!working) return ""
-            if (activityMillis != null && isQuiet(activityMillis, nowMillis)) {
-                return "quiet ${(nowMillis - activityMillis) / 60_000L}m · "
-            }
-            return ""
-        }
-
-        /**
-         * Whether a working session is really moving: it works and is not quiet. This is what the
-         * footer's spinner and a row's "N working" count.
-         *
-         * Called by [AgentCounts] and by the view model when they count working sessions.
-         *
-         * @param working whether the session's state is working.
-         * @param activityMillis see [agePrefixOf].
-         * @param nowMillis the current epoch millis.
-         * @return true for a working session with a recent sign of life.
-         */
-        fun isMoving(working: Boolean, activityMillis: Long?, nowMillis: Long): Boolean =
-            working && agePrefixOf(true, activityMillis, nowMillis).isEmpty()
 
         private const val TASK_PREFIX = "task:"
         private const val OPEN_WORK_RANK = 2

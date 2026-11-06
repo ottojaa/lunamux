@@ -6,7 +6,7 @@
  * it, what ↵ opens in every branch (the task's own session, a live session in a listed tab, the
  * task's `open` action, a watch of a background session, a resume that asks first, nothing), ⌘↵ and → on a task,
  * which rows ⌘⌫ may close, how a search folds the sessions of one task into one row, the selection
- * staying on its row, the stable order of NOW, and when a working session counts as moving or quiet.
+ * staying on its row, the stable order of NOW, and that a working session counts as working however long it has been silent.
  * A task's sessions are the sessions that carry its id; the task file only declares the task.
  */
 package se.soderbjorn.lunamux.client.viewmodel
@@ -385,29 +385,28 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun theFooterCountsAsWorkingOnlyTheSessionsThatAreMovingAndTheClockAloneEndsThat() {
+    fun theFooterCountsASessionAsWorkingForAsLongAsItWorksHoweverSilentItIs() {
         show(
             emptyList(),
             session("live", "working", lastActivityAt = now - MINUTE),
-            session("quiet", "working", lastActivityAt = now - 6 * MINUTE),
+            session("long", "working", lastActivityAt = now - 6 * MINUTE),
         )
-        // One moving; the quiet one is not counted.
-        assertEquals(1, vm.state.workingCount)
-        now += 5 * MINUTE
+        assertEquals(2, vm.state.workingCount, "a six minute test run is working for all six")
+        now += 30 * MINUTE
         vm.tick()
-        assertEquals(0, vm.state.workingCount)
+        assertEquals(2, vm.state.workingCount, "no amount of clock ends it: only a hook or the screen does")
     }
 
     @Test
-    fun aTaskRowCountsAQuietSessionAsNotWorking() {
+    fun aTaskRowCountsASilentSessionAsWorking() {
         layout("leaf-w1", "leaf-w2")
         show(
             listOf(task()),
             session("w1", "working", taskId = "g1", lastActivityAt = now - MINUTE),
             session("w2", "working", taskId = "g1", lastActivityAt = now - 6 * MINUTE),
         )
-        assertEquals("working", row("task:g1").stateWord, "only the first moves: the second is quiet")
-        assertEquals(1, vm.state.workingCount)
+        assertEquals("2 working", row("task:g1").stateWord, "both work, the silent one as much as the other")
+        assertEquals(2, vm.state.workingCount)
     }
 
     // ---- state words ----
@@ -490,7 +489,7 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
-    fun aSessionThatWorksButHasGoneQuietDoesNotMakeItsTaskReadWorking() {
+    fun aSessionThatWorksButIsSilentStillMakesItsTaskReadWorking() {
         layout("leaf-a")
         show(
             listOf(task()),
@@ -498,7 +497,7 @@ class AgentsOverviewTasksViewModelTest {
             session("b", "done", taskId = "g1"),
         )
         assertEquals(listOf("task:g1"), vm.state.now.map { it.id })
-        assertEquals("done", row("task:g1").stateWord)
+        assertEquals("working", row("task:g1").stateWord)
     }
 
     @Test
@@ -1722,16 +1721,6 @@ class AgentsOverviewTasksViewModelTest {
             listOf(AgentsOverviewBackingViewModel.ChipKind.FOLDER, AgentsOverviewBackingViewModel.ChipKind.TAB),
             row("a").chips.map { it.kind },
         )
-    }
-
-    // ---- moving and quiet ----
-
-    @Test
-    fun aWorkingSessionGoesQuietAfterFiveMinutesWithoutASignOfLife() {
-        val q = AgentsOverviewBackingViewModel.QUIET_AFTER_MS
-        assertEquals(5 * 60_000L, q)
-        assertFalse(AgentsOverviewBackingViewModel.isQuiet(10_000, 10_000 + q - 1))
-        assertTrue(AgentsOverviewBackingViewModel.isQuiet(10_000, 10_000 + q))
     }
 
     private companion object {

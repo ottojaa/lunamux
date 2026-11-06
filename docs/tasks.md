@@ -34,10 +34,10 @@ one of:
 | Word | When |
 |---|---|
 | **needs you** (yellow) | one conversation waits for the person; with more than one it reads "2 need you" |
-| **N working** (cyan, with the moving braille glyph before it) | two or more of the task's conversations are moving, background ones counted |
-| **working** (cyan, with the glyph) | one conversation is moving |
-| **done** (muted green) | the row is in NOW and nothing is moving or waiting |
-| **finished** (dim) | the row is in EARLIER and nothing is moving or waiting |
+| **N working** (cyan, with the moving braille glyph before it) | two or more of the task's conversations work, background ones counted |
+| **working** (cyan, with the glyph) | one conversation works |
+| **done** (muted green) | the row is in NOW and nothing works or waits |
+| **finished** (dim) | the row is in EARLIER and nothing works or waits |
 
 **Needs you** always means a question the person can see and answer: a permission prompt or an
 elicitation that Claude Code reports, an `AskUserQuestion` call, or the approval overlay of Codex.
@@ -53,11 +53,13 @@ positions in a bold weight, and the glyph is meant to show two dots turning. Its
 the clock, never from when the row was drawn, so a row that is redrawn (a new status line, a new
 age) keeps the frame it had, and the footer's spinner shows the same frame as the rows.
 
-A conversation is *moving* while it works and has shown a sign of life in the last five minutes. One that works but
-has gone quiet reads as not moving, so a task of quiet conversations reads **done**.
+A conversation **works** until a hook or the screen says otherwise, however long it has been silent: a test run
+that takes six minutes is working for all six, on the row and in the footer's count. No timer ends it. The
+screen says otherwise when it reads idle (no work, no prompt) for three polls in a row, after the poller's own three-poll hold (about fifteen seconds in all), with
+no hook in between: the process is gone or the turn ended without a Stop, and the row is **done**.
 
 The **detail** is the first of these that exists: the task's status line, the question of the
-conversation that waits (in quotes), what a moving conversation is doing, or nothing. The folder
+conversation that waits (in quotes), what a working conversation is doing, or nothing. The folder
 and the detail are hidden when the panel is narrower than 700px.
 
 A question counts only while the conversation that asks has a pane. When the main conversation is
@@ -217,12 +219,23 @@ single pane is not asked about, and an agent's `close_tab` never asks.
 
 Sessions of Claude Code report their state through hooks: a prompt that asks for permission or
 elicits an answer is **needs you**, a finished turn is **done**, and nothing is guessed from the text of
-a reply. Claude Code sends no event when a permission prompt is answered or refused, so the screen
-ends the wait: once Lunamux has seen the prompt on screen, work on screen means it was approved (the
-row is working) and a screen with neither the prompt nor work means it was refused (the row is done).
-A prompt refused before Lunamux's next look at the screen (about three seconds) was never seen, so the
-row keeps waiting until the conversation's next event; Lunamux does not clear it on a timer, because a
-question it failed to recognise on screen would then vanish from the count while still unanswered.
+a reply. Claude Code sends no event when a permission prompt is answered or refused, nor when a turn is
+interrupted with Esc, so what really happened ends the wait, in this order and never by a timer:
+
+- The transcript ends in the line `[Request interrupted by user]` (or `... for tool use`, after a refused
+  tool call), written after the last hook: the turn is over, the row is **done**. This holds for a prompt
+  refused with No, a prompt refused with Esc and a turn interrupted while it writes, and it holds even when
+  the prompt was refused before Lunamux ever saw it. Lunamux reads the end of the file only when it has
+  changed.
+- The screen showed the prompt and now shows work: the prompt was approved, the row is **working**.
+- The screen showed the prompt and now shows neither it nor work: the prompt left without a go-ahead, the
+  row is **done**.
+
+A prompt that no poll ever showed is settled only by the transcript rule above or by a hook: a poll can be
+taken before the prompt is drawn, and the line about background agents reads "working" whatever else is
+on screen, so such a screen proves nothing about the question. A prompt that nothing has answered keeps
+waiting for as long as it takes: a question Lunamux failed to recognise on screen must not vanish from the
+count while it is still unanswered.
 For Codex and Gemini the state comes from reading the screen, so it is a best guess and lags a
 little. Codex is its own conversation per session: its own conversation id has not been confirmed
 against a real session, so a resumed Codex session may show as a new row.

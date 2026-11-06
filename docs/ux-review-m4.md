@@ -112,7 +112,7 @@ the task line "1 working" counted a session whose file had stopped speaking. Fir
 owner called it broken, rightly: the north star says *what is moving*, and a quiet session is not.
 
 Verdict: **broken**. Fix: one rule decides it for the row prefix, the chip and the task line
-(`agePrefixOf` / `isMoving` in `AgentsOverviewBackingViewModel`): a session counts as working only
+(`agePrefixOf` / `isMoving` in `AgentsOverviewBackingViewModel`, since removed: a session now counts as working until a hook or the screen says otherwise, see `docs/tasks.md`): a session counted as working only
 while it is working and neither quiet (5 min without activity) nor stale (20 min). The chip counts
 those only, and the task line names the others by their own word: *1 working · 1 quiet · 1 stale ·
 1 in review*, never "working". The task header's moving glyph still follows any working member, so

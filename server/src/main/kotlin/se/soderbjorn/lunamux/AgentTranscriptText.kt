@@ -150,8 +150,11 @@ object AgentTranscriptText {
         return runCatching { json.parseToJsonElement(line) as? JsonObject }.getOrNull()
     }
 
-    /** The text parts of a message's `content`, which is a string or a list of typed parts. */
-    private fun textOf(content: JsonElement?): String = when (content) {
+    /**
+     * The text parts of a message's `content`, which is a string or a list of typed parts.
+     * Also read by [TranscriptTail] to recognise the interrupt marker.
+     */
+    internal fun textOf(content: JsonElement?): String = when (content) {
         is JsonPrimitive -> if (content.isString) content.content else ""
         is JsonArray -> content.mapNotNull { part ->
             val o = part as? JsonObject
