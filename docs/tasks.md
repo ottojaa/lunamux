@@ -466,7 +466,7 @@ no byline):
    artifact, a document, a brief, and each of the owner's decisions linking to its record. Each row
    shows the kind, label and time its writer sent with it, newest first; a link sent without a time
    comes after the dated ones, in the order written, and shows no time. Lunamux knows no list of
-   kinds: it shows the writer's word as sent (up to 12 characters), `link` when there is none. It is
+   kinds: it shows the writer's word as sent (up to 8 characters), `link` when there is none. It is
    built from every `links` block.
 4. **Recent activity** has one line per item with the time at the left and the text beside it; a
    long item wraps under itself, and the next item stands one full line below it. It is built from
@@ -497,7 +497,7 @@ a `type`, an optional `title` (80) and the fields of its type:
 | --- | --- | --- |
 | `text` | `text` | 4000 characters of markdown: paragraphs, `#` to `###` headings, `-` / `1.` lists, fenced code, `**bold**`, `*italic*`, `` `code` `` and `[label](url)`. Anything else, HTML included, is shown as written. |
 | `facts` | `items`: `{label, value}` | 30 items; label 80, value 200. |
-| `links` | `items`: `{kind?, label, url, at?}` | 30 items; `kind` is one short word of up to 12 characters, `link` when missing or blank; label 80; `http`, `https` or `file` addresses only, 2000 characters; `at` is when the linked thing was made or changed, an ISO time or epoch milliseconds. Drawn with its time of day (with the day when it is not from today). A link stored before `kind` and `at` existed reads as kind `link` with no time. |
+| `links` | `items`: `{kind?, label, url, at?}` | 30 items; `kind` is one short word of up to 8 characters, `link` when missing or blank; label 80; `http`, `https` or `file` addresses only, 2000 characters; `at` is when the linked thing was made or changed, an ISO time or epoch milliseconds. Drawn with its time of day (with the day when it is not from today). A link stored before `kind` and `at` existed reads as kind `link` with no time. |
 | `timeline` | `items`: `{at, text}` | 50 items; `at` is an ISO time or epoch milliseconds; text 200. Shown newest first. |
 | `progress` | `done` and `total`, and/or `phase`; optional `label` | A bar when there is a count. |
 | `actions` | `buttons`: `{id, label, text}` | 8 buttons; label 40, text 500, one line. |

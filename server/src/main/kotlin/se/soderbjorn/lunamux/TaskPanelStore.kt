@@ -44,8 +44,11 @@ object TaskPanelLimits {
     const val VALUE_MAX = 200
     /** Longest link address. */
     const val URL_MAX = 2000
-    /** Longest link kind, the short word shown before the label. */
-    const val KIND_MAX = 12
+    /**
+     * Longest link kind, the short word shown before the label. It is as many characters as the
+     * panel's kind column can show without cutting the word.
+     */
+    const val KIND_MAX = 8
     /** Most entries a timeline keeps; the newest are kept. */
     const val TIMELINE_MAX = 50
     /** Longest timeline entry. */
@@ -120,13 +123,13 @@ object TaskPanelLimits {
                 count("links", c.items.size, LIST_MAX)
                 c.items.forEachIndexed { i, l ->
                     if (l.label.isBlank()) throw TaskException("Block '$id': link ${i + 1} has no label.")
+                    limit("the label of link ${i + 1}", l.label, LABEL_MAX)
                     if (l.kind.isBlank() || hasControlChars(l.kind)) {
                         throw TaskException("Block '$id': the kind of link '${l.label}' must be a short word (1-$KIND_MAX characters) with no control characters.")
                     }
                     limit("the kind of link '${l.label}'", l.kind, KIND_MAX)
                     val at = l.at
                     if (at != null && at < 0) throw TaskException("Block '$id': link '${l.label}' has a negative time.")
-                    limit("the label of link ${i + 1}", l.label, LABEL_MAX)
                     limit("the address of link '${l.label}'", l.url, URL_MAX)
                     if (!urlPattern.matches(l.url)) {
                         throw TaskException(

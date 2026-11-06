@@ -367,7 +367,7 @@ private fun buildLinks(links: TaskPanelViewModel.Block<TaskPanelViewModel.LinkRo
     }
     links.shown.forEachIndexed { i, link ->
         val row = div("tp-link-row")
-        row.appendChild(span("tp-kind tp-kind-${link.kind.lowercase()}", link.kind))
+        row.appendChild(span("tp-kind", link.kind))
         row.appendChild(span("tp-link-title", link.title))
         row.appendChild(span("tp-link-time", link.time))
         row.setAttribute("role", "link")

@@ -187,8 +187,8 @@ print(json.dumps({"taskId": sys.argv[1], "by": "release notes agent", "blocks": 
   {"id": "brief", "type": "links", "title": "Brief", "items": [
     {"kind": "brief", "label": "Brief: release notes for 4.3", "url": "https://example.com/briefs/release-4.3", "at": now - 18000000}]},
   {"id": "decisions", "type": "links", "title": "Decisions", "items": [
-    {"kind": "decision", "label": "You decided: notes stay one page", "url": "https://example.com/decisions/one-page", "at": now - 14400000},
-    {"kind": "decision", "label": "You decided: screenshots are retaken", "url": "https://example.com/decisions/screenshots", "at": now - 5400000}]},
+    {"kind": "doc", "label": "You decided: notes stay one page", "url": "https://example.com/decisions/one-page", "at": now - 14400000},
+    {"kind": "doc", "label": "You decided: screenshots are retaken", "url": "https://example.com/decisions/screenshots", "at": now - 5400000}]},
   {"id": "activity", "type": "timeline", "title": "Recent activity", "items": [
     {"at": now - 120000, "text": "Changelog check found two gaps: the entry for the sidebar fix has no merged pull request, and the one for the search change points at a pull request that was closed without merging"},
     {"at": now - 300000, "text": "Draft sent for review"},

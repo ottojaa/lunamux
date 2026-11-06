@@ -195,12 +195,20 @@ class TaskPanelStoreTest {
     fun `a link keeps a short kind of any word and a time that is not negative`() {
         fun link(kind: String = "PR", at: Long? = null) =
             TaskPanelBlock("l", null, TaskBlockContent.Links(listOf(TaskLink(kind, "x", "https://a.b", at))), writtenAtMillis = 0)
-        for (ok in listOf("PR", "slack", "decision", "k".repeat(12), "anything")) store.upsert(taskId, link(ok), null)
-        assertTrue("kind" in refused(link("k".repeat(13))))
+        for (ok in listOf("PR", "slack", "decision", "k".repeat(8), "anything")) store.upsert(taskId, link(ok), null)
+        assertTrue("kind" in refused(link("k".repeat(9))))
         assertTrue("kind" in refused(link(" ")))
         assertTrue("kind" in refused(link("P\nR")))
         store.upsert(taskId, link(at = 0L), null)
         assertTrue("negative" in refused(link(at = -1L)))
+    }
+
+    @Test
+    fun `a link with a bad kind and a label that is too long is refused for the label, which is not echoed`() {
+        val longLabel = "L".repeat(81)
+        val msg = refused(TaskPanelBlock("l", null, TaskBlockContent.Links(listOf(TaskLink(" ", longLabel, "https://a.b", -1L))), writtenAtMillis = 0))
+        assertTrue("label" in msg, msg)
+        assertTrue(longLabel !in msg, msg)
     }
 
     @Test

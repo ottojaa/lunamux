@@ -363,8 +363,8 @@ object AgentsOverviewSeed {
                 "decisions", "Decisions",
                 TaskBlockContent.Links(
                     listOf(
-                        TaskLink("decision", "You decided: notes stay one page", "https://example.com/decisions/one-page", now - 4 * HOUR),
-                        TaskLink("decision", "You decided: screenshots are retaken", "https://example.com/decisions/screenshots", now - 90 * MINUTE),
+                        TaskLink("doc", "You decided: notes stay one page", "https://example.com/decisions/one-page", now - 4 * HOUR),
+                        TaskLink("doc", "You decided: screenshots are retaken", "https://example.com/decisions/screenshots", now - 90 * MINUTE),
                     ),
                 ),
             ),
