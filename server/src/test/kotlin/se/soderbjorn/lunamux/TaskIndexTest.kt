@@ -1,6 +1,6 @@
 /**
  * Tests for [TaskIndex] and the task support in [AgentSessionTracker]: which task each session
- * belongs to (explicit join, file match by session id, file match by folder, none), how a
+ * belongs to (the task whose id it carries, else none; a task file lists no sessions), how a
  * resumed conversation keeps its task, how a task promised to a pane with no agent yet is handed
  * to the session that starts there, which record stands for a task's own session (the pane it ran
  * in, also when a restart has renumbered the terminal ids), and the operations behind the MCP task tools.
@@ -83,136 +83,62 @@ class TaskIndexTest {
         nowLine = "Bash ls", leafId = leafId, createdAt = createdAt, taskId = taskId,
     )
 
-    private fun member(
-        key: String, title: String = key, state: String = "idle", sessionId: String? = null,
-        matchSessionId: String? = null, matchFolder: String? = null,
-    ) = TaskFileMember(AgentTaskMember(key, title, state = state, line = "file line", sinceMillis = 7, sessionId = sessionId), matchSessionId, matchFolder)
+    private fun file(id: String, open: TaskOpen? = null, title: String = "File $id") =
+        TaskFile(id, title, repo = null, open = open, modified = 99)
 
-    private fun file(id: String, vararg members: TaskFileMember, open: TaskOpen? = null, title: String = "File $id") =
-        TaskFile(id, title, repo = null, open = open, members = members.toList(), modified = 99)
+    private fun resolve(
+        records: List<AgentSessionRecord>, files: List<TaskFile> = emptyList(),
+        rows: List<SettingsRepository.AgentTaskRow> = emptyList(),
+        meta: Map<String, SettingsRepository.TaskMetaRow> = emptyMap(),
+    ) = TaskIndex.resolve(records, files, rows, meta)
 
-    private fun resolve(records: List<AgentSessionRecord>, files: List<TaskFile> = emptyList(), rows: List<SettingsRepository.AgentTaskRow> = emptyList()) =
-        TaskIndex.resolve(records, files, rows)
-
-    // ── Precedence (GI-15, GI-16, GI-17, GI-18, GI-19) ──────────────────────────────────
+    // ── Which task a record belongs to: the one whose id it carries ─────────────────────
 
     @Test
-    fun `a member matches the newest record with its agent session id and follows it live`() {
+    fun `a record belongs to the task whose id it carries, and a record that carries none belongs to none`() {
         val snap = resolve(
-            listOf(
-                rec("old", agentSessionId = "abc", createdAt = 1),
-                rec("new", agentSessionId = "abc", createdAt = 9, state = "needs_you").copy(question = "Merge?"),
-                rec("other", agentSessionId = "zzz", createdAt = 99),
-            ),
-            listOf(file("f", member("m", matchSessionId = "abc"))),
+            listOf(rec("in", taskId = "f"), rec("out"), rec("also-in", taskId = "f", state = "ended")),
+            listOf(file("f")),
         )
-        val m = snap.tasks.single().members.single()
-        assertEquals("new", m.recordId)
-        assertEquals("needs_you", m.state)
-        assertEquals("Merge?", m.line)
-        assertEquals(500, m.sinceMillis)
-        assertEquals("m", m.title)
-        assertEquals("f", snap.assignment["new"])
-        assertNull(snap.assignment["other"])
+        assertEquals("f", snap.assignment["in"])
+        assertEquals("f", snap.assignment["also-in"])
+        assertNull(snap.assignment["out"])
     }
 
     @Test
-    fun `a member matches an open record in its folder or below, not a sibling with the same prefix`() {
-        val wt = folder("wt")
-        val sub = File(wt, "sub").apply { mkdirs() }.canonicalPath
-        val records = listOf(
-            rec("sibling", folder("wt-other")),
-            rec("ended", wt, state = "ended"),
-            rec("below", sub, createdAt = 3),
-            rec("exact", wt, createdAt = 7),
-        )
-        val f = listOf(file("f", member("m", matchFolder = wt)))
-        assertEquals("exact", resolve(records, f).tasks.single().members.single().recordId)
-        assertEquals("below", resolve(records.filter { it.id != "exact" }, f).tasks.single().members.single().recordId)
-        val none = resolve(records.filter { it.id != "exact" && it.id != "below" }, f).tasks.single().members.single()
-        assertNull(none.recordId)
-        assertEquals("idle", none.state)
-        assertEquals("file line", none.line)
-    }
-
-    @Test
-    fun `a session id match beats a folder match for the same member`() {
+    fun `a session opened in the folder a task file opens in is not taken into that task`() {
         val wt = folder("wt")
         val snap = resolve(
-            listOf(rec("by-folder", wt, createdAt = 9), rec("by-id", folder("elsewhere"), agentSessionId = "abc", createdAt = 1)),
-            listOf(file("f", member("m", matchSessionId = "abc", matchFolder = wt))),
+            listOf(rec("owners", wt, agentSessionId = "abc")),
+            listOf(file("f", open = TaskOpen("claude go", wt))),
         )
-        assertEquals("by-id", snap.tasks.single().members.single().recordId)
-        assertNull(snap.assignment["by-folder"])
+        assertNull(snap.assignment["owners"], "only the id a session carries places it in a task")
     }
 
     @Test
-    fun `a matched member follows its record live and falls back to the file once it ends`() {
+    fun `a session opened in a subfolder of the folder a task file opens in is not taken into that task`() {
         val wt = folder("wt")
-        val f = listOf(file("f", member("m", state = "needs_you", matchFolder = wt)))
-        assertEquals("working", resolve(listOf(rec("r", wt)), f).tasks.single().members.single().state)
-        val ended = resolve(listOf(rec("r", wt, state = "ended")), f).tasks.single().members.single()
-        assertEquals("needs_you", ended.state)
-        assertEquals("file line", ended.line)
-        assertNull(ended.recordId)
-    }
-
-    @Test
-    fun `an ended record that a member names by session id gives the member its record id and keeps the file's state`() {
-        val snap = resolve(listOf(rec("r", agentSessionId = "abc", state = "ended")), listOf(file("f", member("m", state = "idle", matchSessionId = "abc"))))
-        val m = snap.tasks.single().members.single()
-        assertEquals("r", m.recordId)
-        assertEquals("idle", m.state)
-        assertEquals("f", snap.assignment["r"])
-    }
-
-    @Test
-    fun `two members never take the same record`() {
-        val wt = folder("wt")
-        val snap = resolve(listOf(rec("only", wt)), listOf(file("f", member("a", matchFolder = wt), member("b", matchFolder = wt))))
-        assertEquals(listOf("only", null), snap.tasks.single().members.map { it.recordId })
-    }
-
-    @Test
-    fun `a record an agent put in a task is not taken by another task's folder match, and wins over a file match`() {
-        val wt = folder("wt")
-        val files = listOf(file("a", member("m", matchFolder = wt)), file("b"))
-        val snap = resolve(listOf(rec("r", wt, taskId = "b")), files)
-        assertEquals("b", snap.assignment["r"])
-        assertNull(snap.tasks.first { it.id == "a" }.members.single().recordId)
-    }
-
-    @Test
-    fun `a record put in a file's task by an agent can still be that file's member`() {
-        val wt = folder("wt")
-        val snap = resolve(listOf(rec("r", wt, taskId = "f")), listOf(file("f", member("m", matchFolder = wt))))
-        assertEquals("r", snap.tasks.single().members.single().recordId)
-        assertEquals("f", snap.assignment["r"])
-    }
-
-    @Test
-    fun `a record the agent put in a file's task that no member matches belongs to the task without being a member`() {
-        val snap = resolve(listOf(rec("r", folder("x"), taskId = "f")), listOf(file("f", member("m"))))
-        assertEquals("f", snap.assignment["r"])
-        assertNull(snap.tasks.single().members.single().recordId)
+        val sub = folder("wt/src/deep")
+        val snap = resolve(
+            listOf(rec("deep", sub, agentSessionId = "abc"), rec("carries", sub, taskId = "f")),
+            listOf(file("f", open = TaskOpen("claude go", wt))),
+        )
+        assertNull(snap.assignment["deep"], "a folder below the open folder places nothing")
+        assertEquals("f", snap.assignment["carries"], "the id it carries still does")
     }
 
     @Test
     fun `a task id no file and no row knows is ignored, so the record is a task of its own`() {
-        val wt = folder("wt")
-        val snap = resolve(listOf(rec("r", wt, taskId = "ghost")), listOf(file("f", member("m", matchFolder = wt))))
-        assertEquals("f", snap.assignment["r"], "the file match still applies")
-        assertNull(resolve(listOf(rec("r2", wt, taskId = "ghost"))).assignment["r2"])
+        assertNull(resolve(listOf(rec("r2", taskId = "ghost"))).assignment["r2"])
     }
 
     @Test
-    fun `file order is by id, so the same input always resolves the same way`() {
-        val wt = folder("wt")
-        val records = listOf(rec("r", wt))
-        val a = file("a", member("m", matchFolder = wt))
-        val b = file("b", member("m", matchFolder = wt))
-        assertEquals("a", resolve(records, listOf(b, a)).assignment["r"])
-        assertEquals("a", resolve(records, listOf(a, b)).assignment["r"])
+    fun `a task starts when its first session was created, else when its file was written`() {
+        val withSessions = resolve(listOf(rec("a", taskId = "f", createdAt = 40), rec("b", taskId = "f", createdAt = 25)), listOf(file("f")))
+        assertEquals(25, withSessions.tasks.single().startedAtMillis)
+        assertEquals(99, resolve(emptyList(), listOf(file("f"))).tasks.single().startedAtMillis)
+        val stored = resolve(listOf(rec("a", taskId = "f", createdAt = 40)), listOf(file("f")), meta = mapOf("f" to SettingsRepository.TaskMetaRow("f", startedAt = 7)))
+        assertEquals(7, stored.tasks.single().startedAtMillis)
     }
 
     @Test
@@ -384,7 +310,7 @@ class TaskIndexTest {
 
     @Test
     fun `a task file's task keeps its main conversation the same way`() {
-        files.value = listOf(file("prog", member("m", title = "Run one")))
+        files.value = listOf(file("prog"))
         session("s1", "a-1")
         index.recompute()
         index.setOwnSession("prog", "s1")
@@ -499,7 +425,7 @@ class TaskIndexTest {
 
     @Test
     fun `add_to_task works on a task file's id and the session is then in that file's task`() {
-        files.value = listOf(file("prog", member("m", title = "Run one")))
+        files.value = listOf(file("prog"))
         session("s1")
         index.recompute()
         index.addToTask("prog", listOf("s1"))
@@ -531,14 +457,14 @@ class TaskIndexTest {
     }
 
     @Test
-    fun `remove_from_task leaves a session in the file task whose member still matches it`() {
-        val wt = folder("wt")
-        files.value = listOf(file("prog", member("m", matchFolder = wt)))
-        session("s1", cwd = wt)
+    fun `remove_from_task takes a session out of a file's task as well`() {
+        files.value = listOf(file("prog"))
+        session("s1")
+        index.recompute()
         index.addToTask("prog", listOf("s1"))
         val after = index.removeFromTask(listOf("s1"))
         assertNull(tracker.openRecordOf("s1")!!.taskId)
-        assertEquals("prog", after["s1"], "the file still places it")
+        assertNull(after["s1"])
     }
 
     @Test
@@ -577,16 +503,18 @@ class TaskIndexTest {
 
     @Test
     fun `list_tasks shows every task with its sessions, including a task nothing is in yet`() {
-        files.value = listOf(file("prog", member("m", title = "Declared", state = "working")))
+        files.value = listOf(file("prog"))
         session("s1")
+        session("s2")
         val mine = index.createTask("Mine", listOf("s1"))
+        index.addToTask("prog", listOf("s2"))
         val empty = index.createTask("Empty", emptyList())
         val listing = index.listing().associateBy { it.id }
         assertEquals("file", listing.getValue("prog").source)
-        assertEquals(listOf("Declared"), listing.getValue("prog").members.map { it.title })
-        assertEquals(listOf("s1"), listing.getValue(mine).members.map { it.sessionId })
+        assertEquals(listOf("s2"), listing.getValue("prog").sessions.map { it.sessionId })
+        assertEquals(listOf("s1"), listing.getValue(mine).sessions.map { it.sessionId })
         assertEquals("agents", listing.getValue(mine).source)
-        assertTrue(listing.getValue(empty).members.isEmpty())
+        assertTrue(listing.getValue(empty).sessions.isEmpty())
     }
 
     @Test

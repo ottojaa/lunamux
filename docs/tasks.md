@@ -7,13 +7,11 @@ keeps its row when it is resumed with `claude --resume` and when Lunamux restart
 the conversation, not the pane it happens to run in. A task has one **main conversation**, the one
 that speaks for it, and that conversation's row stands for the whole task.
 
-There are two ways a session gets into a task, and they can be mixed:
-
-- **Agents group their own sessions.** An agent that splits its work across a second session
-  says so through the Lunamux MCP tools below. Nobody has to write a file.
-- **A tool that runs sessions Lunamux does not host declares them in a task file.** A
-  scheduler, an orchestrator or a CI runner writes one JSON file per task into a folder Lunamux
-  watches. Lunamux only ever *reads* these files.
+A session is in a task when it carries the task's id, and nothing else decides it. Agents put their
+sessions in a task through the Lunamux MCP tools below; nobody has to write a file. A **task file**
+is optional: it gives a task a title and, if wanted, an `open` action that starts work for it. It
+lists no sessions. A tool outside Lunamux writes one JSON file per task into a folder Lunamux
+watches, and Lunamux only ever *reads* these files.
 
 ## What the person sees
 
@@ -43,7 +41,9 @@ one of:
 
 **Needs you** always means a question the person can see and answer: a permission prompt or an
 elicitation that Claude Code reports, an `AskUserQuestion` call, or the approval overlay of Codex.
-One question counts once. A reply that merely ends in a question ("Want me to go ahead?") is done,
+One question counts once. Only a conversation that has a pane in a window counts, in the footer and in the
+state words alike: a conversation that has ended, or whose pane the window no longer holds, is counted
+nowhere, and a task whose conversations all lack a pane sits in EARLIER and reads **finished**. Known gap: a conversation that carries no task id and is the main conversation of two tasks is in both rows, so both can read **needs you** while the footer counts it once. A reply that merely ends in a question ("Want me to go ahead?") is done,
 and so is a conversation that was just resumed and sits at its prompt.
 
 The glyph is the app's own working mark: four braille frames that cross-fade
@@ -53,16 +53,16 @@ positions in a bold weight, and the glyph is meant to show two dots turning. Its
 the clock, never from when the row was drawn, so a row that is redrawn (a new status line, a new
 age) keeps the frame it had, and the footer's spinner shows the same frame as the rows.
 
-A conversation is *moving* while it works and has shown a sign of life in the last five minutes (for
-a member that only a task file lists: while its file was refreshed in the last twenty). One that works but
+A conversation is *moving* while it works and has shown a sign of life in the last five minutes. One that works but
 has gone quiet reads as not moving, so a task of quiet conversations reads **done**.
 
 The **detail** is the first of these that exists: the task's status line, the question of the
 conversation that waits (in quotes), what a moving conversation is doing, or nothing. The folder
 and the detail are hidden when the panel is narrower than 700px.
 
-When a question waits and the main conversation is closed, the row says "a question waits" and the
-count does not rise yet; ↵ resumes the conversation, which asks again, and the count rises then.
+A question counts only while the conversation that asks has a pane. When the main conversation is
+closed, its last question is not counted; ↵ resumes the conversation, which asks again, and the
+count rises then.
 
 What a moving session is doing is said **in words, never as the raw command**, because a column of
 shell commands tells nobody anything at a glance. Lunamux words each tool call as it arrives:
@@ -84,8 +84,8 @@ since that is what the person is asked to allow.
 - **The selected row has more under it.** In this order: the whole status, only when the row cut
   it short (it ends in "…") or hides it in a panel narrower than 700px, so the same words are
   never shown twice; then up to two chips about the session ↵ goes to; then any text the model
-  put on the row (where a search matched, the message of a resume that failed, "nothing to jump to:
-  this session is not in a Lunamux pane"). The **folder chip** is that session's working folder, the
+  put on the row (where a search matched, the message of a resume that failed, why ↵ has
+  nothing to open for a conversation in a background tab). The **folder chip** is that session's working folder, the
   home folder written `~`. The **tab chip** names the session's tab, and shows only when the
   tab's name does not already contain every word of the row's title (a word is a run of letters
   and digits; case and punctuation are ignored; whole words only, no fuzzy matching); a tab in
@@ -118,8 +118,8 @@ since that is what the person is asked to allow.
   5. **The task has no main conversation on record:** a live conversation of the task in a tab of the
      strip is jumped to (the one waiting longest, else the busiest); else ask "no conversation /
      Start one in a new tab?" and run the task file's `open` action on a second ↵; else the newest
-     conversation the task has a record of is resumed after the same kind of question; else ↵
-     offers nothing.
+     conversation the task has a record of is resumed after the same kind of question. A task with
+     no conversation and no `open` action has no row.
   A row for a conversation that is in no task does the same for itself: it jumps to a live one in a tab
   of the strip, shows the tab of a waiting one in a hidden tab, and resumes a closed one. A resumed
   conversation is the task's main conversation again, in the same row.
@@ -173,7 +173,10 @@ since that is what the person is asked to allow.
   within three days and **LAST TWO WEEKS** those between three and fourteen days old. Together
   they show the newest five rows, then one **+ N more** line (a click on it, or ↓ on the last row,
   shows the rest). A band with nothing to show has no heading. Older rows are not listed, but
-  search still finds them, and search is never cut.
+  search still finds older *conversations*, and search is never cut. A task with no conversation
+  (only an `open` action) is aged by its start, which never moves: fourteen days after the server
+  first saw it, its row leaves EARLIER and search does not return it, even if the file was
+  rewritten since. It comes back as soon as the task has a conversation.
   - A task's age is its newest conversation's.
   - Both edges are inclusive on the older side: exactly three days old is still in the first band,
     exactly fourteen still listed.
@@ -213,9 +216,7 @@ matches on its own title, its **task's title**, its first prompt, its branch and
 conversation or its last screen, and results are ranked in that order. A match through the task
 reads "in task title" on the selected row's second line, so a session whose own words
 never mention the work can still be found by what the work was called. A session is found through
-its task when it was put in it through the tools, or when a task file places it and it is still
-known to the server; an old session that a task file once placed by folder is found by its own
-words only.
+its task when it carries the task's id.
 
 A search shows one row per task: when two sessions of a task match, the better match stands for
 the task and the second line names where and in which session it matched ("in transcript of
@@ -226,10 +227,10 @@ never the background ones.
 
 `scripts/seed-agents-overview.sh <db file> <tasks folder>` fills a scratch database and folder
 with about twenty ended conversations (last active today, 1, 2, 6, 12 and 30 days ago), six
-agent-made tasks (one with its own main conversation, a status and two background members) and six
+agent-made tasks (one with its own main conversation, a status and two background agents) and six
 task files. Seed while the scratch server is stopped, then start it on its own port, with a
-throwaway `-Duser.home` (the settings file lives there), `-Dlunamux.dbPath`, `-Dlunamux.tasksDir`,
-`-Dlunamux.agentGroupsDir` and `-Dlunamux.claudeProjects` pointing at scratch paths. The script's
+throwaway `-Duser.home` (the settings file lives there), `-Dlunamux.dbPath`, `-Dlunamux.tasksDir`
+and `-Dlunamux.claudeProjects` pointing at scratch paths. The script's
 header lists what to look at, and the cases that need a running agent.
 `scripts/seed-agents-overview-live.sh <server> <token> <moment>` then makes the usual case (1), a
 background agent that asks (4) or a closed main conversation with two agents working (5) happen on
@@ -273,7 +274,7 @@ Seven MCP tools are registered. All but `list_tasks` change tasks and need a `re
 |---|---|---|
 | `create_task` | `title`, `sessionIds?` | Makes a task and puts the named sessions in it. Returns `{ taskId, sessions }`. |
 | `add_to_task` | `taskId`, `sessionIds` | Moves sessions into a task. The id can name a task file's task: the session is then in that task. |
-| `remove_from_task` | `sessionIds` | Takes sessions out, so each is a task of its own again. Returns where each one ended up; a session that a task file still matches stays in that file's task. |
+| `remove_from_task` | `sessionIds` | Takes sessions out, so each is a task of its own again. Returns where each one ended up. |
 | `rename_task` | `taskId`, `title` | Renames a task made through the tools. A file's task is named by its file, so renaming it is refused with that reason. |
 | `set_task_lead` | `taskId`, and exactly one of `sessionId` or `conversationId` | Names the session that speaks for the task. A `sessionId` (the pane's `$LUNAMUX_SESSION_ID`) is turned into the conversation running in it now; a `conversationId` is the agent's own session id, which a closed conversation still has. Refused for an unknown task, pane or both arguments. `create_task` already names the conversation of the session that made the task (the pane named in the `X-Lunamux-Session` header, else the first one in `sessionIds`). Returns the `taskId` and the `mainConversation` now named. |
 | `set_task_status` | `taskId`, `text` | Sets the task's one-line status; empty clears it. Newlines become spaces, the ends are trimmed, at most 120 characters. |
@@ -312,12 +313,15 @@ shown only once a session is in it; a task that loses its last session disappear
 ~/.lunamux/tasks/<anything>.json
 ```
 
-Set `-Dlunamux.tasksDir=/some/folder` to watch another folder. Earlier versions read
-`~/.lunamux/agent-groups`; that folder is still read when no override is set, so files written
-for it keep working, and `-Dlunamux.agentGroupsDir` still names a folder to read instead. A dev
-server and the real Lunamux read the same folders unless an override is set, so a dev server
-must always set one. Files must end in `.json`; names starting with `.` are ignored, so a writer
-can build a file under a dot-name and rename it into place.
+Set `-Dlunamux.tasksDir=/some/folder` to watch another folder. A dev server and the real Lunamux
+read the same folder unless an override is set, so a dev server must always set one. Files must
+end in `.json`; names starting with `.` are ignored, so a writer can build a file under a dot-name
+and rename it into place.
+
+A task file declares a task: its id, its name and, if wanted, how to start work for it. It names no
+sessions. The sessions of a task are the ones that carry its id, put there through the tools above;
+a session that merely runs in the folder the file opens in is not taken into the task and keeps its
+own row.
 
 ### Format
 
@@ -325,120 +329,62 @@ One object per file.
 
 ```json
 {
-  "version": 2,
   "id": "access-control",
   "title": "Access control",
   "repo": "work-app",
   "open": {
     "command": "claude --resume access-control",
     "folder": "~/code/work-app"
-  },
-  "members": [
-    {
-      "title": "Role model",
-      "links": ["ACC-12"],
-      "match": { "folder": "~/code/work-app/.worktrees/acc-12" },
-      "state": "needs_you",
-      "line": "Should admins inherit viewer rights?",
-      "since": "2026-11-01T09:12:00Z"
-    },
-    {
-      "title": "Login audit trail",
-      "match": { "agentSessionId": "5b0f6d2c-1c53-4a49-8f0e-3f6b1c0f7a11" },
-      "state": "working",
-      "since": "2026-11-01T08:50:00Z"
-    },
-    {
-      "title": "Permissions page",
-      "state": "done",
-      "label": "in review",
-      "links": ["#212"],
-      "since": "2026-11-01T08:10:00Z",
-      "sessionId": "9a3c1e72-6d0b-4c11-b2f4-0c5d8e7a1b30"
-    }
-  ]
+  }
 }
 ```
 
 | Field | Required | Meaning |
 |---|---|---|
-| `version` | no | `2`. Accepted and ignored; a `1` file works too. |
 | `id` | yes | Unique, stable id of the task. If two files use one id, the newer file wins and a warning is logged. A task made through the tools with the same id is the same task, and the file's title wins. |
 | `title` | yes | The task's name. |
 | `repo` | no | Repository name shown beside the title. |
 | `open` | no | The task's optional **open** action, see below. |
 | `open.command` | if `open` | Typed into a new shell (followed by ↵) when the header's ↵ has no open session to jump to. |
 | `open.folder` | if `open` | Absolute path, or one starting with `~/`. The new tab opens here. |
-| `lead` | no | The older spelling of `open`, read as `open` when `open` is absent. Its `sessionId` is ignored: a file cannot name the task's own session, an agent does that with `set_task_lead`. |
-| `tag`, `link`, `updatedAt` | no | Accepted and ignored. |
-| `members[]` | no | The task's sessions that tools outside Lunamux run, shown in the order listed. |
-| `members[].title` | yes | What the member is called. A matched session keeps this title. |
-| `members[].state` | yes | `needs_you`, `working`, `done` or `ended`. `idle`, the older spelling of `done`, is still read as `done`. |
-| `members[].label` | no | A short status word shown in front of the line and used in the counts ("1 in review"). `in review`, `queued`, `waiting`, `paused` and `done` (or `ready`) have a glyph and a place in the order; any other label, `held` included, counts as given. Use plain statuses, not ticket keys. |
-| `members[].line` | no | One line of detail: the question for `needs_you`, otherwise what it is doing. Blank means none. |
-| `members[].sessionId` | no | The id `claude attach` takes for the member's background session. Gives the member a **resume** action when Lunamux hosts no session for it. Only letters, digits, `-` and `_` are accepted; anything else is never typed into a shell. |
-| `members[].since` | no (recommended) | ISO-8601 time the member entered its state; drives the age and the ordering. When missing or unreadable, the file's modified time is used. |
-| `members[].links` | no | Ticket ids and pull requests such as `ACC-12` or `#212`. A `#`-number is the member's pull request, shown after `done`; Lunamux adds none of its own. |
-| `members[].match` | no | How to find the member's real session; see below. |
 
-Unknown fields are ignored. Paths must be absolute or start with `~/`; a relative path makes the
-file invalid. Symbolic links in paths are resolved before comparing.
+Other keys are ignored. A file written for an earlier version, with `version`, `tag`, `link`,
+`updatedAt`, `lead` or `members[]`, still parses; those keys do nothing. Paths must be absolute or
+start with `~/`; a relative path makes the file invalid.
 
-A file that cannot be used (broken JSON, a missing `id` or `title`, an `open` without a command
-or an absolute folder, an unknown `state`, a relative path) is **skipped whole**, with one
-warning in the server log each time the file changes. The other tasks are unaffected, and a later
-fixed version of the file is picked up within about three seconds.
+A file that cannot be used (broken JSON, a missing `id` or `title`, an `open` without a command or
+an absolute folder, a relative path) is **skipped whole**, with one warning in the server log each
+time the file changes. The other tasks are unaffected, and a later fixed version of the file is
+picked up within about three seconds.
+
+A task that has a file but no session yet shows a row only when the file declares `open`: that row
+is how a person starts the work. A task with neither has no row.
 
 ### The `open` action
 
 `open` is optional. With it, ↵ on a row that has no conversation at all (after the question "Start
 one in a new tab?") types `open.command` into a new tab started in `open.folder`. The tab is named
-like the task. Without it, a task with no conversation does nothing.
+like the task. Without it, a task with no conversation has no row.
 
-### Matching members to real sessions
-
-Without `match`, a member is drawn from the file alone: its state, line and age are exactly what
-the file says. It has no action unless it has a `sessionId`. Whether it is alive is told by the
-file's freshness alone (see below).
-
-Every session record gets its task by the first of these that applies:
-
-1. **An explicit join.** The agent put it in a task through the tools above (or `create_window`
-   promised it one). This beats everything else, and a task id that no file or agent-made task
-   knows is ignored.
-2. **A file member's `match.agentSessionId`**: the newest session with that agent session id.
-3. **A file member's `match.folder`**: the newest *open* session whose working folder is that
-   folder or inside it.
-4. Otherwise the session is a task of its own.
-
-A matched member takes the session's live state, line and age while the session is open, and ↵
-jumps to it (or resumes it once closed). Its title stays the file's. A session is in exactly one
-task and fills at most one member, so two members never take one session. A session an agent
-put into a file's task that no member matches belongs to the task all the same, and shows as an
-extra session after the members.
-
-Two members of one file may carry the same `sessionId`. Each still gets its own row and its own
-open action, because the server numbers a repeated id by the member's place in the file.
+Lunamux only types the command; it does not tie the new session to the task. The command has to join
+the task itself (for example by starting an agent that calls the `add_to_task` MCP tool).
+Otherwise the new session gets a row of its own, and the task's row stays without a conversation.
 
 ### Writing and removing files
 
 - **Replace atomically.** Write the new content to a temporary name (starting with `.`) in the
   same folder and rename it over the old file. Lunamux notices changes by modified time and size
-  and re-reads about every three seconds, so a state change shows up within a poll.
-- **Keep the file fresh while the work runs.** Staleness is read from the file's modified time.
-  A writer that has nothing new to say must still touch the file (set its modified time, leaving
-  content and format alone) at least every two minutes while a member works, or its working
-  members read as quiet after five minutes and stale after twenty.
-- **To remove a task**, delete its file. The task disappears within a poll, and its matched
-  sessions become tasks of their own. Lunamux keeps nothing about it.
+  and re-reads about every three seconds.
+- **To remove a task**, delete its file. The task disappears within a poll; its sessions become
+  tasks of their own again, unless the task was also made through the tools. Lunamux keeps nothing
+  about the file.
 
 ### Trust
 
 `open.command` is typed into the user's shell when they press ↵ on the header. Anyone who can
 write into the folder can therefore run a command as the user. Only the user's own tools should
 write there, and the folder should not be shared or writable by others. The command comes from
-the file on the server and is never taken from the browser, and the `claude attach` command for
-a member is built by the server from the member's `sessionId` alone.
+the file on the server and is never taken from the browser.
 
 ## The task panel
 

@@ -6,8 +6,8 @@
  *
  * This file decides whether the panel shows at all (only in the tab where the main conversation
  * is live, and only while the person has it open), builds the four blocks from the task's
- * members and the blocks agents wrote, and carries out what a click or key on an agent line does
- * (jump to a listed one, show a waiting background one as a tab, attach to an unhosted one).
+ * sessions that carry its id and the blocks agents wrote, and carries out what a click or key on
+ * an agent line does (jump to a listed one, show a waiting background one as a tab).
  *
  * Contains [TaskPanelViewModel] with its state types ([TaskPanelViewModel.State],
  * [TaskPanelViewModel.AgentLine], [TaskPanelViewModel.LinkRow], [TaskPanelViewModel.ActivityRow],
@@ -65,17 +65,14 @@ class TaskPanelViewModel(
      * @see AgentLine.action
      */
     enum class MemberAction {
-        /** Nothing: the member has no session this client can reach, or it works out of sight. */
+        /** Nothing: the session has no pane this client can reach, or it works out of sight. */
         NONE,
 
-        /** Go to the tab of a member running in a tab the person can see. */
+        /** Go to the tab of a session running in a tab the person can see. */
         JUMP,
 
-        /** Show a background member that waits on the person as a marked tab until it works on. */
+        /** Show a background session that waits on the person as a marked tab until it works on. */
         SHOW_WAITING,
-
-        /** Open a member the task file lists but Lunamux does not host, with its own attach command. */
-        OPEN,
     }
 
     /** The lists of the panel that can open in full. */
@@ -84,25 +81,23 @@ class TaskPanelViewModel(
     /**
      * One line of the agents block.
      *
-     * @property key the member's key, unique within the task; keeps a line's identity through a redraw.
-     * @property title the member's name.
+     * @property title the session's name.
      * @property state `needs_you` or `working`; a view picks the glyph from it.
      * @property stateWord the word for [state]: "working" or "needs you".
-     * @property age how long the member has been in [state], as `now`, `5m`, `3h` or `2d`.
+     * @property age how long the session has been in [state], as `now`, `5m`, `3h` or `2d`.
      * @property nowLine what it is doing or asking, in words, or null. Never a bare tool name.
      * @property action what a click does.
-     * @property recordId the session record behind the line, or null for an unhosted member.
+     * @property recordId the session record behind the line; unique within the task, so it also keeps a line's identity through a redraw.
      * @property hint the keys that act on the line while it is selected, or null when none does.
      */
     data class AgentLine(
-        val key: String,
         val title: String,
         val state: String,
         val stateWord: String,
         val age: String,
         val nowLine: String?,
         val action: MemberAction,
-        val recordId: String?,
+        val recordId: String,
         val hint: String?,
     )
 
@@ -225,19 +220,17 @@ class TaskPanelViewModel(
     }
 
     /**
-     * Do what ↵ or a click on [line] does: jump to a listed member, show a waiting background one
-     * as a tab, attach to an unhosted one, or nothing.
+     * Do what ↵ or a click on [line] does: jump to a listed session, show a waiting background one
+     * as a tab, or nothing.
      *
      * @param line a line of [State.agents].
      * @see MemberAction
      * @see WindowCommand.ShowWaitingAgent
      */
     suspend fun activateMember(line: AgentLine) {
-        val taskId = state.taskId ?: return
         when (line.action) {
             MemberAction.JUMP -> jump(line.recordId)
-            MemberAction.SHOW_WAITING -> line.recordId?.let { send(WindowCommand.ShowWaitingAgent(it)) }
-            MemberAction.OPEN -> send(WindowCommand.OpenTaskMember(taskId, line.key))
+            MemberAction.SHOW_WAITING -> send(WindowCommand.ShowWaitingAgent(line.recordId))
             MemberAction.NONE -> Unit
         }
     }
@@ -284,7 +277,7 @@ class TaskPanelViewModel(
             visible = ui.open,
             taskId = task.id,
             title = task.title,
-            agents = cut(agentLines(task, sessions, byId, config, own, now), task.id, Section.AGENTS, ui),
+            agents = cut(agentLines(task, sessions, config, own, now), task.id, Section.AGENTS, ui),
             progress = progressOf(blocks),
             links = cut(linkRows(blocks, now), task.id, Section.LINKS, ui),
             activity = cut(activityRows(blocks, now), task.id, Section.ACTIVITY, ui),
@@ -297,44 +290,39 @@ class TaskPanelViewModel(
         else Block(all.take(SHOWN), all.size - SHOWN, all.size)
 
     /**
-     * The members working or waiting on the person, the ones waiting first. The main conversation
-     * is left out (the panel sits beside it), and so is every member that finished.
+     * The sessions of the task that work or wait on the person, the ones waiting first. The main
+     * conversation is left out (the panel sits beside it), and so is every session that finished or
+     * has no pane in the layout: the footer and the rows count only sessions with a pane, and the
+     * panel lists the same ones.
      */
     private fun agentLines(
         task: AgentTask,
         sessions: List<AgentSessionSummary>,
-        byId: Map<String, AgentSessionSummary>,
         config: WindowConfig,
         own: AgentSessionSummary,
         now: Long,
     ): List<AgentLine> {
-        val fileMembers = task.members.map { it to it.recordId?.let(byId::get) }
-        val extra = TaskMembers.unlistedSessions(task, byId, sessions.filter { it.taskId == task.id })
-            .map { TaskMembers.memberOf(it) to it }
-        val lines = (fileMembers + extra)
-            .filter { (_, s) -> s == null || s.conversationId != own.conversationId }
-            .mapNotNull { (m, s) ->
-                val state = s?.state ?: m.state
-                if (state != WORKING && state != NEEDS_YOU) return@mapNotNull null
-                val where = s?.takeIf { it.state != ENDED }?.leafId?.let { locate(config, it) }
+        val lines = sessions.filter { it.taskId == task.id && it.conversationId != own.conversationId }
+            .sortedWith(compareBy({ TaskMembers.startedOf(it) }, { it.id }))
+            .filter { it.state == WORKING || it.state == NEEDS_YOU }
+            .mapNotNull { s -> s.leafId?.let { locate(config, it) }?.let { s to it } }
+            .map { (s, where) ->
                 val action = when {
-                    s == null && m.sessionId != null -> MemberAction.OPEN
-                    where != null && !where.tab.isListed && state == NEEDS_YOU -> MemberAction.SHOW_WAITING
-                    where != null && where.tab.isListed -> MemberAction.JUMP
+                    !where.tab.isListed && s.state == NEEDS_YOU -> MemberAction.SHOW_WAITING
+                    where.tab.isListed -> MemberAction.JUMP
                     else -> MemberAction.NONE
                 }
                 AgentLine(
-                    key = m.key,
-                    title = m.title.ifBlank { "Agent session" },
-                    state = state,
-                    stateWord = if (state == NEEDS_YOU) "needs you" else "working",
-                    age = ageOf(s?.stateSince ?: m.sinceMillis, now),
-                    nowLine = inWords(m.line ?: s?.nowLine),
+                    title = TaskMembers.titleOf(s),
+                    state = s.state,
+                    stateWord = if (s.state == NEEDS_YOU) "needs you" else "working",
+                    age = ageOf(s.stateSince, now),
+                    nowLine = inWords(if (s.state == NEEDS_YOU) s.question ?: s.nowLine else s.nowLine),
                     action = action,
-                    recordId = s?.id,
+                    recordId = s.id,
                     hint = when (action) {
                         MemberAction.SHOW_WAITING -> AgentsOverviewBackingViewModel.SHOW_WAITING_HINT.let { "↵ $it" }
-                        MemberAction.JUMP, MemberAction.OPEN -> OPEN_HINT
+                        MemberAction.JUMP -> OPEN_HINT
                         MemberAction.NONE -> null
                     },
                 )
@@ -389,7 +377,7 @@ class TaskPanelViewModel(
         /** What a list shows before "+ N more". */
         const val SHOWN = 5
 
-        /** What a line says about ↵ when it goes to the member's own tab or attach command. */
+        /** What a line says about ↵ when it goes to the session's own tab. */
         const val OPEN_HINT = "↵ open"
 
         private val EMPTY_BLOCK = Block<Nothing>(emptyList(), 0, 0)

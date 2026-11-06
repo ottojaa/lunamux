@@ -63,7 +63,6 @@ import se.soderbjorn.lunamux.AgentSessionMatch
 import se.soderbjorn.lunamux.AgentSessionSummary
 import se.soderbjorn.lunamux.AgentSessionText
 import se.soderbjorn.lunamux.AgentTask
-import se.soderbjorn.lunamux.AgentTaskMember
 import se.soderbjorn.lunamux.LeafNode
 import se.soderbjorn.lunamux.WindowCommand
 import se.soderbjorn.lunamux.WindowConfig
@@ -324,7 +323,7 @@ class AgentsOverviewBackingViewModel(
      *   whatever this holds.
      * @property needYouCount conversations asking for the user, background ones included; the
      *   footer's "waiting" number (see [AgentCounts]).
-     * @property workingCount conversations that work and are moving (neither quiet nor stale, see
+     * @property workingCount conversations that work and are moving (not quiet, see
      *   [isMoving]), background ones included; the footer's spinner number.
      * @property selectedId the id of the highlighted row, or null when there are no rows.
      * @property peek the screen popover, or null while it is closed.
@@ -847,56 +846,20 @@ class AgentsOverviewBackingViewModel(
     }
 
     /**
-     * One conversation of a task, paired with the session summary it matched (null when Lunamux
-     * does not host it).
-     *
-     * @property member what the task says about the conversation: the file's member, or one made
-     *   from the session itself.
-     * @property session the hosted session behind it, or null.
-     */
-    private class Run(val member: AgentTaskMember, val session: AgentSessionSummary?) {
-        /**
-         * The task file's refresh time when this member is one Lunamux does not host,
-         * else null.
-         *
-         * @param refreshed epoch millis the declaring task file was last refreshed, or null.
-         */
-        fun fileRefreshed(refreshed: Long?): Long? = refreshed.takeIf { session == null }
-    }
-
-    /**
-     * Whether [run] is working and really moving (neither quiet nor stale).
-     *
-     * Called by [taskRow] for the state word.
-     *
-     * @param run the task member.
-     * @param refreshed epoch millis the task file was last refreshed, or null.
-     * @param nowMillis the current time.
-     * @return true when it is counted as working.
-     * @see isMoving
-     */
-    private fun runMoving(run: Run, refreshed: Long?, nowMillis: Long): Boolean =
-        isMoving(run.member.state == WORKING, run.fileRefreshed(refreshed), workingActivity(run, refreshed), nowMillis)
-
-    /**
      * A task with its conversations, ready to become a row.
      *
      * @property task the task as the server sent it.
-     * @property runs its conversations: the file's members, the hosted sessions that carry its id and
-     *   its main conversation.
-     * @property waiting the runs that wait on the person and are counted: a hosted conversation that
-     *   asks, and a member Lunamux does not host that asks while the main conversation is open.
+     * @property sessions its conversations: the sessions that carry its id, oldest first, and its
+     *   main conversation when no session of the task is it.
+     * @property waiting the conversations that wait on the person and sit in a pane, which are the
+     *   ones [AgentCounts] counts.
      * @property since the time that places the task among those in NOW: since the oldest conversation
      *   that needs the person (or works) changed state, else the newest change of any conversation.
      * @property recency epoch millis of the newest activity of any conversation of the task: when an
-     *   ended one ended, the last activity of an open one, and the time a task file gives a member.
-     *   Decides the EARLIER band and the order inside it.
+     *   ended one ended, the last activity of an open one. Decides the EARLIER band and the order
+     *   inside it.
      * @property inNow whether the task belongs in NOW: one of its conversations is live in a pane the
-     *   layout holds, or a question waits that only the main conversation can take. Every other task is
-     *   in EARLIER.
-     * @property questionWaits whether a member Lunamux does not host asks for the person while the main
-     *   conversation is closed. It is not counted; the row says a question waits and ↵ resumes the
-     *   conversation, which asks it.
+     *   layout holds. Every other task is in EARLIER.
      * @property started epoch millis the task started, which fixes its place in NOW.
      * @property enter what ↵ does on the task's row.
      * @property target the session [enter] acts on, or null for [Enter.OPEN] and for [Enter.NONE]
@@ -905,23 +868,19 @@ class AgentsOverviewBackingViewModel(
      *   more (it is older than the ones kept), else null. ↵ resumes the conversation by this id.
      * @property mainId the record id of the task's main conversation, or null when Lunamux does not
      *   list it.
-     * @property countsUnhosted false when the task names a main conversation that is not open; the task's
-     *   row then leaves the members Lunamux does not host out of its working count, as the footer does.
      */
     private class TaskUnit(
         val task: AgentTask,
-        val runs: List<Run>,
-        val waiting: List<Run>,
+        val sessions: List<AgentSessionSummary>,
+        val waiting: List<AgentSessionSummary>,
         val since: Long,
         val recency: Long,
         val inNow: Boolean,
-        val questionWaits: Boolean,
         val started: Long,
         val enter: Enter,
         val target: AgentSessionSummary?,
         val mainId: String?,
         val resumeId: String?,
-        val countsUnhosted: Boolean,
     ) {
         /** Whether the task is in EARLIER: every place that draws a task there asks this. */
         val inEarlier: Boolean get() = !inNow
@@ -964,7 +923,7 @@ class AgentsOverviewBackingViewModel(
         val query = ui.query.trim()
         val matchMode = query.length >= MIN_QUERY
         // A conversation is found by its conversation id as well as by the id of the record that stands
-        // for it: a task member and a search match may name either.
+        // for it: a task's main conversation and a search match may name either.
         val byKey = sessions.associateBy { it.id } + sessions.associateBy { it.conversationId }
         fun inspectionOf(id: String) = inspection?.takeIf { it.recordId == id }
 
@@ -974,9 +933,9 @@ class AgentsOverviewBackingViewModel(
 
         // The server lists matches best first; the first match of a task is the one that stands for it.
         // The task's main conversation often carries no task id, so a match on it is routed to its task
-        // by the conversations the task's runs hold; otherwise it would be a row of its own beside the task.
+        // by the conversations the task holds; otherwise it would be a row of its own beside the task.
         val unitBySession = buildMap {
-            units.forEach { u -> u.runs.forEach { r -> r.session?.let { put(it.id, u); put(it.conversationId, u) } } }
+            units.forEach { u -> u.sessions.forEach { put(it.id, u); put(it.conversationId, u) } }
         }
         val answer = matches?.takeIf { matchMode && it.query == query }
         val matchRows = answer?.matches.orEmpty()
@@ -996,7 +955,7 @@ class AgentsOverviewBackingViewModel(
         // conversation an agent runs out of sight gets no row of its own while it works or rests: it is
         // counted, and a task that holds it shows it. One that waits for the person and that no task
         // holds does get a row, because ↵ on it is the only way to its question.
-        val claimed = units.flatMap { u -> u.runs.mapNotNull { it.session?.id } }.toSet()
+        val claimed = units.flatMap { u -> u.sessions.map { it.id } }.toSet()
         val singles = sessions.filter { it.id !in claimed && (!it.background || (it.state == NEEDS_YOU && c.live(it))) }
 
         // NOW is every live conversation in a tab, once each, whatever its state, and every task with a
@@ -1074,7 +1033,7 @@ class AgentsOverviewBackingViewModel(
         // Once a resume has switched to the new tab the overlay has done its job;
         // settleResume then resets the inputs so it stays closed.
         val resumed = ui.resumingId != null && config?.effectiveActiveTabId != ui.resumeFromTab
-        val counts = AgentCounts.of(sessions, taskList, nowMillis)
+        val counts = AgentCounts.of(sessions, config, nowMillis).total
         return State(
             open = ui.open && !resumed,
             query = ui.query,
@@ -1123,7 +1082,7 @@ class AgentsOverviewBackingViewModel(
      * counting it here as well would show it in two rows' state words. The row's ↵ still goes to it
      * (see [mainOf]).
      *
-     * Called by [unitOf] to add the conversation to the task's runs when no member holds it.
+     * Called by [unitOf] to add the conversation to the task's sessions when none of them is it.
      *
      * @param t the task.
      * @param byKey all session summaries by record id and by conversation id.
@@ -1144,16 +1103,15 @@ class AgentsOverviewBackingViewModel(
         t.mainConversation?.let(byKey::get)
 
     /**
-     * Pair a task's conversations with the hosted sessions they match, work out where the task sits
-     * and what ↵ on its row opens.
+     * Gather a task's conversations, work out where the task sits and what ↵ on its row opens.
      *
-     * The task's conversations are the members its file lists plus every hosted session that carries
-     * its id and no member of the file claimed, and its main conversation when neither holds it. A
-     * task without conversations and without an `open` action has no unit and no row.
+     * The task's conversations are the sessions that carry its id, and its main conversation when
+     * none of those is it. A task without conversations and without an `open` action has no unit and
+     * no row.
      *
      * @param t the task.
      * @param byKey all session summaries by record id and by conversation id.
-     * @param hosted the hosted sessions whose [AgentSessionSummary.taskId] is [t]'s id.
+     * @param hosted the sessions whose [AgentSessionSummary.taskId] is [t]'s id.
      * @param c the layout and the clock; it tells which sessions are open.
      * @return the unit, or null when the task has nothing to show.
      */
@@ -1163,42 +1121,33 @@ class AgentsOverviewBackingViewModel(
         hosted: List<AgentSessionSummary>,
         c: Context,
     ): TaskUnit? {
-        val fileRuns = t.members.map { m -> Run(m, m.recordId?.let(byKey::get)) }
-        val extraRuns = TaskMembers.unlistedSessions(t, byKey, hosted).map { s -> Run(memberOf(s), s) }
-        // The main conversation is one of the task's conversations even when it carries no task id and no
-        // file member names it: it counts in the state word and is never a row of its own.
-        val held = (fileRuns + extraRuns).mapNotNullTo(HashSet()) { it.session?.id }
+        // The main conversation is one of the task's conversations even when it carries no task id: it
+        // counts in the state word and is never a row of its own.
         val main = mainOf(t, byKey)
-        val mainRuns = listOfNotNull(ownOf(t, byKey)?.takeIf { it.id !in held }).map { s -> Run(memberOf(s), s) }
-        val runs = fileRuns + extraRuns + mainRuns
-        if (runs.isEmpty() && !t.hasOpen) return null
+        val own = ownOf(t, byKey)?.takeIf { o -> hosted.none { it.id == o.id } }
+        val sessions = hosted.sortedWith(compareBy({ startedOf(it) }, { it.id })) + listOfNotNull(own)
+        if (sessions.isEmpty() && !t.hasOpen) return null
         val urgentRank = when {
-            runs.any { it.member.state == NEEDS_YOU } -> 0
-            runs.any { it.member.state == WORKING } -> 1
+            sessions.any { it.state == NEEDS_YOU } -> 0
+            sessions.any { it.state == WORKING } -> 1
             else -> OPEN_WORK_RANK
         }
+        // A task with no session yet is placed by when it started: its file's first sighting.
         val since = when {
-            runs.isEmpty() -> t.refreshedAtMillis ?: 0L
-            urgentRank == OPEN_WORK_RANK -> runs.maxOf { it.member.sinceMillis }
-            else -> runs.filter { rankOf(it.member.state) == urgentRank }.minOf { it.member.sinceMillis }
+            sessions.isEmpty() -> t.startedAtMillis ?: 0L
+            urgentRank == OPEN_WORK_RANK -> sessions.maxOf { it.stateSince }
+            else -> sessions.filter { rankOf(it.state) == urgentRank }.minOf { it.stateSince }
         }
         // Open means a conversation Lunamux lists whose pane is in the layout, so Jump has somewhere to go.
-        val open = runs.filter { r -> r.session != null && c.live(r.session) }
+        val open = sessions.filter { c.live(it) }
         val mainLive = main != null && c.live(main)
-        val started = t.startedAtMillis ?: runs.mapNotNull { it.session?.let(::startedOf) }.minOrNull() ?: since
-        val recency = runs.maxOfOrNull { r -> maxOf(r.member.sinceMillis, r.session?.let(::activityOf) ?: 0L) }
-            ?: t.refreshedAtMillis ?: 0L
-        // A question a member Lunamux does not host asks is only the person's to answer once the main
-        // conversation is open; before that the conversation has to be resumed to ask it.
-        val unhostedAsks = runs.filter { it.session == null && it.member.state == NEEDS_YOU }
-        val waiting = runs.filter { r ->
-            r.member.state == NEEDS_YOU && (r.session != null || mainLive)
-        }
-        val questionWaits = unhostedAsks.isNotEmpty() && !mainLive
-        val inNow = open.isNotEmpty() || mainLive || questionWaits
+        val started = t.startedAtMillis ?: sessions.minOfOrNull(::startedOf) ?: since
+        val recency = sessions.maxOfOrNull { maxOf(it.stateSince, activityOf(it)) } ?: t.startedAtMillis ?: 0L
+        val waiting = sessions.filter { AgentCounts.isWaiting(it, c.config) }
+        val inNow = open.isNotEmpty() || mainLive
         val resumeId = t.mainConversation.takeIf { main == null }
-        val (enter, target) = enterOf(t, main, mainLive, runs, open, resumeId)
-        return TaskUnit(t, runs, waiting, since, recency, inNow, questionWaits, started, enter, target, main?.id, resumeId, t.mainConversation == null || (main != null && main.state != ENDED))
+        val (enter, target) = enterOf(t, main, mainLive, sessions, open, resumeId)
+        return TaskUnit(t, sessions, waiting, since, recency, inNow, started, enter, target, main?.id, resumeId)
     }
 
     /**
@@ -1213,12 +1162,13 @@ class AgentsOverviewBackingViewModel(
      * closed main conversation is resumed (a conversation the task has in a listed tab does not
      * replace it), else a live conversation in a listed tab is jumped to (the one waiting longest
      * on the person, else the busiest), else the task's `open` action runs, else the newest
-     * conversation it has a record of is resumed, else nothing is offered.
+     * conversation it has a record of is resumed. A task with neither a conversation nor an `open`
+     * action has no unit, so there is always something to do.
      *
      * @param t the task.
      * @param main the main conversation, or null.
      * @param mainLive whether [main] is live and its pane is in the layout.
-     * @param runs the task's conversations.
+     * @param sessions the task's conversations.
      * @param open the conversations whose pane is in the layout.
      * @param resumeId the stored id of a main conversation no summary holds, or null; it is resumed
      *   like a closed main conversation, by that id.
@@ -1230,11 +1180,11 @@ class AgentsOverviewBackingViewModel(
         t: AgentTask,
         main: AgentSessionSummary?,
         mainLive: Boolean,
-        runs: List<Run>,
-        open: List<Run>,
+        sessions: List<AgentSessionSummary>,
+        open: List<AgentSessionSummary>,
         resumeId: String?,
     ): Pair<Enter, AgentSessionSummary?> {
-        val asking = open.filter { it.member.state == NEEDS_YOU }.minByOrNull { it.member.sinceMillis }?.session
+        val asking = open.filter { it.state == NEEDS_YOU }.minByOrNull { it.stateSince }
         val mainAsks = main != null && main.state == NEEDS_YOU
         if (mainLive && main != null && (asking == null || mainAsks)) {
             if (!main.background) return Enter.JUMP to main
@@ -1245,22 +1195,21 @@ class AgentsOverviewBackingViewModel(
         }
         // The conversation that most needs the person comes first: the ◆ that has waited longest, then
         // the working one with the freshest sign of life, then any other open one.
-        val urgency = compareBy<Run>(
-            { rankOf(it.member.state) },
-            { if (it.member.state == NEEDS_YOU) it.member.sinceMillis else -(it.session!!.lastActivityAt ?: it.session.stateSince) },
+        val urgency = compareBy<AgentSessionSummary>(
+            { rankOf(it.state) },
+            { if (it.state == NEEDS_YOU) it.stateSince else -(it.lastActivityAt ?: it.stateSince) },
         )
-        val listed = open.filter { !it.session!!.background }.minWithOrNull(urgency)
-        val newest = runs.mapNotNull { it.session }.maxByOrNull(::activityOf)
+        val listed = open.filter { !it.background }.minWithOrNull(urgency)
+        val newest = sessions.maxByOrNull(::activityOf)
         return when {
             // Only a main conversation in a background tab gets here: a listed one has returned above.
-            mainLive && listed != null -> Enter.JUMP to listed.session
+            mainLive && listed != null -> Enter.JUMP to listed
             mainLive -> Enter.NONE to main
             main != null -> Enter.RESUME to main
             resumeId != null -> Enter.RESUME to null
-            listed != null -> Enter.JUMP to listed.session
+            listed != null -> Enter.JUMP to listed
             t.hasOpen -> Enter.OPEN to null
-            newest != null -> Enter.RESUME to newest
-            else -> Enter.NONE to null
+            else -> Enter.RESUME to newest
         }
     }
 
@@ -1293,44 +1242,22 @@ class AgentsOverviewBackingViewModel(
      */
     private fun headerRepo(u: TaskUnit): String? {
         u.task.repo?.let { return it }
-        val hosted = u.runs.mapNotNull { it.session }
+        val hosted = u.sessions
         if (hosted.isEmpty() || hosted.any { it.repo == null }) return null
         return hosted.map { it.repo }.distinct().singleOrNull()
     }
 
     /**
-     * The last sign of life of a working session: the newer of its hosted session's last activity
-     * and the time the task file declaring it was last refreshed. A member outside Lunamux has only
-     * the file; a file that is still being refreshed keeps its working members live.
-     */
-    private fun workingActivity(run: Run, refreshed: Long?): Long? {
-        val hosted = run.session?.let { it.lastActivityAt ?: it.stateSince }
-        return listOfNotNull(hosted, refreshed).maxOrNull()
-    }
-
-    /**
-     * A task member made from a hosted session no task file lists: its own title, state, question
-     * or last tool line and age.
+     * What a conversation is saying right now: the question one that waits on the person asks, or
+     * the last tool line of one that works.
      *
-     * @param s the hosted session.
-     * @return the member, keyed by the record id.
-     */
-    private fun memberOf(s: AgentSessionSummary) = TaskMembers.memberOf(s)
-
-    /**
-     * What a member is saying right now: the question a member that waits on the person asks, or
-     * the last tool line of one that works, as the task file or the hosted session gives it.
-     *
-     * @param run the member.
+     * @param s the conversation.
      * @return the text, or null when there is none.
      */
-    private fun lineOf(run: Run): String? {
-        val s = run.session
-        val fromFile = run.member.line?.trim()?.takeIf { it.isNotEmpty() }
-        if (run.member.state == NEEDS_YOU) {
-            return fromFile ?: AgentSessionText.previewOf(s?.question) ?: s?.nowLine?.trim()?.takeIf { it.isNotEmpty() }
-        }
-        return fromFile ?: s?.nowLine?.trim()?.takeIf { it.isNotEmpty() }
+    private fun lineOf(s: AgentSessionSummary): String? {
+        val nowLine = s.nowLine?.trim()?.takeIf { it.isNotEmpty() }
+        if (s.state == NEEDS_YOU) return s.question?.trim()?.takeIf { it.isNotEmpty() } ?: nowLine
+        return nowLine
     }
 
     /**
@@ -1349,9 +1276,9 @@ class AgentsOverviewBackingViewModel(
     private fun taskRow(u: TaskUnit, c: Context): Row {
         val t = u.task
         val id = "$TASK_PREFIX${t.id}"
-        // A task whose main conversation is named but closed does not count the members Lunamux does not host, as the footer does not.
-        val moving = u.runs.filter { (it.session != null || u.countsUnhosted) && runMoving(it, t.refreshedAtMillis, c.nowMillis) }
-        val waiting = u.waiting.minByOrNull { it.member.sinceMillis }
+        // The row counts the conversations the footer counts, by the same functions.
+        val moving = u.sessions.filter { AgentCounts.isWorking(it, c.config, c.nowMillis) }
+        val waiting = u.waiting.minByOrNull { it.stateSince }
         // Something that moves is working, wherever the task is filed; a task that only rests reads done in NOW and finished in EARLIER.
         val stateWord = when {
             u.waiting.size >= 2 -> needYouText(u.waiting.size)
@@ -1362,15 +1289,14 @@ class AgentsOverviewBackingViewModel(
             else -> STATE_DONE
         }
         val status = t.status?.trim()?.takeIf { it.isNotEmpty() }
-        val detail = QUESTION_WAITS.takeIf { u.questionWaits }
-            ?: status
+        val detail = status
             ?: waiting?.let(::lineOf)?.let(::quoted)
-            ?: moving.sortedByDescending { workingActivity(it, t.refreshedAtMillis) ?: 0L }.firstNotNullOfOrNull(::lineOf)
+            ?: moving.sortedByDescending { it.lastActivityAt ?: it.stateSince }.firstNotNullOfOrNull(::lineOf)
             ?: ""
         val target = u.target
         val live = target != null && c.live(target)
-        val single = u.runs.singleOrNull()?.session
-        val folder = u.runs.mapNotNull { it.session }.map(::folderOf).distinct().singleOrNull()
+        val single = u.sessions.singleOrNull()
+        val folder = u.sessions.map(::folderOf).distinct().singleOrNull()
         val error = c.errorOf(id)
         return Row(
             id = id,
@@ -1382,13 +1308,9 @@ class AgentsOverviewBackingViewModel(
             detail = detail,
             extra = extraOf(
                 c.noteOf(target?.id),
-                (
-                    when {
-                        target == null -> NOTHING_TO_JUMP
-                        target.state == WORKING -> HIDDEN_MAIN_NOTE
-                        else -> HIDDEN_MAIN_DONE_NOTE
-                    }
-                ).takeIf { u.enter == Enter.NONE },
+                // ↵ has nothing to do only for a main conversation that runs in a background tab.
+                target?.let { if (it.state == WORKING) HIDDEN_MAIN_NOTE else HIDDEN_MAIN_DONE_NOTE }
+                    .takeIf { u.enter == Enter.NONE },
                 error,
             ),
             chips = chipsOf(t.title, target, c),
@@ -1420,8 +1342,9 @@ class AgentsOverviewBackingViewModel(
     private fun sessionRow(s: AgentSessionSummary, earlier: Boolean, c: Context, taskTitle: String? = null): Row {
         val live = c.live(s)
         val id = if (taskTitle != null) "$TASK_PREFIX${s.taskId}" else s.conversationId
-        val needs = s.state == NEEDS_YOU
-        val moving = isMoving(s.state == WORKING, null, s.lastActivityAt ?: s.stateSince, c.nowMillis)
+        // The same rule as the footer: a conversation waits or moves on a row only while its pane is in the layout.
+        val needs = AgentCounts.isWaiting(s, c.config)
+        val moving = AgentCounts.isWorking(s, c.config, c.nowMillis)
         val nowLine = s.nowLine?.trim()?.takeIf { it.isNotEmpty() }
         val detail = when {
             needs -> (AgentSessionText.previewOf(s.question) ?: nowLine)?.let(::quoted) ?: ""
@@ -1697,9 +1620,6 @@ class AgentsOverviewBackingViewModel(
         /** What ↵ does on a row whose waiting conversation is in a background tab, as the footer says it. */
         const val SHOW_WAITING_HINT = "answer it · opens as a tab until it works on"
 
-        /** What a task's row says when a question waits for the person but the main conversation is closed. */
-        const val QUESTION_WAITS = "a question waits"
-
         /** The state word of a task that has a session waiting on the person. */
         const val STATE_NEEDS_YOU = "needs you"
 
@@ -1714,9 +1634,6 @@ class AgentsOverviewBackingViewModel(
 
         /** The mark in the first column of a row that needs the person. */
         const val MARKER = "◆"
-
-        /** What the selected row's extra line says when ↵ has no session Lunamux can open. */
-        const val NOTHING_TO_JUMP = "nothing to jump to: this session is not in a Lunamux pane"
 
         /**
          * What the selected row's extra line says when the task's main conversation runs in a
@@ -1787,25 +1704,6 @@ class AgentsOverviewBackingViewModel(
         fun isQuiet(activityMillis: Long, nowMillis: Long): Boolean = nowMillis - activityMillis >= QUIET_AFTER_MS
 
         /**
-         * How long a task file may go without being refreshed before what it says about members
-         * Lunamux does not host is treated as stale. The writer touches an unchanged file at least
-         * every two minutes while a member works, so twenty minutes of silence means the
-         * writer stopped and the file's states are no longer news.
-         */
-        const val STALE_AFTER_MS = 20L * 60_000L
-
-        /**
-         * Whether a task file has gone stale: it was last refreshed [STALE_AFTER_MS] or more ago.
-         * A pure function of the clock, like [isQuiet], so a periodic redraw can flip a row with no
-         * new input from the server.
-         *
-         * @param refreshedMillis epoch millis the task file was last refreshed.
-         * @param nowMillis the current epoch millis.
-         * @return true when the gap is at least [STALE_AFTER_MS].
-         */
-        fun isStale(refreshedMillis: Long, nowMillis: Long): Boolean = nowMillis - refreshedMillis >= STALE_AFTER_MS
-
-        /**
          * "2 need you" / "1 needs you": the plural form of a row's state word.
          *
          * @param n how many need the user.
@@ -1814,24 +1712,18 @@ class AgentsOverviewBackingViewModel(
         fun needYouText(n: Int): String = if (n == 1) "1 needs you" else "$n need you"
 
         /**
-         * The prefix of a working session's status when its sign of life is old: "stale 25m · " for a
-         * member whose task file has not been refreshed for [STALE_AFTER_MS], else "quiet 6m · " once
+         * The prefix of a working session's status when its sign of life is old: "quiet 6m · " once
          * [QUIET_AFTER_MS] has passed; empty otherwise.
          *
          * Called by [isMoving], so the rule that decides what counts as working lives in one place.
          *
          * @param working whether the session's state is working; any other state has no prefix.
-         * @param fileRefreshedMillis epoch millis the declaring task file was last refreshed, for a
-         *   member Lunamux does not host; null otherwise.
          * @param activityMillis epoch millis of the last sign of life; null when there is none.
          * @param nowMillis the current epoch millis.
-         * @return "stale 25m · ", "quiet 6m · " or an empty string.
+         * @return "quiet 6m · " or an empty string.
          */
-        fun agePrefixOf(working: Boolean, fileRefreshedMillis: Long?, activityMillis: Long?, nowMillis: Long): String {
+        fun agePrefixOf(working: Boolean, activityMillis: Long?, nowMillis: Long): String {
             if (!working) return ""
-            if (fileRefreshedMillis != null && isStale(fileRefreshedMillis, nowMillis)) {
-                return "stale ${(nowMillis - fileRefreshedMillis) / 60_000L}m · "
-            }
             if (activityMillis != null && isQuiet(activityMillis, nowMillis)) {
                 return "quiet ${(nowMillis - activityMillis) / 60_000L}m · "
             }
@@ -1839,20 +1731,18 @@ class AgentsOverviewBackingViewModel(
         }
 
         /**
-         * Whether a working session is really moving: it works and is neither quiet nor stale. This
-         * is what the footer's spinner and a row's "N working" count.
+         * Whether a working session is really moving: it works and is not quiet. This is what the
+         * footer's spinner and a row's "N working" count.
          *
-         * Called by the view model and by [AgentCounts] when they count working sessions, for lone
-         * sessions and for task members.
+         * Called by [AgentCounts] and by the view model when they count working sessions.
          *
          * @param working whether the session's state is working.
-         * @param fileRefreshedMillis see [agePrefixOf].
          * @param activityMillis see [agePrefixOf].
          * @param nowMillis the current epoch millis.
          * @return true for a working session with a recent sign of life.
          */
-        fun isMoving(working: Boolean, fileRefreshedMillis: Long?, activityMillis: Long?, nowMillis: Long): Boolean =
-            working && agePrefixOf(true, fileRefreshedMillis, activityMillis, nowMillis).isEmpty()
+        fun isMoving(working: Boolean, activityMillis: Long?, nowMillis: Long): Boolean =
+            working && agePrefixOf(true, activityMillis, nowMillis).isEmpty()
 
         private const val TASK_PREFIX = "task:"
         private const val OPEN_WORK_RANK = 2

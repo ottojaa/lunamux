@@ -1,7 +1,7 @@
 /**
  * Tests for [TaskPanelViewModel]: when the panel shows (the task whose main conversation is live in
  * the active tab, nothing elsewhere or while the person hid it), the agents block (only working and
- * waiting members, in words, what a click does), the progress block, the links block (each row's
+ * waiting sessions, in words, what a click does), the progress block, the links block (each row's
  * own kind and own time, newest first, undated last), the recent-activity block, and the five-then-"+ N more" rule
  * every list follows.
  */
@@ -10,7 +10,6 @@ package se.soderbjorn.lunamux.client.viewmodel
 import kotlinx.datetime.TimeZone
 import se.soderbjorn.lunamux.AgentSessionSummary
 import se.soderbjorn.lunamux.AgentTask
-import se.soderbjorn.lunamux.AgentTaskMember
 import se.soderbjorn.lunamux.LeafNode
 import se.soderbjorn.lunamux.Pane
 import se.soderbjorn.lunamux.TabConfig
@@ -76,11 +75,8 @@ class TaskPanelViewModelTest {
         )
     }
 
-    private fun task(members: List<AgentTaskMember> = emptyList(), main: String? = "own", id: String = "t1") =
-        AgentTask(id = id, title = "Release notes", members = members, mainConversation = main, startedAtMillis = 1)
-
-    private fun member(key: String, title: String, state: String, recordId: String? = null, sessionId: String? = null, line: String? = null) =
-        AgentTaskMember(key = key, title = title, state = state, sinceMillis = now - 3_600_000, recordId = recordId, sessionId = sessionId, line = line)
+    private fun task(main: String? = "own", id: String = "t1") =
+        AgentTask(id = id, title = "Release notes", mainConversation = main, startedAtMillis = 1)
 
     private fun give(tasks: List<AgentTask>, sessions: List<AgentSessionSummary>) {
         windowState.updateAgentTasks(tasks)
@@ -125,22 +121,38 @@ class TaskPanelViewModelTest {
     // ---- the agents block ----
 
     @Test
-    fun `agents lists only working and waiting members, the ones waiting first, and never the main conversation`() {
+    fun `agents lists only working and waiting sessions of the task, the ones waiting first, and never the main conversation`() {
         layout()
         give(
-            listOf(task(members = listOf(
-                member("1", "Builder", "working", recordId = "w"),
-                member("2", "Reviewer", "needs_you", recordId = "r"),
-                member("3", "Finished one", "done", recordId = "d"),
-                member("4", "Gone one", "ended", recordId = "e"),
-            ))),
+            listOf(task()),
             listOf(
-                session("own"), session("w", leaf = "leaf-w"), session("r", state = "needs_you", leaf = "leaf-bg"),
-                session("d", state = "done", leaf = "leaf-w"), session("e", state = "ended", leaf = null),
+                session("own"),
+                session("w", title = "Builder", leaf = "leaf-w"),
+                session("r", title = "Reviewer", state = "needs_you", leaf = "leaf-bg"),
+                session("d", title = "Finished one", state = "done", leaf = "leaf-w"),
+                session("e", title = "Gone one", state = "ended", leaf = null),
+                session("other", title = "Someone else's", leaf = "leaf-w", taskId = "t2"),
+                session("none", title = "Carries no task", leaf = "leaf-w", taskId = null),
             ),
         )
         assertEquals(listOf("Reviewer", "Builder"), vm.state.agents.shown.map { it.title })
         assertEquals(listOf("needs you", "working"), vm.state.agents.shown.map { it.stateWord })
+    }
+
+    @Test
+    fun `a working or waiting session whose pane the layout does not hold is not in the agents block`() {
+        layout()
+        give(
+            listOf(task()),
+            listOf(
+                session("own"),
+                session("here", title = "In a pane", state = "needs_you", leaf = "leaf-w"),
+                session("gone", title = "Pane closed", state = "needs_you", leaf = "leaf-closed"),
+                session("none", title = "No pane yet", state = "working", leaf = null),
+            ),
+        )
+        assertEquals(listOf("In a pane"), vm.state.agents.shown.map { it.title })
+        assertEquals(0, vm.state.agents.more)
     }
 
     @Test
@@ -152,44 +164,40 @@ class TaskPanelViewModelTest {
         assertEquals("Run the server tests", TaskPanelViewModel.inWords(" Run the server tests "))
         layout()
         give(
-            listOf(task(members = listOf(member("1", "Builder", "working", recordId = "w")))),
-            listOf(session("own"), session("w", leaf = "leaf-w", nowLine = "Running cd")),
+            listOf(task()),
+            listOf(session("own"), session("w", title = "Builder", leaf = "leaf-w", nowLine = "Running cd")),
         )
         assertNull(vm.state.agents.shown.single().nowLine)
     }
 
     @Test
-    fun `a click on a listed member jumps, on a waiting hidden one shows it as a tab, on an unhosted one attaches`() = runNow {
+    fun `a click on a session in a listed tab jumps, on a waiting hidden one shows it as a tab`() = runNow {
         layout()
         give(
-            listOf(task(members = listOf(
-                member("1", "Listed", "working", recordId = "w"),
-                member("2", "Hidden", "needs_you", recordId = "r"),
-                member("3", "Elsewhere", "working", sessionId = "bg-9"),
-            ))),
-            listOf(session("own"), session("w", leaf = "leaf-w"), session("r", state = "needs_you", leaf = "leaf-bg")),
+            listOf(task()),
+            listOf(
+                session("own"),
+                session("w", title = "Listed", leaf = "leaf-w"),
+                session("r", title = "Hidden", state = "needs_you", leaf = "leaf-bg"),
+            ),
         )
         val lines = vm.state.agents.shown.associateBy { it.title }
         assertEquals(MemberAction.JUMP, lines.getValue("Listed").action)
         assertEquals(MemberAction.SHOW_WAITING, lines.getValue("Hidden").action)
-        assertEquals(MemberAction.OPEN, lines.getValue("Elsewhere").action)
 
         vm.activateMember(lines.getValue("Listed"))
         assertEquals(listOf<WindowCommand>(WindowCommand.SetActiveTab("tab-2"), WindowCommand.SetFocusedPane("tab-2", "leaf-w")), sent)
         sent.clear()
         vm.activateMember(lines.getValue("Hidden"))
         assertEquals(listOf<WindowCommand>(WindowCommand.ShowWaitingAgent("r")), sent)
-        sent.clear()
-        vm.activateMember(lines.getValue("Elsewhere"))
-        assertEquals(listOf<WindowCommand>(WindowCommand.OpenTaskMember("t1", "3")), sent)
     }
 
     @Test
-    fun `a hidden member that only works has nothing to open`() {
+    fun `a hidden session that only works has nothing to open`() {
         layout()
         give(
-            listOf(task(members = listOf(member("1", "Quiet", "working", recordId = "b")))),
-            listOf(session("own"), session("b", leaf = "leaf-bg")),
+            listOf(task()),
+            listOf(session("own"), session("b", title = "Quiet", leaf = "leaf-bg")),
         )
         assertEquals(MemberAction.NONE, vm.state.agents.shown.single().action)
         assertNull(vm.state.agents.shown.single().hint)
@@ -305,9 +313,8 @@ class TaskPanelViewModelTest {
     @Test
     fun `nineteen agents, nineteen links and nineteen lines show five of each and plus fourteen more, which open in place`() {
         layout()
-        val members = (1..19).map { member("$it", "Worker $it", "working", recordId = "w$it") }
-        val sessions = listOf(session("own")) + (1..19).map { session("w$it", leaf = "leaf-w") }
-        give(listOf(task(members = members)), sessions)
+        val sessions = listOf(session("own")) + (1..19).map { session("w$it", title = "Worker $it", leaf = "leaf-w") }
+        give(listOf(task()), sessions)
         blocks(
             block("l", TaskBlockContent.Links((1..19).map { TaskLink(label = "Link $it", url = "https://example.com/$it") })),
             block("t", TaskBlockContent.Timeline((1..19).map { TaskTimelineItem(now - it * 60_000L, "Step $it") })),

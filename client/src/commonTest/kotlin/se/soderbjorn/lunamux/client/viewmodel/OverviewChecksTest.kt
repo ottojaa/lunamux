@@ -41,7 +41,7 @@ class OverviewChecksTest {
     )
 
     private fun task(main: String?) = AgentTask(
-        id = "g1", title = "Release", repo = "proj", source = "agents", hasOpen = false, members = emptyList(), mainConversation = main,
+        id = "g1", title = "Release", repo = "proj", source = "agents", hasOpen = false, mainConversation = main,
     )
 
     private fun snapshot(expectedMain: Map<String, String> = emptyMap()) = OverviewChecks.Snapshot(
@@ -178,20 +178,15 @@ class OverviewChecksTest {
     }
 
     @Test
-    fun aMemberCountedAsWaitingThatHasNoConversationFailsTheQuestionCheck() {
+    fun aSessionOpenedInsideATasksFolderKeepsItsOwnRowWithNoFileNamingIt() {
         usualCase()
-        val member = se.soderbjorn.lunamux.AgentTaskMember(key = "m1", title = "Ghost", state = "needs_you")
-        windowState.updateAgentTasks(listOf(task("main").copy(members = listOf(member))))
-        val c5 = OverviewChecks.evaluate(snapshot()).first { it.id == "C5" }
-        assertFalse(c5.ok)
-        assertTrue(c5.problems.single().contains("Ghost"))
-    }
-
-    @Test
-    fun aSessionATaskFileClaimsWithoutCarryingTheTaskIdIsInItsTasksRowOnlyOnce() {
-        usualCase()
-        val claimed = se.soderbjorn.lunamux.AgentTaskMember(key = "m1", title = "Claimed", state = "done", recordId = "solo")
-        windowState.updateAgentTasks(listOf(task("main").copy(members = listOf(claimed))))
+        // The task is a file task with an `open` action; nothing but the task id a session carries
+        // puts it in a task. (The server decides the folder rule; see TaskIndexTest.)
+        windowState.updateAgentTasks(listOf(task("main").copy(source = "file", hasOpen = true)))
+        val rows = snapshot().overview.now
+        val own = rows.single { it.recordId == "solo" }
+        assertEquals("solo", own.id, "the session has a row of its own, not folded into the task's")
+        assertTrue("task:g1" in rows.map { it.id }, "the task keeps its row")
         val checks = OverviewChecks.evaluate(snapshot())
         assertEquals(emptyList(), failed(checks), OverviewChecks.render(checks))
     }

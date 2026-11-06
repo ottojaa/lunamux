@@ -62,7 +62,7 @@ class AgentsOverviewMomentsTest {
     )
 
     private fun task(main: String?) = AgentTask(
-        id = "g1", title = "Release", repo = "proj", source = "agents", hasOpen = false, members = emptyList(), mainConversation = main,
+        id = "g1", title = "Release", repo = "proj", source = "agents", hasOpen = false, mainConversation = main,
     )
 
     private fun show(tasks: List<AgentTask>, vararg conversations: AgentSessionSummary) {
@@ -116,7 +116,7 @@ class AgentsOverviewMomentsTest {
         assertEquals("needs you", row("task:g1").stateWord)
         assertEquals("◆", row("task:g1").marker)
         assertEquals(1, vm.state.needYouCount)
-        assertEquals(1, AgentCounts.of(windowState.agentSessions.value, windowState.agentTasks.value, now).waiting)
+        assertEquals(1, AgentCounts.of(windowState.agentSessions.value, windowState.config.value, now).total.waiting)
         // The tab strip's dot is drawn by the web page from the terminal state of the panes in the tab, which is
         // not part of this view model, so it is not asserted here: the moment's screenshot on the live check shows it.
     }
@@ -196,7 +196,7 @@ class AgentsOverviewMomentsTest {
             ),
             activeWorldId = "w1",
         )
-        val counts = AgentCounts.byWorld(
+        val counts = AgentCounts.of(
             listOf(
                 conversation("a", "needs_you"),
                 conversation("b", "working"),
@@ -205,9 +205,48 @@ class AgentsOverviewMomentsTest {
                 conversation("old", "ended", ended = true),
             ),
             config, now,
-        )
+        ).byWorld
         assertEquals(AgentCounts.Counts(1, 0), counts["w1"])
         assertEquals(AgentCounts.Counts(0, 2), counts["w2"])
         assertEquals(setOf("w1", "w2"), counts.keys)
+    }
+
+    /**
+     * The total and the per-world lines come from the same sessions: a task whose agents sit in two
+     * worlds and in a background tab adds up, and a live session is counted once.
+     */
+    @Test
+    fun theTotalIsTheSumOfThePerWorldLinesForATaskWhoseAgentsSitInSeveralWindows() {
+        val config = WindowConfig(
+            worlds = listOf(
+                WorldConfig(
+                    "w1", "Home",
+                    tabs = listOf(
+                        TabConfig("t0", "t0", panes = panes(listOf("leaf-a"))),
+                        TabConfig("tbg", "agents", panes = panes(listOf("leaf-bg")), isBackground = true),
+                    ),
+                ),
+                WorldConfig("w2", "Work", tabs = listOf(TabConfig("t1", "t1", panes = panes(listOf("leaf-b", "leaf-c"))))),
+            ),
+            activeWorldId = "w1",
+        )
+        val sessions = listOf(
+            conversation("a", "needs_you", taskId = "g1"),
+            conversation("bg", "working", taskId = "g1", background = true),
+            conversation("b", "working", taskId = "g1"),
+            conversation("c", "needs_you", taskId = "g1"),
+            conversation("lone", "working"),
+            conversation("gone", "working").copy(leafId = null),
+            conversation("old", "ended", taskId = "g1", ended = true),
+        )
+        val tally = AgentCounts.of(sessions, config, now)
+        assertEquals(AgentCounts.Counts(2, 2), tally.total, "a live session counts once, however many windows the task spans")
+        assertEquals(
+            tally.total,
+            AgentCounts.Counts(tally.byWorld.values.sumOf { it.waiting }, tally.byWorld.values.sumOf { it.working }),
+            "the total is the sum of the lines",
+        )
+        // "lone" and "gone" have no pane any world holds, so they are in neither the lines nor the total.
+        assertEquals(setOf("w1", "w2"), tally.byWorld.keys)
     }
 }

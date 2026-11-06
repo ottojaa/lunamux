@@ -114,9 +114,6 @@ internal fun startAgentsOverview() {
     GlobalScope.launch {
         lunamuxClient.windowState.agentSessions.collect { updateWorldStatusFooter() }
     }
-    GlobalScope.launch {
-        lunamuxClient.windowState.agentTasks.collect { updateWorldStatusFooter() }
-    }
     window.setInterval({ updateWorldStatusFooter() }, FOOTER_CLOCK_TICK_MS)
 }
 

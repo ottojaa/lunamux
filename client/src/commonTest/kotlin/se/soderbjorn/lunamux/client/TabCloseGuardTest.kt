@@ -14,7 +14,6 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import se.soderbjorn.lunamux.AgentSessionSummary
 import se.soderbjorn.lunamux.AgentTask
-import se.soderbjorn.lunamux.AgentTaskMember
 import se.soderbjorn.lunamux.LeafNode
 import se.soderbjorn.lunamux.Pane
 import se.soderbjorn.lunamux.TabConfig
@@ -38,10 +37,8 @@ class TabCloseGuardTest {
 
     private fun config(vararg tabs: TabConfig) = WindowConfig(tabs = tabs.toList(), activeTabId = tabs.first().id)
 
-    private fun task(main: String?, vararg members: String) = AgentTask(
-        id = "g1", title = "Release notes", repo = null, source = "agents", hasOpen = false,
-        members = members.mapIndexed { i, id -> AgentTaskMember(key = "#$i", title = id, state = "working", recordId = id) },
-        refreshedAtMillis = null, mainConversation = main,
+    private fun task(main: String?) = AgentTask(
+        id = "g1", title = "Release notes", repo = null, source = "agents", hasOpen = false, mainConversation = main,
     )
 
     @Test
@@ -81,7 +78,7 @@ class TabCloseGuardTest {
             session("b3", "ended", background = true, taskId = "g1"),
             session("x", "working", taskId = "g1"),
         )
-        val check = TabCloseGuard.check("t1", cfg, sessions, listOf(task("main", "b2")))!!
+        val check = TabCloseGuard.check("t1", cfg, sessions, listOf(task("main")))!!
         assertEquals(listOf("Check the schema", "Claude"), check.keepsRunning.map { it.title })
         assertEquals(listOf("working", "needs_you"), check.keepsRunning.map { it.state })
         assertEquals(5_000L, check.keepsRunning.first().sinceMillis)

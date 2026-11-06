@@ -995,21 +995,18 @@ private class WorldStatusRow(
  * @return the lines to draw; empty when nothing waits and nothing works.
  * @see updateWorldStatusFooter
  * @see AgentCounts.of
- * @see AgentCounts.byWorld
  */
 private fun computeAgentStatusRows(): List<WorldStatusRow> {
     val sessions = lunamuxClient.windowState.agentSessions.value
-    val tasks = lunamuxClient.windowState.agentTasks.value
-    val now = kotlin.js.Date.now().toLong()
-    val total = AgentCounts.of(sessions, tasks, now)
-    if (total.waiting == 0 && total.working == 0) return emptyList()
     val cfg = latestWindowConfig
+    val tally = AgentCounts.of(sessions, cfg, kotlin.js.Date.now().toLong())
+    val total = tally.total
+    if (total.waiting == 0 && total.working == 0) return emptyList()
     val several = cfg != null && cfg.worlds.size >= 2
     val out = mutableListOf(WorldStatusRow(if (several) "All worlds" else "Agents", null, total.working, total.waiting))
     if (cfg == null || !several) return out
-    val byWorld = AgentCounts.byWorld(sessions, cfg, now)
     for (world in cfg.worlds) {
-        val c = byWorld[world.id] ?: continue
+        val c = tally.byWorld[world.id] ?: continue
         val accent = runCatching { argbToCss(resolvedThemeForWorld(world.themeSelection).accent) }
             .getOrNull() ?: "#4f8cf7"
         out.add(WorldStatusRow(world.name, accent, c.working, c.waiting))

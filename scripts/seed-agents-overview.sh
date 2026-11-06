@@ -12,7 +12,7 @@
 # ends any session still open. Two seeded sessions are left open on purpose, to show that.
 #
 # It refuses ~/Library/Application Support/Termtastic, a database named termtastic.db or
-# lunamux-dev.db, and the real task folders (~/.lunamux/tasks, ~/.lunamux/agent-groups).
+# lunamux-dev.db, and the real task folder (~/.lunamux/tasks).
 #
 # Start a scratch server on its own port, database, folders and transcript folder, so it reads
 # none of the real ones:
@@ -21,17 +21,16 @@
 #   scripts/seed-agents-overview.sh "$DB" "$TASKS"
 #   ./gradlew :server:run -Plunula.toolkit.useArtifacts=true \
 #       -Dlunamux.port=8471 -Dlunamux.dbPath="$DB" -Dlunamux.tasksDir="$TASKS" \
-#       -Dlunamux.agentGroupsDir=/tmp/aov-seed/groups -Dlunamux.claudeProjects=/tmp/aov-seed/projects
+#       -Dlunamux.claudeProjects=/tmp/aov-seed/projects
 #
 # Open https://localhost:8471, press ⌘⇧A and look at:
 #
-#   NOW              "Access control" only: its main conversation is closed and one of its background agents
-#                    waits on a question, so the row says a question waits and counts in the footer once
-#                    that conversation is resumed (↵ asks first, then resumes). NOW is the live conversations
-#                    in open tabs, and nothing here is in a tab. "Nightly sync" (its file is 25 minutes old)
-#                    and "Billing cleanup" have no conversation in an open tab, so they are in the first
-#                    EARLIER band. Run scripts/seed-agents-overview-live.sh to put live conversations in the
-#                    tabs and see them in NOW.
+#   NOW              nothing: NOW is the tasks and conversations that are live in an open tab, and the
+#                    seed starts none. Every session here is only a record, so no row says "needs you"
+#                    and the footer counts nothing. "Access control", "Nightly sync" and "Billing
+#                    cleanup" have records that are not ended but no pane, so they sit in the first
+#                    EARLIER band. Run scripts/seed-agents-overview-live.sh to put live conversations
+#                    in the tabs and see them in NOW.
 #   LAST FEW DAYS    everything finished within 3 days, newest first: "Release train",
 #                    a file task whose three sessions are all done but none has ended; today's two
 #                    sessions, "Rate limiter rewrite" and "Auth token refresh" (a session from

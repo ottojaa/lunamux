@@ -2,11 +2,11 @@
  * The one place that decides which task each agent session belongs to.
  *
  * This file contains [TaskIndex], which combines the tasks agents made through the MCP tools
- * (rows in `agent_tasks`, sessions that carry a `task_id`), the tasks that task files declare
- * ([TaskFile]) and the session records, and publishes the result as [AgentTask]s plus an
- * assignment of every record to at most one task. It also holds the operations behind the MCP task
- * tools, so that the tools and the overview agree on every rule. The clients never work out
- * membership themselves.
+ * (rows in `agent_tasks`), the tasks that task files declare ([TaskFile]) and the session records,
+ * and publishes the result as [AgentTask]s plus an assignment of every record to at most one task.
+ * A task's members are the sessions whose record carries the task's id, and nothing else. It also
+ * holds the operations behind the MCP task tools, so that the tools and the overview agree on
+ * every rule.
  *
  * @see TaskFilesWatcher
  * @see AgentSessionTracker
@@ -46,14 +46,14 @@ data class TaskSnapshot(
 )
 
 /**
- * One line of a task listing: a session or a file-declared member.
+ * One line of a task listing: a session that carries the task's id.
  *
  * @property sessionId the `LUNAMUX_SESSION_ID` of the pane the session runs in, or null when it is not
- *   open (ended, or a member Lunamux does not host).
+ *   open (ended).
  * @property title what to call it.
  * @property state `needs_you`, `working`, `done` or `ended`.
  */
-data class TaskListMember(val sessionId: String?, val title: String, val state: String)
+data class TaskListSession(val sessionId: String?, val title: String, val state: String)
 
 /**
  * One task as the `list_tasks` MCP tool reports it.
@@ -61,7 +61,7 @@ data class TaskListMember(val sessionId: String?, val title: String, val state: 
  * @property id the task's id.
  * @property title the task's name.
  * @property source `file` when a task file declares it, else `agents`.
- * @property members its sessions and file members.
+ * @property sessions the sessions that carry the task's id.
  * @property mainConversation the conversation that speaks for the task, or null when none was named.
  * @property ownSessionId the terminal session id (`LUNAMUX_SESSION_ID`) of the pane where the main
  *   conversation runs now, or null when none was named or it is closed. The task remembers the
@@ -72,7 +72,7 @@ data class TaskListing(
     val id: String,
     val title: String,
     val source: String,
-    val members: List<TaskListMember>,
+    val sessions: List<TaskListSession>,
     val mainConversation: String? = null,
     val ownSessionId: String? = null,
     val status: String? = null,
@@ -81,12 +81,11 @@ data class TaskListing(
 /**
  * Decides each session's task and carries the operations that change it.
  *
- * A session's task is, in this order: the task its record names (an agent put it there through
- * `add_to_task` or `create_window`), the task file member whose `match.agentSessionId` equals the
- * session's, the task file member whose `match.folder` holds the newest open session, or none. A
- * task file and an agent-made task with one id are one task; the file's title wins. A task
- * named by no file and no row is ignored, so removing a task file does not leave sessions pointing
- * at a ghost.
+ * A session's task is the task its record names (an agent put it there through `add_to_task` or
+ * `create_window`), or none. Where a session runs, and what a task file lists, never places it. A
+ * task file and an agent-made task with one id are one task; the file's title wins. A task named by
+ * no file and no row is ignored, so removing a task file does not leave sessions pointing at a
+ * ghost.
  *
  * Created once by `main()`. [start] keeps [state] current as files and records change; the
  * mutating methods publish immediately so a tool's answer already reflects its own change.
@@ -133,7 +132,7 @@ class TaskIndex(
     }
 
     /**
-     * Look up a task file by id, for the routes that run its `open` action or attach to a member.
+     * Look up a task file by id, for the route that runs its `open` action.
      *
      * @param taskId the task's id.
      * @return the parsed file, or null when no file declares the task.
@@ -350,8 +349,7 @@ class TaskIndex(
     /**
      * Take sessions out of the task an agent put them in, so each is a task of its own again.
      *
-     * Called by the MCP `remove_from_task` tool. A session that a task file's member still matches
-     * stays in that task: the file, not the agent, placed it there.
+     * Called by the MCP `remove_from_task` tool.
      *
      * @param sessionIds panes (`LUNAMUX_SESSION_ID` values) to take out.
      * @return the task each pane is in afterwards (null for none), by pane id.
@@ -400,9 +398,9 @@ class TaskIndex(
         val records = tracker.snapshot()
         val snapshot = _state.value
         val byTask = records.filter { it.id in snapshot.assignment }.groupBy { snapshot.assignment.getValue(it.id) }
-        fun sessionsOf(taskId: String, claimed: Set<String>): List<TaskListMember> =
-            byTask[taskId].orEmpty().filter { it.id !in claimed }.map { r ->
-                TaskListMember(
+        fun sessionsOf(taskId: String): List<TaskListSession> =
+            byTask[taskId].orEmpty().map { r ->
+                TaskListSession(
                     sessionId = r.terminalSessionId.takeIf { r.state != ENDED },
                     title = r.title ?: r.firstPrompt?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim()?.take(80)
                         ?: "${r.agent} session",
@@ -410,17 +408,11 @@ class TaskIndex(
                 )
             }
         val fileListings = files.value.sortedBy { it.id }.map { f ->
-            val task = snapshot.tasks.firstOrNull { it.id == f.id }
-            val claimed = task?.members?.mapNotNull { it.recordId }?.toSet().orEmpty()
-            val declared = task?.members.orEmpty().map { m ->
-                val rec = m.recordId?.let { id -> records.firstOrNull { it.id == id } }
-                TaskListMember(rec?.terminalSessionId?.takeIf { rec.state != ENDED }, m.title, m.state)
-            }
-            TaskListing(f.id, f.title, "file", declared + sessionsOf(f.id, claimed), mainConversationOf(f.id), ownSessionOf(f.id), statusOf(f.id))
+            TaskListing(f.id, f.title, "file", sessionsOf(f.id), mainConversationOf(f.id), ownSessionOf(f.id), statusOf(f.id))
         }
         val fileIds = files.value.map { it.id }.toSet()
         val agentListings = rows.filter { it.id !in fileIds }.sortedBy { it.id }
-            .map { TaskListing(it.id, it.title, "agents", sessionsOf(it.id, emptySet()), mainConversationOf(it.id), ownSessionOf(it.id), statusOf(it.id)) }
+            .map { TaskListing(it.id, it.title, "agents", sessionsOf(it.id), mainConversationOf(it.id), ownSessionOf(it.id), statusOf(it.id)) }
         return fileListings + agentListings
     }
 
@@ -517,8 +509,11 @@ class TaskIndex(
         private const val SUFFIX_LENGTH = 4
         const val STATUS_MAX = 120
 
+        private fun isOpen(r: AgentSessionRecord) = r.state != ENDED && r.leafId != null
+
         /**
-         * Work out the tasks and every record's task from the three inputs. Pure, so tests and
+         * Work out the tasks and every record's task from the three inputs. A record belongs to the
+         * task it names if that task exists, and to none otherwise. Pure, so tests and
          * [recompute] share it.
          *
          * @param records the session records in memory.
@@ -538,36 +533,8 @@ class TaskIndex(
             val assignment = LinkedHashMap<String, String>()
             for (r in records) r.taskId?.takeIf { it in known }?.let { assignment[r.id] = it }
 
-            val canon = HashMap<String, String>()
-            fun cwdOf(r: AgentSessionRecord) = r.cwd?.let { canon.getOrPut(it) { canonical(it) } }
-            val newestFirst = records.sortedByDescending { it.createdAt }
-            val claimed = HashSet<String>()
             val fileTasks = files.sortedBy { it.id }.map { f ->
-                val members = f.members.map { fm ->
-                    val m = fm.member
-                    val candidates = newestFirst.filter { it.id !in claimed && assignment[it.id].let { t -> t == null || t == f.id } }
-                    val rec = fm.matchSessionId?.let { sid -> candidates.firstOrNull { it.agentSessionId == sid } }
-                        ?: fm.matchFolder?.let { folder ->
-                            candidates.firstOrNull { r ->
-                                val cwd = cwdOf(r)
-                                isOpen(r) && cwd != null && (cwd == folder || cwd.startsWith(folder.trimEnd('/') + "/"))
-                            }
-                        }
-                    if (rec == null) m else {
-                        claimed += rec.id
-                        assignment[rec.id] = f.id
-                        if (!isOpen(rec)) m.copy(recordId = rec.id) else m.copy(
-                            state = rec.state,
-                            line = (if (rec.state == "needs_you") rec.question else rec.nowLine) ?: m.line,
-                            sinceMillis = rec.stateSince,
-                            recordId = rec.id,
-                        )
-                    }
-                }
-                AgentTask(
-                    id = f.id, title = f.title, repo = f.repo, source = "file", hasOpen = f.open != null,
-                    members = members, refreshedAtMillis = f.modified,
-                )
+                AgentTask(id = f.id, title = f.title, repo = f.repo, source = "file", hasOpen = f.open != null)
             }
             val used = assignment.values.toSet()
             val agentTasks = rows.filter { it.id !in fileIds && it.id in used }
@@ -576,8 +543,7 @@ class TaskIndex(
             val tasks = (fileTasks + agentTasks).map { t ->
                 val m = meta[t.id]
                 val firstSeen = recordsByTask[t.id].orEmpty().map { it.createdAt }.filter { it > 0 }.minOrNull()
-                    ?: t.members.map { it.sinceMillis }.filter { it > 0 }.minOrNull()
-                    ?: t.refreshedAtMillis
+                    ?: files.firstOrNull { it.id == t.id }?.modified
                     ?: rows.firstOrNull { it.id == t.id }?.createdAt
                 t.copy(
                     mainConversation = m?.mainConversation?.let { stored ->
@@ -590,7 +556,5 @@ class TaskIndex(
             }
             return TaskSnapshot(tasks.sortedBy { it.id }, assignment)
         }
-
-        private fun isOpen(r: AgentSessionRecord) = r.state != ENDED && r.leafId != null
     }
 }

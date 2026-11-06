@@ -104,7 +104,7 @@ fun main() {
     val agentTracker = AgentSessionTracker(repo, onEnded = searchIndexer::indexEnded).also { it.start() }
     searchIndexer.runningIn = agentTracker::hasUnidentifiedClaudeIn
     val claudeHooks = ClaudeHooks()
-    val taskFiles = TaskFilesWatcher(AppPaths.taskDirs())
+    val taskFiles = TaskFilesWatcher(AppPaths.taskDir())
     val taskIndex = TaskIndex(repo, agentTracker, taskFiles.files, leafOfSession = { WindowState.leafIdOfSession(it) })
     // Sessions recorded before search existed get their text now.
     searchIndexer.backfill()

@@ -160,16 +160,18 @@ class AgentsOverviewBackingViewModelTest {
         val s = vm.state
         assertEquals(1, s.needYouCount)
         assertEquals(2, s.workingCount)
-        val counts = AgentCounts.of(rows, emptyList(), now)
+        val counts = AgentCounts.of(rows, windowState.config.value, now).total
         assertEquals(s.needYouCount, counts.waiting, "the footer and the overview count waiting conversations the same way")
         assertEquals(s.workingCount, counts.working)
     }
 
     @Test
     fun noConversationsAreCountedAsNothing() {
-        assertEquals(AgentCounts.Counts(0, 0), AgentCounts.of(emptyList(), emptyList(), now))
+        hosted("e")
+        val config = windowState.config.value
+        assertEquals(AgentCounts.Counts(0, 0), AgentCounts.of(emptyList(), config, now).total)
         val ended = listOf(session("e", "ended", endedAt = 5))
-        assertEquals(AgentCounts.Counts(0, 0), AgentCounts.of(ended, emptyList(), now))
+        assertEquals(AgentCounts.Counts(0, 0), AgentCounts.of(ended, config, now).total)
     }
 
     @Test
@@ -632,24 +634,24 @@ class AgentsOverviewBackingViewModelTest {
     }
 
     @Test
-    fun aWorkingSessionOutsideEveryOpenTabIsInABandNotInNowButTheFooterCountsIt() {
+    fun aWorkingSessionWithNoPaneInTheLayoutIsInABandNotInNowAndTheFooterLeavesItOut() {
         hosted("in")
         windowState.updateAgentSessions(listOf(session("in", "working"), session("out", "working", leaf = "gone")), true)
         assertEquals(listOf("in"), vm.state.now.map { it.id })
         assertEquals(listOf("out"), vm.state.recent.map { it.id })
-        assertEquals("working", vm.state.recent.single().stateWord, "a lone session in a band keeps its real state")
-        assertEquals(2, vm.state.workingCount, "the footer counts every moving conversation")
+        assertEquals("finished", vm.state.recent.single().stateWord, "a session with no pane is not moving anywhere the person can see")
+        assertEquals(1, vm.state.workingCount, "the footer counts only the conversations that sit in a pane")
     }
 
     @Test
-    fun aSessionThatNeedsYouWithNoPaneInTheLayoutIsNotInNowButIsCounted() {
+    fun aSessionThatNeedsYouWithNoPaneInTheLayoutIsNotInNowAndNotCounted() {
         hosted("in")
         windowState.updateAgentSessions(
             listOf(session("in", "needs_you", since = 2_000), session("out", "needs_you", since = 1_000, leaf = "gone")),
             true,
         )
         assertEquals(listOf("in"), vm.state.now.map { it.id }, "a conversation with no pane in the layout is not in NOW")
-        assertEquals(2, vm.state.needYouCount, "the footer counts it")
+        assertEquals(1, vm.state.needYouCount, "nobody can answer a conversation with no pane, so the footer leaves it out")
     }
 
     @Test

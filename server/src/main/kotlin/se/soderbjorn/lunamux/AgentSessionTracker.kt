@@ -410,7 +410,7 @@ class AgentSessionTracker(
      * copied under the lock: the records [summaries] is made of.
      *
      * Called by [TaskIndex] whenever [summaries] changes, because a summary lacks the agent's own
-     * session id that task file members are matched by.
+     * session id that a task's main conversation is found by.
      *
      * @return the records, in the order [summaries] lists them.
      */

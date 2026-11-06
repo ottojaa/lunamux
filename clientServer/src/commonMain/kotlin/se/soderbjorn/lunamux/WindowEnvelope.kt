@@ -254,7 +254,7 @@ sealed class WindowEnvelope {
      * The tasks that have something to say beyond their sessions: every task a task file
      * declares and every task agents made that holds at least one session. A session joins a
      * task through [AgentSessionSummary.taskId]; this frame names the tasks, their titles, their
-     * file-declared members and whether the task has an `open` action. The `open` command is
+     * start times and whether the task has an `open` action. The `open` command is
      * deliberately not part of it: the server keeps it and [WindowCommand.OpenTask] names the
      * task instead. Sent on connect, right after [AgentSessions], and again whenever a task file,
      * a task or a session record changes. Older clients fail to decode this frame and drop it,
@@ -597,14 +597,14 @@ enum class DiffLineType {
 }
 
 /**
- * One task as the agents overview draws it: a name, the sessions that belong to it (they carry
- * its id in [AgentSessionSummary.taskId]) and, for a task a tool declares in a task file, the
- * members that file lists.
+ * One task as the agents overview draws it: a name and the sessions that belong to it, which are
+ * the ones that carry its id in [AgentSessionSummary.taskId]. A task has no member list of its
+ * own; the sessions are the only source of who is in it.
  *
  * Built by the server's task index from task files, the tasks agents made and the session
  * records, pushed in [WindowEnvelope.AgentTasks] and ordered by the client's agents overview
- * view model. A task with several sessions, or with an `open` action, is drawn as an expansion
- * panel; a task with one session and no `open` is drawn as that session's plain row.
+ * view model. A task with several sessions, or with an `open` action, is drawn as one task row;
+ * a task with one session and no `open` is drawn as that session's plain row.
  *
  * @param id the task's id: a file's `id`, or the id the `create_task` tool returned; what
  *   [WindowCommand.OpenTask] names.
@@ -614,17 +614,13 @@ enum class DiffLineType {
  * @param source `file` when a task file declares the task (also when agents added sessions to it),
  *   `agents` when only the MCP tools made it.
  * @param hasOpen whether the task file gives an `open` action the header can run.
- * @param members the members the task file lists, in the file's order; empty for an agent-made task.
- * @param refreshedAtMillis epoch millis the task file was last written or touched (its modification
- *   time), or null when no file declares the task. A file nobody has refreshed for a while no longer
- *   says anything about its members; the overview marks such rows stale from this alone.
  * @param mainConversation the conversation that speaks for the task: the one that made it, or the one
  *   an agent named with `set_task_lead`. It is a conversation id ([AgentSessionSummary.conversationId]),
  *   never a pane, so it still names the same conversation after a restart renumbers the panes. The
  *   client finds its row and its live pane through the summary with that conversation id; when no
  *   summary has it, the conversation is closed and gone from memory, and ↵ resumes it by this id.
  *   Null when none was named. The overview opens it on ↵.
- * @param status the one-line status a member set through `set_task_status`, shown on the task's
+ * @param status the one-line status a session set through `set_task_status`, shown on the task's
  *   row; null when none was set or it was cleared.
  * @param statusAtMillis epoch millis the status was set, or null with no status.
  * @param startedAtMillis epoch millis the server first saw the task, stamped once and never
@@ -637,40 +633,8 @@ data class AgentTask(
     val repo: String? = null,
     val source: String = "agents",
     val hasOpen: Boolean = false,
-    val members: List<AgentTaskMember> = emptyList(),
-    val refreshedAtMillis: Long? = null,
     val mainConversation: String? = null,
     val status: String? = null,
     val statusAtMillis: Long? = null,
     val startedAtMillis: Long? = null,
-)
-
-/**
- * One member a task file lists for an [AgentTask]. A member Lunamux hosts takes its state, line
- * and age from its session record; any other shows what the file says.
- *
- * @param key the member's id inside its task, unique within it: the file's `sessionId` when that is
- *   given and not repeated, else a number from the member's place in the file. It names the member in
- *   [WindowCommand.OpenTaskMember] and keeps a row's identity through a redraw.
- * @param title the member's name, always the file's.
- * @param links ticket keys or other short labels shown beside the title.
- * @param state `needs_you`, `working`, `done` or `ended`.
- * @param label a state word the file gave ("in review"), used in the task's summary line; null for the default.
- * @param line one line about what the member is doing or waiting for, or null.
- * @param sinceMillis epoch millis when the member entered [state].
- * @param recordId the session record the member matched, or null when Lunamux does not host it.
- * @param sessionId the id of the member's background session as the file gave it, or null. The
- *   command that attaches to it is built by the server from this id and never travels.
- */
-@Serializable
-data class AgentTaskMember(
-    val key: String,
-    val title: String,
-    val links: List<String> = emptyList(),
-    val state: String,
-    val label: String? = null,
-    val line: String? = null,
-    val sinceMillis: Long = 0,
-    val recordId: String? = null,
-    val sessionId: String? = null,
 )

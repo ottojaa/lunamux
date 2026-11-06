@@ -95,17 +95,13 @@ object OverviewChecks {
         }
     }
 
-    /** The conversations each row stands for: a task's main conversation and its live members, whichever way the task holds them (background ones too), or the lone one. */
+    /** The conversations each row stands for: a task's main conversation and its other live sessions, whichever way the task holds them (background ones too), or the lone one. */
     private fun conversationsOf(row: AgentsOverviewBackingViewModel.Row, s: Snapshot): Set<String> {
         val byKey = s.sessions.associateBy { it.id } + s.sessions.associateBy { it.conversationId }
         val task = row.taskId?.let { id -> s.tasks.firstOrNull { it.id == id } }
         if (task == null) return setOfNotNull(row.recordId?.let(byKey::get)?.conversationId)
-        // The membership rule the rows use: the sessions the task file's members name, the hosted
-        // sessions that carry the task's id, and the main conversation.
-        val hosted = s.sessions.filter { it.taskId == task.id }
-        val named = task.members.mapNotNull { m -> m.recordId?.let(byKey::get) }
-        val unlisted = TaskMembers.unlistedSessions(task, byKey, hosted)
-        val live = (named + unlisted).filter { it.state != ENDED }
+        // The membership rule the rows use: the sessions that carry the task's id, and the main conversation.
+        val live = s.sessions.filter { it.taskId == task.id && it.state != ENDED }
         return (setOfNotNull(task.mainConversation) + live.map { it.conversationId }).toSet()
     }
 
@@ -124,7 +120,7 @@ object OverviewChecks {
 
     /** C1: the footer's waiting count is the sum of "needs you" over the overview's rows. */
     private fun footerEqualsRows(s: Snapshot): Check {
-        val footer = AgentCounts.of(s.sessions, s.tasks, s.nowMillis).waiting
+        val footer = AgentCounts.of(s.sessions, s.config, s.nowMillis).total.waiting
         val rows = allRows(s).sumOf(::waitingOf)
         val problems = buildList {
             if (footer != rows) add("the footer counts $footer waiting, the rows add up to $rows")
@@ -246,14 +242,6 @@ object OverviewChecks {
                 } else if (targetPlace != null && !targetPlace.tab.isListed && row.enter != AgentsOverviewBackingViewModel.Enter.SHOW_WAITING) {
                     problems += "\"${target.title ?: target.id}\" needs you in a background tab but ↵ on its row \"${row.title}\" jumps instead of showing the tab"
                 }
-            }
-        }
-        val byKey = s.sessions.associateBy { it.id } + s.sessions.associateBy { it.conversationId }
-        for (task in s.tasks) {
-            val mainOpen = task.mainConversation?.let(byKey::get)?.let { it.state != ENDED } == true
-            if (!mainOpen) continue
-            for (m in task.members) {
-                if (m.state == NEEDS_YOU && m.recordId?.let(byKey::get) == null) problems += "member \"${m.title}\" of \"${task.title}\" is counted as waiting but has no conversation to show"
             }
         }
         return Check("C5", "every needs-you leads to a visible question", problems)

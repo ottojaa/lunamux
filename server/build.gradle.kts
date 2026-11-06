@@ -130,7 +130,7 @@ sqldelight {
 // These settings are overridable from the command line:
 //
 //     ./gradlew :server:run -Dlunamux.port=8460 -Dlunamux.dbPath=/tmp/mine.db \
-//         -Dlunamux.tasksDir=/tmp/mine-tasks -Dlunamux.agentGroupsDir=/tmp/mine-groups \
+//         -Dlunamux.tasksDir=/tmp/mine-tasks \
 //         -Dlunamux.claudeProjects=/tmp/mine-projects
 //
 // The forwarding below is load-bearing and not redundant. A `-D` on the
@@ -159,7 +159,7 @@ tasks.named<JavaExec>("run") {
     // The folders of task files are forwarded for the same reason: without them a dev server
     // reads the task files of the Lunamux that runs for real on this machine. The folder of Claude
     // transcripts goes along: a dev server would otherwise import the owner's real history.
-    for (name in listOf("lunamux.tasksDir", "lunamux.agentGroupsDir", "lunamux.claudeProjects")) {
+    for (name in listOf("lunamux.tasksDir", "lunamux.claudeProjects")) {
         providers.systemProperty(name).orNull?.let { systemProperty(name, it) }
     }
     doFirst {
