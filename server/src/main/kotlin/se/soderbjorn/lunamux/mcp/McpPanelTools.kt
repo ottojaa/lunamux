@@ -3,8 +3,8 @@
  *
  * An agent that works on a task can show the person what it is doing in blocks next to the task's
  * own session. The panel draws four things: the task's agents (it makes that block itself), a
- * progress block, links and a timeline. Documents are stored and listed by `get_task_panel`;
- * text, facts and buttons are stored too but no client draws them. `set_task_panel` replaces
+ * progress block, links and a timeline. Text, facts and buttons are stored too but no client
+ * draws them. `set_task_panel` replaces
  * all of them, `upsert_task_block` and `remove_task_block` change one, and `get_task_panel` reads
  * them back. This file turns an agent's JSON into [TaskPanelBlock]s and the stored blocks back
  * into JSON; the rules about sizes and shapes live in [se.soderbjorn.lunamux.TaskPanelLimits] and
@@ -27,7 +27,6 @@ import kotlinx.serialization.json.put
 import se.soderbjorn.lunamux.AgentSessionTracker
 import se.soderbjorn.lunamux.TaskBlockContent
 import se.soderbjorn.lunamux.TaskButton
-import se.soderbjorn.lunamux.TaskDocument
 import se.soderbjorn.lunamux.TaskException
 import se.soderbjorn.lunamux.TaskFact
 import se.soderbjorn.lunamux.TaskLink
@@ -39,7 +38,7 @@ import java.time.Instant
 import java.time.OffsetDateTime
 
 /** The block types an agent may write, in the order the tool descriptions list them. */
-private val BLOCK_TYPES = listOf("text", "facts", "links", "documents", "timeline", "progress", "actions")
+private val BLOCK_TYPES = listOf("text", "facts", "links", "timeline", "progress", "actions")
 
 /**
  * Read a JSON value as the array of objects a block field expects.
@@ -69,22 +68,35 @@ private fun JsonObject.str(field: String, where: String): String =
         ?: throw McpArgumentException("$where needs a text '$field'.")
 
 /**
- * Turn the time of a timeline entry or a document into epoch milliseconds.
+ * Turn the `at` time of a timeline entry or a link into epoch milliseconds.
  *
  * @param el an ISO-8601 instant or offset date-time string, or epoch milliseconds as a number.
  * @param where words naming the entry for the refusal.
- * @param field the name of the field the time was read from, used in the refusal: `at` for a
- *   timeline entry, `updated` for a document.
  * @return epoch milliseconds.
  * @throws McpArgumentException when it is neither.
  */
-private fun parseAt(el: JsonElement?, where: String, field: String = "at"): Long {
-    val p = el as? JsonPrimitive ?: throw McpArgumentException("$where needs an '$field' time (ISO-8601 text or epoch milliseconds).")
+private fun parseAt(el: JsonElement?, where: String): Long {
+    val p = el as? JsonPrimitive ?: throw McpArgumentException("$where needs an 'at' time (ISO-8601 text or epoch milliseconds).")
     p.contentOrNull?.toLongOrNull()?.let { return it }
-    val text = p.contentOrNull ?: throw McpArgumentException("$where needs an '$field' time (ISO-8601 text or epoch milliseconds).")
+    val text = p.contentOrNull ?: throw McpArgumentException("$where needs an 'at' time (ISO-8601 text or epoch milliseconds).")
     return runCatching { Instant.parse(text).toEpochMilli() }.getOrNull()
         ?: runCatching { OffsetDateTime.parse(text).toInstant().toEpochMilli() }.getOrNull()
-        ?: throw McpArgumentException("$where has an '$field' of '${text.take(40)}' that is not ISO-8601 (like 2026-05-01T12:00:00Z) or epoch milliseconds.")
+        ?: throw McpArgumentException("$where has an 'at' of '${text.take(40)}' that is not ISO-8601 (like 2026-05-01T12:00:00Z) or epoch milliseconds.")
+}
+
+/**
+ * Read the optional `kind` of a link: the short word shown before its label.
+ *
+ * @receiver the link's JSON.
+ * @param where words naming the link for the refusal.
+ * @return the trimmed kind, or [TaskLink.DEFAULT_KIND] when it is absent, null or blank.
+ * @throws McpArgumentException when it is present but not text.
+ */
+private fun JsonObject.linkKind(where: String): String {
+    val el = this["kind"]?.takeUnless { it is JsonNull } ?: return TaskLink.DEFAULT_KIND
+    val p = el as? JsonPrimitive
+    if (p == null || !p.isString) throw McpArgumentException("$where has a 'kind' that is not text.")
+    return p.content.trim().ifEmpty { TaskLink.DEFAULT_KIND }
 }
 
 /**
@@ -110,14 +122,12 @@ internal fun parsePanelBlock(json: JsonObject): TaskPanelBlock {
             TaskFact(o.str("label", "Block '$id' fact ${i + 1}"), o.str("value", "Block '$id' fact ${i + 1}"))
         })
         "links" -> TaskBlockContent.Links(json.objects("items", id).mapIndexed { i, o ->
-            TaskLink(o.str("label", "Block '$id' link ${i + 1}"), o.str("url", "Block '$id' link ${i + 1}"))
-        })
-        "documents" -> TaskBlockContent.Documents(json.objects("items", id).mapIndexed { i, o ->
-            val where = "Block '$id' document ${i + 1}"
-            TaskDocument(
-                title = o.str("title", where),
+            val where = "Block '$id' link ${i + 1}"
+            TaskLink(
+                kind = o.linkKind(where),
+                label = o.str("label", where),
                 url = o.str("url", where),
-                updatedMillis = o["updated"]?.takeUnless { it is JsonNull }?.let { parseAt(it, where, "updated") },
+                at = o["at"]?.takeUnless { it is JsonNull }?.let { parseAt(it, where) },
             )
         })
         "timeline" -> TaskBlockContent.Timeline(json.objects("items", id).mapIndexed { i, o ->
@@ -174,14 +184,12 @@ internal fun panelBlockJson(b: TaskPanelBlock): JsonObject = buildJsonObject {
             c.items.forEach { add(buildJsonObject { put("label", it.label); put("value", it.value) }) }
         })
         is TaskBlockContent.Links -> put("items", buildJsonArray {
-            c.items.forEach { add(buildJsonObject { put("label", it.label); put("url", it.url) }) }
-        })
-        is TaskBlockContent.Documents -> put("items", buildJsonArray {
-            c.items.forEach { d ->
+            c.items.forEach { l ->
                 add(buildJsonObject {
-                    put("title", d.title)
-                    put("url", d.url)
-                    d.updatedMillis?.let { put("updated", Instant.ofEpochMilli(it).toString()) }
+                    put("kind", l.kind)
+                    put("label", l.label)
+                    put("url", l.url)
+                    l.at?.let { put("at", Instant.ofEpochMilli(it).toString()) }
                 })
             }
         })
@@ -230,9 +238,9 @@ fun registerMcpPanelTools(store: TaskPanelStore, tracker: AgentSessionTracker) {
         ),
         "items" to schemaArray(
             "type facts: [{label, value}] (up to ${TaskPanelLimits.LIST_MAX}; label ${TaskPanelLimits.LABEL_MAX}, value ${TaskPanelLimits.VALUE_MAX} characters). " +
-                "type links: [{label, url}] (up to ${TaskPanelLimits.LIST_MAX}; only http, https and file addresses). " +
-                "type documents: [{title, url, updated?}] (up to ${TaskPanelLimits.LIST_MAX}; title ${TaskPanelLimits.LABEL_MAX} characters; " +
-                "only http, https and file addresses; updated is ISO-8601 or epoch milliseconds). " +
+                "type links: [{kind?, label, url, at?}] (up to ${TaskPanelLimits.LIST_MAX}; kind is the short word shown before the label, " +
+                "up to ${TaskPanelLimits.KIND_MAX} characters, and \"link\" when you give none; at is when the linked thing was made or changed, " +
+                "ISO-8601 or epoch milliseconds, and a link without one is listed after the others; only http, https and file addresses). " +
                 "type timeline: [{at, text}] where at is ISO-8601 or epoch milliseconds (text ${TaskPanelLimits.TIMELINE_TEXT_MAX} characters; " +
                 "past ${TaskPanelLimits.TIMELINE_MAX} entries the newest are kept).",
             buildJsonObject { put("type", "object") },
@@ -273,7 +281,7 @@ fun registerMcpPanelTools(store: TaskPanelStore, tracker: AgentSessionTracker) {
     writeTool(
         name = "set_task_panel",
         description = "Show the person what is going on in a task, in blocks beside the task's own session: " +
-            "links, a timeline and progress (the panel also lists the task's agents itself). text, facts, documents and buttons " +
+            "links, a timeline and progress (the panel also lists the task's agents itself). text, facts and buttons " +
             "are stored and read back by get_task_panel, but the panel does not draw them, so put what the person should see in " +
             "links, the timeline or progress. This replaces every block of the task at once, in " +
             "the order you give (at most ${TaskPanelLimits.MAX_BLOCKS}). To change one block without touching the " +

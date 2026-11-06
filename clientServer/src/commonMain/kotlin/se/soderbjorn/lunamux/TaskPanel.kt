@@ -4,7 +4,7 @@
  * `task_panel_blocks` table), pushes them to every window as [WindowEnvelope.TaskPanel], and
  * the clients draw them in the panel beside the task's own session.
  *
- * Contains [TaskPanelBlock], the sealed [TaskBlockContent] with its seven cases, and the small item
+ * Contains [TaskPanelBlock], the sealed [TaskBlockContent] with its six cases, and the small item
  * types those cases carry. Everything here is plain data; the limits on sizes and counts are
  * enforced by the server when a block is written, not by these types.
  *
@@ -90,21 +90,6 @@ sealed class TaskBlockContent {
     }
 
     /**
-     * Pages and files written for the person, one plain row each, that open outside Lunamux.
-     *
-     * Written by any agent through `set_task_panel` or `upsert_task_block`, the way [Links] are;
-     * drawn by the panel's clients from the view model's documents body.
-     *
-     * @property items the documents, in the order the writer gave.
-     * @see TaskDocument
-     */
-    @Serializable
-    @SerialName("documents")
-    data class Documents(val items: List<TaskDocument>) : TaskBlockContent() {
-        override val kindName: String get() = "documents"
-    }
-
-    /**
      * Things that happened, drawn newest first.
      *
      * @property items the entries, oldest first as stored.
@@ -160,23 +145,32 @@ data class TaskFact(val label: String, val value: String)
  * A link in a [TaskBlockContent.Links] block. The server only stores `http`, `https` and `file`
  * addresses.
  *
+ * The writer says what the link is and when it happened; the panel shows both as given and
+ * guesses neither. A row stored before these fields existed reads back as kind `link` with no
+ * time.
+ *
+ * Built by the server's MCP panel tools from an agent's `links` items, and by the panel store when
+ * it reads a stored block; read by the panel's view model for the Links list.
+ *
+ * @property kind the short word shown for what the link is (any word the writer chose, up to
+ *   a short length the server enforces); `link` when the writer gave none.
  * @property label the words shown for the link.
  * @property url where it goes.
+ * @property at when the linked thing was made or last changed, in epoch milliseconds, or null when
+ *   the writer gave no time. Rows without a time are listed after the ones with one.
  */
 @Serializable
-data class TaskLink(val label: String, val url: String)
-
-/**
- * A document in a [TaskBlockContent.Documents] block. The server only stores `http`, `https` and
- * `file` addresses, as for [TaskLink].
- *
- * @property title the words shown for the document.
- * @property url where it is; the person opens it outside Lunamux.
- * @property updatedMillis when the document last changed, in epoch milliseconds, or null when the
- *   writer gave no time.
- */
-@Serializable
-data class TaskDocument(val title: String, val url: String, val updatedMillis: Long? = null)
+data class TaskLink(
+    val kind: String = TaskLink.DEFAULT_KIND,
+    val label: String,
+    val url: String,
+    val at: Long? = null,
+) {
+    companion object {
+        /** The kind of a link whose writer gave none, and of a row stored before kinds existed. */
+        const val DEFAULT_KIND = "link"
+    }
+}
 
 /**
  * One entry in a [TaskBlockContent.Timeline] block.

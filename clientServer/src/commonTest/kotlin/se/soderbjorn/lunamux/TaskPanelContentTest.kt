@@ -4,16 +4,17 @@
  *
  * Runs on every :clientServer target: the server encodes a block with [windowJson] and stores it,
  * and the web, Android and iOS clients decode it with the same configuration, so all of them
- * must agree on the documents block, its `kind` name and what a missing time means.
+ * must agree on a link's own kind and time and on what a missing one means.
  *
- * @see TaskBlockContent.Documents
- * @see TaskDocument
+ * @see TaskBlockContent.Links
+ * @see TaskLink
  */
 package se.soderbjorn.lunamux
 
+import kotlinx.serialization.SerializationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNull
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class TaskPanelContentTest {
@@ -23,36 +24,42 @@ class TaskPanelContentTest {
     private fun decode(json: String): TaskBlockContent = windowJson.decodeFromString(TaskBlockContent.serializer(), json)
 
     @Test
-    fun documentsRoundTripWithAndWithoutATime() {
-        val content = TaskBlockContent.Documents(
+    fun linksRoundTripWithTheirKindAndTime() {
+        val content = TaskBlockContent.Links(
             listOf(
-                TaskDocument("Design page", "https://example.com/design", 1_700_000_000_000L),
-                TaskDocument("Notes", "file:///tmp/notes.md"),
+                TaskLink("PR", "Fix the footer", "https://github.com/o/r/pull/12", 1_700_000_000_000L),
+                TaskLink(label = "Notes", url = "file:///tmp/notes.md"),
             ),
         )
         assertEquals(content, decode(encode(content)))
-        assertEquals("documents", content.kindName)
+        assertEquals("links", content.kindName)
     }
 
     @Test
-    fun documentsAreWrittenUnderTheirOwnKind() {
-        val json = encode(TaskBlockContent.Documents(listOf(TaskDocument("A", "https://a.b"))))
-        assertTrue("\"kind\":\"documents\"" in json, json)
-        assertTrue("\"updatedMillis\":null" in json, "an absent time is written, so every client reads it the same way: $json")
+    fun aLinkIsWrittenWithItsKindAndAnAbsentTime() {
+        val json = encode(TaskBlockContent.Links(listOf(TaskLink(label = "A", url = "https://a.b"))))
+        assertTrue("\"kind\":\"links\"" in json, "the block keeps its own kind name: $json")
+        assertTrue("\"kind\":\"link\"" in json, "the link's kind is written, so every client reads it the same way: $json")
+        assertTrue("\"at\":null" in json, "an absent time is written as null: $json")
     }
 
     @Test
-    fun aStoredDocumentWithNoTimeReadsAsNull() {
-        val read = decode("""{"kind":"documents","items":[{"title":"A","url":"https://a.b"}]}""")
-        val item = (read as TaskBlockContent.Documents).items.single()
-        assertEquals("A", item.title)
-        assertNull(item.updatedMillis)
+    fun aLinkStoredBeforeKindsAndTimesReadsAsKindLinkWithNoTime() {
+        val read = decode("""{"kind":"links","items":[{"label":"A","url":"https://a.b"}]}""")
+        assertEquals(TaskLink("link", "A", "https://a.b", null), (read as TaskBlockContent.Links).items.single())
     }
 
     @Test
-    fun aDocumentIgnoresFieldsAClientDoesNotKnow() {
-        val read = decode("""{"kind":"documents","items":[{"title":"A","url":"https://a.b","updatedMillis":5,"opens":"inside"}]}""")
-        assertEquals(TaskDocument("A", "https://a.b", 5L), (read as TaskBlockContent.Documents).items.single())
+    fun aLinkIgnoresFieldsAClientDoesNotKnow() {
+        val read = decode("""{"kind":"links","items":[{"kind":"PR","label":"A","url":"https://a.b","at":5,"opens":"inside"}]}""")
+        assertEquals(TaskLink("PR", "A", "https://a.b", 5L), (read as TaskBlockContent.Links).items.single())
+    }
+
+    @Test
+    fun aDocumentsBlockIsNoLongerAKind() {
+        assertFailsWith<SerializationException> {
+            decode("""{"kind":"documents","items":[{"title":"A","url":"https://a.b"}]}""")
+        }
     }
 
     @Test

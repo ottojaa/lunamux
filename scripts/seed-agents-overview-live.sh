@@ -167,7 +167,7 @@ call set_task_status "{\"taskId\":\"$NOTES\",\"text\":\"Notes drafted, waiting o
 # The task's panel (⌘I in the "Release notes" tab): what a writing agent would put there. Four
 # blocks show: the agents (the server's own), the progress, the links and the recent activity. The
 # links are several kinds (a Slack thread, pull requests, a Claude artifact, documents, a brief and
-# the decisions, each under a block titled for its kind) and more than five, so the panel says
+# the decisions, each carrying its own kind word and time) and more than five, so the panel says
 # "+ N more". One activity line wraps to three lines at the narrowest width and is followed by a
 # one-line entry.
 call set_task_panel "$(python3 -I -c 'import json,sys
@@ -176,19 +176,19 @@ now = int(time.time() * 1000)
 print(json.dumps({"taskId": sys.argv[1], "by": "release notes agent", "blocks": [
   {"id": "progress", "type": "progress", "title": "Progress", "done": 3, "total": 5, "label": "Matching the changelog entries to merged pull requests"},
   {"id": "links", "type": "links", "title": "Links", "items": [
-    {"label": "Release 4.3 notes, first draft", "url": "https://example.com/notes/4.3"},
-    {"label": "Release thread", "url": "https://example.slack.com/archives/C0RELEASE/p1730800000"},
-    {"label": "Changelog check", "url": "https://github.com/example/lunamux/pull/412"},
-    {"label": "Screenshot refresh", "url": "https://github.com/example/lunamux/pull/415"},
-    {"label": "Notes preview", "url": "https://claude.ai/artifact/seed-release-notes"},
-    {"label": "Upgrade guide", "url": "https://example.com/upgrade"},
-    {"label": "Screenshot list", "url": "file:///tmp/release-4.3/screenshots.md"},
-    {"label": "Known issues", "url": "https://github.com/example/lunamux/issues/398"}]},
+    {"kind": "doc", "label": "Release 4.3 notes, first draft", "url": "https://example.com/notes/4.3", "at": now - 2400000},
+    {"kind": "slack", "label": "Release thread", "url": "https://example.slack.com/archives/C0RELEASE/p1730800000", "at": now - 720000},
+    {"kind": "PR", "label": "Changelog check", "url": "https://github.com/example/lunamux/pull/412", "at": now - 180000},
+    {"kind": "PR", "label": "Screenshot refresh", "url": "https://github.com/example/lunamux/pull/415", "at": now - 1200000},
+    {"kind": "art", "label": "Notes preview", "url": "https://claude.ai/artifact/seed-release-notes", "at": now - 300000},
+    {"kind": "doc", "label": "Upgrade guide", "url": "https://example.com/upgrade", "at": now - 4200000},
+    {"kind": "doc", "label": "Screenshot list", "url": "file:///tmp/release-4.3/screenshots.md", "at": now - 1500000},
+    {"kind": "issue", "label": "Known issues", "url": "https://github.com/example/lunamux/issues/398", "at": now - 10800000}]},
   {"id": "brief", "type": "links", "title": "Brief", "items": [
-    {"label": "Brief: release notes for 4.3", "url": "https://example.com/briefs/release-4.3"}]},
+    {"kind": "brief", "label": "Brief: release notes for 4.3", "url": "https://example.com/briefs/release-4.3", "at": now - 18000000}]},
   {"id": "decisions", "type": "links", "title": "Decisions", "items": [
-    {"label": "You decided: notes stay one page", "url": "https://example.com/decisions/one-page"},
-    {"label": "You decided: screenshots are retaken", "url": "https://example.com/decisions/screenshots"}]},
+    {"kind": "doc", "label": "You decided: notes stay one page", "url": "https://example.com/decisions/one-page", "at": now - 14400000},
+    {"kind": "doc", "label": "You decided: screenshots are retaken", "url": "https://example.com/decisions/screenshots", "at": now - 5400000}]},
   {"id": "activity", "type": "timeline", "title": "Recent activity", "items": [
     {"at": now - 120000, "text": "Changelog check found two gaps: the entry for the sidebar fix has no merged pull request, and the one for the search change points at a pull request that was closed without merging"},
     {"at": now - 300000, "text": "Draft sent for review"},
