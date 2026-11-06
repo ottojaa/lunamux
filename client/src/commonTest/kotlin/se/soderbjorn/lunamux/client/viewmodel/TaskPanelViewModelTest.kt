@@ -1,8 +1,8 @@
 /**
  * Tests for [TaskPanelViewModel]: when the panel shows (the task whose main conversation is live in
  * the active tab, nothing elsewhere or while the person hid it), the agents block (only working and
- * waiting members, in words, what a click does), the progress block, the links block (any kind of
- * link, kind shown, newest first), the recent-activity block, and the five-then-"+ N more" rule
+ * waiting members, in words, what a click does), the progress block, the links block (each row's
+ * own kind and own time, newest first, undated last), the recent-activity block, and the five-then-"+ N more" rule
  * every list follows.
  */
 package se.soderbjorn.lunamux.client.viewmodel
@@ -15,12 +15,12 @@ import se.soderbjorn.lunamux.LeafNode
 import se.soderbjorn.lunamux.Pane
 import se.soderbjorn.lunamux.TabConfig
 import se.soderbjorn.lunamux.TaskBlockContent
-import se.soderbjorn.lunamux.TaskDocument
 import se.soderbjorn.lunamux.TaskLink
 import se.soderbjorn.lunamux.TaskPanelBlock
 import se.soderbjorn.lunamux.TaskTimelineItem
 import se.soderbjorn.lunamux.WindowCommand
 import se.soderbjorn.lunamux.WindowConfig
+import se.soderbjorn.lunamux.windowJson
 import se.soderbjorn.lunamux.client.WindowStateRepository
 import se.soderbjorn.lunamux.client.viewmodel.TaskPanelViewModel.MemberAction
 import se.soderbjorn.lunamux.client.viewmodel.TaskPanelViewModel.Section
@@ -212,31 +212,72 @@ class TaskPanelViewModelTest {
     // ---- links ----
 
     @Test
-    fun `links take any kind, show their kind and come newest first`() {
+    fun `a link row shows its own kind and its own time, newest first, and the block's write time plays no part`() {
         layout()
         give(listOf(task()), listOf(session("own")))
         blocks(
             block("l", TaskBlockContent.Links(listOf(
-                TaskLink("Thread with Ana", "https://acme.slack.com/archives/C1/p1"),
-                TaskLink("Fix the footer", "https://github.com/o/r/pull/12"),
-                TaskLink("Plan", "https://claude.ai/artifact/abc"),
-            )), at = now - 60_000),
-            block("d", TaskBlockContent.Documents(listOf(TaskDocument("Design brief", "file:///work/brief.md", now - 10_000)))),
-            block("x", TaskBlockContent.Links(listOf(TaskLink("Not safe", "javascript:alert(1)"))), at = now),
+                TaskLink("slack", "Thread with Ana", "https://acme.slack.com/archives/C1/p1", now - 3_000_000),
+                TaskLink("PR", "Fix the footer", "https://github.com/o/r/pull/12", now - 60_000),
+                TaskLink("art", "Plan", "https://claude.ai/artifact/abc", now - 1_000_000),
+            )), at = now),
+            block("m", TaskBlockContent.Links(listOf(TaskLink("whatever", "Design brief", "file:///work/brief.md", now - 10_000)))),
+            block("x", TaskBlockContent.Links(listOf(TaskLink("PR", "Not safe", "javascript:alert(1)", now))), at = now),
         )
         val rows = vm.state.links.shown
-        assertEquals(listOf("doc", "slack", "PR", "art"), rows.map { it.kind })
-        assertEquals("Design brief", rows.first().title)
+        assertEquals(listOf("whatever", "PR", "art", "slack"), rows.map { it.kind }, "the writer's words, as sent")
+        assertEquals(listOf("Design brief", "Fix the footer", "Plan", "Thread with Ana"), rows.map { it.title })
+        assertEquals(listOf("02:46", "02:45", "02:30", "01:56"), rows.map { it.time }, "each row's own time, in the viewer's zone")
         assertTrue(rows.none { it.url.startsWith("javascript") })
     }
 
     @Test
-    fun `links name a decision or a brief by the block that holds them`() {
-        assertEquals("decision", TaskPanelViewModel.kindOf("https://x.dev/a", "Names", "Decisions", false))
-        assertEquals("decision", TaskPanelViewModel.kindOf("https://x.dev/a", "You decided: names", null, false))
-        assertEquals("brief", TaskPanelViewModel.kindOf("https://x.dev/a", "Names", "Briefs", false))
-        assertEquals("issue", TaskPanelViewModel.kindOf("https://github.com/o/r/issues/3", "x", null, false))
-        assertEquals("link", TaskPanelViewModel.kindOf("https://example.com", "x", null, false))
+    fun `links without a time come after the dated ones in the order written, and a missing kind reads link`() {
+        layout()
+        give(listOf(task()), listOf(session("own")))
+        blocks(
+            block("a", TaskBlockContent.Links(listOf(
+                TaskLink(label = "Written first", url = "https://example.com/1"),
+                TaskLink("doc", "Old but dated", "https://example.com/2", now - 9_000_000),
+            ))),
+            block("b", TaskBlockContent.Links(listOf(
+                TaskLink("  ", "Blank kind", "https://example.com/3"),
+                TaskLink("PR", "Dated", "https://example.com/4", now - 1_000),
+            ))),
+        )
+        val rows = vm.state.links.shown
+        assertEquals(listOf("Dated", "Old but dated", "Written first", "Blank kind"), rows.map { it.title })
+        assertEquals(listOf("PR", "doc", "link", "link"), rows.map { it.kind })
+        assertEquals(listOf("02:46", "00:16", "", ""), rows.map { it.time }, "no time given, none shown")
+    }
+
+    @Test
+    fun `a link listed twice shows once, as its dated row`() {
+        layout()
+        give(listOf(task()), listOf(session("own")))
+        blocks(block("a", TaskBlockContent.Links(listOf(
+            TaskLink("link", "Same, no time", "https://example.com/same"),
+            TaskLink("PR", "Same, dated", "https://example.com/same", now - 120_000),
+        ))))
+        val rows = vm.state.links.shown
+        assertEquals(1, rows.size)
+        assertEquals("Same, dated", rows.single().title)
+    }
+
+    @Test
+    fun `a links block stored before links had a kind and a time still loads, as kind link with no time`() {
+        val stored = windowJson.decodeFromString(
+            TaskBlockContent.serializer(),
+            """{"kind":"links","items":[{"label":"Old row","url":"https://example.com/old"}]}""",
+        )
+        assertEquals(listOf(TaskLink("link", "Old row", "https://example.com/old", null)), (stored as TaskBlockContent.Links).items)
+        layout()
+        give(listOf(task()), listOf(session("own")))
+        blocks(block("l", stored))
+        val row = vm.state.links.shown.single()
+        assertEquals("link", row.kind)
+        assertEquals("", row.time)
+        assertEquals("Old row", row.title)
     }
 
     @Test
@@ -268,7 +309,7 @@ class TaskPanelViewModelTest {
         val sessions = listOf(session("own")) + (1..19).map { session("w$it", leaf = "leaf-w") }
         give(listOf(task(members = members)), sessions)
         blocks(
-            block("l", TaskBlockContent.Links((1..19).map { TaskLink("Link $it", "https://example.com/$it") })),
+            block("l", TaskBlockContent.Links((1..19).map { TaskLink(label = "Link $it", url = "https://example.com/$it") })),
             block("t", TaskBlockContent.Timeline((1..19).map { TaskTimelineItem(now - it * 60_000L, "Step $it") })),
         )
         val s = vm.state
@@ -288,7 +329,7 @@ class TaskPanelViewModelTest {
     @Test
     fun `opening a list on one task leaves the same list of another task cut`() {
         layout()
-        val links = TaskBlockContent.Links((1..19).map { TaskLink("Link $it", "https://example.com/$it") })
+        val links = TaskBlockContent.Links((1..19).map { TaskLink(label = "Link $it", url = "https://example.com/$it") })
         give(
             listOf(task(), task(main = "own2", id = "t2")),
             listOf(session("own"), session("own2", leaf = "leaf-w", taskId = "t2")),
@@ -308,7 +349,7 @@ class TaskPanelViewModelTest {
     fun `a list of exactly five shows no more button`() {
         layout()
         give(listOf(task()), listOf(session("own")))
-        blocks(block("l", TaskBlockContent.Links((1..5).map { TaskLink("Link $it", "https://example.com/$it") })))
+        blocks(block("l", TaskBlockContent.Links((1..5).map { TaskLink(label = "Link $it", url = "https://example.com/$it") })))
         assertEquals(0, vm.state.links.more)
         assertEquals(5, vm.state.links.shown.size)
     }
