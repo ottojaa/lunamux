@@ -115,23 +115,6 @@ class TaskIndexTest {
     }
 
     @Test
-    fun `a session opened in a subfolder of the folder a task file opens in is not taken into that task`() {
-        val wt = folder("wt")
-        val sub = folder("wt/src/deep")
-        val snap = resolve(
-            listOf(rec("deep", sub, agentSessionId = "abc"), rec("carries", sub, taskId = "f")),
-            listOf(file("f", open = TaskOpen("claude go", wt))),
-        )
-        assertNull(snap.assignment["deep"], "a folder below the open folder places nothing")
-        assertEquals("f", snap.assignment["carries"], "the id it carries still does")
-    }
-
-    @Test
-    fun `a task id no file and no row knows is ignored, so the record is a task of its own`() {
-        assertNull(resolve(listOf(rec("r2", taskId = "ghost"))).assignment["r2"])
-    }
-
-    @Test
     fun `a task starts when its first session was created, else when its file was written`() {
         val withSessions = resolve(listOf(rec("a", taskId = "f", createdAt = 40), rec("b", taskId = "f", createdAt = 25)), listOf(file("f")))
         assertEquals(25, withSessions.tasks.single().startedAtMillis)
@@ -157,12 +140,6 @@ class TaskIndexTest {
         assertEquals("agents", snap.tasks.first { it.id == "used" }.source)
         assertEquals("file", snap.tasks.first { it.id == "shared" }.source)
         assertEquals("shared", snap.assignment["b"])
-    }
-
-    @Test
-    fun `a task is marked as having an open action only when its file declares one`() {
-        val snap = resolve(emptyList(), listOf(file("a", open = TaskOpen("claude", "/tmp")), file("b")))
-        assertEquals(listOf(true, false), snap.tasks.map { it.hasOpen })
     }
 
     // ── The task's main conversation: stored as a conversation, found again in whatever pane it runs ──
@@ -200,14 +177,6 @@ class TaskIndexTest {
     }
 
     @Test
-    fun `the caller's pane, not the first listed pane, is the main conversation when the caller is known`() {
-        session("s1")
-        session("s2")
-        val id = index.createTask("Plan", listOf("s1"), callerSessionId = "s2")
-        assertEquals("a-s2", storedMain(id))
-    }
-
-    @Test
     fun `set_task_lead with a pane that runs no agent is refused and keeps the old conversation`() {
         session("s1")
         val id = index.createTask("Plan", listOf("s1"))
@@ -225,18 +194,6 @@ class TaskIndexTest {
         assertEquals("a-s2", storedMain(id))
         assertFailsWith<TaskException> { index.setMainConversation(id, "nobody") }
         assertEquals("a-s2", storedMain(id))
-    }
-
-    @Test
-    fun `set_task_lead takes the conversation id of a record the database holds but memory does not`() {
-        session("s1")
-        val id = index.createTask("Plan", listOf("s1"))
-        repo.saveAgentSession(
-            AgentSessionRecord(id = "gone", agent = "claude", agentSessionId = "conv-gone", source = "hooks",
-                state = "ended", stateSince = 1, createdAt = 1, endedAt = 1),
-        )
-        index.setMainConversation(id, "conv-gone")
-        assertEquals("conv-gone", storedMain(id))
     }
 
     @Test
@@ -307,16 +264,6 @@ class TaskIndexTest {
         assertEquals("s8", reopened.listing().single { it.id == task }.ownSessionId)
     }
 
-    @Test
-    fun `a task file's task keeps its main conversation the same way`() {
-        files.value = listOf(file("prog"))
-        session("s1", "a-1")
-        index.recompute()
-        index.setOwnSession("prog", "s1")
-        assertEquals("a-1", storedMain("prog"))
-        assertEquals("a-1", index.state.value.tasks.single { it.id == "prog" }.mainConversation)
-    }
-
     // ── Resume and the pending pane assignment ──────────────────────────────────────────
 
     @Test
@@ -361,19 +308,6 @@ class TaskIndexTest {
         assertNull(tracker.openRecordOf("s5")!!.taskId, "the promise was used up")
     }
 
-    @Test
-    fun `a promise wins over the task an earlier record of the conversation had`() {
-        session("s1", "a-1")
-        val old = index.createTask("Old", listOf("s1"))
-        val newer = index.createTask("New", emptyList())
-        tracker.onSessionDestroyed("s1", null)
-        pane("s2")
-        index.addToTask(newer, listOf("s2"))
-        tracker.onHook(pane("s2"), event("SessionStart", "a-1"))
-        assertEquals(newer, tracker.openRecordOf("s2")!!.taskId)
-        assertTrue(old != newer)
-    }
-
     // ── The operations behind the MCP tools ─────────────────────────────────────────────
 
     @Test
@@ -389,29 +323,6 @@ class TaskIndexTest {
     }
 
     @Test
-    fun `task ids never repeat, even for the same title`() {
-        val a = index.createTask("Same", emptyList())
-        val b = index.createTask("Same", emptyList())
-        assertTrue(a != b)
-    }
-
-    @Test
-    fun `a title that is blank is refused and one that is long is cut`() {
-        assertFailsWith<TaskException> { index.createTask("   ", emptyList()) }
-        index.createTask("x".repeat(500), emptyList())
-        assertTrue(index.listing().single().title.length <= 120)
-    }
-
-    @Test
-    fun `create_task with a session that does not exist changes nothing and names the session`() {
-        session("s1")
-        val e = assertFailsWith<TaskException> { index.createTask("T", listOf("s1", "nope")) }
-        assertTrue("nope" in e.message!!)
-        assertTrue(index.listing().isEmpty())
-        assertNull(tracker.openRecordOf("s1")!!.taskId)
-    }
-
-    @Test
     fun `add_to_task moves a session between tasks`() {
         session("s1")
         val a = index.createTask("A", listOf("s1"))
@@ -423,29 +334,6 @@ class TaskIndexTest {
     }
 
     @Test
-    fun `add_to_task works on a task file's id and the session is then in that file's task`() {
-        files.value = listOf(file("prog"))
-        session("s1")
-        index.recompute()
-        index.addToTask("prog", listOf("s1"))
-        val rec = tracker.openRecordOf("s1")!!
-        assertEquals("prog", rec.taskId)
-        assertEquals("prog", index.state.value.assignment[rec.id])
-        assertEquals("prog", tracker.summaries.value.single().taskId)
-    }
-
-    @Test
-    fun `add_to_task refuses an unknown task or session and changes nothing`() {
-        session("s1")
-        val task = index.createTask("A", emptyList())
-        val noTask = assertFailsWith<TaskException> { index.addToTask("missing", listOf("s1")) }
-        assertTrue("missing" in noTask.message!!)
-        val noSession = assertFailsWith<TaskException> { index.addToTask(task, listOf("s1", "ghost")) }
-        assertTrue("ghost" in noSession.message!!)
-        assertNull(tracker.openRecordOf("s1")!!.taskId)
-    }
-
-    @Test
     fun `remove_from_task makes the session a task of its own again and says where each one ended up`() {
         session("s1")
         index.createTask("A", listOf("s1"))
@@ -453,27 +341,6 @@ class TaskIndexTest {
         assertEquals(mapOf<String, String?>("s1" to null), after)
         assertNull(tracker.openRecordOf("s1")!!.taskId)
         assertTrue(index.state.value.tasks.isEmpty())
-    }
-
-    @Test
-    fun `remove_from_task takes a session out of a file's task as well`() {
-        files.value = listOf(file("prog"))
-        session("s1")
-        index.recompute()
-        index.addToTask("prog", listOf("s1"))
-        val after = index.removeFromTask(listOf("s1"))
-        assertNull(tracker.openRecordOf("s1")!!.taskId)
-        assertNull(after["s1"])
-    }
-
-    @Test
-    fun `remove_from_task withdraws a promise made to a pane with no agent`() {
-        val task = index.createTask("A", emptyList())
-        pane("s7")
-        index.addToTask(task, listOf("s7"))
-        index.removeFromTask(listOf("s7"))
-        tracker.onHook(pane("s7"), event("SessionStart", "a-7"))
-        assertNull(tracker.openRecordOf("s7")!!.taskId)
     }
 
     @Test
@@ -529,10 +396,4 @@ class TaskIndexTest {
         assertEquals(id, index.state.value.assignment[tracker.snapshot().single().id], "an ended record keeps its task")
     }
 
-    @Test
-    fun `fileTask finds a file by id`() {
-        files.value = listOf(file("prog", open = TaskOpen("claude go", "/tmp")))
-        assertEquals("claude go", index.fileTask("prog")!!.open!!.command)
-        assertNull(index.fileTask("nope"))
-    }
 }

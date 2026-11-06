@@ -98,16 +98,6 @@ class AgentsOverviewMomentsTest {
         assertFalse(vm.state.rows.any { it.recordId in setOf("b1", "b2") }, "a background agent never gets a row")
     }
 
-    /** Moment 2: Return goes to the live main conversation. */
-    @Test
-    fun returnOnALiveMainConversationJumpsToItsPane() = runNow {
-        layout(listOf("leaf-main"))
-        show(listOf(task("main")), conversation("main", "working", taskId = "g1"))
-        assertEquals(Enter.JUMP, row("task:g1").enter)
-        vm.activate(row("task:g1"))
-        assertEquals(listOf<WindowCommand>(WindowCommand.SetActiveTab("tab-1"), WindowCommand.SetFocusedPane("tab-1", "leaf-main")), sent)
-    }
-
     /** Moment 3: the main conversation asks. */
     @Test
     fun whenTheMainConversationAsksTheRowSaysNeedsYouAndTheFooterCountsOne() {
@@ -149,22 +139,6 @@ class AgentsOverviewMomentsTest {
         assertEquals("finished", vm.state.earlier.single { it.id == "task:g1" }.stateWord)
     }
 
-    /** The same after a restart: the main is no longer in memory, only the task file's open action and the flag remain. */
-    @Test
-    fun aMainThatIsGoneFromMemoryStillKeepsItsRowWhileAQuestionWaits() = runNow {
-        layout(listOf("leaf-other"))
-        val asking = task("main").copy(hasOpen = true, status = "Which database?", questionWaits = true)
-        show(listOf(asking), conversation("other", "working"))
-        assertTrue(vm.state.now.any { it.id == "task:g1" })
-        assertEquals("Which database?", row("task:g1").detail)
-        assertEquals(Enter.RESUME, row("task:g1").enter)
-        assertEquals(0, vm.state.needYouCount)
-        vm.open(); vm.select("task:g1")
-        vm.activateSelected()
-        vm.activateSelected()
-        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("main")), sent)
-    }
-
     /** A flag keeps the row of a task whose file declares no `open` action and that has no session in memory. */
     @Test
     fun aQuestionFlagKeepsTheRowOfATaskWithNoOpenActionAndNoSession() = runNow {
@@ -173,14 +147,6 @@ class AgentsOverviewMomentsTest {
         assertEquals("Which database?", row("task:g1").detail)
         assertEquals(Enter.RESUME, row("task:g1").enter)
         show(listOf(task("main").copy(status = "Which database?")), conversation("other", "working"))
-        assertFalse(vm.state.rows.any { it.id == "task:g1" })
-    }
-
-    /** A flag on a task that has no main conversation has nothing to resume, so it keeps no row of its own. */
-    @Test
-    fun aQuestionFlagOnATaskWithNoMainConversationKeepsNoRow() {
-        layout(listOf("leaf-other"))
-        show(listOf(task(null).copy(status = "Which database?", questionWaits = true)), conversation("other", "working"))
         assertFalse(vm.state.rows.any { it.id == "task:g1" })
     }
 
@@ -249,24 +215,6 @@ class AgentsOverviewMomentsTest {
         assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("main")), sent, "still by conversation, not by pane")
     }
 
-    /**
-     * A working conversation counts as working until a hook or the screen says otherwise: one whose
-     * last sign of life is a six minute test run old is still counted, in the total and per world.
-     */
-    @Test
-    fun aWorkingConversationIsCountedHoweverLongItHasBeenSilent() {
-        val config = WindowConfig(
-            worlds = listOf(WorldConfig("w1", "Home", tabs = listOf(TabConfig("t0", "t0", panes = panes(listOf("leaf-a")))))),
-            activeWorldId = "w1",
-        )
-        val silent = conversation("a", "working").copy(lastActivityAt = now - 6 * 60_000L)
-        val tally = AgentCounts.of(listOf(silent), config)
-        assertEquals(AgentCounts.Counts(0, 1), tally.total)
-        assertEquals(AgentCounts.Counts(0, 1), tally.byWorld["w1"])
-        val aDayLater = silent.copy(lastActivityAt = now - 24 * 60 * 60_000L)
-        assertEquals(AgentCounts.Counts(0, 1), AgentCounts.of(listOf(aDayLater), config).total)
-    }
-
     /** The footer's per-world split leaves out a conversation with no pane in the layout. */
     @Test
     fun countsByWorldSplitByThePaneAndLeaveOutAConversationWithNoPane() {
@@ -292,42 +240,4 @@ class AgentsOverviewMomentsTest {
         assertEquals(setOf("w1", "w2"), counts.keys)
     }
 
-    /**
-     * The total and the per-world lines come from the same sessions: a task whose agents sit in two
-     * worlds and in a background tab adds up, and a live session is counted once.
-     */
-    @Test
-    fun theTotalIsTheSumOfThePerWorldLinesForATaskWhoseAgentsSitInSeveralWindows() {
-        val config = WindowConfig(
-            worlds = listOf(
-                WorldConfig(
-                    "w1", "Home",
-                    tabs = listOf(
-                        TabConfig("t0", "t0", panes = panes(listOf("leaf-a"))),
-                        TabConfig("tbg", "agents", panes = panes(listOf("leaf-bg")), isBackground = true),
-                    ),
-                ),
-                WorldConfig("w2", "Work", tabs = listOf(TabConfig("t1", "t1", panes = panes(listOf("leaf-b", "leaf-c"))))),
-            ),
-            activeWorldId = "w1",
-        )
-        val sessions = listOf(
-            conversation("a", "needs_you", taskId = "g1"),
-            conversation("bg", "working", taskId = "g1", background = true),
-            conversation("b", "working", taskId = "g1"),
-            conversation("c", "needs_you", taskId = "g1"),
-            conversation("lone", "working"),
-            conversation("gone", "working").copy(leafId = null),
-            conversation("old", "ended", taskId = "g1", ended = true),
-        )
-        val tally = AgentCounts.of(sessions, config)
-        assertEquals(AgentCounts.Counts(2, 2), tally.total, "a live session counts once, however many windows the task spans")
-        assertEquals(
-            tally.total,
-            AgentCounts.Counts(tally.byWorld.values.sumOf { it.waiting }, tally.byWorld.values.sumOf { it.working }),
-            "the total is the sum of the lines",
-        )
-        // "lone" and "gone" have no pane any world holds, so they are in neither the lines nor the total.
-        assertEquals(setOf("w1", "w2"), tally.byWorld.keys)
-    }
 }

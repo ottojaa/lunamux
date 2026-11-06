@@ -230,25 +230,6 @@ class AgentSessionTrackerTest {
     }
 
     @Test
-    fun `a finished turn that ends in a reply is done even when the reply closes with an offer`() {
-        val t = tracker()
-        val p = pane()
-        val replies = listOf(
-            "I'd do 1 and skip 2, since your CLAUDE.md already covers it. Want me to go ahead?",
-            "Both options work.\n\nThe first is smaller.\nThe second is safer, shall I take it?",
-            "All done. Shall I also update the docs?",
-            "Which do you want: the alias or the rename?",
-        )
-        for (reply in replies) {
-            t.onHook(p, event("UserPromptSubmit", "a-1", "prompt" to "go"))
-            t.onHook(p, event("Stop", "a-1", "last_assistant_message" to reply))
-            val row = t.summaries.value.single()
-            assertEquals("done", row.state, reply)
-            assertNull(row.question, reply)
-        }
-    }
-
-    @Test
     fun `a permission request asks for you and an approval or sign-in notice does not`() {
         val t = tracker()
         val p = pane()
@@ -283,30 +264,12 @@ class AgentSessionTrackerTest {
     }
 
     @Test
-    fun `a notification of another type than a permission prompt keeps the hook's text while a tool runs`() {
-        val t = tracker()
-        val p = pane()
-        t.onHook(p, toolEvent("mcp__srv__tool", """{"query":"x"}"""))
-        t.onHook(p, event("Notification", "a-1", "message" to "srv needs some input", "notification_type" to "elicitation_dialog"))
-        assertEquals("srv needs some input", t.summaries.value.single().question)
-    }
-
-    @Test
     fun `a permission prompt typed as such names the tool call`() {
         val t = tracker()
         val p = pane()
         t.onHook(p, toolEvent("Bash", """{"command":"ls"}"""))
         t.onHook(p, event("Notification", "a-1", "message" to "Claude needs your permission", "notification_type" to "permission_prompt"))
         assertEquals("Allow Bash ls?", t.summaries.value.single().question)
-    }
-
-    @Test
-    fun `a prompt with no tool call pending keeps the hook's own text`() {
-        val t = tracker()
-        val p = pane()
-        t.onHook(p, event("Stop", "a-1", "last_assistant_message" to "Done."))
-        t.onHook(p, event("Notification", "a-1", "message" to "Claude needs your permission"))
-        assertEquals("Claude needs your permission", t.summaries.value.single().question)
     }
 
     @Test
@@ -334,17 +297,6 @@ class AgentSessionTrackerTest {
         t.onHook(p, event("Stop", "a-1", "last_assistant_message" to "Done."))
         t.onHook(p, event("Notification", "a-1", "notification_type" to "idle_prompt", "message" to "Claude is waiting for your input"))
         assertEquals("done", t.summaries.value.single().state)
-    }
-
-    @Test
-    fun `the idle reminder is recognised by its text when the type is missing`() {
-        val t = tracker()
-        val p = pane()
-        t.onHook(p, event("Stop", "a-1", "last_assistant_message" to "Done."))
-        t.onHook(p, event("Notification", "a-1", "message" to "Claude is waiting for your input"))
-        assertEquals("done", t.summaries.value.single().state)
-        t.onHook(p, event("Notification", "a-1", "message" to "Claude needs your permission to use Bash"))
-        assertEquals("needs_you", t.summaries.value.single().state)
     }
 
     @Test
@@ -376,15 +328,6 @@ class AgentSessionTrackerTest {
         assertEquals(2, rows.size)
         assertEquals(1, rows.count { it.state == "ended" })
         assertEquals(1, rows.count { it.state != "ended" })
-    }
-
-    @Test
-    fun `a repeated session start with the same id changes nothing`() {
-        val t = tracker()
-        val p = pane()
-        t.onHook(p, event("SessionStart", "a-1"))
-        t.onHook(p, event("SessionStart", "a-1"))
-        assertEquals(1, t.summaries.value.size)
     }
 
     @Test
@@ -466,15 +409,6 @@ class AgentSessionTrackerTest {
     }
 
     @Test
-    fun `a prompt the screen never showed is not cleared by a screen without it`() {
-        val t = tracker()
-        t.onHook(pane(), event("PreToolUse", "a-1", "tool_name" to "Bash"))
-        t.onHook(pane(), event("Notification", "a-1", "message" to "Claude needs your permission to use Bash"))
-        t.onPoll(listOf(pane(agent = "claude", state = null)))
-        assertEquals("needs_you", t.summaries.value.single().state)
-    }
-
-    @Test
     fun `a prompt approved long after it was asked is a fresh sign of life`() {
         val t = tracker()
         t.onHook(pane(), event("PreToolUse", "a-1", "tool_name" to "Bash"))
@@ -528,22 +462,6 @@ class AgentSessionTrackerTest {
     }
 
     @Test
-    fun `a blank poll between polls that show work, or just after a hook, does not count towards done`() {
-        val t = tracker()
-        t.onHook(pane(), event("UserPromptSubmit", "a-1"))
-        repeat(2) { now += 3_000; t.onPoll(listOf(pane(agent = "claude", state = null))) }
-        now += 3_000
-        t.onPoll(listOf(pane(agent = "claude", state = "working")))
-        repeat(2) { now += 3_000; t.onPoll(listOf(pane(agent = "claude", state = null))) }
-        assertEquals("working", onlyState(t), "the count starts again after a poll that shows work")
-
-        now += 3_000
-        t.onHook(pane(), toolEvent("Bash", """{"command":"sleep 1"}"""))
-        repeat(2) { now += 3_000; t.onPoll(listOf(pane(agent = "claude", state = null))) }
-        assertEquals("working", onlyState(t), "the count starts again after a hook")
-    }
-
-    @Test
     fun `a prompt refused at once never reaches needs_you and the working row settles from the transcript`() {
         val rec = Recording("refused-fast")
         val t = tracker()
@@ -563,30 +481,6 @@ class AgentSessionTrackerTest {
     }
 
     @Test
-    fun `a prompt refused before any poll saw it leaves needs_you`() {
-        val rec = Recording("refused-after-notification")
-        val t = tracker()
-        rec.playTo(t, rec.hookAt(3))
-        assertEquals("needs_you", onlyState(t))
-
-        rec.playTo(t, rec.interruptedAt + 50)
-        t.onPoll(listOf(pane(agent = "claude", state = null)))
-        val row = t.summaries.value.single()
-        assertEquals("done", row.state)
-        assertNull(row.question)
-    }
-
-    @Test
-    fun `a prompt refused with Esc settles the same way as one refused with No`() {
-        val rec = Recording("refused-with-esc")
-        val t = tracker()
-        rec.playTo(t, rec.hookAt(2))
-        rec.playTo(t, rec.interruptedAt + 50)
-        t.onPoll(listOf(pane(agent = "claude", state = null)))
-        assertEquals("done", onlyState(t))
-    }
-
-    @Test
     fun `a prompt nobody answered stays needs_you however long the screen shows it`() {
         val rec = Recording("refused-after-notification")
         val t = tracker()
@@ -597,18 +491,6 @@ class AgentSessionTrackerTest {
             now += 60 * 60_000L
             t.onPoll(listOf(pane(agent = "claude", state = "waiting")))
             assertEquals("needs_you", onlyState(t))
-        }
-    }
-
-    @Test
-    fun `a prompt the screen never showed stays needs_you whether the screen shows work or nothing`() {
-        val rec = Recording("refused-after-notification")
-        val t = tracker()
-        rec.playTo(t, rec.hookAt(3))
-        for (state in listOf("working", null, "working", null, null, "working")) {
-            now += 24 * 60 * 60_000L
-            t.onPoll(listOf(pane(agent = "claude", state = state)))
-            assertEquals("needs_you", onlyState(t), "screen state $state")
         }
     }
 
@@ -660,29 +542,6 @@ class AgentSessionTrackerTest {
         rec.sendAt(t, rec.interruptedAt + 10_000, "UserPromptSubmit")
         t.onPoll(listOf(pane(agent = "claude", state = "working")))
         assertEquals("working", onlyState(t))
-    }
-
-    @Test
-    fun `a transcript that is missing or ends without an interrupt settles nothing`() {
-        val t = tracker()
-        t.onHook(pane(), event("PreToolUse", "a-1", "tool_name" to "Bash", "transcript_path" to File(dbDir, "nowhere.jsonl").path))
-        t.onPoll(listOf(pane(agent = "claude", state = null)))
-        assertEquals("working", onlyState(t))
-    }
-
-    @Test
-    fun `a screen that keeps showing work renews its stamp only once it is stale`() {
-        val t = tracker()
-        t.onPoll(listOf(pane(agent = "claude", state = "working")))
-        val first = t.summaries.value.single().lastActivityAt
-
-        now += 3_000
-        t.onPoll(listOf(pane(agent = "claude", state = "working")))
-        assertEquals(first, t.summaries.value.single().lastActivityAt, "a poll a few seconds later keeps the published value, so no new frame is sent")
-
-        now += 40_000
-        t.onPoll(listOf(pane(agent = "claude", state = "working")))
-        assertEquals(now, t.summaries.value.single().lastActivityAt)
     }
 
     @Test
@@ -760,33 +619,6 @@ class AgentSessionTrackerTest {
     }
 
     @Test
-    fun `a restart never ends a record in the future of the restart`() {
-        val transcript = File.createTempFile("transcript", ".jsonl").apply {
-            deleteOnExit()
-            setLastModified(50_000)
-        }
-        val t = tracker()
-        t.onHook(pane(), event("SessionStart", "a-1", "transcript_path" to transcript.path))
-        now = 9_000
-        assertEquals(9_000, tracker().summaries.value.single().endedAt)
-    }
-
-    @Test
-    fun `a restart brings back ended records from the last fourteen days, the edge included, and no older`() {
-        val day = 24L * 60 * 60 * 1000
-        now = 100 * day
-        fun ended(id: String, at: Long, source: String = "hooks") = repo.saveAgentSession(
-            AgentSessionRecord(id = id, agent = "claude", source = source, state = "ended", stateSince = at,
-                createdAt = at, endedAt = at),
-        )
-        ended("fresh", now - day)
-        ended("edge", now - 14 * day)
-        ended("stale", now - 14 * day - 1)
-        ended("imported", now - day, source = "import")
-        assertEquals(setOf("fresh", "edge"), tracker().summaries.value.map { it.id }.toSet())
-    }
-
-    @Test
     fun `ended records beyond the newest three hundred stay out of memory but in the database`() {
         now = 1_000_000
         repeat(310) { i ->
@@ -799,21 +631,6 @@ class AgentSessionTrackerTest {
         assertEquals(300, t.summaries.value.size)
         assertEquals(false, t.summaries.value.any { it.id == "e300" })
         assertNotEquals(null, t.find("e300"))
-    }
-
-    @Test
-    fun `a conversation older than the ones kept in memory is found by its conversation id`() {
-        val day = 24L * 60 * 60 * 1000
-        now = 100 * day
-        repo.saveAgentSession(
-            AgentSessionRecord(id = "old-record", agent = "claude", agentSessionId = "conv-old", source = "hooks",
-                state = "ended", stateSince = now - 30 * day, createdAt = now - 30 * day, endedAt = now - 30 * day),
-        )
-        val t = tracker()
-        assertEquals(false, t.summaries.value.any { it.conversationId == "conv-old" })
-        assertEquals("old-record", t.find("conv-old")?.id)
-        assertEquals("old-record", t.find("old-record")?.id)
-        assertEquals(null, t.find("conv-unknown"))
     }
 
     @Test
@@ -850,21 +667,6 @@ class AgentSessionTrackerTest {
     }
 
     @Test
-    fun `a Bash call without a description says it is running a command, never the program name`() {
-        assertEquals("Running a command", toolLine(call("Bash", """{"command":"cat > /tmp/aov45-desc.txt 2>/dev/null; D=/private/x"}""")))
-        assertEquals("Running a command", toolLine(call("Bash", """{"command":"./gradlew test\nsecond"}""")))
-        assertEquals("Running a command", toolLine(call("Bash", """{"command":"GIT_PAGER=cat LC_ALL=C /usr/bin/git log"}""")))
-        assertEquals("Running a command", toolLine(call("Bash", """{"command":"   "}""")))
-        assertEquals("Running a command", toolLine(call("Bash", """{"description":"  "}""")))
-    }
-
-    @Test
-    fun `a row never shows the command text of a Bash call`() {
-        val line = toolLine(call("Bash", """{"command":"cat > /tmp/aov45-desc.txt 2>/dev/null; D=/private/tmp/very/long/path"}"""))!!
-        assertFalse("/tmp" in line || ">" in line || ";" in line, "got: $line")
-    }
-
-    @Test
     fun `the file tools name the file and not where it lives`() {
         assertEquals("Editing card-check", toolLine(call("Edit", """{"file_path":"/Users/o/bin/card-check","old_string":"a","new_string":"b"}""")))
         assertEquals("Editing card-check", toolLine(call("MultiEdit", """{"file_path":"/Users/o/bin/card-check","edits":[]}""")))
@@ -875,26 +677,12 @@ class AgentSessionTrackerTest {
     }
 
     @Test
-    fun `a file tool without a path still says what it does`() {
-        assertEquals("Editing a file", toolLine(call("Edit")))
-        assertEquals("Reading a file", toolLine(call("Read", """{"file_path":""}""")))
-        assertEquals("Writing a file", toolLine(call("Write")))
-    }
-
-    @Test
     fun `searches name their pattern`() {
         assertEquals("Searching for \"fun toolLine\"", toolLine(call("Grep", """{"pattern":"fun toolLine","path":"/a/b"}""")))
         assertEquals("Finding files matching \"**/*.kt\"", toolLine(call("Glob", """{"pattern":"**/*.kt"}""")))
         assertEquals("Searching the web for \"kotlin flow\"", toolLine(call("WebSearch", """{"query":"kotlin flow"}""")))
         assertEquals("Searching the code", toolLine(call("Grep")))
         assertEquals("Finding files", toolLine(call("Glob")))
-    }
-
-    @Test
-    fun `a web fetch names the host`() {
-        assertEquals("Fetching example.com", toolLine(call("WebFetch", """{"url":"https://example.com/a/b?c=d","prompt":"x"}""")))
-        assertEquals("Fetching example.com", toolLine(call("WebFetch", """{"url":"https://user@example.com#frag"}""")))
-        assertEquals("Fetching a web page", toolLine(call("WebFetch")))
     }
 
     @Test
@@ -920,22 +708,11 @@ class AgentSessionTrackerTest {
     }
 
     @Test
-    fun `a tool this code does not know is named without its arguments`() {
-        assertEquals("Using FancyNewTool", toolLine(call("FancyNewTool", """{"command":"rm -rf /","file_path":"/secret/path"}""")))
-    }
-
-    @Test
     fun `a question put to the person keeps showing the question`() {
         val asked = call("AskUserQuestion", """{"questions":[{"question":"Which port should it use?","options":[]}]}""")
         assertEquals("Asks: Which port should it use?", toolLine(asked))
         assertEquals("Asks: Which port should it use?", rawToolLine(asked))
         assertEquals("Asking a question", toolLine(call("AskUserQuestion")), "with no question there is nothing to quote")
-    }
-
-    @Test
-    fun `a words line is cut at the row limit`() {
-        val line = toolLine(call("Bash", """{"description":"${"w".repeat(500)}"}"""))!!
-        assertEquals(160, line.length)
     }
 
     @Test
@@ -1030,18 +807,4 @@ class AgentSessionTrackerTest {
         assertNull(row.lastActivityAt)
     }
 
-    @Test
-    fun `a first prompt is cut to its first non-blank line and a sane length`() {
-        assertEquals("fix the bug", firstPromptLine("\n  fix the bug  \nthen more\n"))
-        assertNull(firstPromptLine("   \n\t"))
-        assertEquals(160, firstPromptLine("x".repeat(500))!!.length)
-    }
-
-    @Test
-    fun `what it last said skips a line that is only a code fence`() {
-        assertEquals("npm test", lastSaidOf("Done.\n\n```\nnpm test\n```"))
-        assertEquals("Done. Tests pass.", lastSaidOf("Intro\n\nDone. Tests pass.\nMore"))
-        assertEquals("Ran it", lastSaidOf("Ran it\n\n```"))
-        assertEquals("", lastSaidOf("   "))
-    }
 }

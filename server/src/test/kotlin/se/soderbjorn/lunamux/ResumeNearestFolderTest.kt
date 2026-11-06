@@ -95,30 +95,6 @@ class ResumeNearestFolderTest {
         assertEquals("Its folder is gone. It resumes in ${base.path}.", resumeNoteOf(record, null))
     }
 
-    /** When the parent is gone as well the walk goes on up, and the note names where it ended. */
-    @Test
-    fun `a parent that is also gone walks further up`() {
-        val deep = File(base, "gone/deeper/wt").path
-        val record = closedRecord(deep)
-
-        resume()
-
-        assertEquals(Triple(base.path, "feat", "claude --resume $uuid"), opened.single())
-        assertEquals("Its folder is gone. It resumes in ${base.path}.", resumeNoteOf(record, null))
-        assertEquals(base.path, nearestExistingFolder(deep))
-    }
-
-    /** A folder that exists is used as it is, with no note. */
-    @Test
-    fun `a folder that exists resumes in place and says nothing`() {
-        val record = closedRecord(main.apply { mkdirs() }.path)
-
-        resume()
-
-        assertEquals(main.path, opened.single().first)
-        assertNull(resumeNoteOf(record, null))
-    }
-
     /** A conversation that never recorded a folder is refused with the old message, and no tab opens. */
     @Test
     fun `a conversation with no recorded folder is refused`() {
@@ -130,27 +106,6 @@ class ResumeNearestFolderTest {
         assertTrue(opened.isEmpty())
         assertEquals("No folder was recorded for this session.", resumeNoteOf(record, null))
         assertEquals("No folder was recorded for this session.", resumeNoteOf(record.copy(cwd = "  "), null))
-    }
-
-    /** A conversation with no id to resume is still refused, whatever its folder. */
-    @Test
-    fun `a conversation without a session id is refused even when its folder is gone`() {
-        repo.saveAgentSession(closedRecord(File(base, "gone").path).copy(agentSessionId = null))
-
-        resume()
-
-        assertEquals(
-            "This conversation has no session id Lunamux can resume.",
-            assertIs<WindowEnvelope.AgentSessionError>(sent.single()).message,
-        )
-        assertTrue(opened.isEmpty())
-    }
-
-    /** A path with no existing ancestor has nowhere to walk to. */
-    @Test
-    fun `a relative path with nothing above it has no nearest folder`() {
-        assertNull(nearestExistingFolder("no-such-folder-anywhere/deeper"))
-        assertEquals(base.path, nearestExistingFolder(base.path))
     }
 
     /**

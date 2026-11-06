@@ -52,6 +52,8 @@ object OverviewChecks {
      * The state the checks look at, as one snapshot.
      *
      * @property sessions the conversation summaries the server pushed.
+     * @property footer the counts the footer shows, as [AgentCounts.of] gives them for [sessions]
+     *   and [config]; C1 holds these against numbers it counts itself.
      * @property tasks the tasks the server pushed.
      * @property config the window layout.
      * @property overview the overview's state, as its view model computes it.
@@ -62,6 +64,7 @@ object OverviewChecks {
      */
     data class Snapshot(
         val sessions: List<AgentSessionSummary>,
+        val footer: AgentCounts.Tally,
         val tasks: List<AgentTask>,
         val config: WindowConfig,
         val overview: AgentsOverviewBackingViewModel.State,
@@ -118,15 +121,28 @@ object OverviewChecks {
         return Regex("^(\\d+) need you").find(row.stateWord)?.groupValues?.get(1)?.toInt() ?: 0
     }
 
-    /** C1: the footer's waiting count is the sum of "needs you" over the overview's rows. */
+    /** Whether [session] has a pane in the layout, which is what puts it in the footer's counts. */
+    private fun hasPane(session: AgentSessionSummary, config: WindowConfig): Boolean =
+        session.state != ENDED && session.leafId?.let { TaskMembers.locate(config, it) } != null
+
+    /**
+     * C1: the footer's numbers are the ones the screen adds up to. The expected waiting count is the
+     * sum of "needs you" on the rendered rows and, separately, the waiting conversations with a pane
+     * among the raw sessions; the expected working count is the working conversations with a pane.
+     * Both are counted here, not by [AgentCounts], so a wrong footer cannot agree with itself.
+     */
     private fun footerEqualsRows(s: Snapshot): Check {
-        val footer = AgentCounts.of(s.sessions, s.config).total.waiting
+        val footer = s.footer.total
         val rows = allRows(s).sumOf(::waitingOf)
+        val waiting = s.sessions.count { it.state == NEEDS_YOU && hasPane(it, s.config) }
+        val working = s.sessions.count { it.state == WORKING && hasPane(it, s.config) }
         val problems = buildList {
-            if (footer != rows) add("the footer counts $footer waiting, the rows add up to $rows")
-            if (s.overview.needYouCount != footer) add("the overview's own count is ${s.overview.needYouCount}, the footer's is $footer")
+            if (footer.waiting != rows) add("the footer counts ${footer.waiting} waiting, the rows add up to $rows")
+            if (footer.waiting != waiting) add("the footer counts ${footer.waiting} waiting, the sessions have $waiting")
+            if (footer.working != working) add("the footer counts ${footer.working} working, the sessions have $working")
+            if (s.overview.needYouCount != footer.waiting) add("the overview's own count is ${s.overview.needYouCount}, the footer's is ${footer.waiting}")
         }
-        return Check("C1", "the footer count equals the sum of \"needs you\" on the rows", problems)
+        return Check("C1", "the footer counts equal what the rows and the sessions add up to", problems)
     }
 
     /** C2: a live conversation in a visible tab is in NOW exactly once; a background agent has no row of its own unless it waits for you. */

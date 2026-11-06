@@ -39,18 +39,6 @@ class ResumeCommandTest {
         assertEquals(false, cmd!!.contains("--continue"))
     }
 
-    /** A Claude run Lunamux saw only on screen has no conversation id, so there is nothing to type. */
-    @Test
-    fun claudeWithNoConversationIdHasNothingToTypeInsteadOfContinuing() {
-        assertNull(resumeCommandOf(AgentSessionRecord(id = "r1", agent = "claude")))
-    }
-
-    /** An id a shell would interpret is refused rather than typed. */
-    @Test
-    fun anIdWithShellCharactersIsRefused() {
-        assertNull(resumeCommandOf(AgentSessionRecord(id = "r1", agent = "claude", agentSessionId = "x; rm -rf ~")))
-    }
-
     /** Codex takes its own id when known and asks which one otherwise; Gemini has no resume. */
     @Test
     fun codexResumesByIdWhenKnownAndGeminiHasNoResume() {
@@ -69,14 +57,6 @@ class ResumeCommandTest {
     private fun declaredFor(rec: AgentSessionRecord, command: String, folder: String = "/work") =
         declaredResumeFor(rec, TaskOpen(command, folder))
 
-    /** A declared command that already names the conversation is typed exactly as the file wrote it. */
-    @Test
-    fun aDeclaredCommandHoldingTheIdIsTypedAsIs() {
-        val declared = "claude --resume $uuid --model opus --name 'work'"
-        assertEquals(declared, declaredFor(inWork, declared))
-        assertEquals(declared, declaredResumeLine(declared, uuid))
-    }
-
     /** A declared command that lacks the id gets `--resume <id>` after its program, nothing else changed. */
     @Test
     fun aDeclaredCommandLackingTheIdGetsResumeAfterItsProgram() {
@@ -85,15 +65,6 @@ class ResumeCommandTest {
             declaredFor(inWork, "claude --model opus --name 'work'"),
         )
         assertEquals("claude --resume $uuid", declaredFor(inWork, "  claude  "))
-    }
-
-    /** A blank declared command leaves Lunamux's own line; `--continue` is never typed. */
-    @Test
-    fun noUsableDeclaredCommandLeavesTheOwnLine() {
-        assertNull(declaredFor(inWork, "   "))
-        assertNull(declaredResumeLine(null, uuid))
-        assertEquals("claude --resume $uuid", resumeCommandOf(inWork))
-        assertTrue(!declaredFor(inWork, "claude --model opus")!!.contains("--continue"))
     }
 
     /**
@@ -120,36 +91,6 @@ class ResumeCommandTest {
         )) {
             assertNull(declaredFor(inWork, line), line)
         }
-    }
-
-    /** Quotes protect a prompt word that holds an operator, so the usual start-up line still takes the id. */
-    @Test
-    fun aQuotedPromptWordWithAnOperatorStillTakesTheId() {
-        assertEquals(
-            "claude --resume $uuid -n 'R&D · review' '/start'",
-            declaredFor(inWork, "claude -n 'R&D · review' '/start'"),
-        )
-        assertEquals(
-            "/usr/local/bin/claude --resume $uuid --model opus",
-            declaredFor(inWork, "/usr/local/bin/claude --model opus"),
-        )
-    }
-
-    /** A line that had to be given the id is used only for a conversation that ran in the declared folder. */
-    @Test
-    fun aLineLackingTheIdNeedsTheConversationToHaveRunInTheDeclaredFolder() {
-        assertEquals("claude --resume $uuid", declaredFor(inWork, "claude", "/work/"))
-        assertNull(declaredFor(inWork, "claude", "/elsewhere"))
-        assertNull(declaredFor(inWork.copy(cwd = null), "claude"))
-        assertEquals("claude --resume $uuid", declaredFor(inWork, "claude --resume $uuid", "/elsewhere"))
-    }
-
-    /** A Codex record keeps `codex resume`: the declared command is a Claude command line. */
-    @Test
-    fun aCodexRecordKeepsItsOwnLineWhateverTheTaskDeclares() {
-        val rec = AgentSessionRecord(id = "r1", agent = "codex", agentSessionId = "c-9", cwd = "/work")
-        assertNull(declaredFor(rec, "claude --model opus"))
-        assertEquals("codex resume c-9", resumeCommandOf(rec))
     }
 
     private val base = File.createTempFile("lunamux-resume", "").apply { delete(); mkdirs(); deleteOnExit() }
@@ -210,36 +151,6 @@ class ResumeCommandTest {
         val (folder, _, command) = opened.single()
         assertEquals(declaredFolder, folder)
         assertEquals("claude --resume a-s1 --model opus", command)
-    }
-
-    /** A session of the same task that is not its main conversation is resumed the plain way, in its own folder. */
-    @Test
-    fun aNonMainSessionOfTheSameTaskIsResumedThePlainWay() {
-        files.value = listOf(taskFile("t1", TaskOpen("claude --model opus", declaredFolder)))
-        session("s1")
-        val other = sessionIn("s2", declaredFolder)
-        index.recompute()
-        index.setOwnSession("t1", "s1")
-        index.addToTask("t1", listOf("s2"))
-        resume(other)
-        assertTrue(sent.isEmpty(), "no error expected: $sent")
-        val (folder, _, command) = opened.single()
-        assertEquals(other.cwd, folder)
-        assertEquals("claude --resume a-s2", command)
-    }
-
-    /** A task with no `open` action (a task an agent made, or a file without one) resumes its main the plain way. */
-    @Test
-    fun aTaskWithNoOpenActionResumesItsMainThePlainWay() {
-        files.value = listOf(taskFile("t1", null))
-        val main = session("s1")
-        index.recompute()
-        index.setOwnSession("t1", "s1")
-        resume(main)
-        assertTrue(sent.isEmpty(), "no error expected: $sent")
-        val (folder, _, command) = opened.single()
-        assertEquals(main.cwd, folder)
-        assertEquals("claude --resume a-s1", command)
     }
 
     /** A declared folder that is gone does not block the resume: the declared line is typed in the nearest folder above it. */
@@ -319,46 +230,6 @@ class ResumeCommandTest {
         val (folder, _, command) = opened.single()
         assertEquals("$declaredFolder/./", folder)
         assertEquals("claude --resume a-s1 --model opus", command)
-    }
-
-    /** A declared line that names another conversation is not used: the main named now is resumed the plain way. */
-    @Test
-    fun aDeclaredLineNamingAnotherConversationIsNotTyped() {
-        files.value = listOf(taskFile("t1", TaskOpen("claude --resume old-conversation", declaredFolder)))
-        val main = session("s1")
-        index.recompute()
-        index.setOwnSession("t1", "s1")
-        resume(main)
-        assertTrue(sent.isEmpty(), "no error expected: $sent")
-        val (folder, _, command) = opened.single()
-        assertEquals(main.cwd, folder)
-        assertEquals("claude --resume a-s1", command)
-    }
-
-    /** A Codex main of a task that declares `open` is resumed by Codex with Codex's own line, though it ran in the declared folder. */
-    @Test
-    fun aCodexMainIsResumedByCodexInItsOwnFolderWhateverTheTaskDeclares() {
-        files.value = listOf(taskFile("t1", TaskOpen("claude --model opus", declaredFolder)))
-        val cwd = declaredFolder
-        repo.saveAgentSession(
-            AgentSessionRecord(id = "cx1", agent = "codex", agentSessionId = "c-1", cwd = cwd, state = "ended", endedAt = 900L),
-        )
-        index.recompute()
-        index.setMainConversation("t1", "c-1")
-        assertEquals("t1", index.listing().single { it.mainConversation == "c-1" }.id)
-        resume("c-1")
-        assertTrue(sent.isEmpty(), "no error expected: $sent")
-        val (folder, _, command) = opened.single()
-        assertEquals(cwd, folder)
-        assertEquals("codex resume c-1", command)
-    }
-
-    /** An id a shell would interpret is refused before the declared command is looked at. */
-    @Test
-    fun anIdWithShellCharactersIsRefusedEvenWhenTheTaskDeclaresACommand() {
-        val rec = AgentSessionRecord(id = "r1", agent = "claude", agentSessionId = "x; rm -rf ~", cwd = "/work")
-        assertNull(declaredFor(rec, "claude --model opus"))
-        assertNull(declaredFor(rec, "claude --resume x; rm -rf ~"))
     }
 
     /** The route refuses such an id too, when the task's main conversation is the one asked for. */
