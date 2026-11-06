@@ -1,0 +1,4 @@
+{"at": 1793957748033, "event": {"hook_event_name": "SessionStart", "session_id": "4ac7cff5-b878-46be-9089-80c8619f0d4e"}}
+{"at": 1793957752582, "event": {"hook_event_name": "UserPromptSubmit", "session_id": "4ac7cff5-b878-46be-9089-80c8619f0d4e", "prompt": "Run exactly this shell command with the Bash tool and nothin"}}
+{"at": 1793957755654, "event": {"hook_event_name": "PreToolUse", "session_id": "4ac7cff5-b878-46be-9089-80c8619f0d4e", "tool_name": "Bash", "tool_use_id": "toolu_01BmbVxpe5kuHNzjQVQr1PXw", "tool_input": {"command": "touch /tmp/x/marker.txt"}}}
+{"at": 1793957761717, "event": {"hook_event_name": "Notification", "session_id": "4ac7cff5-b878-46be-9089-80c8619f0d4e", "notification_type": "permission_prompt", "message": "Claude needs your permission"}}

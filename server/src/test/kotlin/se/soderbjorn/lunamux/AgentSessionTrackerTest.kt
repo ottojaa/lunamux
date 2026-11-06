@@ -9,11 +9,16 @@ package se.soderbjorn.lunamux
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 import kotlinx.serialization.json.put
 import se.soderbjorn.lunamux.persistence.AgentSessionRecord
 import se.soderbjorn.lunamux.persistence.SettingsRepository
 import java.io.File
+import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -54,6 +59,64 @@ class AgentSessionTrackerTest {
         put("tool_name", tool)
         put("tool_input", Json.parseToJsonElement(input))
     }
+
+    /**
+     * A session Claude Code 2.1.319 really ran, replayed against the fake clock: the hook events it
+     * sent (those Lunamux subscribes to) and its transcript, both stamped by Claude Code's own
+     * clock. The transcript file on disk holds only the lines stamped no later than the clock, so a
+     * poll at time T sees what a poll at time T saw then.
+     *
+     * The recordings are in `src/test/resources/claude-2.1.319-interrupts`, one per way a turn
+     * ended without a hook.
+     */
+    private inner class Recording(private val name: String) {
+        private fun lines(suffix: String) =
+            javaClass.getResource("/claude-2.1.319-interrupts/$name.$suffix.jsonl")!!.readText().lines().filter { it.isNotBlank() }
+
+        private val hooks = lines("hooks").map {
+            val o = Json.parseToJsonElement(it).jsonObject
+            o["at"]!!.jsonPrimitive.long to o["event"]!!.jsonObject
+        }
+
+        /** Each transcript line with the stamp it was written at (lines without one follow the one before). */
+        private val transcript: List<Pair<Long, String>> = run {
+            var stamp = 0L
+            lines("transcript").map {
+                Json.parseToJsonElement(it).jsonObject["timestamp"]?.jsonPrimitive?.content?.let { ts -> stamp = Instant.parse(ts).toEpochMilli() }
+                stamp to it
+            }
+        }
+        private var delivered = 0
+        private val file = File(dbDir, "$name.transcript.jsonl")
+
+        /** Send one more hook of this session at [time], as Claude Code would when the person goes on. */
+        fun sendAt(t: AgentSessionTracker, time: Long, hookName: String) {
+            now = time
+            t.onHook(pane(), JsonObject(hooks[0].second + mapOf("hook_event_name" to JsonPrimitive(hookName), "transcript_path" to JsonPrimitive(file.path))))
+        }
+
+        /** When the hook with this index (in the order sent) was sent. */
+        fun hookAt(index: Int) = hooks[index].first
+
+        /** When the person interrupted: the stamp of the transcript's interrupt line. */
+        val interruptedAt = transcript.first { it.second.contains("[Request interrupted by user") }.first
+
+        /** Deliver the hooks sent up to [time], then bring the clock and the transcript on disk to [time]. */
+        fun playTo(t: AgentSessionTracker, time: Long) {
+            while (delivered < hooks.size && hooks[delivered].first <= time) {
+                val (at, event) = hooks[delivered++]
+                now = at
+                write()
+                t.onHook(pane(), JsonObject(event + ("transcript_path" to JsonPrimitive(file.path))))
+            }
+            now = time
+            write()
+        }
+
+        private fun write() = file.writeText(transcript.filter { it.first <= now }.joinToString("") { it.second + "\n" })
+    }
+
+    private fun onlyState(t: AgentSessionTracker) = t.summaries.value.single().state
 
     @Test
     fun `a pane that shows an agent opens a screen record and follows its state`() {
@@ -349,15 +412,28 @@ class AgentSessionTrackerTest {
         t.onHook(pane(), event("Notification", "a-1", "message" to "Claude needs your permission to use Bash"))
         assertEquals("needs_you", t.summaries.value.single().state)
 
-        // Work on screen before the prompt was ever seen is not an approval.
-        t.onPoll(listOf(pane(agent = "claude", state = "working")))
-        assertEquals("needs_you", t.summaries.value.single().state)
-
+        // The prompt is shown, then work follows: the person said yes.
         t.onPoll(listOf(pane(agent = "claude", state = "waiting")))
         t.onPoll(listOf(pane(agent = "claude", state = "working")))
         val row = t.summaries.value.single()
         assertEquals("working", row.state)
         assertNull(row.question)
+    }
+
+    @Test
+    fun `a screen at work settles a prompt no poll ever saw`() {
+        val t = tracker()
+        t.onHook(pane(), event("PreToolUse", "a-1", "tool_name" to "Bash"))
+        t.onHook(pane(), event("Notification", "a-1", "message" to "Claude needs your permission to use Bash"))
+        assertEquals("needs_you", onlyState(t))
+
+        // Approved between the notification and the next poll: only work on screen is left to see.
+        now = 2_000
+        t.onPoll(listOf(pane(agent = "claude", state = "working")))
+        val row = t.summaries.value.single()
+        assertEquals("working", row.state)
+        assertNull(row.question)
+        assertEquals(2_000, row.stateSince)
     }
 
     @Test
@@ -403,6 +479,136 @@ class AgentSessionTrackerTest {
         val row = t.summaries.value.single()
         assertEquals("working", row.state)
         assertEquals(now, row.lastActivityAt, "the answer must not leave the old stamp from the prompt in place")
+    }
+
+    @Test
+    fun `a hook-fed record whose screen shows work stays working through six minutes without a hook`() {
+        val t = tracker()
+        t.onHook(pane(), event("UserPromptSubmit", "a-1"))
+        t.onHook(pane(), toolEvent("Bash", """{"command":"./gradlew test"}"""))
+        val since = t.summaries.value.single().stateSince
+
+        repeat(120) {
+            now += 3_000
+            t.onPoll(listOf(pane(agent = "claude", state = "working")))
+        }
+        val row = t.summaries.value.single()
+        assertEquals("working", row.state)
+        assertEquals(since, row.stateSince)
+        assertTrue(now - row.lastActivityAt!! < 30_000L, "work on screen keeps the sign of life current")
+        assertEquals(6 * 60_000L, now - 1_000L, "the loop covered six minutes")
+    }
+
+    @Test
+    fun `a hook-fed working record stays working while the screen shows nothing and no hook came`() {
+        val t = tracker()
+        t.onHook(pane(), toolEvent("Bash", """{"command":"./gradlew test"}"""))
+        repeat(120) {
+            now += 3_000
+            t.onPoll(listOf(pane(agent = "claude", state = null)))
+        }
+        assertEquals("working", onlyState(t), "no timer ends a working record; only a hook or what really happened does")
+    }
+
+    @Test
+    fun `a prompt refused at once never reaches needs_you and the working row settles from the transcript`() {
+        val rec = Recording("refused-fast")
+        val t = tracker()
+        rec.playTo(t, rec.hookAt(2))
+        assertEquals("working", onlyState(t), "the notification comes seconds after the prompt, if at all")
+
+        // The prompt is up and the person has not answered: the transcript says nothing, so nothing moves.
+        rec.playTo(t, rec.interruptedAt - 1)
+        t.onPoll(listOf(pane(agent = "claude", state = "waiting")))
+        assertEquals("working", onlyState(t))
+
+        rec.playTo(t, rec.interruptedAt + 50)
+        t.onPoll(listOf(pane(agent = "claude", state = null)))
+        val row = t.summaries.value.single()
+        assertEquals("done", row.state)
+        assertNull(row.nowLine)
+    }
+
+    @Test
+    fun `a prompt refused before any poll saw it leaves needs_you`() {
+        val rec = Recording("refused-after-notification")
+        val t = tracker()
+        rec.playTo(t, rec.hookAt(3))
+        assertEquals("needs_you", onlyState(t))
+
+        rec.playTo(t, rec.interruptedAt + 50)
+        t.onPoll(listOf(pane(agent = "claude", state = null)))
+        val row = t.summaries.value.single()
+        assertEquals("done", row.state)
+        assertNull(row.question)
+    }
+
+    @Test
+    fun `a prompt refused with Esc settles the same way as one refused with No`() {
+        val rec = Recording("refused-with-esc")
+        val t = tracker()
+        rec.playTo(t, rec.hookAt(2))
+        rec.playTo(t, rec.interruptedAt + 50)
+        t.onPoll(listOf(pane(agent = "claude", state = null)))
+        assertEquals("done", onlyState(t))
+    }
+
+    @Test
+    fun `a prompt nobody answered stays needs_you however long it waits and whatever the screen shows`() {
+        val rec = Recording("refused-after-notification")
+        val t = tracker()
+        rec.playTo(t, rec.hookAt(3))
+
+        // The same session, but the person never answers: its transcript has no interrupt line. The
+        // prompt on screen is waiting; a detector that misses it for a while shows nothing at all.
+        for (state in listOf("waiting", "waiting")) {
+            now += 60 * 60_000L
+            t.onPoll(listOf(pane(agent = "claude", state = state)))
+            assertEquals("needs_you", onlyState(t))
+        }
+    }
+
+    @Test
+    fun `a prompt the detector never recognised stays needs_you for good`() {
+        val rec = Recording("refused-after-notification")
+        val t = tracker()
+        rec.playTo(t, rec.hookAt(3))
+        repeat(3) {
+            now += 24 * 60 * 60_000L
+            t.onPoll(listOf(pane(agent = "claude", state = null)))
+            assertEquals("needs_you", onlyState(t))
+        }
+    }
+
+    @Test
+    fun `an interrupted turn settles from the transcript and a later prompt is not taken for it`() {
+        val rec = Recording("interrupted-while-writing")
+        val t = tracker()
+        rec.playTo(t, rec.hookAt(1))
+        assertEquals("working", onlyState(t))
+
+        rec.playTo(t, rec.interruptedAt - 1)
+        t.onPoll(listOf(pane(agent = "claude", state = "working")))
+        assertEquals("working", onlyState(t))
+
+        rec.playTo(t, rec.interruptedAt + 50)
+        t.onPoll(listOf(pane(agent = "claude", state = "working")))
+        assertEquals("done", onlyState(t), "the transcript is read before the screen, which still shows work for a few polls")
+        t.onPoll(listOf(pane(agent = "claude", state = "working")))
+        assertEquals("done", onlyState(t))
+
+        // A new prompt: the interrupt line is old news even before the new prompt reaches the transcript.
+        rec.sendAt(t, rec.interruptedAt + 10_000, "UserPromptSubmit")
+        t.onPoll(listOf(pane(agent = "claude", state = "working")))
+        assertEquals("working", onlyState(t))
+    }
+
+    @Test
+    fun `a transcript that is missing or ends without an interrupt settles nothing`() {
+        val t = tracker()
+        t.onHook(pane(), event("PreToolUse", "a-1", "tool_name" to "Bash", "transcript_path" to File(dbDir, "nowhere.jsonl").path))
+        t.onPoll(listOf(pane(agent = "claude", state = null)))
+        assertEquals("working", onlyState(t))
     }
 
     @Test
@@ -740,7 +946,7 @@ class AgentSessionTrackerTest {
     }
 
     @Test
-    fun `every folded hook event stamps the activity time, which the state clock does not follow`() {
+    fun `every folded hook event and every screen showing work stamps the activity time, which the state clock does not follow`() {
         val t = tracker()
         t.onPoll(listOf(pane(agent = "claude", state = "working")))
         assertEquals(1_000, t.summaries.value.single().lastActivityAt, "a screen that shows work is a sign of life for a record no hook feeds")
@@ -754,9 +960,10 @@ class AgentSessionTrackerTest {
         assertEquals(1_000, row.stateSince, "it has been working since the first poll, so the state clock stays put")
 
         now = 90_000
-        t.onPoll(listOf(pane(agent = "claude", state = "working")))
         t.onHook(pane(agent = "claude", state = "working"), event("Notification", "a-1", "notification_type" to "idle_prompt"))
-        assertEquals(40_000, t.summaries.value.single().lastActivityAt, "once hooks feed it, a poll or the idle reminder is not activity")
+        assertEquals(40_000, t.summaries.value.single().lastActivityAt, "the idle reminder is not activity")
+        t.onPoll(listOf(pane(agent = "claude", state = "working")))
+        assertEquals(90_000, t.summaries.value.single().lastActivityAt, "work on screen is, for a hook-fed record too: a build can run minutes between hooks")
 
         t.onSessionDestroyed("s1", "bye")
         row = t.summaries.value.single()
