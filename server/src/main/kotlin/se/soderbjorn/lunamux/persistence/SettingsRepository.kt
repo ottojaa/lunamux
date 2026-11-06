@@ -650,8 +650,9 @@ class SettingsRepository(
      * @property statusAt epoch millis the status was set, or null with no status.
      * @property questionWaits whether the status says a question waits for the person; false
      *   whenever there is no status.
-     * @property startedAt epoch millis the server first saw the task with a session in it, or null
-     *   before that; never changes once set.
+     * @property startedAt epoch millis the task was first recorded (its first session's start, else
+     *   its file's time, else when a status or main conversation was first set), or null before
+     *   that; never changes once set.
      * @property createdAt epoch millis an agent made the task, or null for a task file's task.
      * @property updatedAt epoch millis an agent last renamed the task, or null for a task file's
      *   task.
@@ -710,7 +711,7 @@ class SettingsRepository(
     }
 
     /**
-     * Record when the server first saw a task with a session in it, unless it already has a start.
+     * Record when a task started (see [TaskRow.startedAt] for what that time is), unless it already has a start.
      *
      * Makes a row for the task when it has none, so a task file's task gets one on first sight.
      *

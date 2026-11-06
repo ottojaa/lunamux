@@ -153,6 +153,22 @@ class ResumeCommandTest {
         assertEquals("claude --resume a-s1 --model opus", command)
     }
 
+    /** A session of the same task that is not its main conversation is resumed the plain way, in its own folder. */
+    @Test
+    fun aNonMainSessionOfTheSameTaskIsResumedThePlainWay() {
+        files.value = listOf(taskFile("t1", TaskOpen("claude --model opus", declaredFolder)))
+        session("s1")
+        val other = sessionIn("s2", declaredFolder)
+        index.recompute()
+        index.setOwnSession("t1", "s1")
+        index.addToTask("t1", listOf("s2"))
+        resume(other)
+        assertTrue(sent.isEmpty(), "no error expected: $sent")
+        val (folder, _, command) = opened.single()
+        assertEquals(other.cwd, folder)
+        assertEquals("claude --resume a-s2", command)
+    }
+
     /** A declared folder that is gone does not block the resume: the declared line is typed in the nearest folder above it. */
     @Test
     fun aDeclaredFolderThatIsGoneTakesTheDeclaredLineInTheNearestFolderAboveIt() {
@@ -232,7 +248,25 @@ class ResumeCommandTest {
         assertEquals("claude --resume a-s1 --model opus", command)
     }
 
-    /** The route refuses such an id too, when the task's main conversation is the one asked for. */
+    /** A Codex main of a task that declares `open` is resumed by Codex with Codex's own line, though it ran in the declared folder. */
+    @Test
+    fun aCodexMainIsResumedByCodexInItsOwnFolderWhateverTheTaskDeclares() {
+        files.value = listOf(taskFile("t1", TaskOpen("claude --model opus", declaredFolder)))
+        val cwd = declaredFolder
+        repo.saveAgentSession(
+            AgentSessionRecord(id = "cx1", agent = "codex", agentSessionId = "c-1", cwd = cwd, state = "ended", endedAt = 900L),
+        )
+        index.recompute()
+        index.setMainConversation("t1", "c-1")
+        assertEquals("t1", index.listing().single { it.mainConversation == "c-1" }.id)
+        resume("c-1")
+        assertTrue(sent.isEmpty(), "no error expected: $sent")
+        val (folder, _, command) = opened.single()
+        assertEquals(cwd, folder)
+        assertEquals("codex resume c-1", command)
+    }
+
+    /** The route refuses an id with shell characters, when the task's main conversation is the one asked for. */
     @Test
     fun theRouteTypesNothingForAnIdWithShellCharactersWhateverTheTaskDeclares() {
         files.value = listOf(taskFile("t1", TaskOpen("claude --model opus", declaredFolder)))

@@ -567,7 +567,7 @@ class TaskIndex(
             val agentTasks = rows.filter { it.id !in fileIds && it.id in used }
                 .map { AgentTask(id = it.id, title = it.title.orEmpty(), source = "agents") }
             val recordsByTask = records.filter { it.id in assignment }.groupBy { assignment.getValue(it.id) }
-            val tasks = (fileTasks + agentTasks).map { t ->
+            val listed = (fileTasks + agentTasks).map { t ->
                 val m = tasks[t.id]
                 val firstSeen = recordsByTask[t.id].orEmpty().map { it.createdAt }.filter { it > 0 }.minOrNull()
                     ?: files.firstOrNull { it.id == t.id }?.modified
@@ -582,7 +582,7 @@ class TaskIndex(
                     startedAtMillis = m?.startedAt ?: firstSeen,
                 )
             }
-            return TaskSnapshot(tasks.sortedBy { it.id }, assignment)
+            return TaskSnapshot(listed.sortedBy { it.id }, assignment)
         }
     }
 }

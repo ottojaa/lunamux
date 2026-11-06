@@ -179,6 +179,13 @@ class OverviewChecksTest {
     }
 
     @Test
+    fun theMainConversationMustBeTheOneTheRunExpects() {
+        usualCase()
+        assertTrue(OverviewChecks.evaluate(snapshot(mapOf("g1" to "ma"))).first { it.id == "C4" }.ok)
+        assertFalse(OverviewChecks.evaluate(snapshot(mapOf("g1" to "b7714ac5"))).first { it.id == "C4" }.ok)
+    }
+
+    @Test
     fun aSessionOpenedInsideATasksFolderKeepsItsOwnRowWithNoFileNamingIt() {
         usualCase()
         // The task is a file task with an `open` action; nothing but the task id a session carries

@@ -190,6 +190,16 @@ class AgentsOverviewBackingViewModelTest {
     }
 
     @Test
+    fun aQueryUnderTwoCharactersFiltersNothingAndSendsNoSearch() = runNow {
+        windowState.updateAgentSessions(listOf(session("a", "working", title = "Alpha"), session("b", "working", title = "Beta")), true)
+        vm.setQuery("a")
+        vm.search()
+        assertFalse(vm.state.matchMode)
+        assertEquals(2, vm.state.rows.size)
+        assertTrue(sent.none { it is WindowCommand.SearchAgentSessions })
+    }
+
+    @Test
     fun twoCharactersSearchEverySessionAndWaitForTheAnswer() = runNow {
         windowState.updateAgentSessions(listOf(session("a", "working")), true)
         vm.open()
@@ -393,6 +403,19 @@ class AgentsOverviewBackingViewModelTest {
     }
 
     @Test
+    fun theKeyboardCloseIsIgnoredWhileTypingButTheButtonStillWorks() = runNow {
+        layout(leaf("leaf-a"))
+        windowState.updateAgentSessions(listOf(session("a", "done", title = "alpha")), true)
+        vm.open()
+        vm.setQuery("al")
+        answer("al", AgentSessionMatch(session("a", "done", title = "alpha"), "title", null, 0, 2, null))
+        vm.requestClose(fromKeyboard = true)
+        assertNull(vm.state.confirm)
+        vm.requestClose()
+        assertEquals("alpha", vm.state.confirm!!.title)
+    }
+
+    @Test
     fun selectionStartsAtTheTopStopsAtTheEndsAndResetsOnTyping() {
         windowState.updateAgentSessions(listOf(session("a", "working"), session("b", "working", since = 2_000)), true)
         vm.open()
@@ -445,6 +468,20 @@ class AgentsOverviewBackingViewModelTest {
 
         windowState.updateConfig(WindowConfig(tabs = listOf(TabConfig("tab-1", "one"), TabConfig("tab-2", "two")), activeTabId = "tab-2"))
         assertFalse(vm.state.open)
+    }
+
+    @Test
+    fun aFailedResumeShowsItsMessageOnTheRow() = runNow {
+        layout(leaf("leaf-x"))
+        windowState.updateAgentSessions(listOf(session("old", "ended", leaf = null, endedAt = 9)), true)
+        vm.open()
+        vm.activateSelected()
+        vm.activateSelected()
+        windowState.setAgentSessionError("folder no longer exists")
+        assertEquals("folder no longer exists", vm.state.rows.single().error)
+        assertTrue(vm.state.open)
+        vm.setQuery("")
+        assertNull(vm.state.rows.single().error)
     }
 
     @Test

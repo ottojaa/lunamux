@@ -46,8 +46,9 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
 -- main_conversation is the agent's own conversation id of the conversation that speaks for the
 -- task, never a pane: pane ids are handed out again on every start. status and status_at are the
 -- task's one-line status; question_waits is 1 while that status says a question waits for the
--- person and is set and cleared together with it. started_at is when the server first saw the task
--- with a session in it; the first stamp wins, so a task's place in the overview never moves.
+-- person and is set and cleared together with it. started_at is the time the task was first
+-- recorded: its first session's start, else its file's time, else the moment a status or main
+-- conversation was first set; the first stamp wins, so a task's place in the overview never moves.
 -- created_at and updated_at are the times an agent made and last renamed the task. Every column
 -- but id can be empty: a task that has only been named has no start yet, and a task file's task has
 -- no creation time.

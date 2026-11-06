@@ -121,9 +121,11 @@ object OverviewChecks {
         return Regex("^(\\d+) need you").find(row.stateWord)?.groupValues?.get(1)?.toInt() ?: 0
     }
 
-    /** Whether [session] has a pane in the layout, which is what puts it in the footer's counts. */
-    private fun hasPane(session: AgentSessionSummary, config: WindowConfig): Boolean =
-        session.state != ENDED && session.leafId?.let { TaskMembers.locate(config, it) } != null
+    /** The ids of every pane the layout holds, walked from the layout itself and not through [TaskMembers] (which the footer's count also uses). */
+    private fun paneIds(config: WindowConfig): Set<String> {
+        val tabs = if (config.worlds.isEmpty()) config.tabs else config.worlds.flatMap { it.tabs }
+        return tabs.flatMap { tab -> tab.panes.map { it.leaf.id } }.toSet()
+    }
 
     /**
      * C1: the footer's numbers are the ones the screen adds up to. The expected waiting count is the
@@ -134,8 +136,9 @@ object OverviewChecks {
     private fun footerEqualsRows(s: Snapshot): Check {
         val footer = s.footer.total
         val rows = allRows(s).sumOf(::waitingOf)
-        val waiting = s.sessions.count { it.state == NEEDS_YOU && hasPane(it, s.config) }
-        val working = s.sessions.count { it.state == WORKING && hasPane(it, s.config) }
+        val panes = paneIds(s.config)
+        val waiting = s.sessions.count { it.state == NEEDS_YOU && it.leafId in panes }
+        val working = s.sessions.count { it.state == WORKING && it.leafId in panes }
         val problems = buildList {
             if (footer.waiting != rows) add("the footer counts ${footer.waiting} waiting, the rows add up to $rows")
             if (footer.waiting != waiting) add("the footer counts ${footer.waiting} waiting, the sessions have $waiting")

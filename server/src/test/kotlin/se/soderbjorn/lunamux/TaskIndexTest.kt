@@ -129,9 +129,11 @@ class TaskIndexTest {
             SettingsRepository.TaskRow("empty", title = "Empty", createdAt = 1, updatedAt = 1),
             SettingsRepository.TaskRow("used", title = "Used", createdAt = 1, updatedAt = 1),
             SettingsRepository.TaskRow("shared", title = "Row title", createdAt = 1, updatedAt = 1),
+            // A row with no title is what a task file leaves behind; with the file gone it is no task.
+            SettingsRepository.TaskRow("file-gone", startedAt = 3),
         )
         val snap = resolve(
-            listOf(rec("a", taskId = "used"), rec("b", taskId = "shared")),
+            listOf(rec("a", taskId = "used"), rec("b", taskId = "shared"), rec("c", taskId = "file-gone"), rec("d", taskId = "nobody-knows")),
             listOf(file("shared", title = "File title")),
             rows,
         )
@@ -140,6 +142,8 @@ class TaskIndexTest {
         assertEquals("agents", snap.tasks.first { it.id == "used" }.source)
         assertEquals("file", snap.tasks.first { it.id == "shared" }.source)
         assertEquals("shared", snap.assignment["b"])
+        assertNull(snap.assignment["c"], "a title-less row whose file is gone is not a task")
+        assertNull(snap.assignment["d"], "an id no file and no row knows places nothing")
     }
 
     // ── The task's main conversation: stored as a conversation, found again in whatever pane it runs ──

@@ -483,6 +483,26 @@ class AgentsOverviewTasksViewModelTest {
     }
 
     @Test
+    fun enterOnATaskWhoseOwnSessionIsGoneResumesItEvenWhenTheTaskHasAnOpenAction() = runNow {
+        layout("leaf-m")
+        show(
+            listOf(hostedTask(main = "main", hasOpen = true)),
+            session("main", "ended", taskId = "g1", since = 500, endedAt = now - 5_000),
+            session("m", "working", taskId = "g1", lastActivityAt = now - 1_000),
+        )
+        vm.open()
+        vm.select("task:g1")
+        val r = row("task:g1")
+        assertEquals(Enter.RESUME, r.enter, "the open action starts a conversation; this one exists and is resumed")
+        assertFalse(r.isLive)
+        assertEquals("main", r.recordId)
+        vm.activateSelected()
+        vm.activateSelected()
+        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("main")), sent)
+        assertTrue(vm.state.open, "the overlay waits for the new tab")
+    }
+
+    @Test
     fun aTaskWithNoOwnSessionJumpsToTheLiveSessionInAListedTabThatWaitedLongest() = runNow {
         layout("leaf-r1", "leaf-r2", "leaf-r3")
         show(
