@@ -450,9 +450,7 @@ private class WorldStatus(
  */
 private fun computeWorldStatuses(): List<WorldStatus> {
     val cfg = latestWindowConfig ?: return emptyList()
-    val counts = AgentCounts.of(
-        lunamuxClient.windowState.agentSessions.value, cfg, kotlin.js.Date.now().toLong(),
-    ).byWorld
+    val counts = AgentCounts.of(lunamuxClient.windowState.agentSessions.value, cfg).byWorld
     return cfg.worlds.mapNotNull { world ->
         val c = counts[world.id] ?: return@mapNotNull null
         WorldStatus(world.id, world.name, world.themeSelection, c.working, c.waiting)

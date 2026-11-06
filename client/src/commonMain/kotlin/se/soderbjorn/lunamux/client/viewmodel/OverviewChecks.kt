@@ -56,7 +56,7 @@ object OverviewChecks {
      * @property config the window layout.
      * @property overview the overview's state, as its view model computes it.
      * @property panel the panel's state for the active tab, as its view model computes it.
-     * @property nowMillis the clock the counts and the quiet-session rule use.
+     * @property nowMillis the clock the checks measure how long a state has lasted with.
      * @property expectedMain task id to the start of the conversation id its main conversation must
      *   have; empty when no such claim is made.
      */
@@ -120,7 +120,7 @@ object OverviewChecks {
 
     /** C1: the footer's waiting count is the sum of "needs you" over the overview's rows. */
     private fun footerEqualsRows(s: Snapshot): Check {
-        val footer = AgentCounts.of(s.sessions, s.config, s.nowMillis).total.waiting
+        val footer = AgentCounts.of(s.sessions, s.config).total.waiting
         val rows = allRows(s).sumOf(::waitingOf)
         val problems = buildList {
             if (footer != rows) add("the footer counts $footer waiting, the rows add up to $rows")

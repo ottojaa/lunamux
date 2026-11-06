@@ -999,7 +999,7 @@ private class WorldStatusRow(
 private fun computeAgentStatusRows(): List<WorldStatusRow> {
     val sessions = lunamuxClient.windowState.agentSessions.value
     val cfg = latestWindowConfig
-    val tally = AgentCounts.of(sessions, cfg, kotlin.js.Date.now().toLong())
+    val tally = AgentCounts.of(sessions, cfg)
     val total = tally.total
     if (total.waiting == 0 && total.working == 0) return emptyList()
     val several = cfg != null && cfg.worlds.size >= 2
@@ -1053,8 +1053,7 @@ private fun appendWorldStatusCounts(host: HTMLElement, working: Int, waiting: In
 /**
  * Repaints the sidebar's agent block from the conversations the server pushed. Called from
  * [updateStateIndicators] (every config and state push routes through it), from the agents
- * overview when sessions or tasks change, and on a slow clock so a quiet agent stops counting as
- * working.
+ * overview when sessions or tasks change.
  *
  * When nothing waits and nothing works the block collapses to nothing (via `world-status-empty`,
  * which zeroes its padding) so an idle footer shows only the usage bar. The whole block is

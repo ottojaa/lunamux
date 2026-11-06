@@ -27,7 +27,7 @@ object AgentCounts {
      * How many conversations wait for the person and how many are moving.
      *
      * @property waiting conversations that wait for the person.
-     * @property working conversations that work and are moving (not quiet).
+     * @property working conversations that work.
      */
     data class Counts(val waiting: Int, val working: Int)
 
@@ -68,24 +68,24 @@ object AgentCounts {
     /** Whether [s] asks, wherever its pane is: the one rule behind [isWaiting] and [of]. */
     private fun waits(s: AgentSessionSummary): Boolean = s.state == NEEDS_YOU
 
-    /** Whether [s] works and is moving at [nowMillis]: the one rule behind [isWorking] and [of]. */
-    private fun works(s: AgentSessionSummary, nowMillis: Long): Boolean =
-        AgentsOverviewBackingViewModel.isMoving(s.state == WORKING, s.lastActivityAt ?: s.stateSince, nowMillis)
+    /**
+     * Whether [s] works: the one rule behind [isWorking] and [of]. A conversation works until a hook
+     * or the screen says otherwise, however long it has been since it last said anything (a long
+     * build is minutes of silence), so no clock takes part.
+     */
+    private fun works(s: AgentSessionSummary): Boolean = s.state == WORKING
 
     /**
-     * Whether [s] is one of the conversations that work and are moving: it works, it sits in a pane
-     * and it has not gone quiet.
+     * Whether [s] is one of the conversations that work: it works and it sits in a pane.
      *
      * Called by [of] and by the overview's rows, for the same reason as [isWaiting].
      *
      * @param s the conversation.
      * @param config the window layout, or null before it has arrived.
-     * @param nowMillis the current epoch millis, which decides who has gone quiet.
      * @return true when the conversation counts as working.
-     * @see AgentsOverviewBackingViewModel.isMoving
      */
-    fun isWorking(s: AgentSessionSummary, config: WindowConfig?, nowMillis: Long): Boolean =
-        works(s, nowMillis) && placeOf(s, config) != null
+    fun isWorking(s: AgentSessionSummary, config: WindowConfig?): Boolean =
+        works(s) && placeOf(s, config) != null
 
     /**
      * Count the conversations in [sessions] that wait or work, in one pass: the total and the lines
@@ -96,17 +96,16 @@ object AgentCounts {
      *
      * @param sessions the conversation summaries the server pushed.
      * @param config the window layout that says where each pane sits, or null before it has arrived.
-     * @param nowMillis the current epoch millis, which decides who has gone quiet.
      * @return the total and the per-world counts.
      */
-    fun of(sessions: List<AgentSessionSummary>, config: WindowConfig?, nowMillis: Long): Tally {
+    fun of(sessions: List<AgentSessionSummary>, config: WindowConfig?): Tally {
         var waiting = 0
         var working = 0
         val byWorld = LinkedHashMap<String, Counts>()
         for (s in sessions) {
             val place = placeOf(s, config) ?: continue
             val w = if (waits(s)) 1 else 0
-            val m = if (works(s, nowMillis)) 1 else 0
+            val m = if (works(s)) 1 else 0
             if (w == 0 && m == 0) continue
             waiting += w
             working += m

@@ -80,7 +80,7 @@ private const val SEARCH_DEBOUNCE_MS = 150
 /** How often an open live peek asks for a fresh screen. */
 private const val PEEK_REFRESH_MS = 2_000
 
-/** How often the open list redraws on its own, so ages move and a working row that has gone quiet stops moving. */
+/** How often the open list redraws on its own, so the ages on its rows move. */
 private const val CLOCK_TICK_MS = 30_000
 
 /**
@@ -109,16 +109,11 @@ internal fun registerAgentsOverviewHotkey() {
 @OptIn(DelicateCoroutinesApi::class)
 internal fun startAgentsOverview() {
     GlobalScope.launch { agentsOverview.stateFlow.collect { renderAgentsOverview(it) } }
-    // The footer counts the same conversations the rows do, so it follows the same pushes; the
-    // timer lets a conversation that went quiet stop counting as working.
+    // The footer counts the same conversations the rows do, so it follows the same pushes.
     GlobalScope.launch {
         lunamuxClient.windowState.agentSessions.collect { updateWorldStatusFooter() }
     }
-    window.setInterval({ updateWorldStatusFooter() }, FOOTER_CLOCK_TICK_MS)
 }
-
-/** How often the footer recounts on its own, so a conversation that went quiet stops counting as working. */
-private const val FOOTER_CLOCK_TICK_MS = 30_000
 
 /** Redraw the overlay if it is open, or close it, from [state]. */
 private fun renderAgentsOverview(state: AgentsOverviewBackingViewModel.State) {
@@ -131,22 +126,20 @@ private fun renderAgentsOverview(state: AgentsOverviewBackingViewModel.State) {
         closeOverlayElement()
     }
     keepPeekFresh(state.peek?.live == true)
-    // A row counts as working only while it is moving, which the clock alone can end.
-    keepClockTicking(state.open || state.workingCount > 0)
+    keepClockTicking(state.open)
 }
 
 /**
  * Start or stop the timer that redraws the open list every [CLOCK_TICK_MS], keeping the scroll
- * position. Nothing else changes the picture while the server is silent, and a hung agent is
- * exactly the case where it must change.
+ * position. Nothing else changes the picture while the server is silent, and the ages on the
+ * rows grow with the clock.
  *
- * @param needed whether the overlay is open, or a session is counted as working (which only the
- *   clock can stop, once it goes quiet).
+ * @param needed whether the overlay is open.
  */
 private fun keepClockTicking(needed: Boolean) {
     if (needed && clockTimer == null) {
         clockTimer = kotlinx.browser.window.setInterval({
-            // A row stops moving on the clock alone, so the state is built again first.
+            // The ages come from the clock alone, so the state is built again first.
             agentsOverview.tick()
             val state = lastState
             val list = listElement

@@ -51,7 +51,7 @@ class AgentsOverviewBackingViewModelTest {
         id = id, agent = agent, state = state, stateSince = since, title = title, links = emptyList(),
         repo = repo, branch = branch, cwd = cwd, nowLine = nowLine, question = question, leafId = leaf, endedAt = endedAt,
         firstPrompt = firstPrompt, lastSaid = lastSaid, cwdHome = cwdHome, taskId = taskId,
-        // A working session is moving (not quiet) unless a test says otherwise, as the footer counts only those.
+        // A working session has a recent sign of life unless a test says otherwise (it only feeds the age on the row).
         lastActivityAt = lastActivityAt ?: if (state == "working") now - 1_000 else null,
     )
 
@@ -160,7 +160,7 @@ class AgentsOverviewBackingViewModelTest {
         val s = vm.state
         assertEquals(1, s.needYouCount)
         assertEquals(2, s.workingCount)
-        val counts = AgentCounts.of(rows, windowState.config.value, now).total
+        val counts = AgentCounts.of(rows, windowState.config.value).total
         assertEquals(s.needYouCount, counts.waiting, "the footer and the overview count waiting conversations the same way")
         assertEquals(s.workingCount, counts.working)
     }
@@ -169,9 +169,9 @@ class AgentsOverviewBackingViewModelTest {
     fun noConversationsAreCountedAsNothing() {
         hosted("e")
         val config = windowState.config.value
-        assertEquals(AgentCounts.Counts(0, 0), AgentCounts.of(emptyList(), config, now).total)
+        assertEquals(AgentCounts.Counts(0, 0), AgentCounts.of(emptyList(), config).total)
         val ended = listOf(session("e", "ended", endedAt = 5))
-        assertEquals(AgentCounts.Counts(0, 0), AgentCounts.of(ended, config, now).total)
+        assertEquals(AgentCounts.Counts(0, 0), AgentCounts.of(ended, config).total)
     }
 
     @Test
