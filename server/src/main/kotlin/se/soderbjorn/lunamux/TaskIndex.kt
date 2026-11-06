@@ -132,7 +132,7 @@ class TaskIndex(
     }
 
     /**
-     * Look up a task file by id, for the routes that run its `open` action or attach to a member.
+     * Look up a task file by id, for the route that runs its `open` action.
      *
      * @param taskId the task's id.
      * @return the parsed file, or null when no file declares the task.

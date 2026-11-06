@@ -23,7 +23,7 @@ class OpenTaskTest {
     private val base = File.createTempFile("lunamux-open", "").apply { delete(); mkdirs(); deleteOnExit() }
     private val tasksDir = File(base, "tasks").apply { mkdirs() }
     private val openFolder = File(base, "open").apply { mkdirs() }.canonicalPath
-    private val watcher = TaskFilesWatcher(listOf(tasksDir)) {}
+    private val watcher = TaskFilesWatcher(tasksDir) {}
     private val repo = SettingsRepository(File(base, "settings.db"))
     private val tracker = AgentSessionTracker(repo)
     private val index = TaskIndex(repo, tracker, watcher.files, leafOfSession = { null })

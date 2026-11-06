@@ -923,7 +923,7 @@ class AgentsOverviewBackingViewModel(
         val query = ui.query.trim()
         val matchMode = query.length >= MIN_QUERY
         // A conversation is found by its conversation id as well as by the id of the record that stands
-        // for it: a task member and a search match may name either.
+        // for it: a task's main conversation and a search match may name either.
         val byKey = sessions.associateBy { it.id } + sessions.associateBy { it.conversationId }
         fun inspectionOf(id: String) = inspection?.takeIf { it.recordId == id }
 
@@ -1162,7 +1162,8 @@ class AgentsOverviewBackingViewModel(
      * closed main conversation is resumed (a conversation the task has in a listed tab does not
      * replace it), else a live conversation in a listed tab is jumped to (the one waiting longest
      * on the person, else the busiest), else the task's `open` action runs, else the newest
-     * conversation it has a record of is resumed, else nothing is offered.
+     * conversation it has a record of is resumed. A task with neither a conversation nor an `open`
+     * action has no unit, so there is always something to do.
      *
      * @param t the task.
      * @param main the main conversation, or null.
@@ -1208,8 +1209,7 @@ class AgentsOverviewBackingViewModel(
             resumeId != null -> Enter.RESUME to null
             listed != null -> Enter.JUMP to listed
             t.hasOpen -> Enter.OPEN to null
-            newest != null -> Enter.RESUME to newest
-            else -> Enter.NONE to null
+            else -> Enter.RESUME to newest
         }
     }
 

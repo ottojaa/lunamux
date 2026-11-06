@@ -140,6 +140,22 @@ class TaskPanelViewModelTest {
     }
 
     @Test
+    fun `a working or waiting session whose pane the layout does not hold is not in the agents block`() {
+        layout()
+        give(
+            listOf(task()),
+            listOf(
+                session("own"),
+                session("here", title = "In a pane", state = "needs_you", leaf = "leaf-w"),
+                session("gone", title = "Pane closed", state = "needs_you", leaf = "leaf-closed"),
+                session("none", title = "No pane yet", state = "working", leaf = null),
+            ),
+        )
+        assertEquals(listOf("In a pane"), vm.state.agents.shown.map { it.title })
+        assertEquals(0, vm.state.agents.more)
+    }
+
+    @Test
     fun `an agent line never names a tool`() {
         assertNull(TaskPanelViewModel.inWords("Running cd"))
         assertNull(TaskPanelViewModel.inWords("  Using Grep "))

@@ -396,9 +396,9 @@ object AgentsOverviewSeed {
     }
 
     /**
-     * Write the task files and the sessions that belong to them: one task that needs the person and
-     * works, one whose sessions are all done but have not ended, one with work still in review or
-     * queued, one that is quiet, and two whose sessions have all ended.
+     * Write the task files and the sessions that belong to them: tasks whose sessions need the
+     * person or work, tasks whose sessions are all done but have not ended, and tasks whose sessions
+     * have all ended.
      *
      * Called by [seed]. A task file only declares the task (id, title, repository and an `open`
      * action); the sessions that make it up are records carrying the task's id. Each file is
@@ -459,8 +459,8 @@ object AgentsOverviewSeed {
                 Member("Permissions page", "done", 40 * MINUTE),
             ),
         )
-        // Every session is done but none has ended, the way a programme holds finished pull
-        // requests for its merge rule. Nothing in it moves or waits, so it belongs with the
+        // Every session is done but none has ended, the way a task keeps finished pull
+        // requests until they are merged. Nothing in it moves or waits, so it belongs with the
         // finished work in EARLIER, not in NOW.
         task(
             "seed-release-train", "Release train", "lunamux",
@@ -470,8 +470,8 @@ object AgentsOverviewSeed {
                 Member("Seed script", "done", 5 * HOUR),
             ),
         )
-        // Open work that is neither waiting on the person nor running: one pull request in review,
-        // one queued. It stays in NOW, because it still has something left to do.
+        // Open work that is neither waiting on the person nor running: its sessions are done but not
+        // ended, and none has a pane, so it is in EARLIER.
         task(
             "seed-billing-cleanup", "Billing cleanup", "billing",
             listOf(

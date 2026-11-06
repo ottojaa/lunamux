@@ -178,15 +178,15 @@ class OverviewChecksTest {
     }
 
     @Test
-    fun theOwnersSessionOpenedInsideARunsFolderKeepsItsOwnRowWithNoFileNamingIt() {
+    fun aSessionOpenedInsideATasksFolderKeepsItsOwnRowWithNoFileNamingIt() {
         usualCase()
-        // The task is a file task opened in the very folder the owner's session sits in; nothing but
-        // the task id a session carries puts it in a task.
+        // The task is a file task with an `open` action; nothing but the task id a session carries
+        // puts it in a task. (The server decides the folder rule; see TaskIndexTest.)
         windowState.updateAgentTasks(listOf(task("main").copy(source = "file", hasOpen = true)))
         val rows = snapshot().overview.now
         val own = rows.single { it.recordId == "solo" }
         assertEquals("solo", own.id, "the session has a row of its own, not folded into the task's")
-        assertEquals(listOf("task:g1", "solo"), rows.map { it.id }.sorted().reversed().sortedBy { it != "task:g1" })
+        assertTrue("task:g1" in rows.map { it.id }, "the task keeps its row")
         val checks = OverviewChecks.evaluate(snapshot())
         assertEquals(emptyList(), failed(checks), OverviewChecks.render(checks))
     }

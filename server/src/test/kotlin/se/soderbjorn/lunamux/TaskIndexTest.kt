@@ -116,6 +116,18 @@ class TaskIndexTest {
     }
 
     @Test
+    fun `a session opened in a subfolder of the folder a task file opens in is not taken into that task`() {
+        val wt = folder("wt")
+        val sub = folder("wt/src/deep")
+        val snap = resolve(
+            listOf(rec("deep", sub, agentSessionId = "abc"), rec("carries", sub, taskId = "f")),
+            listOf(file("f", open = TaskOpen("claude go", wt))),
+        )
+        assertNull(snap.assignment["deep"], "a folder below the open folder places nothing")
+        assertEquals("f", snap.assignment["carries"], "the id it carries still does")
+    }
+
+    @Test
     fun `a task id no file and no row knows is ignored, so the record is a task of its own`() {
         assertNull(resolve(listOf(rec("r2", taskId = "ghost"))).assignment["r2"])
     }

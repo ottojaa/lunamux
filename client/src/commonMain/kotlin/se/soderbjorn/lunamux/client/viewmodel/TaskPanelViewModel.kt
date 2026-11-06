@@ -81,18 +81,16 @@ class TaskPanelViewModel(
     /**
      * One line of the agents block.
      *
-     * @property key the session's record id, unique within the task; keeps a line's identity through a redraw.
      * @property title the session's name.
      * @property state `needs_you` or `working`; a view picks the glyph from it.
      * @property stateWord the word for [state]: "working" or "needs you".
      * @property age how long the session has been in [state], as `now`, `5m`, `3h` or `2d`.
      * @property nowLine what it is doing or asking, in words, or null. Never a bare tool name.
      * @property action what a click does.
-     * @property recordId the session record behind the line.
+     * @property recordId the session record behind the line; unique within the task, so it also keeps a line's identity through a redraw.
      * @property hint the keys that act on the line while it is selected, or null when none does.
      */
     data class AgentLine(
-        val key: String,
         val title: String,
         val state: String,
         val stateWord: String,
@@ -293,7 +291,9 @@ class TaskPanelViewModel(
 
     /**
      * The sessions of the task that work or wait on the person, the ones waiting first. The main
-     * conversation is left out (the panel sits beside it), and so is every session that finished.
+     * conversation is left out (the panel sits beside it), and so is every session that finished or
+     * has no pane in the layout: the footer and the rows count only sessions with a pane, and the
+     * panel lists the same ones.
      */
     private fun agentLines(
         task: AgentTask,
@@ -305,15 +305,14 @@ class TaskPanelViewModel(
         val lines = sessions.filter { it.taskId == task.id && it.conversationId != own.conversationId }
             .sortedWith(compareBy({ TaskMembers.startedOf(it) }, { it.id }))
             .filter { it.state == WORKING || it.state == NEEDS_YOU }
-            .map { s ->
-                val where = s.leafId?.let { locate(config, it) }
+            .mapNotNull { s -> s.leafId?.let { locate(config, it) }?.let { s to it } }
+            .map { (s, where) ->
                 val action = when {
-                    where != null && !where.tab.isListed && s.state == NEEDS_YOU -> MemberAction.SHOW_WAITING
-                    where != null && where.tab.isListed -> MemberAction.JUMP
+                    !where.tab.isListed && s.state == NEEDS_YOU -> MemberAction.SHOW_WAITING
+                    where.tab.isListed -> MemberAction.JUMP
                     else -> MemberAction.NONE
                 }
                 AgentLine(
-                    key = s.id,
                     title = TaskMembers.titleOf(s),
                     state = s.state,
                     stateWord = if (s.state == NEEDS_YOU) "needs you" else "working",

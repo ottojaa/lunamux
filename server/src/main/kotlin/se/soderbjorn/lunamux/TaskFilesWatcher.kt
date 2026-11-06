@@ -97,13 +97,13 @@ private class Seen(val modified: Long, val length: Long, val parsed: TaskFile?)
  * Created once by `main()`; the [TaskIndex] collects [files] and answers every question about a
  * task, including which `open` command the open-task route runs.
  *
- * @param dirs the folders holding `<id>.json` files, in the order they are read; any of them may
- *   not exist. When two files share an id the newer file wins, wherever it lies.
+ * @param dir the folder holding `<id>.json` files; it may not exist. When two files share an id
+ *   the newer file wins.
  * @param warn receives each warning about a file that was skipped; logs by default.
  * @see TaskIndex
  */
 class TaskFilesWatcher(
-    private val dirs: List<File>,
+    private val dir: File,
     private val warn: (String) -> Unit = { LoggerFactory.getLogger(TaskFilesWatcher::class.java).warn(it) },
 ) {
     private val lock = Any()
@@ -114,7 +114,7 @@ class TaskFilesWatcher(
     val files: StateFlow<List<TaskFile>> = _files.asStateFlow()
 
     /**
-     * Start watching: poll the folders every 3 seconds.
+     * Start watching: poll the folder every 3 seconds.
      *
      * Called once from `main()` with the server's background scope.
      *
@@ -123,22 +123,20 @@ class TaskFilesWatcher(
     fun start(scope: CoroutineScope) {
         scope.launch {
             while (isActive) {
-                runCatching { reload() }.onFailure { warn("Task folders ${dirs.joinToString()} could not be read: ${it.message}") }
+                runCatching { reload() }.onFailure { warn("Task folder ${dir.path} could not be read: ${it.message}") }
                 delay(POLL_MS)
             }
         }
     }
 
     /**
-     * Re-read the folders: parse files that are new or changed, forget removed ones, then publish.
+     * Re-read the folder: parse files that are new or changed, forget removed ones, then publish.
      *
      * Called by the polling loop; tests call it directly.
      */
     fun reload() {
-        val found = dirs.flatMap { dir ->
-            dir.listFiles { f -> f.isFile && f.name.endsWith(".json") && !f.name.startsWith(".") }
-                ?.sortedBy { it.name }.orEmpty()
-        }
+        val found = dir.listFiles { f -> f.isFile && f.name.endsWith(".json") && !f.name.startsWith(".") }
+            ?.sortedBy { it.name }.orEmpty()
         synchronized(lock) {
             // A duplicate id is reported only when the set of parsed files changed in this
             // reload; otherwise the same warning would repeat on every poll.

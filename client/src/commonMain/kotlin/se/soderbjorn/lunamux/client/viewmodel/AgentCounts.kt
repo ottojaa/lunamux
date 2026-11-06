@@ -63,7 +63,14 @@ object AgentCounts {
      * @return true when the conversation counts as waiting.
      */
     fun isWaiting(s: AgentSessionSummary, config: WindowConfig?): Boolean =
-        s.state == NEEDS_YOU && placeOf(s, config) != null
+        waits(s) && placeOf(s, config) != null
+
+    /** Whether [s] asks, wherever its pane is: the one rule behind [isWaiting] and [of]. */
+    private fun waits(s: AgentSessionSummary): Boolean = s.state == NEEDS_YOU
+
+    /** Whether [s] works and is moving at [nowMillis]: the one rule behind [isWorking] and [of]. */
+    private fun works(s: AgentSessionSummary, nowMillis: Long): Boolean =
+        AgentsOverviewBackingViewModel.isMoving(s.state == WORKING, s.lastActivityAt ?: s.stateSince, nowMillis)
 
     /**
      * Whether [s] is one of the conversations that work and are moving: it works, it sits in a pane
@@ -78,8 +85,7 @@ object AgentCounts {
      * @see AgentsOverviewBackingViewModel.isMoving
      */
     fun isWorking(s: AgentSessionSummary, config: WindowConfig?, nowMillis: Long): Boolean =
-        placeOf(s, config) != null &&
-            AgentsOverviewBackingViewModel.isMoving(s.state == WORKING, s.lastActivityAt ?: s.stateSince, nowMillis)
+        works(s, nowMillis) && placeOf(s, config) != null
 
     /**
      * Count the conversations in [sessions] that wait or work, in one pass: the total and the lines
@@ -99,14 +105,14 @@ object AgentCounts {
         val byWorld = LinkedHashMap<String, Counts>()
         for (s in sessions) {
             val place = placeOf(s, config) ?: continue
-            val waits = if (s.state == NEEDS_YOU) 1 else 0
-            val works = if (AgentsOverviewBackingViewModel.isMoving(s.state == WORKING, s.lastActivityAt ?: s.stateSince, nowMillis)) 1 else 0
-            if (waits == 0 && works == 0) continue
-            waiting += waits
-            working += works
+            val w = if (waits(s)) 1 else 0
+            val m = if (works(s, nowMillis)) 1 else 0
+            if (w == 0 && m == 0) continue
+            waiting += w
+            working += m
             val world = place.worldId ?: ""
             val prev = byWorld[world] ?: Counts(0, 0)
-            byWorld[world] = Counts(prev.waiting + waits, prev.working + works)
+            byWorld[world] = Counts(prev.waiting + w, prev.working + m)
         }
         return Tally(Counts(waiting, working), byWorld)
     }

@@ -6,8 +6,8 @@
  * first five entries and a "+ N more" line that opens the rest in place; the column scrolls.
  *
  * ⌘I shows and hides the column (as does its ×), and the choice is kept with the other UI
- * settings. An agent's line can be focused: ↵ or a click jumps to a member in a visible tab, shows
- * a waiting background member as a marked tab, or attaches to a member Lunamux does not host.
+ * settings. An agent's line can be focused: ↵ or a click jumps to a session in a visible tab or shows
+ * a waiting session of a background tab as a marked tab.
  *
  * All state and behaviour live in the shared [TaskPanelViewModel]; this file draws its state with
  * DOM nodes and text only (an agent's words are never parsed as HTML) and turns clicks and keys
@@ -277,7 +277,7 @@ private fun buildAgents(agents: TaskPanelViewModel.Block<TaskPanelViewModel.Agen
         if (line.state == "needs_you") {
             mark.textContent = "◆"
         } else {
-            val key = "panel:agent:${line.key}"
+            val key = "panel:agent:${line.recordId}"
             glyphKeys += key
             mark.appendChild(workingGlyph(key))
         }
@@ -294,7 +294,7 @@ private fun buildAgents(agents: TaskPanelViewModel.Block<TaskPanelViewModel.Agen
             row.classList.add("tp-agent-active")
             row.setAttribute("tabindex", "0")
             row.setAttribute("role", "button")
-            row.setAttribute(FOCUS_KEY_ATTRIBUTE, "agent:${line.key}")
+            row.setAttribute(FOCUS_KEY_ATTRIBUTE, "agent:${line.recordId}")
             row.addEventListener("click", { _: Event -> GlobalScope.launch { taskPanel.activateMember(line) } })
             row.addEventListener("keydown", { e: Event ->
                 val key = e as KeyboardEvent
@@ -414,7 +414,7 @@ internal fun buildActivity(activity: TaskPanelViewModel.Block<TaskPanelViewModel
 
 /**
  * The element under [root] that carries [key] in its [FOCUS_KEY_ATTRIBUTE], or null. Keys can hold
- * any character (a member's key may be a session id from a task file), so they are compared as
+ * any character (an agent line's key holds a record id), so they are compared as
  * strings, never spliced into a selector, where a quote or backslash would make the query throw.
  *
  * @param root the part of the page to search.

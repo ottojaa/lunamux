@@ -21,7 +21,7 @@ class TaskFilesWatcherTest {
     private val dir = File.createTempFile("lunamux-tasks", "").apply { delete(); mkdirs(); deleteOnExit() }
     private val work = File.createTempFile("lunamux-work", "").apply { delete(); mkdirs(); deleteOnExit() }
     private val warnings = mutableListOf<String>()
-    private val watcher = TaskFilesWatcher(listOf(dir)) { warnings += it }
+    private val watcher = TaskFilesWatcher(dir) { warnings += it }
 
     private fun folder(name: String) = File(work, name).apply { mkdirs() }.canonicalPath
 
@@ -129,20 +129,10 @@ class TaskFilesWatcherTest {
 
     @Test
     fun `a missing folder is an empty list, not an error`() {
-        val w = TaskFilesWatcher(listOf(File(dir, "absent"))) { warnings += it }
+        val w = TaskFilesWatcher(File(dir, "absent")) { warnings += it }
         w.reload()
         assertTrue(w.files.value.isEmpty())
         assertTrue(warnings.isEmpty())
-    }
-
-    @Test
-    fun `several folders are read together`() {
-        val other = File(work, "other-tasks").apply { mkdirs() }
-        File(other, "x.json").writeText(taskJson(id = "x"))
-        write("t1.json", taskJson(id = "a"))
-        val w = TaskFilesWatcher(listOf(dir, other)) { warnings += it }
-        w.reload()
-        assertEquals(listOf("a", "x"), w.files.value.map { it.id })
     }
 
     @Test
@@ -173,10 +163,10 @@ class TaskFilesWatcherTest {
         try {
             System.clearProperty("lunamux.tasksDir")
             val home = System.getProperty("user.home")
-            assertEquals(listOf(File(home, ".lunamux/tasks")), AppPaths.taskDirs())
+            assertEquals(File(home, ".lunamux/tasks"), AppPaths.taskDir())
 
             System.setProperty("lunamux.tasksDir", "/scratch/tasks")
-            assertEquals(listOf(File("/scratch/tasks")), AppPaths.taskDirs())
+            assertEquals(File("/scratch/tasks"), AppPaths.taskDir())
         } finally {
             if (tasks == null) System.clearProperty("lunamux.tasksDir") else System.setProperty("lunamux.tasksDir", tasks)
         }

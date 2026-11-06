@@ -43,7 +43,7 @@ one of:
 elicitation that Claude Code reports, an `AskUserQuestion` call, or the approval overlay of Codex.
 One question counts once. Only a conversation that has a pane in a window counts, in the footer and in the
 state words alike: a conversation that has ended, or whose pane the window no longer holds, is counted
-nowhere, and a task whose conversations all lack a pane sits in EARLIER and reads **finished**. A reply that merely ends in a question ("Want me to go ahead?") is done,
+nowhere, and a task whose conversations all lack a pane sits in EARLIER and reads **finished**. Known gap: a conversation that carries no task id and is the main conversation of two tasks is in both rows, so both can read **needs you** while the footer counts it once. A reply that merely ends in a question ("Want me to go ahead?") is done,
 and so is a conversation that was just resumed and sits at its prompt.
 
 The glyph is the app's own working mark: four braille frames that cross-fade
@@ -118,8 +118,8 @@ since that is what the person is asked to allow.
   5. **The task has no main conversation on record:** a live conversation of the task in a tab of the
      strip is jumped to (the one waiting longest, else the busiest); else ask "no conversation /
      Start one in a new tab?" and run the task file's `open` action on a second ↵; else the newest
-     conversation the task has a record of is resumed after the same kind of question; else ↵
-     offers nothing.
+     conversation the task has a record of is resumed after the same kind of question. A task with
+     no conversation and no `open` action has no row.
   A row for a conversation that is in no task does the same for itself: it jumps to a live one in a tab
   of the strip, shows the tab of a waiting one in a hidden tab, and resumes a closed one. A resumed
   conversation is the task's main conversation again, in the same row.
@@ -173,7 +173,10 @@ since that is what the person is asked to allow.
   within three days and **LAST TWO WEEKS** those between three and fourteen days old. Together
   they show the newest five rows, then one **+ N more** line (a click on it, or ↓ on the last row,
   shows the rest). A band with nothing to show has no heading. Older rows are not listed, but
-  search still finds them, and search is never cut.
+  search still finds older *conversations*, and search is never cut. A task with no conversation
+  (only an `open` action) is aged by its start, which never moves: fourteen days after the server
+  first saw it, its row leaves EARLIER and search does not return it, even if the file was
+  rewritten since. It comes back as soon as the task has a conversation.
   - A task's age is its newest conversation's.
   - Both edges are inclusive on the older side: exactly three days old is still in the first band,
     exactly fourteen still listed.
@@ -347,8 +350,7 @@ One object per file.
 
 Other keys are ignored. A file written for an earlier version, with `version`, `tag`, `link`,
 `updatedAt`, `lead` or `members[]`, still parses; those keys do nothing. Paths must be absolute or
-start with `~/`; a relative path makes the file invalid. Symbolic links in paths are resolved before
-comparing.
+start with `~/`; a relative path makes the file invalid.
 
 A file that cannot be used (broken JSON, a missing `id` or `title`, an `open` without a command or
 an absolute folder, a relative path) is **skipped whole**, with one warning in the server log each
@@ -362,7 +364,11 @@ is how a person starts the work. A task with neither has no row.
 
 `open` is optional. With it, ↵ on a row that has no conversation at all (after the question "Start
 one in a new tab?") types `open.command` into a new tab started in `open.folder`. The tab is named
-like the task. Without it, a task with no conversation does nothing.
+like the task. Without it, a task with no conversation has no row.
+
+Lunamux only types the command; it does not tie the new session to the task. The command has to join
+the task itself (for example by starting an agent that calls the `add_to_task` MCP tool).
+Otherwise the new session gets a row of its own, and the task's row stays without a conversation.
 
 ### Writing and removing files
 
