@@ -1,6 +1,6 @@
 /**
  * Tests that an `agent_sessions` table that has `last_said` but no `task_id` is upgraded in place
- * when the database is opened, keeping its rows, that the new column and the `agent_tasks` table
+ * when the database is opened, keeping its rows, that the new column and the `tasks` table
  * then round-trip, and that a fresh database has both.
  *
  * @see se.soderbjorn.lunamux.persistence.SettingsRepository
@@ -43,7 +43,7 @@ class AgentSessionTaskMigrationTest {
         assertEquals("Previous session", loaded.title)
         assertEquals("Said it", loaded.lastSaid)
         assertNull(loaded.taskId)
-        assertEquals(emptyList(), repo.loadAgentTasks())
+        assertEquals(emptyList(), repo.loadTasks())
 
         repo.saveAgentSession(loaded.copy(taskId = "fix-login-ab12"))
         assertEquals("fix-login-ab12", repo.findAgentSessionById("prev")!!.taskId)
@@ -52,9 +52,12 @@ class AgentSessionTaskMigrationTest {
         // The upsert still carries the stored search text over.
         assertEquals("prev", repo.searchAgentSessions("kept words").single().record.id)
 
-        repo.saveAgentTask(SettingsRepository.AgentTaskRow("fix-login-ab12", "Fix login", 10, 10))
-        repo.saveAgentTask(SettingsRepository.AgentTaskRow("fix-login-ab12", "Fix the login", 10, 20))
-        assertEquals(listOf(SettingsRepository.AgentTaskRow("fix-login-ab12", "Fix the login", 10, 20)), repo.loadAgentTasks())
+        repo.insertTask("fix-login-ab12", "Fix login", 10)
+        repo.renameTask("fix-login-ab12", "Fix the login", 20)
+        assertEquals(
+            listOf(SettingsRepository.TaskRow("fix-login-ab12", title = "Fix the login", createdAt = 10, updatedAt = 20)),
+            repo.loadTasks(),
+        )
     }
 
     @Test
@@ -63,11 +66,11 @@ class AgentSessionTaskMigrationTest {
         val db = File(dir, "fresh.db")
         val repo = SettingsRepository(db)
         repo.saveAgentSession(AgentSessionRecord(id = "r", agent = "claude", state = "idle", taskId = "t1"))
-        repo.saveAgentTask(SettingsRepository.AgentTaskRow("t1", "One", 1, 1))
+        repo.insertTask("t1", "One", 1)
         assertEquals("t1", repo.findAgentSessionById("r")!!.taskId)
 
         val reopened = SettingsRepository(db)
         assertEquals("t1", reopened.findAgentSessionById("r")!!.taskId)
-        assertEquals("One", reopened.loadAgentTasks().single().title)
+        assertEquals("One", reopened.loadTasks().single().title)
     }
 }

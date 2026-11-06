@@ -2,7 +2,7 @@
  * The one place that decides which task each agent session belongs to.
  *
  * This file contains [TaskIndex], which combines the tasks agents made through the MCP tools
- * (rows in `agent_tasks`), the tasks that task files declare ([TaskFile]) and the session records,
+ * (rows of `tasks` that carry a title), the tasks that task files declare ([TaskFile]) and the session records,
  * and publishes the result as [AgentTask]s plus an assignment of every record to at most one task.
  * A task's members are the sessions whose record carries the task's id, and nothing else. It also
  * holds the operations behind the MCP task tools, so that the tools and the overview agree on
@@ -22,8 +22,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import se.soderbjorn.lunamux.persistence.AgentSessionRecord
 import se.soderbjorn.lunamux.persistence.SettingsRepository
-import se.soderbjorn.lunamux.persistence.SettingsRepository.AgentTaskRow
-import se.soderbjorn.lunamux.persistence.SettingsRepository.TaskMetaRow
+import se.soderbjorn.lunamux.persistence.SettingsRepository.TaskRow
 import java.util.UUID
 
 /**
@@ -110,9 +109,11 @@ class TaskIndex(
     private val newSuffix: () -> String = { UUID.randomUUID().toString().take(SUFFIX_LENGTH) },
 ) {
     private val lock = Any()
-    private var rows: List<AgentTaskRow> = runCatching { repo.loadAgentTasks() }.getOrDefault(emptyList())
-    private var meta: Map<String, TaskMetaRow> =
-        runCatching { repo.loadTaskMeta() }.getOrDefault(emptyList()).associateBy { it.taskId }
+    private var tasks: Map<String, TaskRow> =
+        runCatching { repo.loadTasks() }.getOrDefault(emptyList()).associateBy { it.id }
+
+    /** The tasks an agent made: the stored rows that carry a title. Call with [lock] held. */
+    private fun agentMade(): List<TaskRow> = tasks.values.filter { it.title != null }
     private val _state = MutableStateFlow(TaskSnapshot())
 
     /** The current tasks and assignment; collected per window socket by `WindowRoutes`. */
@@ -153,7 +154,7 @@ class TaskIndex(
      * @return the title, or null when no file and no row has that id.
      */
     fun titleOf(taskId: String): String? = synchronized(lock) {
-        files.value.firstOrNull { it.id == taskId }?.title ?: rows.firstOrNull { it.id == taskId }?.title
+        files.value.firstOrNull { it.id == taskId }?.title ?: tasks[taskId]?.title
     }
 
     /**
@@ -166,7 +167,7 @@ class TaskIndex(
      * @return task ids from files and agent-made rows, using each task's effective title.
      */
     fun taskIdsTitled(text: String): Set<String> = synchronized(lock) {
-        (files.value.map { it.id } + rows.map { it.id }).toSet()
+        (files.value.map { it.id } + agentMade().map { it.id }).toSet()
             .filter { titleOf(it)?.contains(text, ignoreCase = true) == true }
             .toSet()
     }
@@ -191,14 +192,10 @@ class TaskIndex(
     fun recompute() {
         synchronized(lock) {
             val records = tracker.snapshot()
-            val snapshot = resolve(records, files.value, rows, meta)
-            val fresh = snapshot.tasks.filter { it.id !in meta }
-            if (fresh.isNotEmpty()) {
-                // A task's start is fixed the first time it is seen, so its place in the overview
-                // never moves when its sessions come and go afterwards.
-                for (t in fresh) t.startedAtMillis?.let { repo.stampTaskStart(t.id, it) }
-                meta = meta + fresh.mapNotNull { t -> t.startedAtMillis?.let { t.id to TaskMetaRow(t.id, it) } }
-            }
+            val snapshot = resolve(records, files.value, tasks)
+            // A task's start is fixed the first time it is seen, so its place in the overview
+            // never moves when its sessions come and go afterwards.
+            for (t in snapshot.tasks) if (tasks[t.id]?.startedAt == null) t.startedAtMillis?.let { stampStart(t.id, it) }
             _state.value = snapshot
         }
     }
@@ -223,13 +220,12 @@ class TaskIndex(
         val targets = sessionIds.map(::targetOf)
         val own = callerSessionId?.takeIf(::isKnownPane) ?: sessionIds.firstOrNull()
         val id = synchronized(lock) {
-            val known = rows.map { it.id }.toSet() + files.value.map { it.id }
+            val known = tasks.keys + files.value.map { it.id }
             var candidate: String
             do { candidate = "${slug(clean)}-${newSuffix()}" } while (candidate in known)
             val now = clock()
-            val row = AgentTaskRow(candidate, clean, now, now)
-            repo.saveAgentTask(row)
-            rows = rows + row
+            repo.insertTask(candidate, clean, now)
+            tasks = tasks + (candidate to TaskRow(candidate, title = clean, createdAt = now, updatedAt = now))
             candidate
         }
         recompute()
@@ -289,21 +285,19 @@ class TaskIndex(
      *
      * @param taskId an agent-made task or a task file's id.
      * @param text what the work is doing now.
-     * @param by the pane that reports it, when the request says so.
      * @param questionWaits whether a question waits for the person; ignored when [text] is empty.
      * @return the stored status, or null when it was cleared.
      * @throws TaskException when the task is unknown.
      */
-    fun setStatus(taskId: String, text: String, by: String?, questionWaits: Boolean = false): String? {
+    fun setStatus(taskId: String, text: String, questionWaits: Boolean = false): String? {
         requireTask(taskId)
         val clean = text.replace(Regex("\\s*[\\r\\n]+\\s*"), " ").trim().take(STATUS_MAX).trim().ifEmpty { null }
         synchronized(lock) {
             val now = clock()
-            ensureMeta(taskId)
-            repo.setTaskStatus(taskId, clean, by, now, questionWaits)
-            meta = meta + (taskId to meta.getValue(taskId).copy(
-                status = clean, statusBy = clean?.let { by }, statusAt = clean?.let { now },
-                questionWaits = clean != null && questionWaits,
+            ensureStarted(taskId)
+            repo.setTaskStatus(taskId, clean, now, questionWaits)
+            tasks = tasks + (taskId to tasks.getValue(taskId).copy(
+                status = clean, statusAt = clean?.let { now }, questionWaits = clean != null && questionWaits,
             ))
         }
         recompute()
@@ -319,19 +313,24 @@ class TaskIndex(
     /** Store the conversation that speaks for a task, then publish. */
     private fun storeMainConversation(taskId: String, conversationId: String) {
         synchronized(lock) {
-            ensureMeta(taskId)
+            ensureStarted(taskId)
             repo.setTaskMainConversation(taskId, conversationId)
-            meta = meta + (taskId to meta.getValue(taskId).copy(mainConversation = conversationId))
+            tasks = tasks + (taskId to tasks.getValue(taskId).copy(mainConversation = conversationId))
         }
         recompute()
     }
 
-    /** Make sure the task has a stored row to write to; call with [lock] held. */
-    private fun ensureMeta(taskId: String) {
-        if (taskId in meta) return
-        val at = _state.value.tasks.firstOrNull { it.id == taskId }?.startedAtMillis ?: clock()
+    /** Make sure the task has a stored row with a start to write to; call with [lock] held. */
+    private fun ensureStarted(taskId: String) {
+        if (tasks[taskId]?.startedAt != null) return
+        stampStart(taskId, _state.value.tasks.firstOrNull { it.id == taskId }?.startedAtMillis ?: clock())
+    }
+
+    /** Store the task's start, making its row if it has none, and remember it; call with [lock] held. */
+    private fun stampStart(taskId: String, at: Long) {
         repo.stampTaskStart(taskId, at)
-        meta = meta + (taskId to TaskMetaRow(taskId, at))
+        val row = tasks[taskId] ?: TaskRow(taskId)
+        tasks = tasks + (taskId to row.copy(startedAt = row.startedAt ?: at))
     }
 
     private fun isKnownPane(sessionId: String): Boolean =
@@ -388,10 +387,10 @@ class TaskIndex(
             if (files.value.any { it.id == taskId }) {
                 throw TaskException("Task '$taskId' is declared by a task file, which owns its title. Edit the file's title instead.")
             }
-            val row = rows.firstOrNull { it.id == taskId } ?: throw unknownTask(taskId)
-            val renamed = row.copy(title = clean, updatedAt = clock())
-            repo.saveAgentTask(renamed)
-            rows = rows.map { if (it.id == taskId) renamed else it }
+            val row = tasks[taskId]?.takeIf { it.title != null } ?: throw unknownTask(taskId)
+            val now = clock()
+            repo.renameTask(taskId, clean, now)
+            tasks = tasks + (taskId to row.copy(title = clean, updatedAt = now))
         }
         recompute()
     }
@@ -420,8 +419,8 @@ class TaskIndex(
             TaskListing(f.id, f.title, "file", sessionsOf(f.id), mainConversationOf(f.id), ownSessionOf(f.id), statusOf(f.id), questionWaitsOf(f.id))
         }
         val fileIds = files.value.map { it.id }.toSet()
-        val agentListings = rows.filter { it.id !in fileIds }.sortedBy { it.id }
-            .map { TaskListing(it.id, it.title, "agents", sessionsOf(it.id), mainConversationOf(it.id), ownSessionOf(it.id), statusOf(it.id), questionWaitsOf(it.id)) }
+        val agentListings = synchronized(lock) { agentMade() }.filter { it.id !in fileIds }.sortedBy { it.id }
+            .map { TaskListing(it.id, it.title.orEmpty(), "agents", sessionsOf(it.id), mainConversationOf(it.id), ownSessionOf(it.id), statusOf(it.id), questionWaitsOf(it.id)) }
         return fileListings + agentListings
     }
 
@@ -437,20 +436,20 @@ class TaskIndex(
      * @return the terminal session id, or null when no conversation was named or it is closed.
      */
     fun ownSessionOf(taskId: String): String? = synchronized(lock) {
-        val conversation = meta[taskId]?.mainConversation ?: return@synchronized null
+        val conversation = tasks[taskId]?.mainConversation ?: return@synchronized null
         tracker.snapshot().firstOrNull { (it.conversationId == conversation || it.id == conversation) && it.state != ENDED }
             ?.terminalSessionId
     }
 
     /** The conversation that speaks for a task, as stored, or null when none was named. */
     fun mainConversationOf(taskId: String): String? = synchronized(lock) {
-        val stored = meta[taskId]?.mainConversation ?: return@synchronized null
+        val stored = tasks[taskId]?.mainConversation ?: return@synchronized null
         tracker.snapshot().firstOrNull { it.conversationId == stored || it.id == stored }?.conversationId ?: stored
     }
 
-    private fun statusOf(taskId: String): String? = synchronized(lock) { meta[taskId]?.status }
+    private fun statusOf(taskId: String): String? = synchronized(lock) { tasks[taskId]?.status }
 
-    private fun questionWaitsOf(taskId: String): Boolean = synchronized(lock) { meta[taskId]?.questionWaits == true }
+    private fun questionWaitsOf(taskId: String): Boolean = synchronized(lock) { tasks[taskId]?.questionWaits == true }
 
     /**
      * The `open` action a task file declares for the task whose main conversation is [record].
@@ -514,7 +513,7 @@ class TaskIndex(
      * @throws TaskException when no agent-made task and no task file has that id.
      */
     fun requireTask(taskId: String) {
-        val known = synchronized(lock) { rows.any { it.id == taskId } } || files.value.any { it.id == taskId }
+        val known = synchronized(lock) { tasks[taskId]?.title != null } || files.value.any { it.id == taskId }
         if (!known) throw unknownTask(taskId)
     }
 
@@ -546,17 +545,17 @@ class TaskIndex(
          *
          * @param records the session records in memory.
          * @param files the parsed task files.
-         * @param rows the agent-made tasks.
-         * @param meta what is stored per task (start, own session, status), by task id.
+         * @param tasks what is stored per task (name, start, main conversation, status), by task id;
+         *   the rows that carry a title are the agent-made tasks.
          * @return the tasks to push and the assignment of records to them.
          */
         fun resolve(
             records: List<AgentSessionRecord>,
             files: List<TaskFile>,
-            rows: List<AgentTaskRow>,
-            meta: Map<String, TaskMetaRow> = emptyMap(),
+            tasks: Map<String, TaskRow> = emptyMap(),
         ): TaskSnapshot {
             val fileIds = files.map { it.id }.toSet()
+            val rows = tasks.values.filter { it.title != null }
             val known = fileIds + rows.map { it.id }
             val assignment = LinkedHashMap<String, String>()
             for (r in records) r.taskId?.takeIf { it in known }?.let { assignment[r.id] = it }
@@ -566,13 +565,13 @@ class TaskIndex(
             }
             val used = assignment.values.toSet()
             val agentTasks = rows.filter { it.id !in fileIds && it.id in used }
-                .map { AgentTask(id = it.id, title = it.title, source = "agents") }
+                .map { AgentTask(id = it.id, title = it.title.orEmpty(), source = "agents") }
             val recordsByTask = records.filter { it.id in assignment }.groupBy { assignment.getValue(it.id) }
             val tasks = (fileTasks + agentTasks).map { t ->
-                val m = meta[t.id]
+                val m = tasks[t.id]
                 val firstSeen = recordsByTask[t.id].orEmpty().map { it.createdAt }.filter { it > 0 }.minOrNull()
                     ?: files.firstOrNull { it.id == t.id }?.modified
-                    ?: rows.firstOrNull { it.id == t.id }?.createdAt
+                    ?: m?.createdAt
                 t.copy(
                     mainConversation = m?.mainConversation?.let { stored ->
                         records.firstOrNull { it.conversationId == stored || it.id == stored }?.conversationId ?: stored

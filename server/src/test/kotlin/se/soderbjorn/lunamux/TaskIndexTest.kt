@@ -88,9 +88,8 @@ class TaskIndexTest {
 
     private fun resolve(
         records: List<AgentSessionRecord>, files: List<TaskFile> = emptyList(),
-        rows: List<SettingsRepository.AgentTaskRow> = emptyList(),
-        meta: Map<String, SettingsRepository.TaskMetaRow> = emptyMap(),
-    ) = TaskIndex.resolve(records, files, rows, meta)
+        tasks: List<SettingsRepository.TaskRow> = emptyList(),
+    ) = TaskIndex.resolve(records, files, tasks.associateBy { it.id })
 
     // ── Which task a record belongs to: the one whose id it carries ─────────────────────
 
@@ -137,16 +136,16 @@ class TaskIndexTest {
         val withSessions = resolve(listOf(rec("a", taskId = "f", createdAt = 40), rec("b", taskId = "f", createdAt = 25)), listOf(file("f")))
         assertEquals(25, withSessions.tasks.single().startedAtMillis)
         assertEquals(99, resolve(emptyList(), listOf(file("f"))).tasks.single().startedAtMillis)
-        val stored = resolve(listOf(rec("a", taskId = "f", createdAt = 40)), listOf(file("f")), meta = mapOf("f" to SettingsRepository.TaskMetaRow("f", startedAt = 7)))
+        val stored = resolve(listOf(rec("a", taskId = "f", createdAt = 40)), listOf(file("f")), tasks = listOf(SettingsRepository.TaskRow("f", startedAt = 7)))
         assertEquals(7, stored.tasks.single().startedAtMillis)
     }
 
     @Test
     fun `agent-made tasks show only once they hold a session, and a file with the same id is one task with the file's title`() {
         val rows = listOf(
-            SettingsRepository.AgentTaskRow("empty", "Empty", 1, 1),
-            SettingsRepository.AgentTaskRow("used", "Used", 1, 1),
-            SettingsRepository.AgentTaskRow("shared", "Row title", 1, 1),
+            SettingsRepository.TaskRow("empty", title = "Empty", createdAt = 1, updatedAt = 1),
+            SettingsRepository.TaskRow("used", title = "Used", createdAt = 1, updatedAt = 1),
+            SettingsRepository.TaskRow("shared", title = "Row title", createdAt = 1, updatedAt = 1),
         )
         val snap = resolve(
             listOf(rec("a", taskId = "used"), rec("b", taskId = "shared")),
@@ -185,7 +184,7 @@ class TaskIndexTest {
         clock = { now }, newSuffix = { suffixes.next() },
     )
 
-    private fun storedMain(task: String) = repo.loadTaskMeta().single { it.taskId == task }.mainConversation
+    private fun storedMain(task: String) = repo.loadTasks().single { it.id == task }.mainConversation
 
     @Test
     fun `create_task and set_task_lead turn the pane into its conversation once`() {
@@ -483,7 +482,7 @@ class TaskIndexTest {
         val id = index.createTask("Before", listOf("s1"))
         index.renameTask(id, "After")
         assertEquals("After", index.state.value.tasks.single().title)
-        assertEquals("After", repo.loadAgentTasks().single().title)
+        assertEquals("After", repo.loadTasks().single().title)
         assertFailsWith<TaskException> { index.renameTask(id, "  ") }
 
         files.value = listOf(file("prog"))

@@ -71,7 +71,7 @@ object WindowState {
      * The number in a pane (layout leaf) id: `n7-ab12` and the older `n7` both give 7. Null for an id
      * of any other shape.
      *
-     * Called by [rehydrate] for every leaf id it meets and by [seedNodeIdsFromRecords]; the counter
+     * Called by [rehydrate] for every leaf id it meets; the counter
      * that [newNodeId] counts from must start above every number returned here.
      *
      * @param id a layout leaf id.
@@ -80,23 +80,6 @@ object WindowState {
      */
     internal fun nodeIdNumber(id: String): Long? = id.removePrefix("n").substringBefore('-').toLongOrNull()
 
-    /**
-     * Make [newNodeId] skip every pane id an agent session record remembers.
-     *
-     * A pane that was closed leaves no trace in the layout, but the sessions that ran in it are still
-     * on record under its id, and a task remembers its own session's pane by that id. A new pane that
-     * was handed the same id would put the task on an unrelated pane. [rehydrate] does this as part of
-     * rebuilding the layout; [initialize] calls it before [buildDefault] on the paths where the layout
-     * is not rebuilt (nothing persisted, or the persisted layout failed to load).
-     *
-     * @param repo the settings database whose agent session records are read.
-     * @see SettingsRepository.allAgentSessionLeafIds
-     */
-    private fun seedNodeIdsFromRecords(repo: SettingsRepository) {
-        val highest = runCatching { repo.allAgentSessionLeafIds() }.getOrDefault(emptyList())
-            .mapNotNull(::nodeIdNumber).maxOrNull() ?: return
-        nodeIdCounter.updateAndGet { maxOf(it, highest) }
-    }
     private fun newTabId(): String = mintId("t", tabIdCounter)
     private fun newWorldId(): String = mintId("w", worldIdCounter)
 
@@ -318,11 +301,9 @@ object WindowState {
                 rehydrate(loaded, repo)
             } catch (t: Throwable) {
                 log.warn("Failed to rehydrate persisted window config; using default", t)
-                seedNodeIdsFromRecords(repo)
                 buildDefault()
             }
         } else {
-            seedNodeIdsFromRecords(repo)
             buildDefault()
         }
         // A background tab shown for a waiting agent is hidden again by a restart: the tab that
@@ -444,11 +425,6 @@ object WindowState {
                 activeTabId = world.activeTabId?.takeIf { id -> id in tabIdSet },
             )
         }
-
-        // A pane that was closed leaves no trace in the layout, but the sessions that ran in it are
-        // still on record under its id. Counting those ids keeps a new pane from being handed one,
-        // which would put a task's remembered pane on an unrelated one.
-        runCatching { repo.allAgentSessionLeafIds() }.getOrDefault(emptyList()).forEach(::trackNodeId)
 
         nodeIdCounter.set(maxNodeId)
         tabIdCounter.set(maxTabId)

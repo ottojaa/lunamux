@@ -84,7 +84,7 @@ class AgentsOverviewSeedTest {
     fun `the seed holds a task with its own session, a status and two background members that search never finds`() {
         AgentsOverviewSeed.seed(db, tasksDir, now)
         val repo = repo()
-        val meta = repo.loadTaskMeta().single { it.taskId == "seed-task-notes" }
+        val meta = repo.loadTasks().single { it.id == "seed-task-notes" }
         assertEquals("5eed0002-0000-4000-8000-000000000001", meta.mainConversation)
         assertEquals("Notes drafted, waiting on the changelog check", meta.status)
         val members = repo.loadRecentEndedAgentSessions(0, 300).filter { it.taskId == "seed-task-notes" }
@@ -159,7 +159,7 @@ class AgentsOverviewSeedTest {
         AgentsOverviewSeed.seed(db, tasksDir, now)
         AgentsOverviewSeed.seed(db, tasksDir, now + day)
         assertEquals(34, repo().loadRecentEndedAgentSessions(0, 300).size)
-        assertEquals(6, repo().loadAgentTasks().size)
+        assertEquals(6, repo().loadTasks().size)
     }
 
     @Test

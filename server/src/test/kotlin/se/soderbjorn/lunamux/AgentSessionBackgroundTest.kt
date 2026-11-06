@@ -100,7 +100,7 @@ class AgentSessionBackgroundTest {
 
     @Test
     fun `tasks found by title leave out background sessions`() {
-        repo.saveAgentTask(SettingsRepository.AgentTaskRow("t-1", "Billing", 1, 1))
+        repo.insertTask("t-1", "Billing", 1)
         repo.saveAgentSession(AgentSessionRecord(id = "a", agent = "claude", state = "ended", stateSince = 1, createdAt = 1, endedAt = 1, taskId = "t-1", background = true))
         repo.saveAgentSession(AgentSessionRecord(id = "b", agent = "claude", state = "ended", stateSince = 2, createdAt = 2, endedAt = 2, taskId = "t-1"))
         assertEquals(listOf("b"), repo.loadAgentSessionsOfTasks(listOf("t-1")).map { it.id })
