@@ -62,7 +62,9 @@ and the detail are hidden when the panel is narrower than 700px.
 
 A question counts only while the conversation that asks has a pane. When the main conversation is
 closed, its last question is not counted; ↵ resumes the conversation, which asks again, and the
-count rises then.
+count rises then. A task can say so through its status (`set_task_status` with `questionWaits: true`):
+the row then stays in NOW with the status as its detail and reads **done**, without counting as
+waiting, until a later status drops the flag.
 
 What a moving session is doing is said **in words, never as the raw command**, because a column of
 shell commands tells nobody anything at a glance. Lunamux words each tool call as it arrives:
@@ -111,10 +113,20 @@ since that is what the person is asked to allow.
      hidden tab opens only for a waiting agent, so a finished main conversation in a hidden tab
      can be read by the peek but not opened by ↵; nothing here changes that.
   4. **The main conversation is closed:** ask "conversation closed / Resume it in a new tab?"; a
-     second ↵ runs `claude --resume <conversation id>` in a new tab in its own folder (`codex resume
-     <id>` for a Codex conversation whose id is known). The same holds when the server no longer keeps
-     a summary of the conversation: it is resumed by the id the task stores. `claude --continue` is
-     never used: it picks the newest conversation of the folder, not this one.
+     second ↵ resumes it in a new tab. When the task's file declares an `open` action, that action's
+     command is typed in the action's folder, so the conversation starts the way the task always
+     starts it: a command that names the conversation (`--resume <id>`) is typed as written. One that
+     does not is made to name it by putting `--resume <conversation id>` after its program word, and
+     only when it is one plain `claude` line (no other program, no `&&`, `;`, `|` or other shell
+     chaining, no `--resume`, `-r`, `--continue`, `-c` or `--session-id` already) and the conversation ran in the
+     action's folder, because `claude --resume` finds a conversation only from the folder it ran in.
+     Only a Claude conversation takes the declared command, and only its task's main conversation
+     does: any other conversation, a task without an `open` action (every task an agent made), a
+     declared command that cannot take the id as above and a declared folder that is gone run
+     `claude --resume <conversation id>` in the conversation's own folder (`codex resume <id>` for
+     a Codex conversation whose id is known). The same holds when the server no longer keeps a summary of the conversation: it
+     is resumed by the id the task stores. `claude --continue` is never used: it picks the newest
+     conversation of the folder, not this one.
   5. **The task has no main conversation on record:** a live conversation of the task in a tab of the
      strip is jumped to (the one waiting longest, else the busiest); else ask "no conversation /
      Start one in a new tab?" and run the task file's `open` action on a second ↵; else the newest
@@ -140,11 +152,13 @@ since that is what the person is asked to allow.
   confirmation, then the peek, then the overlay.
 - **A task has a one-line status.** An agent sets it with `set_task_status` and the row shows it as
   its detail. Line breaks become spaces, the ends are trimmed, and at most 120 characters are
-  kept. An empty text clears it.
+  kept. An empty text clears it. Passing `questionWaits: true` says a question waits for the person:
+  the flag is stored with the status, `list_tasks` and the task's `questionWaits` report it, every
+  call sets it afresh (a status without it, or an empty text, clears it) and it survives a restart.
 - **NOW is the live conversations.** Every live conversation in a tab of the strip has a row in NOW,
   once. A task's main conversation carries the task's row. A task whose main conversation is closed
-  stays in NOW while a background agent of it is live (it reads "2 working"); otherwise it goes to
-  EARLIER. A conversation that needs the person stays in NOW wherever it runs, because a question
+  stays in NOW while a background agent of it is live (it reads "2 working") or while its status says
+  a question waits; otherwise it goes to EARLIER. A conversation that needs the person stays in NOW wherever it runs, because a question
   must not wait where the **+ N more** cut or the fourteen-day window can hide it. A tab counts as
   open whatever the tab strip shows of it. There is no grace period: a conversation that has ended
   is in EARLIER at once.
@@ -277,8 +291,8 @@ Seven MCP tools are registered. All but `list_tasks` change tasks and need a `re
 | `remove_from_task` | `sessionIds` | Takes sessions out, so each is a task of its own again. Returns where each one ended up. |
 | `rename_task` | `taskId`, `title` | Renames a task made through the tools. A file's task is named by its file, so renaming it is refused with that reason. |
 | `set_task_lead` | `taskId`, and exactly one of `sessionId` or `conversationId` | Names the session that speaks for the task. A `sessionId` (the pane's `$LUNAMUX_SESSION_ID`) is turned into the conversation running in it now; a `conversationId` is the agent's own session id, which a closed conversation still has. Refused for an unknown task, pane or both arguments. `create_task` already names the conversation of the session that made the task (the pane named in the `X-Lunamux-Session` header, else the first one in `sessionIds`). Returns the `taskId` and the `mainConversation` now named. |
-| `set_task_status` | `taskId`, `text` | Sets the task's one-line status; empty clears it. Newlines become spaces, the ends are trimmed, at most 120 characters. |
-| `list_tasks` | none | Lists every task with its sessions and their states, including a task nothing is in yet, with each task's `mainConversation` (`{conversationId, sessionId?}`), status and start. |
+| `set_task_status` | `taskId`, `text`, `questionWaits?` | Sets the task's one-line status; empty clears it. Newlines become spaces, the ends are trimmed, at most 120 characters. `questionWaits: true` says a question waits for the person, which keeps the task's row among the live ones while its main conversation is closed; each call sets it afresh. |
+| `list_tasks` | none | Lists every task with its sessions and their states, including a task nothing is in yet, with each task's `mainConversation` (`{conversationId, sessionId?}`), status, `questionWaits` and start. |
 
 `sessionIds` are terminal session ids: the `$LUNAMUX_SESSION_ID` of the pane a session runs in.
 An agent's own id is in its environment, and `list_sessions` shows the others. `create_window`

@@ -499,7 +499,8 @@ object McpServer {
                     "a task of its own, which is right for work that stands alone. " +
                     "A task has one session that speaks for it, the one that made it (set_task_lead " +
                     "names another), and a one-line status the person sees on its row: keep it " +
-                    "current with set_task_status when something worth knowing changes. " +
+                    "current with set_task_status when something worth knowing changes " +
+                    "(pass questionWaits: true while a question waits for the person). " +
                     "Work the person need not watch can run in the background: create_tab, " +
                     "create_window and run_command take background: true, which opens it out of " +
                     "sight (later windows join it by its tabId). Background sessions are still " +

@@ -204,7 +204,8 @@ class SettingsRepository(
                     status_by    TEXT,
                     status_at    INTEGER,
                     lead_leaf    TEXT,
-                    lead_agent_session TEXT
+                    lead_agent_session TEXT,
+                    question_waits INTEGER
                 )
             """.trimIndent(),
             parameters = 0,
@@ -244,6 +245,9 @@ class SettingsRepository(
         }
         runCatching {
             driver.execute(null, "ALTER TABLE task_meta ADD COLUMN lead_agent_session TEXT", 0)
+        }
+        runCatching {
+            driver.execute(null, "ALTER TABLE task_meta ADD COLUMN question_waits INTEGER", 0)
         }
         runCatching {
             driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN repo_root TEXT", 0)
@@ -701,6 +705,8 @@ class SettingsRepository(
      * @property status the task's one-line status, or null.
      * @property statusBy the terminal session id of the pane that set the status, or null.
      * @property statusAt epoch millis the status was set, or null with no status.
+     * @property questionWaits whether the status says a question waits for the person; false
+     *   whenever there is no status.
      */
     data class TaskMetaRow(
         val taskId: String,
@@ -709,6 +715,7 @@ class SettingsRepository(
         val statusBy: String? = null,
         val statusAt: Long? = null,
         val mainConversation: String? = null,
+        val questionWaits: Boolean = false,
     )
 
     /**
@@ -720,8 +727,8 @@ class SettingsRepository(
      * @return one row per task the server has seen.
      */
     fun loadTaskMeta(): List<TaskMetaRow> =
-        database.settingsQueries.selectTaskMeta { id, startedAt, status, by, at, conversation ->
-            TaskMetaRow(id, startedAt, status, by, at, conversation)
+        database.settingsQueries.selectTaskMeta { id, startedAt, status, by, at, conversation, waits ->
+            TaskMetaRow(id, startedAt, status, by, at, conversation, questionWaits = waits == 1L)
         }.executeAsList()
 
     /**
@@ -765,9 +772,17 @@ class SettingsRepository(
      * @param status the cleaned text, or null to clear the status.
      * @param by the terminal session id of the pane that set it, or null.
      * @param at epoch millis it was set.
+     * @param questionWaits whether the status says a question waits for the person; stored as
+     *   false when [status] is null.
      */
-    fun setTaskStatus(taskId: String, status: String?, by: String?, at: Long) {
-        database.settingsQueries.setTaskStatus(status, if (status == null) null else by, if (status == null) null else at, taskId)
+    fun setTaskStatus(taskId: String, status: String?, by: String?, at: Long, questionWaits: Boolean = false) {
+        database.settingsQueries.setTaskStatus(
+            status,
+            if (status == null) null else by,
+            if (status == null) null else at,
+            if (status != null && questionWaits) 1L else 0L,
+            taskId,
+        )
     }
 
     /**

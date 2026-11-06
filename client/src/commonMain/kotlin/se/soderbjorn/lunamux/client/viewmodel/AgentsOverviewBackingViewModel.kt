@@ -859,7 +859,8 @@ class AgentsOverviewBackingViewModel(
      *   ended one ended, the last activity of an open one. Decides the EARLIER band and the order
      *   inside it.
      * @property inNow whether the task belongs in NOW: one of its conversations is live in a pane the
-     *   layout holds. Every other task is in EARLIER.
+     *   layout holds, or its status says a question waits while its main conversation is closed.
+     *   Every other task is in EARLIER.
      * @property started epoch millis the task started, which fixes its place in NOW.
      * @property enter what ↵ does on the task's row.
      * @property target the session [enter] acts on, or null for [Enter.OPEN] and for [Enter.NONE]
@@ -1126,7 +1127,11 @@ class AgentsOverviewBackingViewModel(
         val main = mainOf(t, byKey)
         val own = ownOf(t, byKey)?.takeIf { o -> hosted.none { it.id == o.id } }
         val sessions = hosted.sortedWith(compareBy({ startedOf(it) }, { it.id })) + listOfNotNull(own)
-        if (sessions.isEmpty() && !t.hasOpen) return null
+        val mainLive = main != null && c.live(main)
+        // A task whose status says a question waits stays in NOW while its main conversation is closed:
+        // ↵ resumes that conversation, which asks. It is no waiting conversation, so nothing counts it.
+        val questionWaits = t.questionWaits && !mainLive && t.mainConversation != null
+        if (sessions.isEmpty() && !t.hasOpen && !questionWaits) return null
         val urgentRank = when {
             sessions.any { it.state == NEEDS_YOU } -> 0
             sessions.any { it.state == WORKING } -> 1
@@ -1140,11 +1145,10 @@ class AgentsOverviewBackingViewModel(
         }
         // Open means a conversation Lunamux lists whose pane is in the layout, so Jump has somewhere to go.
         val open = sessions.filter { c.live(it) }
-        val mainLive = main != null && c.live(main)
         val started = t.startedAtMillis ?: sessions.minOfOrNull(::startedOf) ?: since
         val recency = sessions.maxOfOrNull { maxOf(it.stateSince, activityOf(it)) } ?: t.startedAtMillis ?: 0L
         val waiting = sessions.filter { AgentCounts.isWaiting(it, c.config) }
-        val inNow = open.isNotEmpty() || mainLive
+        val inNow = open.isNotEmpty() || mainLive || questionWaits
         val resumeId = t.mainConversation.takeIf { main == null }
         val (enter, target) = enterOf(t, main, mainLive, sessions, open, resumeId)
         return TaskUnit(t, sessions, waiting, since, recency, inNow, started, enter, target, main?.id, resumeId)

@@ -121,6 +121,69 @@ class AgentsOverviewMomentsTest {
         // not part of this view model, so it is not asserted here: the moment's screenshot on the live check shows it.
     }
 
+    /**
+     * Moment 3, closed: the task's status says a question waits, so the row stays among the live ones with
+     * the status as its detail, nobody is counted as waiting, and Return resumes the conversation, which asks.
+     * Clearing the flag lets the row go to EARLIER.
+     */
+    @Test
+    fun aClosedMainWhoseStatusSaysAQuestionWaitsStaysInNowAndResumesOnReturn() = runNow {
+        layout(listOf("leaf-other"))
+        val closed = conversation("main", "ended", taskId = "g1", ended = true)
+        val asking = task("main").copy(status = "Which database should the migration use?", questionWaits = true)
+        show(listOf(asking), conversation("other", "working"), closed)
+        assertTrue(vm.state.now.any { it.id == "task:g1" }, "the row is among the live ones")
+        assertEquals("done", row("task:g1").stateWord)
+        assertEquals("Which database should the migration use?", row("task:g1").detail)
+        assertEquals(0, vm.state.needYouCount, "no conversation is waiting, so the footer does not count it")
+        assertEquals(0, AgentCounts.of(windowState.agentSessions.value, windowState.config.value, now).total.waiting)
+        assertEquals(Enter.RESUME, row("task:g1").enter)
+        vm.open(); vm.select("task:g1")
+        vm.activateSelected()
+        vm.activateSelected()
+        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("main")), sent)
+
+        // The question is answered: the next status does not repeat the flag.
+        show(listOf(task("main").copy(status = "Migrating", questionWaits = false)), conversation("other", "working"), closed)
+        assertFalse(vm.state.now.any { it.id == "task:g1" })
+        assertEquals("finished", vm.state.earlier.single { it.id == "task:g1" }.stateWord)
+    }
+
+    /** The same after a restart: the main is no longer in memory, only the task file's open action and the flag remain. */
+    @Test
+    fun aMainThatIsGoneFromMemoryStillKeepsItsRowWhileAQuestionWaits() = runNow {
+        layout(listOf("leaf-other"))
+        val asking = task("main").copy(hasOpen = true, status = "Which database?", questionWaits = true)
+        show(listOf(asking), conversation("other", "working"))
+        assertTrue(vm.state.now.any { it.id == "task:g1" })
+        assertEquals("Which database?", row("task:g1").detail)
+        assertEquals(Enter.RESUME, row("task:g1").enter)
+        assertEquals(0, vm.state.needYouCount)
+        vm.open(); vm.select("task:g1")
+        vm.activateSelected()
+        vm.activateSelected()
+        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("main")), sent)
+    }
+
+    /** A flag keeps the row of a task whose file declares no `open` action and that has no session in memory. */
+    @Test
+    fun aQuestionFlagKeepsTheRowOfATaskWithNoOpenActionAndNoSession() = runNow {
+        layout(listOf("leaf-other"))
+        show(listOf(task("main").copy(status = "Which database?", questionWaits = true)), conversation("other", "working"))
+        assertEquals("Which database?", row("task:g1").detail)
+        assertEquals(Enter.RESUME, row("task:g1").enter)
+        show(listOf(task("main").copy(status = "Which database?")), conversation("other", "working"))
+        assertFalse(vm.state.rows.any { it.id == "task:g1" })
+    }
+
+    /** A flag on a task that has no main conversation has nothing to resume, so it keeps no row of its own. */
+    @Test
+    fun aQuestionFlagOnATaskWithNoMainConversationKeepsNoRow() {
+        layout(listOf("leaf-other"))
+        show(listOf(task(null).copy(status = "Which database?", questionWaits = true)), conversation("other", "working"))
+        assertFalse(vm.state.rows.any { it.id == "task:g1" })
+    }
+
     /** Moment 4: a background member asks; the tab stays hidden. */
     @Test
     fun whenABackgroundMemberAsksTheRowAndTheFooterShowItAndNoTabIsListed() {

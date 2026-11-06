@@ -200,20 +200,26 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
         description = "Say in one line where a task stands, shown on its row in the agents overview " +
             "(for example \"2 of 3 migrations done, tests running\"). Call it when something worth " +
             "knowing changes, not on every step. Line breaks become spaces and the text is cut at 120 " +
-            "characters. An empty text clears the status.",
+            "characters. An empty text clears the status. Pass questionWaits: true when a question waits " +
+            "for the person: the task's row then stays among the live ones even while its main " +
+            "conversation is closed, and resuming that conversation asks it. Each call sets the flag " +
+            "afresh, so repeat it in a later status while the question still waits.",
         inputSchema = schemaObject(
             "taskId" to schemaString("The task."),
             "text" to schemaString("The status line; empty clears it."),
+            "questionWaits" to schemaBool("True while a question waits for the person. Default false; an empty text clears it."),
             required = listOf("taskId", "text"),
         ),
     ) { ctx, args ->
         val taskId = args.requireString("taskId")
         val text = (args["text"] as? JsonPrimitive)?.contentOrNull
             ?: throw McpArgumentException("'text' must be a string")
-        val stored = taskCall { taskIndex.setStatus(taskId, text, ctx.callerSessionId) }
+        val questionWaits = args.optBool("questionWaits") == true
+        val stored = taskCall { taskIndex.setStatus(taskId, text, ctx.callerSessionId, questionWaits) }
         McpToolResult.json(buildJsonObject {
             put("taskId", taskId)
             put("status", stored?.let(::JsonPrimitive) ?: JsonNull)
+            put("questionWaits", stored != null && questionWaits)
         })
     }
 
@@ -236,6 +242,7 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
                     put("ownSession", t.ownSessionId?.let(::JsonPrimitive) ?: JsonNull)
                     put("mainConversation", mainConversationJson(t))
                     put("status", t.status?.let(::JsonPrimitive) ?: JsonNull)
+                    put("questionWaits", t.questionWaits)
                     put("sessions", buildJsonArray {
                         for (m in t.sessions) add(buildJsonObject {
                             put("sessionId", m.sessionId?.let(::JsonPrimitive) ?: JsonNull)
