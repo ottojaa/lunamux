@@ -1052,17 +1052,42 @@ private fun isPlainSessionId(id: String): Boolean = id.isNotEmpty() && id.length
  * so it gets plain `codex resume`, which asks which one). Gemini has no resume, and an id with a
  * character a shell would interpret is refused.
  *
+ * A Claude Code conversation that is a task's main one is resumed with the command its task file
+ * declares ([open]), so it starts the way it always starts, with its start-up work. Claude reads a
+ * trailing word as a prompt, so when that command does not name the conversation already,
+ * `--resume <id>` goes in right after its first word. [open] means nothing to the other agents.
+ *
  * @param rec the record of the conversation, the newest of its runs.
+ * @param open the `open` action of the task this conversation is the main one of, or null when it
+ *   is not a task's main conversation or its task declares none.
  * @return the command line, or null when there is nothing to type: Gemini, or a Claude Code
  *   conversation with no usable id.
+ * @see TaskIndex.openOfMain
  */
-internal fun resumeCommandOf(rec: AgentSessionRecord): String? {
+internal fun resumeCommandOf(rec: AgentSessionRecord, open: TaskOpen? = null): String? {
     val id = rec.agentSessionId?.takeIf(::isPlainSessionId)
     return when (rec.agent) {
-        "claude" -> id?.let { "claude --resume $it" }
+        "claude" -> id?.let { declaredResumeLine(open?.command, it) ?: "claude --resume $it" }
         "codex" -> id?.let { "codex resume $it" } ?: "codex resume"
         else -> null
     }
+}
+
+/**
+ * A task's declared `open` command made to resume conversation [id].
+ *
+ * Called by [resumeCommandOf]. A command that already holds the id is returned as it is;
+ * otherwise `--resume <id>` is put after the command's first word, ahead of any prompt words.
+ *
+ * @param command the text of the task's `open` action, or null when it declares none.
+ * @param id the conversation id, already checked by [isPlainSessionId].
+ * @return the line to type, or null when [command] is null or blank.
+ */
+private fun declaredResumeLine(command: String?, id: String): String? {
+    val line = command?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    if (id in line) return line
+    val firstWordEnd = line.indexOfFirst { it.isWhitespace() }.takeIf { it >= 0 } ?: line.length
+    return line.substring(0, firstWordEnd) + " --resume " + id + line.substring(firstWordEnd)
 }
 
 /**
@@ -1072,18 +1097,37 @@ internal fun resumeCommandOf(rec: AgentSessionRecord): String? {
  * tab is titled like the overview row and starts in the folder the agent ran
  * in; the resume command is typed into its shell the way the MCP `run`
  * tool does. Gemini has no resume command, so its tab just opens in the
- * folder. A worktree that has since been removed is recreated at its old path
- * first ([AgentResumePlanner]); when that is impossible, or the folder is gone
- * for good, the reason goes back as an [WindowEnvelope.AgentSessionError] and
- * no tab is created.
+ * folder.
  *
- * @param recordId the [AgentSessionSummary.id] of the row.
+ * A Claude Code conversation that is the main one of a task whose file declares an `open` action
+ * is resumed with that command, in the folder the action names (see [resumeCommandOf]). When that
+ * folder is gone the conversation is resumed plainly instead. Every other conversation is resumed
+ * plainly in its own folder: a worktree that has since been removed is recreated at its old path
+ * first ([AgentResumePlanner]); when that is impossible, or the folder is gone for good, the
+ * reason goes back as an [WindowEnvelope.AgentSessionError] and no tab is created.
+ *
+ * @param recordId the [AgentSessionSummary.id] of the row, or a conversation id.
  * @param ctx the connection that asked, which receives any error.
+ * @param open opens the tab and types the command; [openTabRunning] except in tests.
  */
-private suspend fun resumeAgentSession(recordId: String, ctx: WindowConnectionContext) {
+internal suspend fun resumeAgentSession(
+    recordId: String,
+    ctx: WindowConnectionContext,
+    open: (folder: String, title: String, command: String?) -> Unit = ::openTabRunning,
+) {
     val rec = ctx.agentTracker?.find(recordId)
     if (rec == null) {
         ctx.send(WindowEnvelope.AgentSessionError(recordId, "session no longer exists"))
+        return
+    }
+    val declared = ctx.taskIndex?.openOfMain(rec)?.takeIf { rec.agent == "claude" }
+    if (declared != null && withContext(Dispatchers.IO) { java.io.File(declared.folder).isDirectory }) {
+        val command = resumeCommandOf(rec, declared)
+        if (command == null) {
+            ctx.send(WindowEnvelope.AgentSessionError(recordId, "This conversation has no session id Lunamux can resume."))
+            return
+        }
+        open(declared.folder, rec.title ?: rec.branch ?: java.io.File(declared.folder).name, command)
         return
     }
     val plan = withContext(Dispatchers.IO) { AgentResumePlanner.plan(rec) }
@@ -1107,7 +1151,7 @@ private suspend fun resumeAgentSession(recordId: String, ctx: WindowConnectionCo
         ctx.send(WindowEnvelope.AgentSessionError(recordId, "This conversation has no session id Lunamux can resume."))
         return
     }
-    openTabRunning(cwd, rec.title ?: rec.branch ?: java.io.File(cwd).name, command)
+    open(cwd, rec.title ?: rec.branch ?: java.io.File(cwd).name, command)
 }
 
 /**

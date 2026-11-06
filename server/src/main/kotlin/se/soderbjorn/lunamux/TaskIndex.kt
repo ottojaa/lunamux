@@ -67,6 +67,7 @@ data class TaskListSession(val sessionId: String?, val title: String, val state:
  *   conversation runs now, or null when none was named or it is closed. The task remembers the
  *   conversation, not a pane, so the id is current even after a restart renumbered the panes.
  * @property status the task's one-line status, or null.
+ * @property questionWaits whether the status says a question waits for the person.
  */
 data class TaskListing(
     val id: String,
@@ -76,6 +77,7 @@ data class TaskListing(
     val mainConversation: String? = null,
     val ownSessionId: String? = null,
     val status: String? = null,
+    val questionWaits: Boolean = false,
 )
 
 /**
@@ -280,21 +282,28 @@ class TaskIndex(
      * Called by the MCP `set_task_status` tool. Line breaks become single spaces, the ends are
      * trimmed and the text is cut at [STATUS_MAX] characters; nothing left clears the status.
      *
+     * [questionWaits] belongs to the status: every call sets both, so a later status that does not
+     * repeat the flag takes it back, and clearing the status clears it too. The overview reads it
+     * to keep the row of a task whose main conversation is closed where the person looks, since
+     * resuming that conversation is what asks the question.
+     *
      * @param taskId an agent-made task or a task file's id.
      * @param text what the work is doing now.
      * @param by the pane that reports it, when the request says so.
+     * @param questionWaits whether a question waits for the person; ignored when [text] is empty.
      * @return the stored status, or null when it was cleared.
      * @throws TaskException when the task is unknown.
      */
-    fun setStatus(taskId: String, text: String, by: String?): String? {
+    fun setStatus(taskId: String, text: String, by: String?, questionWaits: Boolean = false): String? {
         requireTask(taskId)
         val clean = text.replace(Regex("\\s*[\\r\\n]+\\s*"), " ").trim().take(STATUS_MAX).trim().ifEmpty { null }
         synchronized(lock) {
             val now = clock()
             ensureMeta(taskId)
-            repo.setTaskStatus(taskId, clean, by, now)
+            repo.setTaskStatus(taskId, clean, by, now, questionWaits)
             meta = meta + (taskId to meta.getValue(taskId).copy(
                 status = clean, statusBy = clean?.let { by }, statusAt = clean?.let { now },
+                questionWaits = clean != null && questionWaits,
             ))
         }
         recompute()
@@ -408,11 +417,11 @@ class TaskIndex(
                 )
             }
         val fileListings = files.value.sortedBy { it.id }.map { f ->
-            TaskListing(f.id, f.title, "file", sessionsOf(f.id), mainConversationOf(f.id), ownSessionOf(f.id), statusOf(f.id))
+            TaskListing(f.id, f.title, "file", sessionsOf(f.id), mainConversationOf(f.id), ownSessionOf(f.id), statusOf(f.id), questionWaitsOf(f.id))
         }
         val fileIds = files.value.map { it.id }.toSet()
         val agentListings = rows.filter { it.id !in fileIds }.sortedBy { it.id }
-            .map { TaskListing(it.id, it.title, "agents", sessionsOf(it.id), mainConversationOf(it.id), ownSessionOf(it.id), statusOf(it.id)) }
+            .map { TaskListing(it.id, it.title, "agents", sessionsOf(it.id), mainConversationOf(it.id), ownSessionOf(it.id), statusOf(it.id), questionWaitsOf(it.id)) }
         return fileListings + agentListings
     }
 
@@ -441,6 +450,26 @@ class TaskIndex(
     }
 
     private fun statusOf(taskId: String): String? = synchronized(lock) { meta[taskId]?.status }
+
+    private fun questionWaitsOf(taskId: String): Boolean = synchronized(lock) { meta[taskId]?.questionWaits == true }
+
+    /**
+     * The `open` action a task file declares for the task whose main conversation is [record].
+     *
+     * Called by `resumeAgentSession`: a task's main conversation is picked up again with the
+     * command its task declares, so it starts the way it always starts, and any other conversation
+     * is resumed plainly. The match is by conversation id, so every run of the conversation counts as
+     * the main one. When several tasks name the conversation, the first by id that declares an
+     * `open` action wins.
+     *
+     * @param record the conversation being resumed.
+     * @return the declared action, or null when the conversation is no task's main one or its
+     *   task declares no `open` action (a task made through MCP never does).
+     */
+    fun openOfMain(record: AgentSessionRecord): TaskOpen? = synchronized(lock) {
+        _state.value.tasks.filter { it.mainConversation == record.conversationId }.sortedBy { it.id }
+            .firstNotNullOfOrNull { t -> files.value.firstOrNull { it.id == t.id }?.open }
+    }
 
     /** A pane or a record an operation applies to: the open record when an agent runs, else the pane's leaf. */
     private class Target(val recordId: String?, val leafId: String?)
@@ -551,6 +580,7 @@ class TaskIndex(
                     },
                     status = m?.status,
                     statusAtMillis = m?.statusAt,
+                    questionWaits = m?.questionWaits == true && m.status != null,
                     startedAtMillis = m?.startedAt ?: firstSeen,
                 )
             }

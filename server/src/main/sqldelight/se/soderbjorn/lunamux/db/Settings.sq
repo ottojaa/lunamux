@@ -50,6 +50,8 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
 -- What the server keeps about a task besides its name, for any task id (an agent-made task or a
 -- task file's): when the server first saw it, the pane whose session speaks for it, and its
 -- one-line status. A row is made on first sight of the task and never replaces another.
+-- question_waits is 1 while the task's status says a question waits for the person; it is set and
+-- cleared together with the status.
 -- lead_leaf is the pane's layout leaf id, which survives a restart; lead_session is the terminal
 -- session id the pane had when it was named, which does not (ids are handed out again from s1),
 -- and is the only thing an older row has. lead_agent_session is the agent's own conversation id of
@@ -63,7 +65,8 @@ CREATE TABLE IF NOT EXISTS task_meta (
     status_by    TEXT,
     status_at    INTEGER,
     lead_leaf    TEXT,
-    lead_agent_session TEXT
+    lead_agent_session TEXT,
+    question_waits INTEGER
 );
 
 -- The blocks agents write into a task's panel, any task id (an agent-made task or a task file's).
@@ -203,7 +206,7 @@ upsertAgentTask:
 INSERT OR REPLACE INTO agent_tasks(id, title, created_at, updated_at) VALUES (?, ?, ?, ?);
 
 selectTaskMeta:
-SELECT task_id, started_at, status, status_by, status_at, lead_agent_session FROM task_meta;
+SELECT task_id, started_at, status, status_by, status_at, lead_agent_session, question_waits FROM task_meta;
 
 -- The first stamp wins: a task's place in the overview must not move once it has one.
 stampTaskStart:
@@ -219,7 +222,7 @@ selectAgentSessionLeafIds:
 SELECT DISTINCT leaf_id FROM agent_sessions WHERE leaf_id IS NOT NULL;
 
 setTaskStatus:
-UPDATE task_meta SET status = ?, status_by = ?, status_at = ? WHERE task_id = ?;
+UPDATE task_meta SET status = ?, status_by = ?, status_at = ?, question_waits = ? WHERE task_id = ?;
 
 selectTaskPanelBlocks:
 SELECT task_id, block_id, position, kind, title, body, written_by, written_at

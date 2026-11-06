@@ -219,6 +219,61 @@ class McpTaskMetaTest {
     }
 
     @Test
+    fun `questionWaits is stored with the status, reported by both tools and set afresh by every call`() {
+        session("a")
+        val id = create("Work", """["a"]""")["taskId"]!!.jsonPrimitive.content
+        fun listedFlag() = payload2(call("list_tasks")).single { it["taskId"]!!.jsonPrimitive.content == id }["questionWaits"]!!.jsonPrimitive.content
+
+        assertEquals("false", listedFlag())
+        val set = call("set_task_status", """{"taskId":"$id","text":"which database?","questionWaits":true}""")
+        assertTrue(!isError(set), textOf(set))
+        assertEquals("true", payload(set)["questionWaits"]!!.jsonPrimitive.content)
+        assertTrue(taskInState(id).questionWaits)
+        assertEquals("which database?", taskInState(id).status)
+        assertEquals("true", listedFlag())
+
+        // A later status that does not repeat the flag says the question is answered.
+        call("set_task_status", """{"taskId":"$id","text":"migrating"}""")
+        assertTrue(!taskInState(id).questionWaits)
+        assertEquals("false", listedFlag())
+
+        // An empty text clears the flag with the status, even when the call passes it.
+        call("set_task_status", """{"taskId":"$id","text":"again?","questionWaits":true}""")
+        assertTrue(taskInState(id).questionWaits)
+        val cleared = call("set_task_status", """{"taskId":"$id","text":"","questionWaits":true}""")
+        assertEquals("false", payload(cleared)["questionWaits"]!!.jsonPrimitive.content)
+        assertTrue(!taskInState(id).questionWaits)
+        assertNull(taskInState(id).status)
+    }
+
+    @Test
+    fun `questionWaits survives a restart`() {
+        session("a")
+        val id = create("Work", """["a"]""")["taskId"]!!.jsonPrimitive.content
+        call("set_task_status", """{"taskId":"$id","text":"which database?","questionWaits":true}""")
+        val reopened = TaskIndex(repo, tracker, files, leafOfSession = { null }, clock = { now })
+        assertTrue(reopened.state.value.tasks.single { it.id == id }.questionWaits)
+    }
+
+    @Test
+    fun `the task tools' descriptions and parameters use no programme wording`() {
+        val tools = runBlocking {
+            McpServer.handleMessage("""{"jsonrpc":"2.0","id":1,"method":"tools/list"}""", McpScope.READ_WRITE, null, null)
+        }.body!!
+        val task = mcpJson.parseToJsonElement(tools).jsonObject["result"]!!.jsonObject["tools"]!!.jsonArray
+            .map { it.jsonObject }
+            .filter { it["name"]!!.jsonPrimitive.content in setOf("set_task_status", "list_tasks") }
+        assertEquals(2, task.size)
+        val banned = listOf("orchestrat", "programme", "manager", "card", "owner", "lead", "step ")
+        for (tool in task) {
+            val text = tool.toString().lowercase()
+            for (word in banned) assertTrue(word !in text, "${tool["name"]} mentions '$word'")
+        }
+        val status = task.single { it["name"]!!.jsonPrimitive.content == "set_task_status" }
+        assertTrue("questionWaits" in status["inputSchema"]!!.jsonObject["properties"]!!.jsonObject)
+    }
+
+    @Test
     fun `lead, status and start survive a restart`() {
         session("a")
         val id = create("Work", """["a"]""")["taskId"]!!.jsonPrimitive.content

@@ -623,6 +623,10 @@ enum class DiffLineType {
  * @param status the one-line status a session set through `set_task_status`, shown on the task's
  *   row; null when none was set or it was cleared.
  * @param statusAtMillis epoch millis the status was set, or null with no status.
+ * @param questionWaits whether the status says a question waits for the person. While the main
+ *   conversation is closed the row then stays among the live tasks: the conversation asks the
+ *   question as soon as ↵ resumes it. It is not a waiting conversation, so it adds to no count.
+ *   False whenever there is no status.
  * @param startedAtMillis epoch millis the server first saw the task, stamped once and never
  *   changed; the overview keeps rows in this order. Null only for a task not yet stamped.
  */
@@ -636,5 +640,6 @@ data class AgentTask(
     val mainConversation: String? = null,
     val status: String? = null,
     val statusAtMillis: Long? = null,
+    val questionWaits: Boolean = false,
     val startedAtMillis: Long? = null,
 )
