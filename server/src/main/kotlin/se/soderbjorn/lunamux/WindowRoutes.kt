@@ -1052,24 +1052,19 @@ private fun isPlainSessionId(id: String): Boolean = id.isNotEmpty() && id.length
  * so it gets plain `codex resume`, which asks which one). Gemini has no resume, and an id with a
  * character a shell would interpret is refused.
  *
- * A Claude Code conversation that is a task's main one is resumed with the command its task file
- * declares ([open]), so it starts the way it always starts, with its start-up work. Claude reads a
- * trailing word as a prompt, so when that command does not name the conversation already,
- * `--resume <id>` goes in right after its program word, but only into a plain `claude` line (see
- * [declaredResumeLine]); any other line leaves Lunamux's own. [open] means nothing to the other
- * agents.
+ * This is the plain line. A Claude Code conversation that is a task's main one is resumed with the
+ * command its task file declares instead, when [declaredResumeFor] says it can be; this line is what
+ * every other conversation gets, and what the main gets when it cannot.
  *
  * @param rec the record of the conversation, the newest of its runs.
- * @param open the `open` action of the task this conversation is the main one of, or null when it
- *   is not a task's main conversation or its task declares none.
  * @return the command line, or null when there is nothing to type: Gemini, or a Claude Code
  *   conversation with no usable id.
- * @see TaskIndex.openOfMain
+ * @see declaredResumeFor
  */
-internal fun resumeCommandOf(rec: AgentSessionRecord, open: TaskOpen? = null): String? {
+internal fun resumeCommandOf(rec: AgentSessionRecord): String? {
     val id = rec.agentSessionId?.takeIf(::isPlainSessionId)
     return when (rec.agent) {
-        "claude" -> id?.let { declaredResumeLine(open?.command, it) ?: "claude --resume $it" }
+        "claude" -> id?.let { "claude --resume $it" }
         "codex" -> id?.let { "codex resume $it" } ?: "codex resume"
         else -> null
     }
@@ -1078,7 +1073,7 @@ internal fun resumeCommandOf(rec: AgentSessionRecord, open: TaskOpen? = null): S
 /**
  * A task's declared `open` command made to resume conversation [id].
  *
- * Called by [resumeCommandOf] and [declaredResumeFor]. A command that already holds the id is
+ * Called by [declaredResumeFor]. A command that already holds the id is
  * returned as it is. Otherwise `--resume <id>` is put after the program word, ahead of any prompt
  * words, but only when the command is a plain `claude` line (see [isPlainClaudeLine]): a line that
  * already resumes or continues something, names another program, or chains commands cannot take
@@ -1135,7 +1130,8 @@ internal fun isPlainClaudeLine(line: String): Boolean {
     val firstWordEnd = line.indexOfFirst { it.isWhitespace() }.takeIf { it >= 0 } ?: line.length
     val program = words.firstOrNull() ?: return false
     if (line.substring(0, firstWordEnd) != program || program.substringAfterLast('/') != "claude") return false
-    return words.drop(1).none { it == "-r" || it == "-c" || it == "--continue" || it == "--resume" || it.startsWith("--resume=") }
+    return words.drop(1).none { it == "-r" || it == "-c" || it == "--continue" || it == "--resume" || it.startsWith("--resume=") ||
+            it == "--session-id" || it.startsWith("--session-id=") }
 }
 
 /**

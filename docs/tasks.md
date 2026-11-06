@@ -118,7 +118,7 @@ since that is what the person is asked to allow.
      starts it: a command that names the conversation (`--resume <id>`) is typed as written. One that
      does not is made to name it by putting `--resume <conversation id>` after its program word, and
      only when it is one plain `claude` line (no other program, no `&&`, `;`, `|` or other shell
-     chaining, no `--resume`, `-r`, `--continue` or `-c` already) and the conversation ran in the
+     chaining, no `--resume`, `-r`, `--continue`, `-c` or `--session-id` already) and the conversation ran in the
      action's folder, because `claude --resume` finds a conversation only from the folder it ran in.
      Only a Claude conversation takes the declared command, and only its task's main conversation
      does: any other conversation, a task without an `open` action (every task an agent made), a
