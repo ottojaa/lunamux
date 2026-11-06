@@ -232,7 +232,7 @@ class AgentSessionSearchTest {
         val i = assertNotNull(inspect("m"))
         assertNull(i.uncommitted)
         assertNull(i.unpushed)
-        assertNotNull(i.resumeNote)
+        assertEquals("Its folder is gone. It resumes in ${dbDir.path}.", i.resumeNote)
         assertNull(inspect("nope"))
     }
 

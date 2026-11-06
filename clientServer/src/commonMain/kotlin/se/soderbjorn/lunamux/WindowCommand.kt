@@ -275,10 +275,10 @@ sealed class WindowCommand {
      * or `codex resume <id>` when Codex's id is known). A conversation with no id to resume is
      * answered with [WindowEnvelope.AgentSessionError], and `claude --continue` is never typed,
      * because it picks the newest conversation of the folder, which may be another one. Gemini has
-     * no resume; for it the tab just opens in the folder. When a worktree's folder was removed, the
-     * server first recreates it at the old path (from the branch, or from the
-     * default branch when the branch is gone); a folder that cannot be
-     * recreated is answered with [WindowEnvelope.AgentSessionError].
+     * no resume; for it the tab just opens in the folder. When the folder was removed, the tab opens
+     * in the nearest folder above it that exists, and the server runs no git command: the agent
+     * rebuilds a removed worktree itself. A conversation with no recorded folder is answered with
+     * [WindowEnvelope.AgentSessionError].
      *
      * @param recordId the [AgentSessionSummary.id] of the row
      */

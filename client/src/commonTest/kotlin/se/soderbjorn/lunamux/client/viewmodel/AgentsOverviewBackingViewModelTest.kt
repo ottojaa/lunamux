@@ -313,7 +313,7 @@ class AgentsOverviewBackingViewModelTest {
             AgentSessionMatch(session("live", "working", title = "Live one"), "transcript", "…a needle here…", 3, 6, null),
             AgentSessionMatch(
                 session("gone", "ended", leaf = null, endedAt = 4, title = "Other"), "prompt", "fix needle", 4, 6,
-                "Worktree removed. Resume recreates it from branch x.",
+                "Its folder is gone. It resumes in /work.",
             ),
         )
         val s = vm.state
@@ -324,7 +324,7 @@ class AgentsOverviewBackingViewModelTest {
         assertEquals("title", s.rows[0].field)
         assertEquals(0 to 6, s.rows[0].matchStart to s.rows[0].matchLength)
         assertEquals("…a needle here…", s.rows[1].snippet)
-        assertEquals("Worktree removed. Resume recreates it from branch x. · in first prompt", s.rows[2].extra)
+        assertEquals("Its folder is gone. It resumes in /work. · in first prompt", s.rows[2].extra)
         assertEquals(AgentsOverviewBackingViewModel.Enter.RESUME, s.rows[2].enter)
     }
 
@@ -395,8 +395,8 @@ class AgentsOverviewBackingViewModelTest {
         vm.inspectSelected()
         assertEquals(listOf<WindowCommand>(WindowCommand.InspectAgentSession("old")), sent)
         assertEquals("", vm.state.rows.single().extra)
-        windowState.updateAgentInspection(WindowEnvelope.AgentSessionInspection("old", live = false, resumeNote = "Worktree removed."))
-        assertEquals("Worktree removed.", vm.state.rows.single().extra)
+        windowState.updateAgentInspection(WindowEnvelope.AgentSessionInspection("old", live = false, resumeNote = "Its folder is gone. It resumes in /work."))
+        assertEquals("Its folder is gone. It resumes in /work.", vm.state.rows.single().extra)
     }
 
     @Test

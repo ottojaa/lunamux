@@ -242,18 +242,18 @@ class ResumeCommandTest {
         assertEquals("claude --resume a-s1", command)
     }
 
-    /** A declared folder that is gone does not block the resume: the plain way is used. */
+    /** A declared folder that is gone does not block the resume: the declared line is typed in the nearest folder above it. */
     @Test
-    fun aDeclaredFolderThatIsGoneFallsBackToThePlainWay() {
-        files.value = listOf(taskFile("t1", TaskOpen("claude --resume a-s1 --model opus", File(base, "gone").path)))
+    fun aDeclaredFolderThatIsGoneTakesTheDeclaredLineInTheNearestFolderAboveIt() {
+        files.value = listOf(taskFile("t1", TaskOpen("claude --resume a-s1 --model opus", File(base, "gone/inner").path)))
         val main = session("s1")
         index.recompute()
         index.setOwnSession("t1", "s1")
         resume(main)
         assertTrue(sent.isEmpty(), "no error expected: $sent")
         val (folder, _, command) = opened.single()
-        assertEquals(main.cwd, folder)
-        assertEquals("claude --resume a-s1", command)
+        assertEquals(base.path, folder)
+        assertEquals("claude --resume a-s1 --model opus", command)
     }
 
     /**

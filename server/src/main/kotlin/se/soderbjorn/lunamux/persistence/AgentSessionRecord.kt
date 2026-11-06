@@ -46,7 +46,7 @@ package se.soderbjorn.lunamux.persistence
  * @property endedAt epoch millis when it ended, or null while open.
  * @property repoRoot absolute path of the repository's main checkout (the parent of
  *   `--git-common-dir`), or null outside git and for records made before it was kept.
- *   Resume uses it to recreate a removed worktree.
+ *   Stored with the record; Resume does not read it.
  * @property lastSaid the first line of the last paragraph of the agent's most recent reply
  *   (at most 160 characters), or null before it has said anything. A member row shows it
  *   as the status line when the session has no tool line to show.

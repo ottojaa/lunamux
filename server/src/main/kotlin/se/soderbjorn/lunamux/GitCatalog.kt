@@ -261,62 +261,6 @@ object GitCatalog {
     }
 
     /**
-     * Add a worktree at [worktreePath] checked out on [branchName].
-     *
-     * Called by [AgentResumePlanner.recreate] to bring back a worktree that was removed.
-     * Without [startPoint] the branch must already exist and is checked out as it is; with
-     * one, a new branch of that name is created there (`worktree add -b`).
-     *
-     * @param repoRoot the main checkout the worktree belongs to
-     * @param branchName the branch to check out, or create when [startPoint] is given
-     * @param worktreePath absolute path where the worktree directory will be created
-     * @param startPoint the commit-ish a new branch starts from, or null to use the existing branch
-     * @return null on success, or git's error message
-     * @see createWorktree
-     */
-    fun addWorktree(repoRoot: Path, branchName: String, worktreePath: Path, startPoint: String? = null): String? {
-        val args = if (startPoint == null) {
-            arrayOf("worktree", "add", worktreePath.toString(), branchName)
-        } else {
-            arrayOf("worktree", "add", "-b", branchName, worktreePath.toString(), startPoint)
-        }
-        val result = runGitWithStderr(repoRoot, *args)
-        return if (result.success) null else (result.stderr.trim().ifBlank { "Failed to create worktree" })
-    }
-
-    /**
-     * Forget worktrees whose folder is gone (`git worktree prune`).
-     *
-     * Called before [addWorktree] recreates a worktree at a path git still has registered
-     * after the folder was deleted by hand; without it git refuses with "missing but already
-     * registered".
-     *
-     * @param repoRoot the main checkout
-     */
-    fun pruneWorktrees(repoRoot: Path) {
-        runGit(repoRoot, "worktree", "prune")
-    }
-
-    /**
-     * Whether [ref] exists in the repository at [cwd].
-     *
-     * @param cwd any folder inside the repository
-     * @param ref a full ref name such as `refs/heads/main`
-     * @return true when the ref resolves
-     */
-    fun refExists(cwd: Path, ref: String): Boolean = runGit(cwd, "show-ref", "--verify", "--quiet", ref) != null
-
-    /**
-     * The commit-ish new work should start from when a branch is gone: the remote's default
-     * branch (`origin/HEAD`), else the checked-out commit of [cwd].
-     *
-     * @param cwd the main checkout
-     * @return for example `origin/main`, or `HEAD`
-     */
-    fun defaultStartPoint(cwd: Path): String =
-        runGit(cwd, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")?.trim()?.takeIf { it.isNotEmpty() } ?: "HEAD"
-
-    /**
      * How many files have uncommitted changes (staged, unstaged or untracked).
      *
      * Called for the close confirmation in the agents overview.

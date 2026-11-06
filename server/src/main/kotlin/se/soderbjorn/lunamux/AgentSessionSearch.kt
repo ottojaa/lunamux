@@ -8,7 +8,7 @@
  * for [WindowCommand.SearchAgentSessions] and [WindowCommand.InspectAgentSession]
  * and sends the answers to the asking connection only.
  *
- * @see AgentResumePlanner
+ * @see resumeNoteOf
  * @see se.soderbjorn.lunamux.persistence.SettingsRepository.searchAgentSessions
  */
 package se.soderbjorn.lunamux
@@ -103,7 +103,7 @@ object AgentSessionSearch {
                     snippet = found.snippet,
                     start = found.start,
                     length = found.length,
-                    resumeNote = if (rec.state == "ended") AgentResumePlanner.note(AgentResumePlanner.plan(rec)) else null,
+                    resumeNote = if (rec.state == "ended") resumeNoteOf(rec, tasks?.openOfMain(rec)) else null,
                     taskTitle = taskTitle,
                 )
             }
@@ -117,9 +117,11 @@ object AgentSessionSearch {
      *
      * @param recordId the record the user selected.
      * @param tracker where the record is looked up.
+     * @param tasks says which `open` action a task's main conversation resumes with, so the note
+     *   names the folder Resume really opens; null when no task is known.
      * @return the details, or null when the record no longer exists.
      */
-    fun inspect(recordId: String, tracker: AgentSessionTracker?): WindowEnvelope.AgentSessionInspection? {
+    fun inspect(recordId: String, tracker: AgentSessionTracker?, tasks: TaskIndex? = null): WindowEnvelope.AgentSessionInspection? {
         val rec = tracker?.find(recordId) ?: return null
         val open = rec.state != "ended"
         val snapshot = if (open) rec.terminalSessionId?.let { livePaneSnapshot(it) } else null
@@ -134,7 +136,7 @@ object AgentSessionSearch {
             unpushed = folder?.let(GitCatalog::unpushedCount),
             branch = folder?.let { GitCatalog.runGit(it, "branch", "--show-current")?.trim()?.takeIf(String::isNotEmpty) }
                 ?: rec.branch,
-            resumeNote = if (open) null else AgentResumePlanner.note(AgentResumePlanner.plan(rec)),
+            resumeNote = if (open) null else resumeNoteOf(rec, tasks?.openOfMain(rec)),
         )
     }
 

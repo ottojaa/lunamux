@@ -328,8 +328,8 @@ sealed class WindowEnvelope {
      * @param unpushed how many commits are on the branch but on no remote; null when unknown
      * @param branch the branch checked out in the folder now, else the one recorded
      * @param resumeNote what Resume would do when it is not simply "run the agent's resume
-     *   command in the folder" (for example "Worktree removed. Resume recreates it from
-     *   branch x."); null when nothing needs saying
+     *   command in the folder" (for example "Its folder is gone. It resumes in /work/repo.");
+     *   null when nothing needs saying
      */
     @Serializable
     @SerialName("agentSessionInspection")
