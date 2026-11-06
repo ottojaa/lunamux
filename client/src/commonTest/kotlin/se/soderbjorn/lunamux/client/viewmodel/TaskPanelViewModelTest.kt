@@ -293,4 +293,52 @@ class TaskPanelViewModelTest {
             assertFalse(isSafeUrl(url), url)
         }
     }
+
+    @Test
+    fun `a hidden session that only works has nothing to open`() {
+        layout()
+        give(
+            listOf(task()),
+            listOf(session("own"), session("b", title = "Quiet", leaf = "leaf-bg")),
+        )
+        assertEquals(MemberAction.NONE, vm.state.agents.shown.single().action)
+        assertNull(vm.state.agents.shown.single().hint)
+    }
+
+    @Test
+    fun `a list of exactly five shows no more button`() {
+        layout()
+        give(listOf(task()), listOf(session("own")))
+        blocks(block("l", TaskBlockContent.Links((1..5).map { TaskLink(label = "Link $it", url = "https://example.com/$it") })))
+        assertEquals(0, vm.state.links.more)
+        assertEquals(5, vm.state.links.shown.size)
+    }
+
+    @Test
+    fun `an agent line never names a tool`() {
+        assertNull(TaskPanelViewModel.inWords("Running cd"))
+        assertNull(TaskPanelViewModel.inWords("  Using Grep "))
+        assertNull(TaskPanelViewModel.inWords("   "))
+        assertNull(TaskPanelViewModel.inWords(null))
+        assertEquals("Run the server tests", TaskPanelViewModel.inWords(" Run the server tests "))
+        layout()
+        give(
+            listOf(task()),
+            listOf(session("own"), session("w", title = "Builder", leaf = "leaf-w", nowLine = "Running cd")),
+        )
+        assertNull(vm.state.agents.shown.single().nowLine)
+    }
+
+    @Test
+    fun `a link listed twice shows once, as its dated row`() {
+        layout()
+        give(listOf(task()), listOf(session("own")))
+        blocks(block("a", TaskBlockContent.Links(listOf(
+            TaskLink("link", "Same, no time", "https://example.com/same"),
+            TaskLink("PR", "Same, dated", "https://example.com/same", now - 120_000),
+        ))))
+        val rows = vm.state.links.shown
+        assertEquals(1, rows.size)
+        assertEquals("Same, dated", rows.single().title)
+    }
 }
