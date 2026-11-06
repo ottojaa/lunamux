@@ -4,7 +4,7 @@
  *
  * It holds [AgentsOverviewSeed]: about twenty ended agent sessions that were last active today,
  * two, six, twelve and thirty days ago, some of them grouped into agent-made tasks, plus a few
- * task files whose members are live. It also seeds the awkward rows a real installation produces:
+ * task files whose sessions are open. It also seeds the awkward rows a real installation produces:
  * sessions that say nothing about what the work is (a home folder, a branch named after a run, a
  * detached HEAD), previews written in markdown, a bare code fence, and sessions a server restart
  * ends. It also seeds one agent-made task, "Release 4.2 notes", with its own session, a one-line status
@@ -20,10 +20,6 @@
  */
 package se.soderbjorn.lunamux
 
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import se.soderbjorn.lunamux.auth.DeviceAuth
@@ -259,9 +255,12 @@ object AgentsOverviewSeed {
                 ),
             )
         }
-        val files = writeTaskFiles(tasksDir, workdir, now)
-        return Summary(sessions.size + cases.size + NOTES_SESSIONS, tasks.size, files)
+        val files = writeTaskFiles(repo, tasksDir, workdir, now)
+        return Summary(sessions.size + cases.size + NOTES_SESSIONS + FILE_SESSIONS, tasks.size, files)
     }
+
+    /** How many session records [writeTaskFiles] writes: the sessions of the six seeded task files. */
+    private const val FILE_SESSIONS = 13
 
     /** How many session records [seedReleaseNotes] writes: the task's own session and two background ones. */
     private const val NOTES_SESSIONS = 3
@@ -397,98 +396,106 @@ object AgentsOverviewSeed {
     }
 
     /**
-     * Write the task files: one live task that needs the person and works, one whose members are all
-     * done but have not ended, one with work still in review or queued, one whose file has gone stale, and two whose members have all ended.
+     * Write the task files and the sessions that belong to them: one task that needs the person and
+     * works, one whose sessions are all done but have not ended, one with work still in review or
+     * queued, one that is quiet, and two whose sessions have all ended.
      *
-     * Called by [seed]. Each file is written under a dot-name and renamed into place, as a real
-     * writer would.
+     * Called by [seed]. A task file only declares the task (id, title, repository and an `open`
+     * action); the sessions that make it up are records carrying the task's id. Each file is
+     * written under a dot-name and renamed into place, as a real writer would.
      *
-     * @param tasksDir the folder to write into.
-     * @param workdir an absolute folder for the files' `open` actions.
+     * @param repo the database the session records are saved to.
+     * @param tasksDir the folder to write the files into.
+     * @param workdir an absolute folder for the files' `open` actions and the records' folder.
      * @param now the time the ages are counted back from.
      * @return how many files were written.
      */
-    private fun writeTaskFiles(tasksDir: File, workdir: String, now: Long): Int {
-        fun member(title: String, state: String, ago: Long, line: String? = null, label: String? = null, links: List<String> = emptyList()): JsonObject =
-            buildJsonObject {
-                put("title", title)
-                put("state", state)
-                put("since", java.time.Instant.ofEpochMilli(now - ago).toString())
-                if (line != null) put("line", line)
-                if (label != null) put("label", label)
-                if (links.isNotEmpty()) put("links", buildJsonArray { links.forEach { add(JsonPrimitive(it)) } })
-            }
+    private fun writeTaskFiles(repo: SettingsRepository, tasksDir: File, workdir: String, now: Long): Int {
+        class Member(val title: String, val state: String, val ago: Long, val line: String? = null)
 
-        fun task(id: String, title: String, repo: String, members: List<JsonObject>, mtimeAgo: Long) {
+        fun task(id: String, title: String, repoName: String, members: List<Member>) {
             val json = buildJsonObject {
-                put("version", 2)
                 put("id", id)
                 put("title", title)
-                put("repo", repo)
+                put("repo", repoName)
                 put("open", buildJsonObject {
                     put("command", "echo opened $title")
                     put("folder", workdir)
                 })
-                put("members", JsonArray(members))
             }
             val tmp = File(tasksDir, ".$id.json.tmp")
             tmp.writeText(json.toString())
-            val target = File(tasksDir, "$id.json")
-            tmp.renameTo(target)
-            target.setLastModified(now - mtimeAgo)
+            tmp.renameTo(File(tasksDir, "$id.json"))
+            members.forEachIndexed { i, m ->
+                val at = now - m.ago
+                repo.saveAgentSession(
+                    AgentSessionRecord(
+                        id = "$id-${i + 1}",
+                        agent = "claude",
+                        agentSessionId = "5eed0002-0000-4000-8000-%012d".format((id.hashCode().toLong() and 0xffffffL) * 100 + i),
+                        source = "hooks",
+                        cwd = workdir,
+                        repo = repoName,
+                        title = m.title,
+                        firstPrompt = m.title,
+                        state = m.state,
+                        stateSince = at,
+                        createdAt = at - 40 * MINUTE,
+                        endedAt = if (m.state == "ended") at else null,
+                        repoRoot = workdir,
+                        question = if (m.state == "needs_you") m.line else null,
+                        nowLine = if (m.state == "working") m.line else null,
+                        taskId = id,
+                    ),
+                )
+            }
         }
 
         task(
             "seed-access-control", "Access control", "work-app",
             listOf(
-                member("Role model", "needs_you", 12 * MINUTE, line = "Should admins inherit viewer rights?", links = listOf("ACC-12")),
-                member("Login audit trail", "working", 3 * MINUTE, line = "Writing the audit log migration"),
-                member("Permissions page", "done", 40 * MINUTE, label = "in review", links = listOf("#212")),
+                Member("Role model", "needs_you", 12 * MINUTE, line = "Should admins inherit viewer rights?"),
+                Member("Login audit trail", "working", 3 * MINUTE, line = "Writing the audit log migration"),
+                Member("Permissions page", "done", 40 * MINUTE),
             ),
-            mtimeAgo = 0,
         )
-        // Every member is done but none has ended, the way a programme holds finished pull
+        // Every session is done but none has ended, the way a programme holds finished pull
         // requests for its merge rule. Nothing in it moves or waits, so it belongs with the
         // finished work in EARLIER, not in NOW.
         task(
             "seed-release-train", "Release train", "lunamux",
             listOf(
-                member("Tasks panel", "done", HOUR, label = "done", links = listOf("#231")),
-                member("Search by task", "done", 3 * HOUR, label = "done", links = listOf("#232")),
-                member("Seed script", "done", 5 * HOUR, label = "done", links = listOf("#233")),
+                Member("Tasks panel", "done", HOUR),
+                Member("Search by task", "done", 3 * HOUR),
+                Member("Seed script", "done", 5 * HOUR),
             ),
-            mtimeAgo = 0,
         )
         // Open work that is neither waiting on the person nor running: one pull request in review,
         // one queued. It stays in NOW, because it still has something left to do.
         task(
             "seed-billing-cleanup", "Billing cleanup", "billing",
             listOf(
-                member("Refund flow", "done", 2 * HOUR, label = "in review", links = listOf("#240")),
-                member("Receipt emails", "done", 6 * HOUR, label = "queued"),
+                Member("Refund flow", "done", 2 * HOUR),
+                Member("Receipt emails", "done", 6 * HOUR),
             ),
-            mtimeAgo = 0,
         )
         task(
             "seed-nightly-sync", "Nightly sync", "ops",
-            listOf(member("Sync worker", "working", 2 * HOUR, line = "Copying the ledger")),
-            mtimeAgo = 25 * MINUTE,
+            listOf(Member("Sync worker", "working", 2 * HOUR, line = "Copying the ledger")),
         )
         task(
             "seed-release-42", "Release 4.2", "lunamux",
             listOf(
-                member("Cut the branch", "ended", 2 * DAY + HOUR, label = "done", links = listOf("#201")),
-                member("Write the notes", "ended", 2 * DAY, label = "done"),
+                Member("Cut the branch", "ended", 2 * DAY + HOUR),
+                Member("Write the notes", "ended", 2 * DAY),
             ),
-            mtimeAgo = 2 * DAY,
         )
         task(
             "seed-docs-sweep", "Docs sweep", "lunamux",
             listOf(
-                member("Fix the broken links", "ended", 9 * DAY, label = "done", links = listOf("#190")),
-                member("Update screenshots", "ended", 9 * DAY + 4 * HOUR, label = "done"),
+                Member("Fix the broken links", "ended", 9 * DAY),
+                Member("Update screenshots", "ended", 9 * DAY + 4 * HOUR),
             ),
-            mtimeAgo = 9 * DAY,
         )
         return 6
     }
@@ -497,8 +504,7 @@ object AgentsOverviewSeed {
      * Refuse a path a real installation uses.
      *
      * Called by [seed] before it touches anything: the production and dev databases live in
-     * `~/Library/Application Support/Termtastic`, and the real tasks are in `~/.lunamux/tasks`
-     * (or the older `agent-groups`).
+     * `~/Library/Application Support/Termtastic`, and the real tasks are in `~/.lunamux/tasks`.
      *
      * @param dbFile the database path to check.
      * @param tasksDir the task folder to check.
@@ -512,7 +518,7 @@ object AgentsOverviewSeed {
             "Refusing to seed $db: it is a real installation's database. Give a scratch path."
         }
         val dir = tasksDir.absoluteFile.canonicalFile
-        require(dir != File(home, ".lunamux/tasks").canonicalFile && dir != File(home, ".lunamux/agent-groups").canonicalFile) {
+        require(dir != File(home, ".lunamux/tasks").canonicalFile) {
             "Refusing to seed $dir: it is the folder Lunamux reads task files from. Give a scratch folder."
         }
     }

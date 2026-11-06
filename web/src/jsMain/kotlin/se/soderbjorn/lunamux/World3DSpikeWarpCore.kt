@@ -438,7 +438,7 @@ private class WorldStatus(
 )
 
 /**
- * Tallies every world's waiting and working conversations with [AgentCounts.byWorld], the same
+ * Tallies every world's waiting and working conversations with [AgentCounts.of], the same
  * rule the footer and the agents overview count with, so the boxes agree with both. Returns one
  * [WorldStatus] per world that has any activity, in the config's world order; worlds with
  * nothing waiting or working are omitted (so they get no box).
@@ -450,9 +450,9 @@ private class WorldStatus(
  */
 private fun computeWorldStatuses(): List<WorldStatus> {
     val cfg = latestWindowConfig ?: return emptyList()
-    val counts = AgentCounts.byWorld(
+    val counts = AgentCounts.of(
         lunamuxClient.windowState.agentSessions.value, cfg, kotlin.js.Date.now().toLong(),
-    )
+    ).byWorld
     return cfg.worlds.mapNotNull { world ->
         val c = counts[world.id] ?: return@mapNotNull null
         WorldStatus(world.id, world.name, world.themeSelection, c.working, c.waiting)

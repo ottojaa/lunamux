@@ -9,15 +9,14 @@
 package se.soderbjorn.lunamux.client.viewmodel
 
 import se.soderbjorn.lunamux.AgentSessionSummary
-import se.soderbjorn.lunamux.AgentTask
 import se.soderbjorn.lunamux.WindowConfig
 
 /**
- * Counts waiting and working conversations, background ones included.
+ * Counts waiting and working conversations, background ones included, that sit in a pane.
  *
- * Called by [AgentsOverviewBackingViewModel] for its [AgentsOverviewBackingViewModel.State] and by
- * the web footer (and its 3D twin) through [AgentCounts.of], so no screen keeps its own copy of
- * the rule.
+ * Called by [AgentsOverviewBackingViewModel] for its [AgentsOverviewBackingViewModel.State] and its
+ * rows, by the checks in [OverviewChecks], and by the web footer (and its 3D twin) through
+ * [AgentCounts.of], so no screen keeps its own copy of the rule.
  */
 object AgentCounts {
     private const val ENDED = "ended"
@@ -28,66 +27,87 @@ object AgentCounts {
      * How many conversations wait for the person and how many are moving.
      *
      * @property waiting conversations that wait for the person.
-     * @property working conversations that work and are moving (neither quiet nor stale).
+     * @property working conversations that work and are moving (not quiet).
      */
     data class Counts(val waiting: Int, val working: Int)
 
     /**
-     * Count the conversations in [sessions], one per summary (the server sends one per conversation),
-     * and the members of [tasks] that Lunamux does not host.
+     * The counts of one layout: the total, and the same conversations split by the world their pane
+     * sits in.
      *
-     * A conversation counts while it is not ended, in a visible tab or a background one. A member a
-     * task file lists but Lunamux does not host counts only while its task's main conversation is
-     * open: before that the question is not the person's to answer, since only resuming the
-     * conversation asks it.
-     *
-     * @param sessions the conversation summaries the server pushed.
-     * @param tasks the tasks the server pushed.
-     * @param nowMillis the current epoch millis, which decides who has gone quiet.
-     * @return the two counts.
-     * @see AgentsOverviewBackingViewModel.isMoving
+     * @property total every waiting and working conversation that sits in a pane.
+     * @property byWorld [total] split by world id, only for worlds with at least one waiting or
+     *   working conversation; a layout without worlds uses the key `""`. The counts add up to
+     *   [total].
      */
-    fun of(sessions: List<AgentSessionSummary>, tasks: List<AgentTask>, nowMillis: Long): Counts {
-        val open = sessions.filter { it.state != ENDED }
-        var waiting = open.count { it.state == NEEDS_YOU }
-        var working = open.count {
-            AgentsOverviewBackingViewModel.isMoving(it.state == WORKING, null, it.lastActivityAt ?: it.stateSince, nowMillis)
-        }
-        val byKey = sessions.associateBy { it.id } + sessions.associateBy { it.conversationId }
-        for (task in tasks) {
-            val mainOpen = task.mainConversation?.let(byKey::get)?.let { it.state != ENDED } == true
-            if (!mainOpen) continue
-            for (member in task.members) {
-                if (member.recordId?.let(byKey::get) != null) continue
-                if (member.state == NEEDS_YOU) waiting++
-                if (AgentsOverviewBackingViewModel.isMoving(member.state == WORKING, task.refreshedAtMillis, task.refreshedAtMillis, nowMillis)) working++
-            }
-        }
-        return Counts(waiting, working)
+    data class Tally(val total: Counts, val byWorld: Map<String, Counts>)
+
+    /**
+     * Where a conversation's pane sits, or null when it has none: an ended conversation has no
+     * pane, and neither has one whose pane the layout does not hold.
+     */
+    private fun placeOf(s: AgentSessionSummary, config: WindowConfig?): TaskMembers.PanePlace? {
+        if (s.state == ENDED || config == null) return null
+        return s.leafId?.let { TaskMembers.locate(config, it) }
     }
 
     /**
-     * The same two counts split by the world each conversation's pane sits in, for the footer's
-     * per-world lines and the 3D view's world boxes. A conversation with no pane in the layout
-     * (an unhosted member, or a closed pane) has no world and is left out; [of] still counts it.
+     * Whether [s] is one of the conversations that wait for the person: it asks, and it sits in a
+     * pane. Background tabs hold panes too, so a background agent that waits counts.
+     *
+     * Called by [of] and by the overview's rows, so a row says "needs you" for exactly the
+     * conversations the footer counts.
+     *
+     * @param s the conversation.
+     * @param config the window layout, or null before it has arrived.
+     * @return true when the conversation counts as waiting.
+     */
+    fun isWaiting(s: AgentSessionSummary, config: WindowConfig?): Boolean =
+        s.state == NEEDS_YOU && placeOf(s, config) != null
+
+    /**
+     * Whether [s] is one of the conversations that work and are moving: it works, it sits in a pane
+     * and it has not gone quiet.
+     *
+     * Called by [of] and by the overview's rows, for the same reason as [isWaiting].
+     *
+     * @param s the conversation.
+     * @param config the window layout, or null before it has arrived.
+     * @param nowMillis the current epoch millis, which decides who has gone quiet.
+     * @return true when the conversation counts as working.
+     * @see AgentsOverviewBackingViewModel.isMoving
+     */
+    fun isWorking(s: AgentSessionSummary, config: WindowConfig?, nowMillis: Long): Boolean =
+        placeOf(s, config) != null &&
+            AgentsOverviewBackingViewModel.isMoving(s.state == WORKING, s.lastActivityAt ?: s.stateSince, nowMillis)
+
+    /**
+     * Count the conversations in [sessions] that wait or work, in one pass: the total and the lines
+     * of the worlds come from the same conversations, so the lines always add up to the total.
+     *
+     * Only a conversation with a pane in [config] counts, one per summary (the server sends one per
+     * conversation), whichever tab the pane is in and whichever task the conversation belongs to.
      *
      * @param sessions the conversation summaries the server pushed.
-     * @param config the window layout that says which world holds each pane.
+     * @param config the window layout that says where each pane sits, or null before it has arrived.
      * @param nowMillis the current epoch millis, which decides who has gone quiet.
-     * @return the counts by world id, only for worlds with at least one waiting or working
-     *   conversation; a layout without worlds uses the key `""`.
+     * @return the total and the per-world counts.
      */
-    fun byWorld(sessions: List<AgentSessionSummary>, config: WindowConfig, nowMillis: Long): Map<String, Counts> {
-        val out = LinkedHashMap<String, Counts>()
+    fun of(sessions: List<AgentSessionSummary>, config: WindowConfig?, nowMillis: Long): Tally {
+        var waiting = 0
+        var working = 0
+        val byWorld = LinkedHashMap<String, Counts>()
         for (s in sessions) {
-            if (s.state == ENDED) continue
-            val world = s.leafId?.let { TaskMembers.locate(config, it) }?.let { it.worldId ?: "" } ?: continue
-            val waiting = if (s.state == NEEDS_YOU) 1 else 0
-            val working = if (AgentsOverviewBackingViewModel.isMoving(s.state == WORKING, null, s.lastActivityAt ?: s.stateSince, nowMillis)) 1 else 0
-            if (waiting == 0 && working == 0) continue
-            val prev = out[world] ?: Counts(0, 0)
-            out[world] = Counts(prev.waiting + waiting, prev.working + working)
+            val place = placeOf(s, config) ?: continue
+            val waits = if (s.state == NEEDS_YOU) 1 else 0
+            val works = if (AgentsOverviewBackingViewModel.isMoving(s.state == WORKING, s.lastActivityAt ?: s.stateSince, nowMillis)) 1 else 0
+            if (waits == 0 && works == 0) continue
+            waiting += waits
+            working += works
+            val world = place.worldId ?: ""
+            val prev = byWorld[world] ?: Counts(0, 0)
+            byWorld[world] = Counts(prev.waiting + waits, prev.working + works)
         }
-        return out
+        return Tally(Counts(waiting, working), byWorld)
     }
 }

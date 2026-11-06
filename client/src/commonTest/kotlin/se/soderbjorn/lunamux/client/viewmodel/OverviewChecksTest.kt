@@ -41,7 +41,7 @@ class OverviewChecksTest {
     )
 
     private fun task(main: String?) = AgentTask(
-        id = "g1", title = "Release", repo = "proj", source = "agents", hasOpen = false, members = emptyList(), mainConversation = main,
+        id = "g1", title = "Release", repo = "proj", source = "agents", hasOpen = false, mainConversation = main,
     )
 
     private fun snapshot(expectedMain: Map<String, String> = emptyMap()) = OverviewChecks.Snapshot(
@@ -178,20 +178,15 @@ class OverviewChecksTest {
     }
 
     @Test
-    fun aMemberCountedAsWaitingThatHasNoConversationFailsTheQuestionCheck() {
+    fun theOwnersSessionOpenedInsideARunsFolderKeepsItsOwnRowWithNoFileNamingIt() {
         usualCase()
-        val member = se.soderbjorn.lunamux.AgentTaskMember(key = "m1", title = "Ghost", state = "needs_you")
-        windowState.updateAgentTasks(listOf(task("main").copy(members = listOf(member))))
-        val c5 = OverviewChecks.evaluate(snapshot()).first { it.id == "C5" }
-        assertFalse(c5.ok)
-        assertTrue(c5.problems.single().contains("Ghost"))
-    }
-
-    @Test
-    fun aSessionATaskFileClaimsWithoutCarryingTheTaskIdIsInItsTasksRowOnlyOnce() {
-        usualCase()
-        val claimed = se.soderbjorn.lunamux.AgentTaskMember(key = "m1", title = "Claimed", state = "done", recordId = "solo")
-        windowState.updateAgentTasks(listOf(task("main").copy(members = listOf(claimed))))
+        // The task is a file task opened in the very folder the owner's session sits in; nothing but
+        // the task id a session carries puts it in a task.
+        windowState.updateAgentTasks(listOf(task("main").copy(source = "file", hasOpen = true)))
+        val rows = snapshot().overview.now
+        val own = rows.single { it.recordId == "solo" }
+        assertEquals("solo", own.id, "the session has a row of its own, not folded into the task's")
+        assertEquals(listOf("task:g1", "solo"), rows.map { it.id }.sorted().reversed().sortedBy { it != "task:g1" })
         val checks = OverviewChecks.evaluate(snapshot())
         assertEquals(emptyList(), failed(checks), OverviewChecks.render(checks))
     }

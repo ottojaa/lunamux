@@ -92,8 +92,8 @@ object TabCloseGuard {
      * Whether closing [tabId] would stop an agent that is working, and what to tell the person.
      *
      * Null unless a pane in the tab has a working session. The agents that keep running are the
-     * live background sessions of every task whose own session sits in this tab (members the task
-     * file lists and sessions an agent put in the task alike), not counting the tab's own.
+     * live background sessions of every task whose own session sits in this tab (the sessions that
+     * carry the task's id), not counting the tab's own.
      *
      * @param tabId the tab about to close.
      * @param config the current layout; the tab is looked up in every world.
@@ -116,10 +116,7 @@ object TabCloseGuard {
         val byKey = sessions.associateBy { it.id } + sessions.associateBy { it.conversationId }
         val ownTasks = tasks.filter { t -> t.mainConversation?.let(byKey::get)?.let { it.state != ENDED && it.leafId in leaves } == true }
         val livePanes = allTabs(cfg).flatMap { t -> t.panes.map { it.leaf.id } }.toSet()
-        val keeps = ownTasks.flatMap { t ->
-            val memberIds = t.members.mapNotNull { it.recordId }.toSet()
-            sessions.filter { s -> s.id in memberIds || s.taskId == t.id }
-        }.distinctBy { it.id }.filter {
+        val keeps = ownTasks.flatMap { t -> sessions.filter { s -> s.taskId == t.id } }.distinctBy { it.id }.filter {
             it.state != ENDED && it.background && it.leafId != null && it.leafId in livePanes && it.leafId !in leaves
         }
         return TabCloseCheck(

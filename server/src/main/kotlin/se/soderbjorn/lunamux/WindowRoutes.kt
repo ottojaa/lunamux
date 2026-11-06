@@ -817,7 +817,6 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
         }
         is WindowCommand.ResumeAgentSession -> resumeAgentSession(cmd.recordId, ctx)
         is WindowCommand.OpenTask -> openTask(cmd.taskId, ctx)
-        is WindowCommand.OpenTaskMember -> openTaskMember(cmd.taskId, cmd.memberKey, ctx)
         is WindowCommand.PressTaskButton -> {
             val store = ctx.taskPanelStore
             val index = ctx.taskIndex
@@ -1124,7 +1123,6 @@ private suspend fun resumeAgentSession(recordId: String, ctx: WindowConnectionCo
  * @param taskId the [AgentTask.id] named by the client.
  * @param ctx the connection that asked, which receives any error.
  * @param open opens the tab and types the command; [openTabRunning] except in tests.
- * @see openTaskMember
  */
 internal suspend fun openTask(
     taskId: String,
@@ -1147,54 +1145,6 @@ internal suspend fun openTask(
         return
     }
     open(action.folder, file.title, action.command)
-}
-
-/**
- * Attach to a session a task file declares but Lunamux does not host, in a new tab.
- *
- * Called by [handleWindowCommand] for [WindowCommand.OpenTaskMember]. The task is looked up in
- * the index and the member by its key, so the id that is typed is one the task file declared; the
- * line itself, `claude attach <id>`, is built here and never taken from a client. The tab starts in
- * the task's `open` folder, else the member's own `match.folder`, else the home folder, and is
- * named like the member. A task or member that is gone, a member with no session id, an id that
- * is not a plain session id or a folder that no longer exists is answered with an
- * [WindowEnvelope.AgentSessionError] (record id null) and no tab is created.
- *
- * @param taskId the [AgentTask.id] named by the client.
- * @param memberKey the [AgentTaskMember.key] named by the client.
- * @param ctx the connection that asked, which receives any error.
- * @param open opens the tab and types the command; [openTabRunning] except in tests.
- * @see openTask
- */
-internal suspend fun openTaskMember(
-    taskId: String,
-    memberKey: String,
-    ctx: WindowConnectionContext,
-    open: (folder: String, title: String, command: String?) -> Unit = ::openTabRunning,
-) {
-    val file = ctx.taskIndex?.fileTask(taskId)
-    val declared = file?.members?.firstOrNull { it.member.key == memberKey }
-    if (file == null || declared == null) {
-        ctx.send(WindowEnvelope.AgentSessionError(null, "That session is no longer in its task."))
-        return
-    }
-    val member = declared.member
-    val sessionId = member.sessionId
-    if (sessionId == null) {
-        ctx.send(WindowEnvelope.AgentSessionError(null, "${member.title} has no session id to attach to."))
-        return
-    }
-    if (!isPlainSessionId(sessionId)) {
-        ctx.send(WindowEnvelope.AgentSessionError(null, "${member.title} has a session id Lunamux will not type into a shell."))
-        return
-    }
-    val folder = file.open?.folder ?: declared.matchFolder ?: System.getProperty("user.home")
-    val folderExists = withContext(Dispatchers.IO) { java.io.File(folder).isDirectory }
-    if (!folderExists) {
-        ctx.send(WindowEnvelope.AgentSessionError(null, "The folder of ${file.title} no longer exists: $folder"))
-        return
-    }
-    open(folder, member.title, "claude attach $sessionId")
 }
 
 /**

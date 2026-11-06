@@ -300,21 +300,6 @@ sealed class WindowCommand {
     data class OpenTask(val taskId: String) : WindowCommand()
 
     /**
-     * Open a task member that Lunamux does not host: the server looks the task up among the task
-     * files it reads, finds the member with [memberKey], and opens a tab named like the member that
-     * types `claude attach <id>` for the session id the file gives it. The line is built by the
-     * server from that id alone; a client never supplies a command. An unknown task, a member that
-     * is no longer in the file, or an id that is not a plain session id is answered with
-     * [WindowEnvelope.AgentSessionError] (record id null).
-     *
-     * @param taskId the [AgentTask.id] of the task the member belongs to
-     * @param memberKey the [AgentTaskMember.key] of the member to attach to
-     */
-    @Serializable
-    @SerialName("openTaskMember")
-    data class OpenTaskMember(val taskId: String, val memberKey: String) : WindowCommand()
-
-    /**
      * Press a button of a task's panel: the server finds the stored button, and types its text and
      * Enter into the task's own session. The command carries no text; a window can only name a
      * button the server already holds. It is dropped when the task has no live own session, the

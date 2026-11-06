@@ -2,11 +2,11 @@
  * Reads the task files other tools leave in a folder and turns them into [TaskFile]s for the
  * [TaskIndex].
  *
- * This file contains [TaskFilesWatcher], which polls the folder(s) and parses each `<id>.json`,
- * the parsed model ([TaskFile], [TaskOpen], [TaskFileMember]) and the private model of the JSON
- * itself ([TaskFileJson] and its parts). The format is described in `docs/tasks.md`. Lunamux only
- * ever reads these files. Matching a file's members to session records is the task index's job,
- * not this file's: the watcher only says what the files declare.
+ * This file contains [TaskFilesWatcher], which polls the folder and parses each `<id>.json`, the
+ * parsed model ([TaskFile], [TaskOpen]) and the private model of the JSON itself ([TaskFileJson]
+ * and [OpenJson]). The format is described in `docs/tasks.md`. A file only declares a task: its id,
+ * its title, its repository and how to start a session for it. Who is in the task is not written
+ * in the file; it is the sessions that carry the task's id. Lunamux only ever reads these files.
  *
  * @see TaskIndex
  * @see AgentTask
@@ -24,22 +24,19 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 import java.io.File
-import java.time.Instant
 
 /**
  * One task file as written by the tool that owns it.
  *
  * Everything is nullable or defaulted so a file with a missing field fails the explicit checks
  * in [TaskFilesWatcher] (one warning, task skipped) instead of failing JSON decoding with a less
- * helpful message. Unknown fields are ignored, which is how `version`, `tag`, `link` and
- * `updatedAt` are accepted without being used.
+ * helpful message. Unknown fields are ignored, which is how a file written for an older version,
+ * with a member list, a `lead` action or a `version`, still parses: those keys say nothing now.
  *
  * @property id the task's id, also what [WindowCommand.OpenTask] names.
  * @property title the task's name.
  * @property repo repository name shown beside the title.
  * @property open how and where to start the session the header's open action starts.
- * @property lead the same thing under its older name; read as [open] when [open] is absent.
- * @property members the members the file lists.
  */
 @Serializable
 internal data class TaskFileJson(
@@ -47,8 +44,6 @@ internal data class TaskFileJson(
     val title: String? = null,
     val repo: String? = null,
     val open: OpenJson? = null,
-    val lead: OpenJson? = null,
-    val members: List<MemberJson> = emptyList(),
 )
 
 /**
@@ -61,40 +56,6 @@ internal data class TaskFileJson(
 internal data class OpenJson(val command: String? = null, val folder: String? = null)
 
 /**
- * How a task file ties a member to a session Lunamux hosts.
- *
- * @property agentSessionId the agent's own session id (Claude's `session_id`).
- * @property folder absolute folder; an open session running in it or below it matches.
- */
-@Serializable
-internal data class MatchJson(val agentSessionId: String? = null, val folder: String? = null)
-
-/**
- * One member of a task file.
- *
- * @property title the member's name.
- * @property links ticket keys or other short labels.
- * @property match how to find the member's session, if Lunamux hosts it.
- * @property state `needs_you`, `working`, `done` or `ended`; `idle`, the older spelling of `done`, is read as `done`.
- * @property label a state word for the summary line, such as "in review".
- * @property line one line about what the member is doing.
- * @property since ISO-8601 time the member entered [state].
- * @property sessionId the id `claude attach` takes for the member's background session; only the id
- *   is read from the file, the command is always built by the server.
- */
-@Serializable
-internal data class MemberJson(
-    val title: String? = null,
-    val links: List<String> = emptyList(),
-    val match: MatchJson? = null,
-    val state: String? = null,
-    val label: String? = null,
-    val line: String? = null,
-    val since: String? = null,
-    val sessionId: String? = null,
-)
-
-/**
  * The `open` action of a parsed task: the command the server types and where.
  *
  * @property command the line typed into a new tab's shell; never leaves the server.
@@ -103,36 +64,22 @@ internal data class MemberJson(
 data class TaskOpen(val command: String, val folder: String)
 
 /**
- * One member of a parsed task file, with the match it asks for.
- *
- * @property member the member as the clients get it, state and line still the file's own.
- * @property matchSessionId the agent session id the member asks to be matched by, or null.
- * @property matchFolder canonical folder an open session may sit in or below, or null.
- */
-data class TaskFileMember(
-    val member: AgentTaskMember,
-    val matchSessionId: String?,
-    val matchFolder: String?,
-)
-
-/**
  * A parsed, validated task file: what [TaskFilesWatcher] keeps per file between polls.
  *
- * Paths are already expanded and canonical, so matching is a plain string comparison.
+ * The folder of the `open` action is already expanded and canonical.
  *
  * @property id the task's id.
  * @property title the task's name.
  * @property repo repository name shown beside the title, or null.
  * @property open the `open` action, or null when the file gives none.
- * @property members the file's members in order.
- * @property modified the file's modification time in epoch millis.
+ * @property modified the file's modification time in epoch millis; the earliest sign of when the
+ *   task existed, used to place a task that has no session yet.
  */
 data class TaskFile(
     val id: String,
     val title: String,
     val repo: String?,
     val open: TaskOpen?,
-    val members: List<TaskFileMember>,
     val modified: Long,
 )
 
@@ -148,7 +95,7 @@ private class Seen(val modified: Long, val length: Long, val parsed: TaskFile?)
  * again; nothing here throws.
  *
  * Created once by `main()`; the [TaskIndex] collects [files] and answers every question about a
- * task, including which `open` command the open-task routes run.
+ * task, including which `open` command the open-task route runs.
  *
  * @param dirs the folders holding `<id>.json` files, in the order they are read; any of them may
  *   not exist. When two files share an id the newer file wins, wherever it lies.
@@ -231,38 +178,12 @@ class TaskFilesWatcher(
         }
         val id = file.id?.takeIf { it.isNotBlank() } ?: return bad("missing id")
         val title = file.title?.takeIf { it.isNotBlank() } ?: return bad("missing title")
-        val openJson = file.open ?: file.lead
-        val open = openJson?.let {
+        val open = file.open?.let {
             val command = it.command?.takeIf { c -> c.isNotBlank() } ?: return bad("missing open.command")
             val folder = absolute(it.folder) ?: return bad("open.folder must be an absolute path")
             TaskOpen(command, folder)
         }
-        val members = ArrayList<TaskFileMember>()
-        val usedKeys = HashSet<String>()
-        for ((i, m) in file.members.withIndex()) {
-            val state = m.state
-            if (state !in STATES) return bad("member ${i + 1} has state '$state'; use needs_you, working, done or ended")
-            val mTitle = m.title?.takeIf { it.isNotBlank() } ?: return bad("member ${i + 1} has no title")
-            val folder = m.match?.folder?.let { absolute(it) ?: return bad("member ${i + 1} match.folder must be an absolute path") }
-            val sessionId = m.sessionId?.trim()?.takeIf { it.isNotEmpty() }
-            // A session id is the most stable name for a member, but two members may carry the same
-            // one; the second gets its place in the file appended so that no two rows share a key.
-            // '#' is not allowed in a session id, so a numbered key never equals a real one.
-            val key = when {
-                sessionId != null && usedKeys.add(sessionId) -> sessionId
-                else -> "${sessionId.orEmpty()}#${i + 1}".also { usedKeys += it }
-            }
-            members += TaskFileMember(
-                member = AgentTaskMember(
-                    key = key, title = mTitle, links = m.links, state = if (state == "idle") "done" else state!!,
-                    label = m.label?.takeIf { it.isNotBlank() }, line = m.line?.takeIf { it.isNotBlank() },
-                    sinceMillis = instant(m.since) ?: modified, sessionId = sessionId,
-                ),
-                matchSessionId = m.match?.agentSessionId?.takeIf { it.isNotBlank() },
-                matchFolder = folder,
-            )
-        }
-        return TaskFile(id, title, file.repo?.takeIf { it.isNotBlank() }, open, members, modified)
+        return TaskFile(id, title, file.repo?.takeIf { it.isNotBlank() }, open, modified)
     }
 
     private fun absolute(path: String?): String? {
@@ -271,12 +192,8 @@ class TaskFilesWatcher(
         return if (expanded.startsWith("/")) canonical(expanded) else null
     }
 
-    private fun instant(text: String?): Long? =
-        text?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
-
     private companion object {
         const val POLL_MS = 3_000L
-        val STATES = setOf("needs_you", "working", "done", "idle", "ended")
         val fileJson = Json { ignoreUnknownKeys = true; isLenient = true }
     }
 }
@@ -284,8 +201,8 @@ class TaskFilesWatcher(
 /**
  * The canonical form of a path, or its absolute form when the file system cannot resolve it.
  *
- * Used by the watcher for the folders in task files and by [TaskIndex] for the folders of session
- * records, so that a symlinked folder compares equal to its target.
+ * Used by the watcher for the folder of a task file's `open` action, so that a symlinked folder
+ * compares equal to its target.
  *
  * @param path the path to resolve.
  * @return the canonical path.

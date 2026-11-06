@@ -123,7 +123,7 @@ class McpTaskToolsTest {
         assertTrue(!isError(call("add_to_task", """{"taskId":"$id","sessionIds":["s1"]}""")))
         assertEquals(id, taskOf("s1"))
 
-        files.value = listOf(TaskFile("prog", "Programme", null, null, emptyList(), 1))
+        files.value = listOf(TaskFile("prog", "Programme", null, null, 1))
         assertTrue(!isError(call("add_to_task", """{"taskId":"prog","sessionIds":["s2"]}""")))
         assertEquals("prog", taskOf("s2"))
     }
@@ -162,7 +162,7 @@ class McpTaskToolsTest {
         val listed = payloadOf(call("list_tasks", scope = McpScope.READ)).jsonArray.map { it.jsonObject }
         assertEquals("After", listed.single { it["taskId"]!!.jsonPrimitive.content == id }["title"]!!.jsonPrimitive.content)
 
-        files.value = listOf(TaskFile("prog", "Programme", null, null, emptyList(), 1))
+        files.value = listOf(TaskFile("prog", "Programme", null, null, 1))
         val file = call("rename_task", """{"taskId":"prog","title":"X"}""")
         assertTrue(isError(file)); assertTrue(textOf(file).contains("file"))
         assertTrue(isError(call("rename_task", """{"taskId":"missing","title":"X"}""")))

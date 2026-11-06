@@ -12,7 +12,7 @@
 # ends any session still open. Two seeded sessions are left open on purpose, to show that.
 #
 # It refuses ~/Library/Application Support/Termtastic, a database named termtastic.db or
-# lunamux-dev.db, and the real task folders (~/.lunamux/tasks, ~/.lunamux/agent-groups).
+# lunamux-dev.db, and the real task folder (~/.lunamux/tasks).
 #
 # Start a scratch server on its own port, database, folders and transcript folder, so it reads
 # none of the real ones:
@@ -21,7 +21,7 @@
 #   scripts/seed-agents-overview.sh "$DB" "$TASKS"
 #   ./gradlew :server:run -Plunula.toolkit.useArtifacts=true \
 #       -Dlunamux.port=8471 -Dlunamux.dbPath="$DB" -Dlunamux.tasksDir="$TASKS" \
-#       -Dlunamux.agentGroupsDir=/tmp/aov-seed/groups -Dlunamux.claudeProjects=/tmp/aov-seed/projects
+#       -Dlunamux.claudeProjects=/tmp/aov-seed/projects
 #
 # Open https://localhost:8471, press ⌘⇧A and look at:
 #

@@ -237,7 +237,7 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
                     put("mainConversation", mainConversationJson(t))
                     put("status", t.status?.let(::JsonPrimitive) ?: JsonNull)
                     put("sessions", buildJsonArray {
-                        for (m in t.members) add(buildJsonObject {
+                        for (m in t.sessions) add(buildJsonObject {
                             put("sessionId", m.sessionId?.let(::JsonPrimitive) ?: JsonNull)
                             put("title", m.title)
                             put("state", m.state)

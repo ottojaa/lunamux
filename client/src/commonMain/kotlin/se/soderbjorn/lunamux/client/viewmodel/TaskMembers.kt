@@ -1,8 +1,7 @@
 /**
- * The rules that decide who a task's members are and what they are called, in one place so the
- * agents overview and the task panel always agree: which hosted sessions join a task's file
- * members, what a session is called, what a member made from a bare session says, and where a
- * pane sits in the layout.
+ * The rules for naming a session and finding its pane, in one place so the agents overview, the
+ * task panel and the counts always agree: what a session is called, what folder it runs in, when
+ * it started, and where a pane sits in the layout.
  *
  * Contains [TaskMembers] and its [TaskMembers.PanePlace].
  *
@@ -13,20 +12,16 @@ package se.soderbjorn.lunamux.client.viewmodel
 
 import se.soderbjorn.lunamux.AgentSessionSummary
 import se.soderbjorn.lunamux.AgentSessionText
-import se.soderbjorn.lunamux.AgentTask
-import se.soderbjorn.lunamux.AgentTaskMember
 import se.soderbjorn.lunamux.LeafNode
 import se.soderbjorn.lunamux.TabConfig
 import se.soderbjorn.lunamux.WindowConfig
 
 /**
- * Pure helpers over a task, its sessions and the window layout. Called by
- * [AgentsOverviewBackingViewModel] to build a task's rows and by [TaskPanelViewModel] to build the
- * agents block; neither keeps its own copy of these rules.
+ * Pure helpers over a session and the window layout. Called by [AgentsOverviewBackingViewModel] to
+ * build a task's rows, by [TaskPanelViewModel] to build the agents block and by [AgentCounts] to
+ * find a pane's world; none keeps its own copy of these rules.
  */
 internal object TaskMembers {
-    private const val NEEDS_YOU = "needs_you"
-
     /**
      * Where a pane sits.
      *
@@ -35,42 +30,6 @@ internal object TaskMembers {
      * @property leaf the pane's leaf.
      */
     data class PanePlace(val worldId: String?, val tab: TabConfig, val leaf: LeafNode)
-
-    /**
-     * The hosted sessions of [task] that no member of its file claims, in the order they started.
-     * These join the file's members as members of their own, so an agent that split its work
-     * across a second session shows up without the file listing it.
-     *
-     * @param task the task.
-     * @param byId every session summary by record id; a file member's `recordId` is looked up here.
-     * @param hosted the sessions whose [AgentSessionSummary.taskId] is the task's id.
-     * @return the unclaimed sessions, oldest first, ties broken by id.
-     */
-    fun unlistedSessions(
-        task: AgentTask,
-        byId: Map<String, AgentSessionSummary>,
-        hosted: List<AgentSessionSummary>,
-    ): List<AgentSessionSummary> {
-        val matched = task.members.mapNotNullTo(HashSet()) { m -> m.recordId?.let(byId::get)?.id }
-        return hosted.filter { it.id !in matched }.sortedWith(compareBy({ startedOf(it) }, { it.id }))
-    }
-
-    /**
-     * A task member made from a hosted session no task file lists: its own title, state, question
-     * or last tool line and age.
-     *
-     * @param s the hosted session.
-     * @return the member, keyed by the record id.
-     */
-    fun memberOf(s: AgentSessionSummary): AgentTaskMember = AgentTaskMember(
-        key = s.id,
-        title = titleOf(s),
-        links = s.links,
-        state = s.state,
-        line = if (s.state == NEEDS_YOU) s.question ?: s.nowLine else s.nowLine,
-        sinceMillis = s.stateSince,
-        recordId = s.id,
-    )
 
     /**
      * A session's name: its own title when it says what the session is for, else the start of its

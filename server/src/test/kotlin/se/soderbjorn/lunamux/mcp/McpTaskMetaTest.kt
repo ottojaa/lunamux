@@ -172,7 +172,7 @@ class McpTaskMetaTest {
     @Test
     fun `a task file's task can be given an own session too`() {
         session("a")
-        files.value = listOf(TaskFile("file-task", "From a file", null, null, emptyList(), 100L))
+        files.value = listOf(TaskFile("file-task", "From a file", null, null, 100L))
         val set = call("set_task_lead", """{"taskId":"file-task","sessionId":"a"}""")
         assertTrue(!isError(set), textOf(set))
         assertEquals("a-a", taskInState("file-task").mainConversation)
