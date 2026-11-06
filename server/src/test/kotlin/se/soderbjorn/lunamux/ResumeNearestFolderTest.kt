@@ -173,4 +173,22 @@ class ResumeNearestFolderTest {
         assertEquals(Triple(base.path, "feat", "claude --resume $uuid 'start'"), opened.single())
         assertEquals("Its folder is gone. It resumes in ${base.path}.", resumeNoteOf(record, declared))
     }
+
+    /**
+     * The row under a search match and the peek name the folder Resume opens, also for a task's main
+     * conversation whose declared folder is gone: both are given the task index, as the routes do.
+     */
+    @Test
+    fun `the search row and the peek name the same folder the tab opens in`() {
+        files.value = listOf(
+            TaskFile("t1", "Task one", repo = null, open = TaskOpen("claude 'start'", File(base, "declared/inner").path), modified = 99),
+        )
+        index.recompute()
+        closedRecord(File(base, "declared/inner").path)
+        index.setMainConversation("t1", uuid)
+        val expected = "Its folder is gone. It resumes in ${base.path}."
+
+        assertEquals(expected, AgentSessionSearch.search(repo, tracker, "feat", index).single().resumeNote)
+        assertEquals(expected, AgentSessionSearch.inspect("r1", tracker, index)!!.resumeNote)
+    }
 }
