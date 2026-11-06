@@ -453,8 +453,7 @@ Every list shows five entries and then **+ N more**, which opens the rest in pla
 scrolls. A panel with 19 agents, 19 links and 19 lines of activity shows five of each and "+ 14 more".
 
 The blocks agents write are kept in the database and survive a restart; they are not removed when
-the task ends. Blocks of the other types below are stored and read back by `get_task_panel`, but
-the panel does not draw them.
+the task ends. A block of any type other than the three below is refused.
 
 | Tool | Arguments | What it does |
 | --- | --- | --- |
@@ -472,16 +471,10 @@ a `type`, an optional `title` (80) and the fields of its type:
 
 | `type` | Fields | Limits |
 | --- | --- | --- |
-| `text` | `text` | 4000 characters of markdown: paragraphs, `#` to `###` headings, `-` / `1.` lists, fenced code, `**bold**`, `*italic*`, `` `code` `` and `[label](url)`. Anything else, HTML included, is shown as written. |
-| `facts` | `items`: `{label, value}` | 30 items; label 80, value 200. |
 | `links` | `items`: `{kind?, label, url, at?}` | 30 items; `kind` is one short word of up to 8 characters, `link` when missing or blank; label 80; `http`, `https` or `file` addresses only, 2000 characters; `at` is when the linked thing was made or changed, an ISO time or epoch milliseconds. Drawn with its time of day (with the day when it is not from today). A link stored before `kind` and `at` existed reads as kind `link` with no time. |
 | `timeline` | `items`: `{at, text}` | 50 items; `at` is an ISO time or epoch milliseconds; text 200. Shown newest first. |
 | `progress` | `done` and `total`, and/or `phase`; optional `label` | A bar when there is a count. |
-| `actions` | `buttons`: `{id, label, text}` | 8 buttons; label 40, text 500, one line. |
 
-A panel holds at most 24 blocks. Every refusal names the block, field or id at fault.
-
-An `actions` block is stored and a pressed button still types its `text` and Enter into the task's
-main conversation, exactly as if the person had typed it there, but the panel draws no buttons. The
-text is the one stored with the block; the window only says which button was pressed. The server
-refuses quietly while that conversation has ended, so the text never runs as a shell command.
+A panel holds at most 24 blocks. Every refusal names the block, field or id at fault. A block
+stored by an earlier version with a type that no longer exists is skipped when the server starts;
+the rest of the panel is kept.

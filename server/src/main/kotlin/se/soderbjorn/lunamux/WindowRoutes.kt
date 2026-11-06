@@ -313,8 +313,6 @@ internal class WindowConnectionContext(
     val claudeHooks: ClaudeHooks? = null,
     /** Which task each agent session belongs to, behind the overview's task rows; null where tasks are not wired up. */
     val taskIndex: TaskIndex? = null,
-    /** The blocks agents write into task panels, behind button presses; null where panels are not wired up. */
-    val taskPanelStore: TaskPanelStore? = null,
 ) {
     private val gitWatchers = ConcurrentHashMap<String, GitWatchHandle>()
 
@@ -534,7 +532,6 @@ internal fun Route.windowRoutes(
             agentTracker = agentTracker,
             claudeHooks = claudeHooks,
             taskIndex = taskIndex,
-            taskPanelStore = taskPanelStore,
         )
 
         try {
@@ -817,19 +814,6 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
         }
         is WindowCommand.ResumeAgentSession -> resumeAgentSession(cmd.recordId, ctx)
         is WindowCommand.OpenTask -> openTask(cmd.taskId, ctx)
-        is WindowCommand.PressTaskButton -> {
-            val store = ctx.taskPanelStore
-            val index = ctx.taskIndex
-            val tracker = ctx.agentTracker
-            if (store != null && index != null && tracker != null) {
-                pressTaskButton(store, index, tracker, cmd.taskId, cmd.blockId, cmd.buttonId) { sessionId, bytes ->
-                    // A person's press is not an agent acting, so the pane gets no agent badge.
-                    val session = TerminalSessions.get(sessionId) ?: return@pressTaskButton false
-                    session.write(bytes)
-                    true
-                }
-            }
-        }
         is WindowCommand.SearchAgentSessions -> ctx.scope.launch {
             // Off the socket's loop: the query reads SQLite and may run git for resume notes.
             runCatching {

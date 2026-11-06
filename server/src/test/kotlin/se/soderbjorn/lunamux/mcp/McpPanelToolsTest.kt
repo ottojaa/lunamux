@@ -89,29 +89,22 @@ class McpPanelToolsTest {
     fun `an agent sets a panel with every block kind, then reads it back`() {
         val r = set(
             """[
-              {"id":"note","type":"text","title":"Status","text":"All **green**"},
-              {"id":"facts","type":"facts","items":[{"label":"Branch","value":"main"}]},
               {"id":"links","type":"links","items":[{"label":"PR","url":"https://example.com/1"}]},
               {"id":"tl","type":"timeline","items":[{"at":"2026-05-01T12:00:00Z","text":"started"},{"at":1700000000000,"text":"later"}]},
               {"id":"prog","type":"progress","done":2,"total":5,"label":"checks"},
-              {"id":"ph","type":"progress","phase":"review"},
-              {"id":"act","type":"actions","buttons":[{"id":"go","label":"Ship it","text":"/ship"},{"id":"plain","label":"Status"}]}
+              {"id":"ph","type":"progress","phase":"review"}
             ]""",
             ""","by":"release agent"""",
         )
         assertTrue(!isError(r), textOf(r))
         val stored = store.blocksOf(taskId)
-        assertEquals(listOf("note", "facts", "links", "tl", "prog", "ph", "act"), stored.map { it.id })
-        assertEquals("Status", stored[0].title)
-        val tl = (stored[3].content as TaskBlockContent.Timeline).items
+        assertEquals(listOf("links", "tl", "prog", "ph"), stored.map { it.id })
+        val tl = (stored[1].content as TaskBlockContent.Timeline).items
         assertEquals(1_777_636_800_000L, tl[0].atMillis)
         assertEquals(1_700_000_000_000L, tl[1].atMillis)
-        val buttons = (stored[6].content as TaskBlockContent.Actions).buttons
-        assertEquals("/ship", buttons[0].text)
-        assertEquals("Status", buttons[1].text, "text defaults to the label")
 
         val read = blocksJson()
-        assertEquals(7, read.size)
+        assertEquals(4, read.size)
         assertEquals("release agent", read[0].jsonObject["writtenBy"]!!.jsonPrimitive.content)
         assertEquals("1970-01-01T00:00:05Z", read[0].jsonObject["writtenAt"]!!.jsonPrimitive.content)
     }
@@ -126,7 +119,7 @@ class McpPanelToolsTest {
                 {"label":"No kind or time","url":"http://example.com/x"},
                 {"kind":"  ","label":"Blank kind","url":"http://example.com/y","at":null}
               ]},
-              {"id":"keep","type":"text","text":"kept"}
+              {"id":"keep","type":"progress","phase":"kept"}
             ]""",
         )
         assertTrue(!isError(r), textOf(r))
@@ -161,17 +154,16 @@ class McpPanelToolsTest {
     }
 
     @Test
-    fun `a documents block is refused as an unknown type and the panel keeps what it had`() {
-        set("""[{"id":"keep","type":"text","text":"old"}]""")
-        val msg = refusal(set("""[{"id":"d","type":"documents","items":[{"title":"A","url":"https://a.b"}]}]"""))
-        assertTrue("unknown type 'documents'" in msg && "links" in msg && "documents," !in msg, msg)
-        assertTrue("unknown type 'documents'" in refusal(call("upsert_task_block", """{"taskId":"$taskId","block":{"id":"d","type":"documents","items":[]}}""")))
+    fun `a block of a type the panel no longer has is refused as unknown and the panel keeps what it had`() {
+        set("""[{"id":"keep","type":"progress","phase":"old"}]""")
+        val msg = refusal(call("upsert_task_block", """{"taskId":"$taskId","block":{"id":"d","type":"text","text":"hello"}}"""))
+        assertTrue("unknown type 'text'" in msg && "links, timeline, progress" in msg, msg)
         assertEquals(listOf("keep"), store.blocksOf(taskId).map { it.id })
     }
 
     @Test
     fun `a link with a javascript url is refused and the panel keeps what it had`() {
-        set("""[{"id":"keep","type":"text","text":"old"}]""")
+        set("""[{"id":"keep","type":"progress","phase":"old"}]""")
         val msg = refusal(set("""[{"id":"d","type":"links","items":[{"kind":"PR","label":"click me","url":"javascript:alert(1)"}]}]"""))
         assertTrue("'click me'" in msg && "http" in msg, msg)
         assertEquals(listOf("keep"), store.blocksOf(taskId).map { it.id })
@@ -190,16 +182,16 @@ class McpPanelToolsTest {
 
     @Test
     fun `upsert replaces one block in place and remove drops another, without touching the rest`() {
-        set("""[{"id":"a","type":"text","text":"1"},{"id":"b","type":"text","text":"2"},{"id":"c","type":"text","text":"3"}]""")
-        assertTrue(!isError(call("upsert_task_block", """{"taskId":"$taskId","block":{"id":"b","type":"text","text":"two"}}""")))
+        set("""[{"id":"a","type":"progress","phase":"1"},{"id":"b","type":"progress","phase":"2"},{"id":"c","type":"progress","phase":"3"}]""")
+        assertTrue(!isError(call("upsert_task_block", """{"taskId":"$taskId","block":{"id":"b","type":"progress","phase":"two"}}""")))
         assertTrue(!isError(call("remove_task_block", """{"taskId":"$taskId","id":"c"}""")))
         assertEquals(listOf("a", "b"), store.blocksOf(taskId).map { it.id })
-        assertEquals(TaskBlockContent.Text("two"), store.blocksOf(taskId)[1].content)
+        assertEquals(TaskBlockContent.Progress(phase = "two"), store.blocksOf(taskId)[1].content)
     }
 
     @Test
     fun `a panel survives a server restart`() {
-        set("""[{"id":"a","type":"text","text":"kept"}]""", ""","by":"w"""")
+        set("""[{"id":"a","type":"progress","phase":"kept"}]""", ""","by":"w"""")
         val reopened = TaskPanelStore(SettingsRepository(dbFile), index, clock = { now })
         assertEquals(listOf("a"), reopened.blocksOf(taskId).map { it.id })
         assertEquals("w", reopened.blocksOf(taskId)[0].writtenBy)
@@ -210,21 +202,13 @@ class McpPanelToolsTest {
         val pane = PaneSnapshot("boss", "leaf-boss", "/work/boss", null, customName = "Release agent", screenText = { "x" })
         tracker.onHook(pane, buildJsonObject { put("hook_event_name", "SessionStart"); put("session_id", "a-boss") })
         assertEquals("Release agent", tracker.openRecordOf("boss")?.title)
-        set("""[{"id":"a","type":"text","text":"x"}]""", caller = "boss")
+        set("""[{"id":"a","type":"progress","phase":"x"}]""", caller = "boss")
         assertEquals("Release agent", store.blocksOf(taskId)[0].writtenBy)
-        set("""[{"id":"a","type":"text","text":"x"}]""", ""","by":"named"""", caller = "boss")
+        set("""[{"id":"a","type":"progress","phase":"x"}]""", ""","by":"named"""", caller = "boss")
         assertEquals("named", store.blocksOf(taskId)[0].writtenBy)
-        set("""[{"id":"a","type":"text","text":"x"}]""", caller = "no-such-pane")
+        set("""[{"id":"a","type":"progress","phase":"x"}]""", caller = "no-such-pane")
         assertNull(store.blocksOf(taskId)[0].writtenBy)
-        assertTrue("limit is 40" in refusal(set("""[{"id":"a","type":"text","text":"x"}]""", ""","by":"${"n".repeat(41)}"""")))
-    }
-
-    @Test
-    fun `a javascript url is refused and the panel keeps what it had`() {
-        set("""[{"id":"keep","type":"text","text":"old"}]""")
-        val msg = refusal(set("""[{"id":"l","type":"links","items":[{"label":"click me","url":"javascript:alert(1)"}]}]"""))
-        assertTrue("'click me'" in msg && "http" in msg, msg)
-        assertEquals(listOf("keep"), store.blocksOf(taskId).map { it.id })
+        assertTrue("limit is 40" in refusal(set("""[{"id":"a","type":"progress","phase":"x"}]""", ""","by":"${"n".repeat(41)}"""")))
     }
 
     @Test
@@ -232,18 +216,16 @@ class McpPanelToolsTest {
         assertTrue("Unknown task 'ghost'" in refusal(call("set_task_panel", """{"taskId":"ghost","blocks":[]}""")))
         assertTrue("Unknown task 'ghost'" in refusal(call("get_task_panel", """{"taskId":"ghost"}""", scope = McpScope.READ)))
         assertTrue("'agents'" in refusal(set("""[{"id":"x","type":"agents"}]""")))
-        assertTrue("reserved" in refusal(set("""[{"id":"agents","type":"text","text":"x"}]""")))
+        assertTrue("reserved" in refusal(set("""[{"id":"agents","type":"progress","phase":"x"}]""")))
         assertTrue("'sparkle'" in refusal(set("""[{"id":"x","type":"sparkle"}]""")))
-        assertTrue("'bad id'" in refusal(set("""[{"id":"bad id","type":"text","text":"x"}]""")))
-        assertTrue("'t'" in refusal(set("""[{"id":"t","type":"text","text":"${"x".repeat(4001)}"}]""")))
+        assertTrue("'bad id'" in refusal(set("""[{"id":"bad id","type":"progress","phase":"x"}]""")))
         assertTrue("Block 'tl'" in refusal(set("""[{"id":"tl","type":"timeline","items":[{"at":"yesterday","text":"x"}]}]""")))
-        assertTrue("'go'" in refusal(set("""[{"id":"a","type":"actions","buttons":[{"id":"go","label":"L","text":"a\nb"}]}]""")))
         assertTrue("'nope'" in refusal(call("remove_task_block", """{"taskId":"$taskId","id":"nope"}""")))
     }
 
     @Test
     fun `get_task_panel needs only a read token and the writing tools need a write token`() {
-        set("""[{"id":"a","type":"text","text":"x"}]""")
+        set("""[{"id":"a","type":"progress","phase":"x"}]""")
         val read = call("get_task_panel", """{"taskId":"$taskId"}""", scope = McpScope.READ)
         assertTrue(!isError(read), textOf(read))
         val denied = call("set_task_panel", """{"taskId":"$taskId","blocks":[]}""", scope = McpScope.READ)

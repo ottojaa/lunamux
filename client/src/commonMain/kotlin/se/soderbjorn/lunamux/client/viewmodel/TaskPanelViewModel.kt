@@ -37,6 +37,21 @@ import se.soderbjorn.lunamux.client.WindowStateRepository
 import se.soderbjorn.lunamux.effectiveActiveTabId
 import se.soderbjorn.lunamux.isListed
 
+private val SAFE_URL = Regex("^(?:https?|file)://\\S+$", RegexOption.IGNORE_CASE)
+
+/**
+ * Whether [url] is an address a link may open: `http`, `https` or `file`, with no spaces.
+ *
+ * Called by [TaskPanelViewModel] when it builds the link rows (an unsafe one gets no row) and
+ * when a click asks where a link goes, so a link is checked where it is listed and again where it
+ * is used.
+ *
+ * @param url the address to check.
+ * @return true when the scheme is one of the three.
+ * @see TaskPanelViewModel.linkTarget
+ */
+internal fun isSafeUrl(url: String): Boolean = SAFE_URL.matches(url)
+
 /**
  * View model of the task panel.
  *
@@ -241,7 +256,7 @@ class TaskPanelViewModel(
      * @param url the address a block carries.
      * @return [url] when it is http, https or file, else null.
      */
-    fun linkTarget(url: String): String? = url.takeIf { PanelMarkdown.isSafeUrl(it) }
+    fun linkTarget(url: String): String? = url.takeIf { isSafeUrl(it) }
 
     private suspend fun jump(recordId: String?) {
         val config = windowState.config.value ?: return
@@ -350,7 +365,7 @@ class TaskPanelViewModel(
      */
     private fun linkRows(blocks: List<TaskPanelBlock>, now: Long): List<LinkRow> {
         val found = blocks.flatMap { (it.content as? TaskBlockContent.Links)?.items.orEmpty() }
-            .filter { PanelMarkdown.isSafeUrl(it.url) }
+            .filter { isSafeUrl(it.url) }
         val (dated, undated) = found.partition { it.at != null }
         val zone = zone()
         return (dated.sortedByDescending { it.at } + undated).distinctBy { it.url }.map {

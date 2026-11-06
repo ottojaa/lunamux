@@ -431,8 +431,7 @@ class TaskIndex(
      * Looked up from the conversation's open record each time, because pane ids are handed out
      * again on every start and only the conversation is stored.
      *
-     * Called by the task panel's button handler to find where a button's text is typed, and by
-     * [listing] for `list_tasks`.
+     * Called by [listing] for `list_tasks`.
      *
      * @param taskId the task's id.
      * @return the terminal session id, or null when no conversation was named or it is closed.

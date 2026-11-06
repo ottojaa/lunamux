@@ -373,4 +373,14 @@ class TaskPanelViewModelTest {
         val noon = 12 * 3_600_000L + 20 * 86_400_000L
         assertEquals("12:00", TaskPanelViewModel.clockOf(noon, noon + 1_000, TimeZone.UTC))
     }
+
+    @Test
+    fun `a link address opens only when it is http, https or file`() {
+        for (url in listOf("http://a.example/x", "https://a.example/x?y=1", "file:///tmp/a.txt", "HTTPS://A.EXAMPLE")) {
+            assertTrue(isSafeUrl(url), url)
+        }
+        for (url in listOf("javascript:alert(1)", "data:text/html,x", "vbscript:x", "ftp://a.example", "//a.example", "/rel", "https://a b", " https://a.example", "")) {
+            assertFalse(isSafeUrl(url), url)
+        }
+    }
 }

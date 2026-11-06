@@ -4,12 +4,12 @@
  * `task_panel_blocks` table), pushes them to every window as [WindowEnvelope.TaskPanel], and
  * the clients draw them in the panel beside the task's own session.
  *
- * Contains [TaskPanelBlock], the sealed [TaskBlockContent] with its six cases, and the small item
- * types those cases carry. Everything here is plain data; the limits on sizes and counts are
- * enforced by the server when a block is written, not by these types.
+ * Contains [TaskPanelBlock], the sealed [TaskBlockContent] with its three cases (links, a timeline
+ * and progress), and the small item types those cases carry. Everything here is plain data; the
+ * limits on sizes and counts are enforced by the server when a block is written, not by these
+ * types.
  *
  * @see WindowEnvelope.TaskPanel
- * @see WindowCommand.PressTaskButton
  */
 package se.soderbjorn.lunamux
 
@@ -46,7 +46,8 @@ data class TaskPanelBlock(
 
 /**
  * What a [TaskPanelBlock] shows. One case per kind of block; the panel draws each in its own way
- * and treats every text in them as plain text (only [Text] is read as a small markdown subset).
+ * and treats every text in them as plain text. A block stored with any other kind is dropped when
+ * the server loads it.
  *
  * @see TaskPanelBlock.content
  */
@@ -54,29 +55,6 @@ data class TaskPanelBlock(
 sealed class TaskBlockContent {
     /** The name stored in the `kind` column and used in the agent-facing `type` field. */
     abstract val kindName: String
-
-    /**
-     * Free text in a small markdown subset (paragraphs, headings, lists, bold, italic, code and
-     * links); anything else, HTML included, is shown as written.
-     *
-     * @property markdown the text.
-     */
-    @Serializable
-    @SerialName("text")
-    data class Text(val markdown: String) : TaskBlockContent() {
-        override val kindName: String get() = "text"
-    }
-
-    /**
-     * Label and value pairs, one per line.
-     *
-     * @property items the pairs, in order.
-     */
-    @Serializable
-    @SerialName("facts")
-    data class Facts(val items: List<TaskFact>) : TaskBlockContent() {
-        override val kindName: String get() = "facts"
-    }
 
     /**
      * Links the person can open.
@@ -119,27 +97,7 @@ sealed class TaskBlockContent {
     ) : TaskBlockContent() {
         override val kindName: String get() = "progress"
     }
-
-    /**
-     * Buttons that type a fixed line into the task's own session when pressed.
-     *
-     * @property buttons the buttons, in order.
-     */
-    @Serializable
-    @SerialName("actions")
-    data class Actions(val buttons: List<TaskButton>) : TaskBlockContent() {
-        override val kindName: String get() = "actions"
-    }
 }
-
-/**
- * A label and its value in a [TaskBlockContent.Facts] block.
- *
- * @property label what the value is.
- * @property value the value.
- */
-@Serializable
-data class TaskFact(val label: String, val value: String)
 
 /**
  * A link in a [TaskBlockContent.Links] block. The server only stores `http`, `https` and `file`
@@ -180,14 +138,3 @@ data class TaskLink(
  */
 @Serializable
 data class TaskTimelineItem(val atMillis: Long, val text: String)
-
-/**
- * A button in a [TaskBlockContent.Actions] block. Pressing it types [text] and Enter into the
- * task's own session; the text lives on the server, so a window can only name the button.
- *
- * @property id the writer's name for the button, unique within its block.
- * @property label the words on the button.
- * @property text the line typed when it is pressed.
- */
-@Serializable
-data class TaskButton(val id: String, val label: String, val text: String)

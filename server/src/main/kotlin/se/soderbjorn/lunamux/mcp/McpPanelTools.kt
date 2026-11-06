@@ -3,8 +3,7 @@
  *
  * An agent that works on a task can show the person what it is doing in blocks next to the task's
  * own session. The panel draws four things: the task's agents (it makes that block itself), a
- * progress block, links and a timeline. Text, facts and buttons are stored too but no client
- * draws them. `set_task_panel` replaces
+ * progress block, links and a timeline. `set_task_panel` replaces
  * all of them, `upsert_task_block` and `remove_task_block` change one, and `get_task_panel` reads
  * them back. This file turns an agent's JSON into [TaskPanelBlock]s and the stored blocks back
  * into JSON; the rules about sizes and shapes live in [se.soderbjorn.lunamux.TaskPanelLimits] and
@@ -26,9 +25,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import se.soderbjorn.lunamux.AgentSessionTracker
 import se.soderbjorn.lunamux.TaskBlockContent
-import se.soderbjorn.lunamux.TaskButton
 import se.soderbjorn.lunamux.TaskException
-import se.soderbjorn.lunamux.TaskFact
 import se.soderbjorn.lunamux.TaskLink
 import se.soderbjorn.lunamux.TaskPanelBlock
 import se.soderbjorn.lunamux.TaskPanelLimits
@@ -38,7 +35,7 @@ import java.time.Instant
 import java.time.OffsetDateTime
 
 /** The block types an agent may write, in the order the tool descriptions list them. */
-private val BLOCK_TYPES = listOf("text", "facts", "links", "timeline", "progress", "actions")
+private val BLOCK_TYPES = listOf("links", "timeline", "progress")
 
 /**
  * Read a JSON value as the array of objects a block field expects.
@@ -117,10 +114,6 @@ internal fun parsePanelBlock(json: JsonObject): TaskPanelBlock {
     }
     val title = (json["title"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotEmpty() }
     val content: TaskBlockContent = when (type) {
-        "text" -> TaskBlockContent.Text(json.str("text", "Block '$id'"))
-        "facts" -> TaskBlockContent.Facts(json.objects("items", id).mapIndexed { i, o ->
-            TaskFact(o.str("label", "Block '$id' fact ${i + 1}"), o.str("value", "Block '$id' fact ${i + 1}"))
-        })
         "links" -> TaskBlockContent.Links(json.objects("items", id).mapIndexed { i, o ->
             val where = "Block '$id' link ${i + 1}"
             TaskLink(
@@ -139,14 +132,6 @@ internal fun parsePanelBlock(json: JsonObject): TaskPanelBlock {
             phase = (json["phase"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() },
             label = (json["label"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() },
         )
-        "actions" -> TaskBlockContent.Actions(json.objects("buttons", id).mapIndexed { i, o ->
-            val label = o.str("label", "Block '$id' button ${i + 1}")
-            TaskButton(
-                id = o.str("id", "Block '$id' button ${i + 1}"),
-                label = label,
-                text = (o["text"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: label,
-            )
-        })
         else -> throw McpArgumentException("Block '$id' has an unknown type '${type.take(40)}'. Use ${BLOCK_TYPES.joinToString(", ")}.")
     }
     return TaskPanelBlock(id = id, title = title, content = content, writtenAtMillis = 0L)
@@ -179,10 +164,6 @@ internal fun panelBlockJson(b: TaskPanelBlock): JsonObject = buildJsonObject {
     put("type", b.content.kindName)
     b.title?.let { put("title", it) }
     when (val c = b.content) {
-        is TaskBlockContent.Text -> put("text", c.markdown)
-        is TaskBlockContent.Facts -> put("items", buildJsonArray {
-            c.items.forEach { add(buildJsonObject { put("label", it.label); put("value", it.value) }) }
-        })
         is TaskBlockContent.Links -> put("items", buildJsonArray {
             c.items.forEach { l ->
                 add(buildJsonObject {
@@ -204,9 +185,6 @@ internal fun panelBlockJson(b: TaskPanelBlock): JsonObject = buildJsonObject {
             c.phase?.let { put("phase", it) }
             c.label?.let { put("label", it) }
         }
-        is TaskBlockContent.Actions -> put("buttons", buildJsonArray {
-            c.buttons.forEach { add(buildJsonObject { put("id", it.id); put("label", it.label); put("text", it.text) }) }
-        })
     }
     put("writtenBy", b.writtenBy?.let(::JsonPrimitive) ?: JsonNull)
     put("writtenAt", Instant.ofEpochMilli(b.writtenAtMillis).toString())
@@ -230,15 +208,10 @@ fun registerMcpPanelTools(store: TaskPanelStore, tracker: AgentSessionTracker) {
                 "Other writers use the same panel, so start your ids with something of your own (like \"tests-status\"). " +
                 "'agents' is reserved.",
         ),
-        "type" to schemaString("What the block holds. The panel draws links, timeline and progress; the other types are stored and not drawn.", BLOCK_TYPES),
+        "type" to schemaString("What the block holds.", BLOCK_TYPES),
         "title" to schemaString("Heading above the block, up to ${TaskPanelLimits.TITLE_MAX} characters."),
-        "text" to schemaString(
-            "type text: up to ${TaskPanelLimits.TEXT_MAX} characters of markdown (paragraphs, # headings, - or 1. lists, " +
-                "**bold**, *italic*, `code`, fenced code, [label](http url)). Anything else, HTML included, is shown as written.",
-        ),
         "items" to schemaArray(
-            "type facts: [{label, value}] (up to ${TaskPanelLimits.LIST_MAX}; label ${TaskPanelLimits.LABEL_MAX}, value ${TaskPanelLimits.VALUE_MAX} characters). " +
-                "type links: [{kind?, label, url, at?}] (up to ${TaskPanelLimits.LIST_MAX}; kind is the short word shown before the label, " +
+            "type links: [{kind?, label, url, at?}] (up to ${TaskPanelLimits.LIST_MAX}; kind is the short word shown before the label, " +
                 "up to ${TaskPanelLimits.KIND_MAX} characters, and \"link\" when you give none; at is when the linked thing was made or changed, " +
                 "ISO-8601 or epoch milliseconds, and a link without one is listed after the others; only http, https and file addresses). " +
                 "type timeline: [{at, text}] where at is ISO-8601 or epoch milliseconds (text ${TaskPanelLimits.TIMELINE_TEXT_MAX} characters; " +
@@ -249,11 +222,6 @@ fun registerMcpPanelTools(store: TaskPanelStore, tracker: AgentSessionTracker) {
         "total" to schemaInt("type progress: how many parts there are (with done)."),
         "phase" to schemaString("type progress: the stage the work is in, instead of done and total."),
         "label" to schemaString("type progress: a short caption."),
-        "buttons" to schemaArray(
-            "type actions: up to ${TaskPanelLimits.BUTTONS_MAX} buttons [{id, label, text?}]. Pressing one types its text and Enter into the " +
-                "task's own session; text defaults to the label. One plain line, no control characters, up to ${TaskPanelLimits.BUTTON_TEXT_MAX} characters.",
-            buildJsonObject { put("type", "object") },
-        ),
         required = listOf("id", "type"),
     )
     val bySchema = schemaString(
@@ -281,9 +249,8 @@ fun registerMcpPanelTools(store: TaskPanelStore, tracker: AgentSessionTracker) {
     writeTool(
         name = "set_task_panel",
         description = "Show the person what is going on in a task, in blocks beside the task's own session: " +
-            "links, a timeline and progress (the panel also lists the task's agents itself). text, facts and buttons " +
-            "are stored and read back by get_task_panel, but the panel does not draw them, so put what the person should see in " +
-            "links, the timeline or progress. This replaces every block of the task at once, in " +
+            "links, a timeline and progress (the panel also lists the task's agents itself). " +
+            "This replaces every block of the task at once, in " +
             "the order you give (at most ${TaskPanelLimits.MAX_BLOCKS}). To change one block without touching the " +
             "rest use upsert_task_block. Call it when the picture changes, not on every step. Only you and other " +
             "agents write here; the person's list of the task's sessions is drawn by the panel itself.",
