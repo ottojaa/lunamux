@@ -170,9 +170,23 @@ tasks.named<JavaExec>("run") {
 // Fills a scratch database and task folder with the cases the agents overview shows (see
 // AgentsOverviewSeed). Run it through scripts/seed-agents-overview.sh while the scratch server
 // is stopped. `--args` carries the two paths.
+//
+// The seeder lives in its own source set (src/seed), so it is compiled for this task and the
+// tests but is not part of the server jar. It sees the server's own classes, internal ones included.
+val seed: SourceSet = sourceSets.create("seed") {
+    compileClasspath += sourceSets["main"].output + sourceSets["main"].compileClasspath
+    runtimeClasspath += output + compileClasspath + sourceSets["main"].runtimeClasspath
+}
+kotlin.target.compilations.getByName("seed").associateWith(kotlin.target.compilations.getByName("main"))
+
+// The seed test runs the seeder, so the test source set needs its classes.
+sourceSets["test"].compileClasspath += seed.output
+sourceSets["test"].runtimeClasspath += seed.output
+kotlin.target.compilations.getByName("test").associateWith(kotlin.target.compilations.getByName("seed"))
+
 tasks.register<JavaExec>("seedAgentsOverview") {
     group = "application"
     description = "Seeds a scratch database and task folder for the agents overview."
-    classpath = sourceSets["main"].runtimeClasspath
+    classpath = seed.runtimeClasspath
     mainClass.set("se.soderbjorn.lunamux.AgentsOverviewSeed")
 }

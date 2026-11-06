@@ -262,7 +262,9 @@ agent-made tasks (one with its own main conversation, a status and two backgroun
 task files. Seed while the scratch server is stopped, then start it on its own port, with a
 throwaway `-Duser.home` (the settings file lives there), `-Dlunamux.dbPath`, `-Dlunamux.tasksDir`
 and `-Dlunamux.claudeProjects` pointing at scratch paths. The script's
-header lists what to look at, and the cases that need a running agent.
+header lists what to look at, and the cases that need a running agent. The seeder's code is
+`server/src/seed/` (its own Gradle source set, not part of the server jar); the script runs it as
+`./gradlew :server:seedAgentsOverview`.
 `scripts/seed-agents-overview-live.sh <server> <token> <moment>` then makes the usual case (1), a
 background agent that asks (4) or a closed main conversation with two agents working (5) happen on
 the running server, with a panel of four blocks that has more than five of each.

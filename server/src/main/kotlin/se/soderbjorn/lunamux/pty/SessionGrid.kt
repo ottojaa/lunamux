@@ -116,9 +116,6 @@ class SessionGrid(cols: Int, rows: Int, initialAnswerSink: ((ByteArray) -> Unit)
     var discardedOutputBytes: Long = 0L
         private set
 
-    /** Removes OSC 52 clipboard sequences from everything [feed] is given. Guarded by [emulator]'s monitor. */
-    private val osc52 = Osc52Filter()
-
     /**
      * The canonical emulator — the *live screen* only. `null` client → the cursor
      * style defaults and Logger falls back to stderr (this grid is never bound to a
@@ -185,12 +182,6 @@ class SessionGrid(cols: Int, rows: Int, initialAnswerSink: ((ByteArray) -> Unit)
      * the ring append and the JediTerm feed), and on the restore path for the
      * persisted scrollback blob plus the mode-reset epilogue.
      *
-     * OSC 52 clipboard sequences are removed before the emulator sees them (see [Osc52Filter]):
-     * it prints the tail of any longer than its OSC limit as text, and that text would then be
-     * restored with every attach and every persisted blob. The filter's state lives across calls,
-     * so a sequence split between two feeds is still removed whole. Blobs already stored with
-     * such text in them are not repaired.
-     *
      * @param buf the byte buffer; only indices `[0, len)` are read.
      * @param len number of valid bytes in [buf]; ≤ 0 is a no-op.
      */
@@ -198,7 +189,7 @@ class SessionGrid(cols: Int, rows: Int, initialAnswerSink: ((ByteArray) -> Unit)
         if (len <= 0) return
         synchronized(emulator) {
             try {
-                osc52.filter(buf, len) { bytes, n -> emulator.append(bytes, n) }
+                emulator.append(buf, len)
             } catch (t: Throwable) {
                 // A malformed control sequence must never take the PTY read loop
                 // down. The grid may be left mid-sequence; the next feed recovers.
