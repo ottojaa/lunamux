@@ -25,7 +25,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import se.soderbjorn.lunamux.TaskException
@@ -215,7 +214,7 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
         val taskId = args.requireString("taskId")
         val text = (args["text"] as? JsonPrimitive)?.contentOrNull
             ?: throw McpArgumentException("'text' must be a string")
-        val questionWaits = (args["questionWaits"] as? JsonPrimitive)?.booleanOrNull ?: false
+        val questionWaits = args.optBool("questionWaits") == true
         val stored = taskCall { taskIndex.setStatus(taskId, text, ctx.callerSessionId, questionWaits) }
         McpToolResult.json(buildJsonObject {
             put("taskId", taskId)

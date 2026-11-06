@@ -115,14 +115,16 @@ since that is what the person is asked to allow.
   4. **The main conversation is closed:** ask "conversation closed / Resume it in a new tab?"; a
      second ↵ resumes it in a new tab. When the task's file declares an `open` action, that action's
      command is typed in the action's folder, so the conversation starts the way the task always
-     starts it: a command that names the conversation (`--resume <id>`) is typed as written, and one
-     that does not gets `--resume <conversation id>` after its first word. Only a Claude conversation
-     takes the declared command, and only its task's main conversation does: any other conversation,
-     a task without an `open` action (every task an agent made) and a declared folder that is gone
-     run `claude --resume <conversation id>` in the conversation's own folder (`codex resume <id>` for
-     a Codex conversation whose id is known). A declared command that begins with something other than
-     the program (an environment assignment, a `cd`) gets `--resume` in the wrong place; write the
-     program first. The same holds when the server no longer keeps a summary of the conversation: it
+     starts it: a command that names the conversation (`--resume <id>`) is typed as written. One that
+     does not is made to name it by putting `--resume <conversation id>` after its program word, and
+     only when it is one plain `claude` line (no other program, no `&&`, `;`, `|` or other shell
+     chaining, no `--resume`, `-r`, `--continue` or `-c` already) and the conversation ran in the
+     action's folder, because `claude --resume` finds a conversation only from the folder it ran in.
+     Only a Claude conversation takes the declared command, and only its task's main conversation
+     does: any other conversation, a task without an `open` action (every task an agent made), a
+     declared command that cannot take the id as above and a declared folder that is gone run
+     `claude --resume <conversation id>` in the conversation's own folder (`codex resume <id>` for
+     a Codex conversation whose id is known). The same holds when the server no longer keeps a summary of the conversation: it
      is resumed by the id the task stores. `claude --continue` is never used: it picks the newest
      conversation of the folder, not this one.
   5. **The task has no main conversation on record:** a live conversation of the task in a tab of the

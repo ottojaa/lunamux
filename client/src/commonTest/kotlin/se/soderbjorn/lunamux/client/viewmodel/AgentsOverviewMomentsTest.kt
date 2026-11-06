@@ -165,6 +165,17 @@ class AgentsOverviewMomentsTest {
         assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("main")), sent)
     }
 
+    /** A flag keeps the row of a task whose file declares no `open` action and that has no session in memory. */
+    @Test
+    fun aQuestionFlagKeepsTheRowOfATaskWithNoOpenActionAndNoSession() = runNow {
+        layout(listOf("leaf-other"))
+        show(listOf(task("main").copy(status = "Which database?", questionWaits = true)), conversation("other", "working"))
+        assertEquals("Which database?", row("task:g1").detail)
+        assertEquals(Enter.RESUME, row("task:g1").enter)
+        show(listOf(task("main").copy(status = "Which database?")), conversation("other", "working"))
+        assertFalse(vm.state.rows.any { it.id == "task:g1" })
+    }
+
     /** A flag on a task that has no main conversation has nothing to resume, so it keeps no row of its own. */
     @Test
     fun aQuestionFlagOnATaskWithNoMainConversationKeepsNoRow() {

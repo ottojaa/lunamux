@@ -91,6 +91,46 @@ class ResumeCommandTest {
         assertTrue(!resumeCommandOf(rec, TaskOpen("claude --model opus", "/work"))!!.contains("--continue"))
     }
 
+    /**
+     * A declared line that cannot take `--resume <id>` safely leaves Lunamux's own line: one that already resumes
+     * another conversation, names another program, or chains commands would otherwise resume the wrong one or none.
+     */
+    @Test
+    fun aDeclaredLineThatCannotTakeResumeLeavesTheOwnLine() {
+        val rec = AgentSessionRecord(id = "r1", agent = "claude", agentSessionId = uuid)
+        val own = "claude --resume $uuid"
+        for (line in listOf(
+            "claude --resume old-conversation",
+            "claude --resume=old-conversation --model opus",
+            "claude -r old-conversation",
+            "claude --continue",
+            "claude -c",
+            "record-pane --pane old && claude --resume old",
+            "cd /work && claude --model opus",
+            "FOO=1 claude --model opus",
+            "tool --model opus",
+            "claude --model opus; echo done",
+            "claude \"\$(date)\"",
+            "'claude' --model opus",
+        )) {
+            assertEquals(own, resumeCommandOf(rec, TaskOpen(line, "/work")), line)
+        }
+    }
+
+    /** Quotes protect a prompt word that holds an operator, so the usual start-up line still takes the id. */
+    @Test
+    fun aQuotedPromptWordWithAnOperatorStillTakesTheId() {
+        val rec = AgentSessionRecord(id = "r1", agent = "claude", agentSessionId = uuid)
+        assertEquals(
+            "claude --resume $uuid -n 'R&D · programme' '/start'",
+            resumeCommandOf(rec, TaskOpen("claude -n 'R&D · programme' '/start'", "/work")),
+        )
+        assertEquals(
+            "/usr/local/bin/claude --resume $uuid --model opus",
+            resumeCommandOf(rec, TaskOpen("/usr/local/bin/claude --model opus", "/work")),
+        )
+    }
+
     /** A Codex record keeps `codex resume`: the declared command is a Claude command line. */
     @Test
     fun aCodexRecordKeepsItsOwnLineWhateverTheTaskDeclares() {
@@ -111,8 +151,11 @@ class ResumeCommandTest {
     private val opened = mutableListOf<Triple<String, String, String?>>()
 
     /** Start a Claude conversation `a-<pane>` in a folder of its own and return its record. */
-    private fun session(pane: String): AgentSessionRecord {
-        val cwd = File(base, "p-$pane").apply { mkdirs() }.canonicalPath
+    private fun session(pane: String): AgentSessionRecord =
+        sessionIn(pane, File(base, "p-$pane").apply { mkdirs() }.canonicalPath)
+
+    /** Start a Claude conversation `a-<pane>` in [cwd] and return its record. */
+    private fun sessionIn(pane: String, cwd: String): AgentSessionRecord {
         val snapshot = PaneSnapshot(pane, leafId = "leaf-$pane", cwd = cwd, programTitle = null, agent = null, screenText = { "" })
         val event: JsonObject = buildJsonObject {
             put("hook_event_name", "SessionStart")
@@ -145,7 +188,7 @@ class ResumeCommandTest {
     @Test
     fun theMainOfATaskWithAnOpenActionIsResumedWithTheDeclaredCommand() {
         files.value = listOf(taskFile("t1", TaskOpen("claude --model opus", declaredFolder)))
-        val main = session("s1")
+        val main = sessionIn("s1", declaredFolder)
         index.recompute()
         index.setOwnSession("t1", "s1")
         resume(main)
@@ -202,11 +245,11 @@ class ResumeCommandTest {
 
     /**
      * The realistic case: the main's tab was closed, so its record has ended, and the client asks by conversation id.
-     * The line a task file written by the flow declares (the pane is recorded, then the conversation resumed) is typed as written.
+     * A declared line that records its pane and then resumes the conversation names the conversation already, so it is typed as written.
      */
     @Test
     fun aClosedMainAskedForByConversationIdIsResumedWithTheDeclaredCommandAsWritten() {
-        val declared = "fl /prog home --pane a-s1 && claude --resume a-s1"
+        val declared = "record-pane --pane a-s1 && claude --resume a-s1"
         files.value = listOf(taskFile("t1", TaskOpen(declared, declaredFolder)))
         session("s1")
         index.recompute()
@@ -224,6 +267,77 @@ class ResumeCommandTest {
         val (folder, _, command) = opened.single()
         assertEquals(declaredFolder, folder)
         assertEquals(declared, command)
+    }
+
+    /**
+     * A declared line that has to be given the id is typed only where the conversation ran: `claude --resume`
+     * finds a conversation from its own folder alone, so a main that ran elsewhere is resumed the plain way.
+     */
+    @Test
+    fun aDeclaredLineLackingTheIdIsNotTypedInAFolderTheConversationDidNotRunIn() {
+        files.value = listOf(taskFile("t1", TaskOpen("claude --model opus", declaredFolder)))
+        val main = session("s1")
+        assertTrue(main.cwd != declaredFolder)
+        index.recompute()
+        index.setOwnSession("t1", "s1")
+        resume(main)
+        assertTrue(sent.isEmpty(), "no error expected: $sent")
+        val (folder, _, command) = opened.single()
+        assertEquals(main.cwd, folder)
+        assertEquals("claude --resume a-s1", command)
+    }
+
+    /** A main that ran in the declared folder takes the declared line even when the folder is written untidily. */
+    @Test
+    fun aDeclaredLineLackingTheIdIsTypedWhereTheConversationRan() {
+        files.value = listOf(taskFile("t1", TaskOpen("claude --model opus", "$declaredFolder/./")))
+        sessionIn("s1", declaredFolder)
+        index.recompute()
+        index.setOwnSession("t1", "s1")
+        tracker.onHook(
+            PaneSnapshot("s1", leafId = "leaf-s1", cwd = declaredFolder, programTitle = null, agent = null, screenText = { "" }),
+            buildJsonObject {
+                put("hook_event_name", "SessionEnd")
+                put("session_id", "a-s1")
+            },
+        )
+        resume("a-s1")
+        assertTrue(sent.isEmpty(), "no error expected: $sent")
+        val (folder, _, command) = opened.single()
+        assertEquals("$declaredFolder/./", folder)
+        assertEquals("claude --resume a-s1 --model opus", command)
+    }
+
+    /** A declared line that names another conversation is not used: the main named now is resumed the plain way. */
+    @Test
+    fun aDeclaredLineNamingAnotherConversationIsNotTyped() {
+        files.value = listOf(taskFile("t1", TaskOpen("claude --resume old-conversation", declaredFolder)))
+        val main = session("s1")
+        index.recompute()
+        index.setOwnSession("t1", "s1")
+        resume(main)
+        assertTrue(sent.isEmpty(), "no error expected: $sent")
+        val (folder, _, command) = opened.single()
+        assertEquals(main.cwd, folder)
+        assertEquals("claude --resume a-s1", command)
+    }
+
+    /** A Codex main of a task that declares `open` is resumed by Codex with Codex's own line, though it ran in the declared folder. */
+    @Test
+    fun aCodexMainIsResumedByCodexInItsOwnFolderWhateverTheTaskDeclares() {
+        files.value = listOf(taskFile("t1", TaskOpen("claude --model opus", declaredFolder)))
+        val cwd = declaredFolder
+        repo.saveAgentSession(
+            AgentSessionRecord(id = "cx1", agent = "codex", agentSessionId = "c-1", cwd = cwd, state = "ended", endedAt = 900L),
+        )
+        index.recompute()
+        index.setMainConversation("t1", "c-1")
+        assertEquals("t1", index.listing().single { it.mainConversation == "c-1" }.id)
+        resume("c-1")
+        assertTrue(sent.isEmpty(), "no error expected: $sent")
+        val (folder, _, command) = opened.single()
+        assertEquals(cwd, folder)
+        assertEquals("codex resume c-1", command)
     }
 
     /** An id a shell would interpret is refused before the declared command is looked at. */

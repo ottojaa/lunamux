@@ -1055,7 +1055,9 @@ private fun isPlainSessionId(id: String): Boolean = id.isNotEmpty() && id.length
  * A Claude Code conversation that is a task's main one is resumed with the command its task file
  * declares ([open]), so it starts the way it always starts, with its start-up work. Claude reads a
  * trailing word as a prompt, so when that command does not name the conversation already,
- * `--resume <id>` goes in right after its first word. [open] means nothing to the other agents.
+ * `--resume <id>` goes in right after its program word, but only into a plain `claude` line (see
+ * [declaredResumeLine]); any other line leaves Lunamux's own. [open] means nothing to the other
+ * agents.
  *
  * @param rec the record of the conversation, the newest of its runs.
  * @param open the `open` action of the task this conversation is the main one of, or null when it
@@ -1076,18 +1078,97 @@ internal fun resumeCommandOf(rec: AgentSessionRecord, open: TaskOpen? = null): S
 /**
  * A task's declared `open` command made to resume conversation [id].
  *
- * Called by [resumeCommandOf]. A command that already holds the id is returned as it is;
- * otherwise `--resume <id>` is put after the command's first word, ahead of any prompt words.
+ * Called by [resumeCommandOf] and [declaredResumeFor]. A command that already holds the id is
+ * returned as it is. Otherwise `--resume <id>` is put after the program word, ahead of any prompt
+ * words, but only when the command is a plain `claude` line (see [isPlainClaudeLine]): a line that
+ * already resumes or continues something, names another program, or chains commands cannot take
+ * the flag without resuming the wrong conversation or none, so it gets null.
  *
  * @param command the text of the task's `open` action, or null when it declares none.
  * @param id the conversation id, already checked by [isPlainSessionId].
- * @return the line to type, or null when [command] is null or blank.
+ * @return the line to type, or null when [command] is null, blank or not a line the id can be put in.
  */
-private fun declaredResumeLine(command: String?, id: String): String? {
+internal fun declaredResumeLine(command: String?, id: String): String? {
     val line = command?.trim()?.takeIf { it.isNotEmpty() } ?: return null
     if (id in line) return line
+    if (!isPlainClaudeLine(line)) return null
     val firstWordEnd = line.indexOfFirst { it.isWhitespace() }.takeIf { it >= 0 } ?: line.length
     return line.substring(0, firstWordEnd) + " --resume " + id + line.substring(firstWordEnd)
+}
+
+/**
+ * Whether [line] is one `claude` command that does not yet resume or continue a conversation.
+ *
+ * Called by [declaredResumeLine]. The line is read the way a shell would split it, with quotes
+ * honoured: its first word must be the program `claude` (a path to it will do), written without
+ * quotes, and nothing outside single quotes may chain or expand (`&`, `;`, `|`, `<`, `>`, `$`,
+ * backquote, parentheses, a backslash, a line break). None of its words may be a resume or continue
+ * flag.
+ *
+ * @param line the trimmed, non-blank declared command.
+ * @return true when `--resume <id>` can be put right after the first word.
+ */
+internal fun isPlainClaudeLine(line: String): Boolean {
+    val words = mutableListOf<String>()
+    val word = StringBuilder()
+    var inWord = false
+    var quote: Char? = null
+    for (c in line) {
+        when {
+            quote == '\'' -> if (c == '\'') quote = null else word.append(c)
+            quote == '"' -> when (c) {
+                '"' -> quote = null
+                '$', '`', '\\' -> return false
+                else -> word.append(c)
+            }
+            c == '\'' || c == '"' -> { quote = c; inWord = true }
+            c.isWhitespace() -> {
+                if (c == '\n' || c == '\r') return false
+                if (inWord) { words += word.toString(); word.clear(); inWord = false }
+            }
+            c in "&;|<>$`()\\" -> return false
+            else -> { word.append(c); inWord = true }
+        }
+    }
+    if (quote != null) return false
+    if (inWord) words += word.toString()
+    val firstWordEnd = line.indexOfFirst { it.isWhitespace() }.takeIf { it >= 0 } ?: line.length
+    val program = words.firstOrNull() ?: return false
+    if (line.substring(0, firstWordEnd) != program || program.substringAfterLast('/') != "claude") return false
+    return words.drop(1).none { it == "-r" || it == "-c" || it == "--continue" || it == "--resume" || it.startsWith("--resume=") }
+}
+
+/**
+ * The line to type, in the task's declared folder, to resume [rec] as the task's main conversation,
+ * or null when the conversation is to be resumed the plain way.
+ *
+ * Called by [resumeAgentSession]. Only a Claude Code conversation with a usable id takes the
+ * declared command, and only when [declaredResumeLine] can make it resume that conversation. A
+ * line that had to be given `--resume <id>` also needs the conversation to have run in the
+ * declared folder, because `claude --resume` finds a conversation only from the folder it ran in;
+ * a line that already names the conversation is trusted to know where it lives.
+ *
+ * @param rec the record of the conversation.
+ * @param open the `open` action of the task this conversation is the main one of.
+ * @return the declared line to type in `open.folder`, or null for the plain path.
+ */
+internal fun declaredResumeFor(rec: AgentSessionRecord, open: TaskOpen): String? {
+    if (rec.agent != "claude") return null
+    val id = rec.agentSessionId?.takeIf(::isPlainSessionId) ?: return null
+    val line = declaredResumeLine(open.command, id) ?: return null
+    if (line != open.command.trim() && !sameFolder(rec.cwd, open.folder)) return null
+    return line
+}
+
+/**
+ * Whether two folder paths name the same folder, compared as written after tidying (`.`, `..`,
+ * a trailing slash). No disk access; a null or blank path is never the same as another.
+ *
+ * Called by [declaredResumeFor].
+ */
+private fun sameFolder(a: String?, b: String?): Boolean {
+    if (a.isNullOrBlank() || b.isNullOrBlank()) return false
+    return java.nio.file.Paths.get(a).normalize() == java.nio.file.Paths.get(b).normalize()
 }
 
 /**
@@ -1100,8 +1181,9 @@ private fun declaredResumeLine(command: String?, id: String): String? {
  * folder.
  *
  * A Claude Code conversation that is the main one of a task whose file declares an `open` action
- * is resumed with that command, in the folder the action names (see [resumeCommandOf]). When that
- * folder is gone the conversation is resumed plainly instead. Every other conversation is resumed
+ * is resumed with that command, in the folder the action names (see [declaredResumeFor]). When
+ * that folder is gone, or the command cannot be made to resume this conversation, the conversation
+ * is resumed plainly instead. Every other conversation is resumed
  * plainly in its own folder: a worktree that has since been removed is recreated at its old path
  * first ([AgentResumePlanner]); when that is impossible, or the folder is gone for good, the
  * reason goes back as an [WindowEnvelope.AgentSessionError] and no tab is created.
@@ -1120,14 +1202,10 @@ internal suspend fun resumeAgentSession(
         ctx.send(WindowEnvelope.AgentSessionError(recordId, "session no longer exists"))
         return
     }
-    val declared = ctx.taskIndex?.openOfMain(rec)?.takeIf { rec.agent == "claude" }
-    if (declared != null && withContext(Dispatchers.IO) { java.io.File(declared.folder).isDirectory }) {
-        val command = resumeCommandOf(rec, declared)
-        if (command == null) {
-            ctx.send(WindowEnvelope.AgentSessionError(recordId, "This conversation has no session id Lunamux can resume."))
-            return
-        }
-        open(declared.folder, rec.title ?: rec.branch ?: java.io.File(declared.folder).name, command)
+    val declared = ctx.taskIndex?.openOfMain(rec)
+    val declaredLine = declared?.let { declaredResumeFor(rec, it) }
+    if (declared != null && declaredLine != null && withContext(Dispatchers.IO) { java.io.File(declared.folder).isDirectory }) {
+        open(declared.folder, rec.title ?: rec.branch ?: java.io.File(declared.folder).name, declaredLine)
         return
     }
     val plan = withContext(Dispatchers.IO) { AgentResumePlanner.plan(rec) }

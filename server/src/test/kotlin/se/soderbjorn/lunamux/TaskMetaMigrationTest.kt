@@ -16,6 +16,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+/** Opening a database whose `task_meta` table predates `question_waits` adds the column and loses nothing. */
 class TaskMetaMigrationTest {
     /** An old table gains `question_waits`, keeps its status, and stores the flag with a new status. */
     @Test
