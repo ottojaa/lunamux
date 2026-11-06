@@ -37,8 +37,9 @@ internal object TasksMigration {
      * `agent_tasks`; its start, status, question flag and main conversation come from `task_meta`.
      * Nothing is invented: a task with no row in one table has empty columns for what that table
      * held. A task whose main is named only by a pane (an older row has no conversation) takes the
-     * conversation of the newest session record of that task that ran in the pane, when there is
-     * one, and none otherwise.
+     * conversation of the newest session record that ran in that pane, preferring a record that
+     * carries the task's id: the pane may have been the person's own session, which never carried
+     * it. A pane with no record gives no main.
      *
      * @param driver the open database; `tasks` and `agent_sessions` must exist.
      * @param inTransaction runs the given block as one transaction against [driver], rolling it back
@@ -54,8 +55,9 @@ internal object TasksMigration {
         // An old table may predate a column; what it lacked reads as empty.
         fun meta(column: String) = if (column in metaColumns) "m.$column" else "NULL"
         val sessionOf = { match: String ->
-            "(SELECT COALESCE(s.agent_session_id, s.id) FROM agent_sessions s " +
-                "WHERE s.task_id = ids.id AND $match ORDER BY s.created_at DESC LIMIT 1)"
+            "(SELECT conversation FROM (SELECT COALESCE(s.agent_session_id, s.id) AS conversation, " +
+                "COALESCE(s.task_id = ids.id, 0) AS member, s.created_at AS at " +
+                "FROM agent_sessions s WHERE $match) ORDER BY member DESC, at DESC LIMIT 1)"
         }
         val main = "COALESCE(${meta("lead_agent_session")}, CASE WHEN ${meta("lead_leaf")} IS NOT NULL " +
             "THEN ${sessionOf("s.leaf_id = ${meta("lead_leaf")}")} " +

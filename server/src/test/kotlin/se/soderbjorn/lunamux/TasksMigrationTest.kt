@@ -59,8 +59,9 @@ class TasksMigrationTest {
                        ('pane-only', 6, NULL, NULL, NULL, NULL, 's4', NULL),
                        ('leaf-only', 8, NULL, NULL, NULL, NULL, 's9', 'n3')""",
                 )
-                // The conversations the two pane-only mains were running: the newer record wins, and a
-                // record of another task is never taken.
+                // The conversations the two pane-only mains were running: of the records that carry the
+                // task's id the newer wins, and a pane's record that carries no id (the person's own
+                // session) is still taken when it is the only one.
                 s.execute(
                     """INSERT INTO agent_sessions (id, agent_session_id, agent, source, terminal_session_id, leaf_id, state, state_since, created_at) VALUES
                        ('old-run', 'conv-old', 'claude', 'hooks', 's4', NULL, 'ended', 1, 1),
@@ -70,7 +71,6 @@ class TasksMigrationTest {
                 s.execute("UPDATE agent_sessions SET terminal_session_id = 's4' WHERE id = 'new-run'")
                 s.execute("ALTER TABLE agent_sessions ADD COLUMN task_id TEXT")
                 s.execute("UPDATE agent_sessions SET task_id = 'pane-only' WHERE id IN ('old-run', 'new-run')")
-                s.execute("UPDATE agent_sessions SET task_id = 'leaf-only' WHERE id = 'leaf-run'")
                 s.execute("PRAGMA user_version = 1")
             }
         }
