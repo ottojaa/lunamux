@@ -55,7 +55,7 @@ age) keeps the frame it had, and the footer's spinner shows the same frame as th
 
 A conversation **works** until a hook or the screen says otherwise, however long it has been silent: a test run
 that takes six minutes is working for all six, on the row and in the footer's count. No timer ends it. The
-screen says otherwise when it reads idle (no work, no prompt) for three polls in a row, about nine seconds, with
+screen says otherwise when it reads idle (no work, no prompt) for three polls in a row, after the poller's own three-poll hold (about fifteen seconds in all), with
 no hook in between: the process is gone or the turn ended without a Stop, and the row is **done**.
 
 The **detail** is the first of these that exists: the task's status line, the question of the
