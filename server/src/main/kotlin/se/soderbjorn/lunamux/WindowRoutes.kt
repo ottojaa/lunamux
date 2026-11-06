@@ -851,7 +851,7 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
             try {
                 runCatching {
                     val inspection = withTimeoutOrNull(INSPECT_TIMEOUT_MS) {
-                        withContext(Dispatchers.IO) { AgentSessionSearch.inspect(cmd.recordId, ctx.agentTracker) }
+                        withContext(Dispatchers.IO) { AgentSessionSearch.inspect(cmd.recordId, ctx.agentTracker, ctx.taskIndex) }
                     }
                     if (inspection != null) ctx.send(inspection)
                 }.onFailure { log.warn("Agent session inspect failed", it) }
@@ -1140,9 +1140,10 @@ internal fun isPlainClaudeLine(line: String): Boolean {
  *
  * Called by [resumeAgentSession]. Only a Claude Code conversation with a usable id takes the
  * declared command, and only when [declaredResumeLine] can make it resume that conversation. A
- * line that had to be given `--resume <id>` also needs the conversation to have run in the
- * declared folder, because `claude --resume` finds a conversation only from the folder it ran in;
- * a line that already names the conversation is trusted to know where it lives.
+ * line that had to be given `--resume <id>` is used only when the conversation ran in the
+ * declared folder (a conversation that ran elsewhere is resumed plainly, in its own folder); a
+ * line that already names the conversation is used as it stands. `claude --resume <id>` finds the
+ * conversation from any folder, so this is a choice about which line starts it, not a limit of the tool.
  *
  * @param rec the record of the conversation.
  * @param open the `open` action of the task this conversation is the main one of.
@@ -1168,6 +1169,66 @@ private fun sameFolder(a: String?, b: String?): Boolean {
 }
 
 /**
+ * The folder text a closed conversation is picked up from, before any walk up to a folder that exists.
+ *
+ * Called by [resumeAgentSession] to open the tab and by [resumeNoteOf] to word the note under the
+ * row, so the two always name the same folder. A conversation that resumes with its task's declared
+ * line (see [declaredResumeFor]) starts from the folder that line is declared for; every other
+ * conversation starts from the folder it ran in.
+ *
+ * @param rec the record of the conversation.
+ * @param open the `open` action of the task this conversation is the main one of, or null.
+ * @return the recorded folder, or null when none was recorded or it is blank.
+ * @see nearestExistingFolder
+ */
+internal fun startFolderOf(rec: AgentSessionRecord, open: TaskOpen?): String? =
+    (if (open != null && declaredResumeFor(rec, open) != null) open.folder else rec.cwd)?.takeIf { it.isNotBlank() }
+
+/**
+ * The first folder at or above [path] that exists on disk.
+ *
+ * Called by [resumeAgentSession] and [resumeNoteOf]. A conversation whose folder was removed, such
+ * as a worktree that was cleaned up, is opened here instead: Claude Code finds the conversation by
+ * its id, so any folder will do, and the agent can rebuild the worktree itself. Looks at the disk
+ * only; no git command runs.
+ *
+ * @param path an absolute folder path that may no longer exist.
+ * @return the path itself when it is a folder, else its nearest ancestor that is one; null when
+ *   no ancestor exists either (a relative path with nothing above it).
+ */
+internal fun nearestExistingFolder(path: String): String? {
+    if (java.io.File(path).isDirectory) return path
+    var dir: java.io.File? = java.io.File(path).parentFile
+    while (dir != null && !dir.isDirectory) dir = dir.parentFile
+    return dir?.path
+}
+
+/** What a row says when its conversation never recorded a folder; also the answer to Resume. */
+private const val NO_FOLDER_RECORDED = "No folder was recorded for this session."
+
+/** What a row says when its folder is gone and nothing above it exists either. */
+private const val NO_FOLDER_ABOVE = "Its folder is gone, and no folder above it exists."
+
+/**
+ * The one line shown under a closed row, and in its inspection, when Resume would not simply run
+ * in the folder the conversation ran in.
+ *
+ * Called by [AgentSessionSearch.search] and [AgentSessionSearch.inspect]. It reads the disk the
+ * way [resumeAgentSession] does, through [startFolderOf] and [nearestExistingFolder].
+ *
+ * @param rec the closed conversation.
+ * @param open the `open` action of the task the conversation is the main one of, or null.
+ * @return "Its folder is gone. It resumes in <nearest folder>.", the reason Resume cannot open a
+ *   tab at all, or null when the folder exists and nothing needs saying.
+ */
+internal fun resumeNoteOf(rec: AgentSessionRecord, open: TaskOpen?): String? {
+    val recorded = startFolderOf(rec, open) ?: return NO_FOLDER_RECORDED
+    if (java.io.File(recorded).isDirectory) return null
+    val nearest = nearestExistingFolder(recorded) ?: return NO_FOLDER_ABOVE
+    return "Its folder is gone. It resumes in $nearest."
+}
+
+/**
  * Open a new tab for an agent session and start its agent again.
  *
  * Called by [handleWindowCommand] for [WindowCommand.ResumeAgentSession]. The
@@ -1177,16 +1238,17 @@ private fun sameFolder(a: String?, b: String?): Boolean {
  * folder.
  *
  * A Claude Code conversation that is the main one of a task whose file declares an `open` action
- * is resumed with that command, in the folder the action names (see [declaredResumeFor]). When
- * that folder is gone, or the command cannot be made to resume this conversation, the conversation
- * is resumed plainly instead. Every other conversation is resumed
- * plainly in its own folder: a worktree that has since been removed is recreated at its old path
- * first ([AgentResumePlanner]); when that is impossible, or the folder is gone for good, the
- * reason goes back as an [WindowEnvelope.AgentSessionError] and no tab is created.
+ * is resumed with that command, in the folder the action names (see [declaredResumeFor]). Every
+ * other conversation is resumed plainly, in its own folder. When that folder is gone, the tab
+ * opens in the nearest folder above it that exists ([nearestExistingFolder]) and nothing else is
+ * done: no git command runs, and the agent rebuilds a removed worktree itself. A conversation with
+ * no recorded folder, or no id to resume, is answered with an [WindowEnvelope.AgentSessionError]
+ * and no tab is created.
  *
  * @param recordId the [AgentSessionSummary.id] of the row, or a conversation id.
  * @param ctx the connection that asked, which receives any error.
  * @param open opens the tab and types the command; [openTabRunning] except in tests.
+ * @see resumeNoteOf
  */
 internal suspend fun resumeAgentSession(
     recordId: String,
@@ -1199,33 +1261,22 @@ internal suspend fun resumeAgentSession(
         return
     }
     val declared = ctx.taskIndex?.openOfMain(rec)
-    val declaredLine = declared?.let { declaredResumeFor(rec, it) }
-    if (declared != null && declaredLine != null && withContext(Dispatchers.IO) { java.io.File(declared.folder).isDirectory }) {
-        open(declared.folder, rec.title ?: rec.branch ?: java.io.File(declared.folder).name, declaredLine)
+    val recorded = startFolderOf(rec, declared)
+    if (recorded == null) {
+        ctx.send(WindowEnvelope.AgentSessionError(recordId, NO_FOLDER_RECORDED))
         return
     }
-    val plan = withContext(Dispatchers.IO) { AgentResumePlanner.plan(rec) }
-    val cwd = when (plan) {
-        ResumePlan.InPlace -> rec.cwd!!
-        is ResumePlan.Missing -> {
-            ctx.send(WindowEnvelope.AgentSessionError(recordId, plan.reason))
-            return
-        }
-        is ResumePlan.Recreate -> {
-            val error = withContext(Dispatchers.IO) { AgentResumePlanner.recreate(plan) }
-            if (error != null) {
-                ctx.send(WindowEnvelope.AgentSessionError(recordId, error))
-                return
-            }
-            AgentResumePlanner.resumeFolder(rec, plan)
-        }
+    val folder = withContext(Dispatchers.IO) { nearestExistingFolder(recorded) }
+    if (folder == null) {
+        ctx.send(WindowEnvelope.AgentSessionError(recordId, NO_FOLDER_ABOVE))
+        return
     }
-    val command = resumeCommandOf(rec)
+    val command = declared?.let { declaredResumeFor(rec, it) } ?: resumeCommandOf(rec)
     if (command == null && rec.agent != "gemini") {
         ctx.send(WindowEnvelope.AgentSessionError(recordId, "This conversation has no session id Lunamux can resume."))
         return
     }
-    open(cwd, rec.title ?: rec.branch ?: java.io.File(cwd).name, command)
+    open(folder, rec.title ?: rec.branch ?: java.io.File(recorded).name, command)
 }
 
 /**

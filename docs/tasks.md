@@ -119,14 +119,18 @@ since that is what the person is asked to allow.
      does not is made to name it by putting `--resume <conversation id>` after its program word, and
      only when it is one plain `claude` line (no other program, no `&&`, `;`, `|` or other shell
      chaining, no `--resume`, `-r`, `--continue`, `-c` or `--session-id` already) and the conversation ran in the
-     action's folder, because `claude --resume` finds a conversation only from the folder it ran in.
-     Only a Claude conversation takes the declared command, and only its task's main conversation
-     does: any other conversation, a task without an `open` action (every task an agent made), a
-     declared command that cannot take the id as above and a declared folder that is gone run
+     action's folder. Only a Claude conversation takes the declared command, and only its task's
+     main conversation does: any other conversation, a task without an `open` action (every task an
+     agent made) and a declared command that cannot take the id as above run
      `claude --resume <conversation id>` in the conversation's own folder (`codex resume <id>` for
      a Codex conversation whose id is known). The same holds when the server no longer keeps a summary of the conversation: it
      is resumed by the id the task stores. `claude --continue` is never used: it picks the newest
-     conversation of the folder, not this one.
+     conversation of the folder, not this one. `claude --resume <id>` finds the conversation from
+     any folder, so a folder that is gone is not a reason to refuse: the tab opens in the nearest
+     folder above it that exists (the declared folder, for a declared command), the row and the
+     peek say "Its folder is gone. It resumes in <that folder>.", and nothing else is done. Lunamux
+     never recreates a removed worktree; the agent rebuilds its own. A conversation with no
+     recorded folder, or no id to resume, is answered with an error and no tab opens.
   5. **The task has no main conversation on record:** a live conversation of the task in a tab of the
      strip is jumped to (the one waiting longest, else the busiest); else ask "no conversation /
      Start one in a new tab?" and run the task file's `open` action on a second ↵; else the newest
