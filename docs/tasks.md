@@ -54,7 +54,9 @@ the clock, never from when the row was drawn, so a row that is redrawn (a new st
 age) keeps the frame it had, and the footer's spinner shows the same frame as the rows.
 
 A conversation **works** until a hook or the screen says otherwise, however long it has been silent: a test run
-that takes six minutes is working for all six, on the row and in the footer's count. No timer ends it.
+that takes six minutes is working for all six, on the row and in the footer's count. No timer ends it. The
+screen says otherwise when it reads idle (no work, no prompt) for three polls in a row, about nine seconds, with
+no hook in between: the process is gone or the turn ended without a Stop, and the row is **done**.
 
 The **detail** is the first of these that exists: the task's status line, the question of the
 conversation that waits (in quotes), what a working conversation is doing, or nothing. The folder
@@ -225,12 +227,15 @@ interrupted with Esc, so what really happened ends the wait, in this order and n
   refused with No, a prompt refused with Esc and a turn interrupted while it writes, and it holds even when
   the prompt was refused before Lunamux ever saw it. Lunamux reads the end of the file only when it has
   changed.
-- The screen shows work: the prompt was approved (or never was a prompt), the row is **working**.
+- The screen showed the prompt and now shows work: the prompt was approved, the row is **working**.
 - The screen showed the prompt and now shows neither it nor work: the prompt left without a go-ahead, the
   row is **done**.
 
-A prompt that nothing has answered shows none of this, so it keeps waiting for as long as it takes: a
-question Lunamux failed to recognise on screen must not vanish from the count while it is still unanswered.
+A prompt that no poll ever showed is settled only by the transcript rule above or by a hook: a poll can be
+taken before the prompt is drawn, and the line about background agents reads "working" whatever else is
+on screen, so such a screen proves nothing about the question. A prompt that nothing has answered keeps
+waiting for as long as it takes: a question Lunamux failed to recognise on screen must not vanish from the
+count while it is still unanswered.
 For Codex and Gemini the state comes from reading the screen, so it is a best guess and lags a
 little. Codex is its own conversation per session: its own conversation id has not been confirmed
 against a real session, so a resumed Codex session may show as a new row.

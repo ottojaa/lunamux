@@ -16,7 +16,6 @@
 package se.soderbjorn.lunamux
 
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -93,11 +92,6 @@ object TranscriptTail {
     /** Whether a `user` line is the interrupt marker: its content is, or starts with, the marker text. */
     private fun isInterrupt(line: JsonObject): Boolean {
         val content = (line["message"] as? JsonObject)?.get("content")
-        val text = when (content) {
-            is JsonPrimitive -> content.contentOrNull
-            is JsonArray -> content.firstNotNullOfOrNull { ((it as? JsonObject)?.get("text") as? JsonPrimitive)?.contentOrNull }
-            else -> null
-        }
-        return text?.startsWith(INTERRUPT_MARK) == true
+        return AgentTranscriptText.textOf(content).startsWith(INTERRUPT_MARK)
     }
 }

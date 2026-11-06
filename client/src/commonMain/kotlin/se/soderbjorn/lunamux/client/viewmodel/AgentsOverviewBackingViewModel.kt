@@ -151,11 +151,11 @@ class AgentsOverviewBackingViewModel(
      * @property marker "◆" when the task needs the person, else empty. The view draws ▸ over it
      *   on the selected row.
      * @property stateWord exactly one of [STATE_NEEDS_YOU] (one conversation waits on the person),
-     *   "N need you" (two or more do), "N working" (two or more conversations are moving,
-     *   background ones included), [STATE_WORKING] (one is moving), [STATE_DONE] (in NOW, nothing
-     *   moving or waiting) or [STATE_FINISHED] (in EARLIER, nothing moving or waiting).
+     *   "N need you" (two or more do), "N working" (two or more conversations are working,
+     *   background ones included), [STATE_WORKING] (one is working), [STATE_DONE] (in NOW, nothing
+     *   working or waiting) or [STATE_FINISHED] (in EARLIER, nothing working or waiting).
      * @property detail what the row says after its state word: the task's status; without one the
-     *   question a session asks, in quotes, else the line a moving session last reported, else
+     *   question a session asks, in quotes, else the line a working session last reported, else
      *   empty. A lone session has no status. In a search result it is the text around the match.
      * @property extra the text lines under the selected row, without [detail]: as they apply, what
      *   Resume will do when it is not the plain case ("2 uncommitted changes · 1 unpushed commit"),
@@ -1279,21 +1279,21 @@ class AgentsOverviewBackingViewModel(
         val t = u.task
         val id = "$TASK_PREFIX${t.id}"
         // The row counts the conversations the footer counts, by the same functions.
-        val moving = u.sessions.filter { AgentCounts.isWorking(it, c.config) }
+        val working = u.sessions.filter { AgentCounts.isWorking(it, c.config) }
         val waiting = u.waiting.minByOrNull { it.stateSince }
         // Something that moves is working, wherever the task is filed; a task that only rests reads done in NOW and finished in EARLIER.
         val stateWord = when {
             u.waiting.size >= 2 -> needYouText(u.waiting.size)
             waiting != null -> STATE_NEEDS_YOU
-            moving.size >= 2 -> "${moving.size} $STATE_WORKING"
-            moving.size == 1 -> STATE_WORKING
+            working.size >= 2 -> "${working.size} $STATE_WORKING"
+            working.size == 1 -> STATE_WORKING
             u.inEarlier -> STATE_FINISHED
             else -> STATE_DONE
         }
         val status = t.status?.trim()?.takeIf { it.isNotEmpty() }
         val detail = status
             ?: waiting?.let(::lineOf)?.let(::quoted)
-            ?: moving.sortedByDescending { it.lastActivityAt ?: it.stateSince }.firstNotNullOfOrNull(::lineOf)
+            ?: working.sortedByDescending { it.lastActivityAt ?: it.stateSince }.firstNotNullOfOrNull(::lineOf)
             ?: ""
         val target = u.target
         val live = target != null && c.live(target)
@@ -1346,11 +1346,11 @@ class AgentsOverviewBackingViewModel(
         val id = if (taskTitle != null) "$TASK_PREFIX${s.taskId}" else s.conversationId
         // The same rule as the footer: a conversation waits or moves on a row only while its pane is in the layout.
         val needs = AgentCounts.isWaiting(s, c.config)
-        val moving = AgentCounts.isWorking(s, c.config)
+        val working = AgentCounts.isWorking(s, c.config)
         val nowLine = s.nowLine?.trim()?.takeIf { it.isNotEmpty() }
         val detail = when {
             needs -> (AgentSessionText.previewOf(s.question) ?: nowLine)?.let(::quoted) ?: ""
-            moving -> nowLine ?: ""
+            working -> nowLine ?: ""
             else -> ""
         }
         val enter = when {
@@ -1368,7 +1368,7 @@ class AgentsOverviewBackingViewModel(
             marker = if (needs) MARKER else "",
             stateWord = when {
                 needs -> STATE_NEEDS_YOU
-                moving -> STATE_WORKING
+                working -> STATE_WORKING
                 earlier -> STATE_FINISHED
                 else -> STATE_DONE
             },
@@ -1625,13 +1625,13 @@ class AgentsOverviewBackingViewModel(
         /** The state word of a task that has a session waiting on the person. */
         const val STATE_NEEDS_YOU = "needs you"
 
-        /** The state word of a task with one moving session; with several it reads "N working". */
+        /** The state word of a task with one working session; with several it reads "N working". */
         const val STATE_WORKING = "working"
 
-        /** The state word of a task in NOW with nothing moving and nothing waiting. */
+        /** The state word of a task in NOW with nothing working and nothing waiting. */
         const val STATE_DONE = "done"
 
-        /** The state word of a task in EARLIER with nothing moving. */
+        /** The state word of a task in EARLIER with nothing working. */
         const val STATE_FINISHED = "finished"
 
         /** The mark in the first column of a row that needs the person. */

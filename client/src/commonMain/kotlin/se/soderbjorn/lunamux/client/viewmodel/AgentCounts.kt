@@ -24,7 +24,7 @@ object AgentCounts {
     private const val WORKING = "working"
 
     /**
-     * How many conversations wait for the person and how many are moving.
+     * How many conversations wait for the person and how many are working.
      *
      * @property waiting conversations that wait for the person.
      * @property working conversations that work.

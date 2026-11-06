@@ -133,6 +133,14 @@ class AgentSessionTracker(
     private val promptSeen = HashSet<String>()
 
     /**
+     * For each open hook-fed `working` record, how many polls in a row have shown no agent at all
+     * on its pane since its last hook. A screen that stays blank this long means the turn is over
+     * without a hook saying so (the process was killed, or the turn ended with an error that sends
+     * no Stop). Any hook, and any poll that shows an agent, starts the count again.
+     */
+    private val idlePolls = HashMap<String, Int>()
+
+    /**
      * When each open record last received a hook event, by record id. Kept in memory only: it
      * is empty after a restart, and a record with no entry publishes no activity time.
      */
@@ -278,33 +286,41 @@ class AgentSessionTracker(
                 // settled from what really happened, never from a timer:
                 //  - the transcript ends in the person's interrupt line, written after the last
                 //    hook: the turn is over, done;
-                //  - the screen shows work: the prompt was answered Yes, or never was a prompt;
-                //  - the screen showed the prompt (waiting) and now shows neither it nor work: the
-                //    prompt has left without a go-ahead, done. The poller already holds the last
-                //    state for a few polls, so one poll without the prompt is a prompt that has left.
+                //  - the screen showed the prompt (waiting) and now shows work: the prompt was
+                //    answered Yes, working. A prompt the screen never showed is not settled by a
+                //    working screen: that poll may have been taken before the prompt was drawn, or
+                //    the detector may read work above a dialog, and an unanswered question must
+                //    stay counted. The next hook (the tool's PostToolUse) moves such a row on;
+                //  - the screen showed the prompt and now shows neither it nor work: the prompt has
+                //    left without a go-ahead, done. The poller already holds the last state for a
+                //    few polls, so one poll without the prompt is a prompt that has left;
+                //  - a working record whose pane shows no agent at all for [IDLE_POLLS_TO_DONE]
+                //    polls in a row since the last hook: the turn ended without a hook, done.
                 // A prompt nothing has answered shows none of this, so it stays needs_you for good.
                 // A later hook moves the row on again.
                 val interruptedAt = interrupts[rec.id]
                 val open = rec.state == WORKING || rec.state == NEEDS_YOU
+                if (rec.state != WORKING || pane.state != null) idlePolls.remove(rec.id)
                 if (open && interruptedAt != null && interruptedAt + HOOK_LAG_MS >= (lastHookAt[rec.id] ?: Long.MAX_VALUE)) {
+                    rec = settleDone(rec)
+                } else if (rec.state == WORKING) {
                     promptSeen.remove(rec.id)
-                    lastActivity[rec.id] = clock()
-                    toolInFlight.remove(rec.id)
-                    rec = rec.copy(state = DONE, stateSince = clock(), nowLine = null, question = null)
-                    put(rec)
+                    if (pane.state == null) {
+                        val idle = (idlePolls[rec.id] ?: 0) + 1
+                        if (idle >= IDLE_POLLS_TO_DONE) rec = settleDone(rec) else idlePolls[rec.id] = idle
+                    }
                 } else if (rec.state != NEEDS_YOU) {
                     promptSeen.remove(rec.id)
-                } else if (pane.state == "working") {
-                    promptSeen.remove(rec.id)
-                    rec = rec.copy(state = WORKING, stateSince = clock(), question = null)
-                    put(rec)
                 } else if (pane.state == "waiting") {
                     promptSeen.add(rec.id)
                 } else if (promptSeen.remove(rec.id)) {
-                    lastActivity[rec.id] = clock()
-                    toolInFlight.remove(rec.id)
-                    rec = rec.copy(state = DONE, stateSince = clock(), nowLine = null, question = null)
-                    put(rec)
+                    if (pane.state == "working") {
+                        lastActivity[rec.id] = clock()
+                        rec = rec.copy(state = WORKING, stateSince = clock(), question = null)
+                        put(rec)
+                    } else {
+                        rec = settleDone(rec)
+                    }
                 }
                 if (rec.state == WORKING && pane.state == "working") noteWork(rec.id)
                 continue
@@ -323,6 +339,24 @@ class AgentSessionTracker(
             if (next != rec) put(next)
         }
         publish()
+    }
+
+    /**
+     * End the turn of the open hook-fed record [rec] without a hook: it becomes done, with no tool
+     * line and no question, and the poll counts as its last sign of life.
+     *
+     * Called by [applyPoll] with the lock held, when the transcript or the screen shows that the
+     * turn is over.
+     *
+     * @param rec the record to settle.
+     * @return the settled record, already stored.
+     */
+    private fun settleDone(rec: AgentSessionRecord): AgentSessionRecord {
+        promptSeen.remove(rec.id)
+        idlePolls.remove(rec.id)
+        lastActivity[rec.id] = clock()
+        toolInFlight.remove(rec.id)
+        return rec.copy(state = DONE, stateSince = clock(), nowLine = null, question = null).also { put(it) }
     }
 
     /**
@@ -424,6 +458,7 @@ class AgentSessionTracker(
         }
         lastActivity[rec.id] = now
         lastHookAt[rec.id] = now
+        idlePolls.remove(rec.id)
         put(rec)
         publish()
     }
@@ -650,6 +685,7 @@ class AgentSessionTracker(
         lastHookAt.remove(recordId)
         tailReads.remove(recordId)
         toolInFlight.remove(recordId)
+        idlePolls.remove(recordId)
     }
 
     /** Read git facts for [cwd] unless a read from the last minute is cached. Never call with the lock held. */
@@ -786,6 +822,13 @@ class AgentSessionTracker(
          * interrupt can land in between.
          */
         const val HOOK_LAG_MS = 1_000L
+
+        /**
+         * Polls in a row (3 s apart, after the poller's own hold of the last state) that must show
+         * no agent on a hook-fed working record's pane, since its last hook, before the turn counts
+         * as over. Long enough for the screen to catch up with a prompt just sent.
+         */
+        const val IDLE_POLLS_TO_DONE = 3
         const val PROMPT_MAX = 500
         const val QUESTION_MAX = 400
         const val GIT_CACHE_MS = 60_000L

@@ -1,6 +1,6 @@
 /**
  * The small glyph the agents overview draws in front of "working" in the state cell of a row whose
- * task has an agent moving.
+ * task has an agent working.
  *
  * It is one component whose look is entirely its [WorkingGlyphSpec] (the frames and their
  * timings), so changing the glyph means changing [BRAILLE_PAIR_TURN], not the drawing code.

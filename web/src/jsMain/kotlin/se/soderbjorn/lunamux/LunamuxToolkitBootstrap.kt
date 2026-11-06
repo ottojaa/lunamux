@@ -973,7 +973,7 @@ private fun buildSidebarFooter(): HTMLElement {
  *                    "Agents" for the total of a layout with one, else the world's display name.
  * @property accent  the world's resolved theme accent as a CSS colour string (the line's dot), or
  *   null for the total line.
- * @property working how many conversations work and are moving.
+ * @property working how many conversations are working.
  * @property waiting how many conversations wait for the person.
  * @see computeAgentStatusRows
  */
@@ -1019,7 +1019,7 @@ private fun computeAgentStatusRows(): List<WorldStatusRow> {
  * "N working" in the working colour, omitting a half that is zero. The waiting half pulses on the
  * shared global pulse loop ([startPulse]) and the working half carries the app's working glyph,
  * built by [workingGlyph] under [glyphKey] so the footer's rebuild on every state push puts the
- * same moving glyph back and its motion never starts over.
+ * same working glyph back and its motion never starts over.
  *
  * @param host      the line's count container to populate (assumed empty).
  * @param working   the working count.

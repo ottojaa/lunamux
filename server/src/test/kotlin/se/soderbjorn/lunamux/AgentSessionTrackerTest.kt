@@ -40,10 +40,13 @@ class AgentSessionTrackerTest {
         newId = { "r${++nextId}" },
     ).also { it.start() }
 
+    /** The layout leaf every [pane] sits in, when a test needs a real one; else one named after the pane. */
+    private var leafOverride: String? = null
+
     private fun pane(
         id: String = "s1", agent: String? = null, state: String? = null, title: String? = null,
         screen: String? = "screen of $id", alive: Boolean = true,
-    ) = PaneSnapshot(id, leafId = "leaf-$id", cwd = "/work/repo", programTitle = title, agent = agent, state = state,
+    ) = PaneSnapshot(id, leafId = leafOverride ?: "leaf-$id", cwd = "/work/repo", programTitle = title, agent = agent, state = state,
         alive = alive, screenText = { screen })
 
     private fun event(name: String, id: String = "a-1", vararg more: Pair<String, String>): JsonObject =
@@ -421,19 +424,24 @@ class AgentSessionTrackerTest {
     }
 
     @Test
-    fun `a screen at work settles a prompt no poll ever saw`() {
+    fun `a screen at work does not settle a prompt no poll ever saw, the tool's own hook does`() {
         val t = tracker()
         t.onHook(pane(), event("PreToolUse", "a-1", "tool_name" to "Bash"))
         t.onHook(pane(), event("Notification", "a-1", "message" to "Claude needs your permission to use Bash"))
         assertEquals("needs_you", onlyState(t))
 
-        // Approved between the notification and the next poll: only work on screen is left to see.
-        now = 2_000
-        t.onPoll(listOf(pane(agent = "claude", state = "working")))
-        val row = t.summaries.value.single()
-        assertEquals("working", row.state)
-        assertNull(row.question)
-        assertEquals(2_000, row.stateSince)
+        // A poll that reads work may have been taken before the prompt was drawn, or may read the
+        // work of a background agent above a question: an unanswered question must stay counted.
+        repeat(5) {
+            now += 3_000
+            t.onPoll(listOf(pane(agent = "claude", state = "working")))
+            assertEquals("needs_you", onlyState(t))
+        }
+        assertEquals("Allow Bash?", t.summaries.value.single().question)
+
+        // Approved after all: the tool runs, and its hook says so.
+        t.onHook(pane(), event("PostToolUse", "a-1", "tool_name" to "Bash"))
+        assertEquals("working", onlyState(t))
     }
 
     @Test
@@ -500,14 +508,39 @@ class AgentSessionTrackerTest {
     }
 
     @Test
-    fun `a hook-fed working record stays working while the screen shows nothing and no hook came`() {
+    fun `a hook-fed working record whose screen reads idle for three polls in a row is done`() {
         val t = tracker()
         t.onHook(pane(), toolEvent("Bash", """{"command":"./gradlew test"}"""))
-        repeat(120) {
+
+        // The process was killed, or the turn ended with an error that sends no Stop: the screen reads
+        // idle. One poll or two could be a screen not yet caught up with a hook.
+        repeat(2) {
             now += 3_000
             t.onPoll(listOf(pane(agent = "claude", state = null)))
+            assertEquals("working", onlyState(t))
         }
-        assertEquals("working", onlyState(t), "no timer ends a working record; only a hook or what really happened does")
+        now += 3_000
+        t.onPoll(listOf(pane(agent = "claude", state = null)))
+        val row = t.summaries.value.single()
+        assertEquals("done", row.state)
+        assertNull(row.nowLine)
+        assertEquals(now, row.stateSince)
+    }
+
+    @Test
+    fun `a blank poll between polls that show work, or just after a hook, does not count towards done`() {
+        val t = tracker()
+        t.onHook(pane(), event("UserPromptSubmit", "a-1"))
+        repeat(2) { now += 3_000; t.onPoll(listOf(pane(agent = "claude", state = null))) }
+        now += 3_000
+        t.onPoll(listOf(pane(agent = "claude", state = "working")))
+        repeat(2) { now += 3_000; t.onPoll(listOf(pane(agent = "claude", state = null))) }
+        assertEquals("working", onlyState(t), "the count starts again after a poll that shows work")
+
+        now += 3_000
+        t.onHook(pane(), toolEvent("Bash", """{"command":"sleep 1"}"""))
+        repeat(2) { now += 3_000; t.onPoll(listOf(pane(agent = "claude", state = null))) }
+        assertEquals("working", onlyState(t), "the count starts again after a hook")
     }
 
     @Test
@@ -554,29 +587,55 @@ class AgentSessionTrackerTest {
     }
 
     @Test
-    fun `a prompt nobody answered stays needs_you however long it waits and whatever the screen shows`() {
+    fun `a prompt nobody answered stays needs_you however long the screen shows it`() {
         val rec = Recording("refused-after-notification")
         val t = tracker()
         rec.playTo(t, rec.hookAt(3))
 
-        // The same session, but the person never answers: its transcript has no interrupt line. The
-        // prompt on screen is waiting; a detector that misses it for a while shows nothing at all.
-        for (state in listOf("waiting", "waiting")) {
+        // The same session, but the person never answers: its transcript has no interrupt line.
+        repeat(3) {
             now += 60 * 60_000L
-            t.onPoll(listOf(pane(agent = "claude", state = state)))
+            t.onPoll(listOf(pane(agent = "claude", state = "waiting")))
             assertEquals("needs_you", onlyState(t))
         }
     }
 
     @Test
-    fun `a prompt the detector never recognised stays needs_you for good`() {
+    fun `a prompt the screen never showed stays needs_you whether the screen shows work or nothing`() {
         val rec = Recording("refused-after-notification")
         val t = tracker()
         rec.playTo(t, rec.hookAt(3))
-        repeat(3) {
+        for (state in listOf("working", null, "working", null, null, "working")) {
             now += 24 * 60 * 60_000L
+            t.onPoll(listOf(pane(agent = "claude", state = state)))
+            assertEquals("needs_you", onlyState(t), "screen state $state")
+        }
+    }
+
+    @Test
+    fun `a prompt refused before any poll leaves the waiting count and the tab shown for it`() {
+        val visible = WindowState.addTab()
+        val bg = WindowState.addTab(background = true)
+        fun tab(id: String) = WindowState.config.value.worlds.flatMap { it.tabs }.first { it.id == id }
+        try {
+            leafOverride = tab(bg).panes.first().leaf.id
+            WindowState.setActiveTab(visible)
+            val rec = Recording("refused-after-notification")
+            val t = tracker()
+            rec.playTo(t, rec.hookAt(3))
+            assertEquals(1, t.summaries.value.count { it.state == "needs_you" })
+            assertTrue(WindowState.showWaitingAgent(leafOverride!!))
+            assertEquals(bg, WindowState.config.value.activeTabId)
+
+            rec.playTo(t, rec.interruptedAt + 50)
             t.onPoll(listOf(pane(agent = "claude", state = null)))
-            assertEquals("needs_you", onlyState(t))
+            assertEquals(0, t.summaries.value.count { it.state == "needs_you" }, "the count the footer shows")
+            WindowState.hideSettledWaitingTabsFor(t.summaries.value)
+            assertFalse(tab(bg).isListed, "the tab shown for the prompt goes away again")
+            assertEquals(visible, WindowState.config.value.activeTabId)
+        } finally {
+            leafOverride = null
+            WindowState.closeTab(bg); WindowState.closeTab(visible)
         }
     }
 
