@@ -23,9 +23,9 @@ import se.soderbjorn.lunamux.ClaudeUsageMonitor
 import se.soderbjorn.lunamux.GitInfo
 import se.soderbjorn.lunamux.PaneSnapshot
 import se.soderbjorn.lunamux.TaskBlockContent
-import se.soderbjorn.lunamux.TaskDocument
 import se.soderbjorn.lunamux.TaskFile
 import se.soderbjorn.lunamux.TaskIndex
+import se.soderbjorn.lunamux.TaskLink
 import se.soderbjorn.lunamux.TaskPanelStore
 import se.soderbjorn.lunamux.WindowState
 import se.soderbjorn.lunamux.persistence.SettingsRepository
@@ -117,13 +117,14 @@ class McpPanelToolsTest {
     }
 
     @Test
-    fun `documents are set, upserted, removed and read back with their time`() {
+    fun `links with a kind and a time are set, upserted, removed and read back the same`() {
         val r = set(
             """[
-              {"id":"docs","type":"documents","title":"Documents","items":[
-                {"title":"Design page","url":"https://example.com/design","updated":"2026-05-01T12:00:00Z"},
-                {"title":"Notes","url":"file:///tmp/notes.md","updated":1700000000000},
-                {"title":"No time yet","url":"http://example.com/x"}
+              {"id":"links","type":"links","title":"Links","items":[
+                {"kind":"PR","label":"Fix the footer","url":"https://example.com/pull/12","at":"2026-05-01T12:00:00Z"},
+                {"kind":"doc","label":"Notes","url":"file:///tmp/notes.md","at":1700000000000},
+                {"label":"No kind or time","url":"http://example.com/x"},
+                {"kind":"  ","label":"Blank kind","url":"http://example.com/y","at":null}
               ]},
               {"id":"keep","type":"text","text":"kept"}
             ]""",
@@ -131,45 +132,60 @@ class McpPanelToolsTest {
         assertTrue(!isError(r), textOf(r))
         assertEquals(
             listOf(
-                TaskDocument("Design page", "https://example.com/design", 1_777_636_800_000L),
-                TaskDocument("Notes", "file:///tmp/notes.md", 1_700_000_000_000L),
-                TaskDocument("No time yet", "http://example.com/x", null),
+                TaskLink("PR", "Fix the footer", "https://example.com/pull/12", 1_777_636_800_000L),
+                TaskLink("doc", "Notes", "file:///tmp/notes.md", 1_700_000_000_000L),
+                TaskLink("link", "No kind or time", "http://example.com/x", null),
+                TaskLink("link", "Blank kind", "http://example.com/y", null),
             ),
-            (store.blocksOf(taskId)[0].content as TaskBlockContent.Documents).items,
+            (store.blocksOf(taskId)[0].content as TaskBlockContent.Links).items,
         )
         val read = blocksJson()[0].jsonObject
-        assertEquals("documents", read["type"]!!.jsonPrimitive.content)
+        assertEquals("links", read["type"]!!.jsonPrimitive.content)
         val items = read["items"]!!.jsonArray.map { it.jsonObject }
-        assertEquals("2026-05-01T12:00:00Z", items[0]["updated"]!!.jsonPrimitive.content)
-        assertNull(items[2]["updated"], "a document with no time reads back with none")
+        assertEquals(listOf("PR", "doc", "link", "link"), items.map { it["kind"]!!.jsonPrimitive.content })
+        assertEquals("2026-05-01T12:00:00Z", items[0]["at"]!!.jsonPrimitive.content)
+        assertEquals("2023-11-14T22:13:20Z", items[1]["at"]!!.jsonPrimitive.content)
+        assertNull(items[2]["at"], "a link with no time reads back with none")
 
         val written = blocksJson()[0].toString()
         assertTrue(!isError(call("upsert_task_block", """{"taskId":"$taskId","block":$written}""")), "what get_task_panel returns is accepted back")
-        assertEquals(listOf("docs", "keep"), store.blocksOf(taskId).map { it.id })
+        assertEquals(listOf("links", "keep"), store.blocksOf(taskId).map { it.id })
+        assertEquals(blocksJson()[0].toString().substringBefore(",\"writtenBy\""), written.substringBefore(",\"writtenBy\""), "and reads back the same")
 
-        assertTrue(!isError(call("upsert_task_block", """{"taskId":"$taskId","block":{"id":"docs","type":"documents","items":[{"title":"Only one","url":"https://example.com/1","updated":null}]}}""")))
-        assertEquals(listOf("docs", "keep"), store.blocksOf(taskId).map { it.id }, "replaced in place")
-        assertEquals(listOf(TaskDocument("Only one", "https://example.com/1")), (store.blocksOf(taskId)[0].content as TaskBlockContent.Documents).items)
+        assertTrue(!isError(call("upsert_task_block", """{"taskId":"$taskId","block":{"id":"links","type":"links","items":[{"kind":"art","label":"Only one","url":"https://example.com/1"}]}}""")))
+        assertEquals(listOf("links", "keep"), store.blocksOf(taskId).map { it.id }, "replaced in place")
+        assertEquals(listOf(TaskLink("art", "Only one", "https://example.com/1")), (store.blocksOf(taskId)[0].content as TaskBlockContent.Links).items)
 
-        assertTrue(!isError(call("remove_task_block", """{"taskId":"$taskId","id":"docs"}""")))
+        assertTrue(!isError(call("remove_task_block", """{"taskId":"$taskId","id":"links"}""")))
         assertEquals(listOf("keep"), store.blocksOf(taskId).map { it.id })
     }
 
     @Test
-    fun `a document with a javascript url is refused and the panel keeps what it had`() {
+    fun `a documents block is refused as an unknown type and the panel keeps what it had`() {
         set("""[{"id":"keep","type":"text","text":"old"}]""")
-        val msg = refusal(set("""[{"id":"d","type":"documents","items":[{"title":"click me","url":"javascript:alert(1)"}]}]"""))
+        val msg = refusal(set("""[{"id":"d","type":"documents","items":[{"title":"A","url":"https://a.b"}]}]"""))
+        assertTrue("unknown type 'documents'" in msg && "links" in msg && "documents," !in msg, msg)
+        assertTrue("unknown type 'documents'" in refusal(call("upsert_task_block", """{"taskId":"$taskId","block":{"id":"d","type":"documents","items":[]}}""")))
+        assertEquals(listOf("keep"), store.blocksOf(taskId).map { it.id })
+    }
+
+    @Test
+    fun `a link with a javascript url is refused and the panel keeps what it had`() {
+        set("""[{"id":"keep","type":"text","text":"old"}]""")
+        val msg = refusal(set("""[{"id":"d","type":"links","items":[{"kind":"PR","label":"click me","url":"javascript:alert(1)"}]}]"""))
         assertTrue("'click me'" in msg && "http" in msg, msg)
         assertEquals(listOf("keep"), store.blocksOf(taskId).map { it.id })
     }
 
     @Test
-    fun `a document refusal names the field at fault`() {
-        assertTrue("document 1 needs a text 'title'" in refusal(set("""[{"id":"d","type":"documents","items":[{"url":"https://a.b"}]}]""")))
-        assertTrue("document 1 needs a text 'url'" in refusal(set("""[{"id":"d","type":"documents","items":[{"title":"x"}]}]""")))
-        assertTrue("'updated'" in refusal(set("""[{"id":"d","type":"documents","items":[{"title":"x","url":"https://a.b","updated":"yesterday"}]}]""")))
+    fun `a link refusal names the field at fault`() {
+        assertTrue("link 1 needs a text 'label'" in refusal(set("""[{"id":"d","type":"links","items":[{"url":"https://a.b"}]}]""")))
+        assertTrue("link 1 needs a text 'url'" in refusal(set("""[{"id":"d","type":"links","items":[{"label":"x"}]}]""")))
+        assertTrue("'at'" in refusal(set("""[{"id":"d","type":"links","items":[{"label":"x","url":"https://a.b","at":"yesterday"}]}]""")))
+        assertTrue("'kind'" in refusal(set("""[{"id":"d","type":"links","items":[{"kind":5,"label":"x","url":"https://a.b"}]}]""")))
+        assertTrue("kind" in refusal(set("""[{"id":"d","type":"links","items":[{"kind":"a-kind-that-is-far-too-long","label":"x","url":"https://a.b"}]}]""")))
         assertTrue("'at'" in refusal(set("""[{"id":"tl","type":"timeline","items":[{"at":"yesterday","text":"x"}]}]""")), "the timeline still names 'at'")
-        assertTrue("31" in refusal(set("""[{"id":"d","type":"documents","items":[${List(31) { """{"title":"d","url":"https://a.b"}""" }.joinToString(",")}]}]""")))
+        assertTrue("31" in refusal(set("""[{"id":"d","type":"links","items":[${List(31) { """{"label":"d","url":"https://a.b"}""" }.joinToString(",")}]}]""")))
     }
 
     @Test

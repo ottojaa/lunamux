@@ -319,8 +319,8 @@ object AgentsOverviewSeed {
     /**
      * Give the "Release 4.2 notes" task the blocks its panel draws: a progress block (the work in
      * hand and how far it is), links of every kind (a Slack thread, pull requests, a Claude
-     * artifact, documents, a brief and the person's decisions, each under a block titled for its
-     * kind) and an activity list.
+     * artifact, documents, a brief and the person's decisions, each carrying its own kind word and
+     * time) and an activity list.
      *
      * The links and the activity are longer than the five lines the panel shows, so the seeded
      * panel shows "+ N more". The activity list holds the awkward cases on purpose: one entry long
@@ -344,27 +344,27 @@ object AgentsOverviewSeed {
                 "links", "Links",
                 TaskBlockContent.Links(
                     listOf(
-                        TaskLink("Release 4.2 notes, first draft", "https://example.com/notes/4.2"),
-                        TaskLink("Release thread", "https://example.slack.com/archives/C0RELEASE/p1730800000"),
-                        TaskLink("Changelog check", "https://github.com/example/lunamux/pull/412"),
-                        TaskLink("Screenshot refresh", "https://github.com/example/lunamux/pull/415"),
-                        TaskLink("Notes preview", "https://claude.ai/artifact/seed-release-notes"),
-                        TaskLink("Upgrade guide", "https://example.com/upgrade"),
-                        TaskLink("Screenshot list", "file:///tmp/release-4.2/screenshots.md"),
-                        TaskLink("Known issues", "https://github.com/example/lunamux/issues/398"),
+                        TaskLink("doc", "Release 4.2 notes, first draft", "https://example.com/notes/4.2", now - 40 * MINUTE),
+                        TaskLink("slack", "Release thread", "https://example.slack.com/archives/C0RELEASE/p1730800000", now - 12 * MINUTE),
+                        TaskLink("PR", "Changelog check", "https://github.com/example/lunamux/pull/412", now - 3 * MINUTE),
+                        TaskLink("PR", "Screenshot refresh", "https://github.com/example/lunamux/pull/415", now - 20 * MINUTE),
+                        TaskLink("art", "Notes preview", "https://claude.ai/artifact/seed-release-notes", now - 5 * MINUTE),
+                        TaskLink("doc", "Upgrade guide", "https://example.com/upgrade", now - 70 * MINUTE),
+                        TaskLink("doc", "Screenshot list", "file:///tmp/release-4.2/screenshots.md", now - 25 * MINUTE),
+                        TaskLink("issue", "Known issues", "https://github.com/example/lunamux/issues/398", now - 3 * HOUR),
                     ),
                 ),
             ),
             Triple(
                 "brief", "Brief",
-                TaskBlockContent.Links(listOf(TaskLink("Brief: release notes for 4.2", "https://example.com/briefs/release-4.2"))),
+                TaskBlockContent.Links(listOf(TaskLink("brief", "Brief: release notes for 4.2", "https://example.com/briefs/release-4.2", now - 5 * HOUR))),
             ),
             Triple(
                 "decisions", "Decisions",
                 TaskBlockContent.Links(
                     listOf(
-                        TaskLink("You decided: notes stay one page", "https://example.com/decisions/one-page"),
-                        TaskLink("You decided: screenshots are retaken", "https://example.com/decisions/screenshots"),
+                        TaskLink("doc", "You decided: notes stay one page", "https://example.com/decisions/one-page", now - 4 * HOUR),
+                        TaskLink("doc", "You decided: screenshots are retaken", "https://example.com/decisions/screenshots", now - 90 * MINUTE),
                     ),
                 ),
             ),

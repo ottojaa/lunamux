@@ -175,7 +175,7 @@ class TaskPanelStoreTest {
         assertTrue("no label" in refused(facts(1, label = " ")))
 
         fun links(n: Int, url: String = "https://example.com") =
-            TaskPanelBlock("l", null, TaskBlockContent.Links(List(n) { TaskLink("l", url) }), writtenAtMillis = 0)
+            TaskPanelBlock("l", null, TaskBlockContent.Links(List(n) { TaskLink("link", "l", url) }), writtenAtMillis = 0)
         store.upsert(taskId, links(30), null)
         assertTrue("31" in refused(links(31)))
         assertTrue("address" in refused(links(1, "https://example.com/" + "a".repeat(2000))))
@@ -183,7 +183,7 @@ class TaskPanelStoreTest {
 
     @Test
     fun `a link keeps http, https and file addresses only`() {
-        fun link(url: String) = TaskPanelBlock("l", null, TaskBlockContent.Links(listOf(TaskLink("x", url))), writtenAtMillis = 0)
+        fun link(url: String) = TaskPanelBlock("l", null, TaskBlockContent.Links(listOf(TaskLink("link", "x", url))), writtenAtMillis = 0)
         for (ok in listOf("http://a.b/c", "https://a.b", "HTTPS://A.B", "file:///tmp/x.md")) store.upsert(taskId, link(ok), null)
         for (bad in listOf("javascript:alert(1)", "JavaScript:alert(1)", "data:text/html,x", "vbscript:x", "ftp://a.b", "//a.b", "a.b", "https://a b", "mailto:a@b.c")) {
             val msg = refused(link(bad))
@@ -192,36 +192,49 @@ class TaskPanelStoreTest {
     }
 
     @Test
-    fun `documents hold 30 items at most, with title and address lengths`() {
-        fun docs(n: Int, title: String = "d", url: String = "https://example.com/d", at: Long? = null) =
-            TaskPanelBlock("d", null, TaskBlockContent.Documents(List(n) { TaskDocument(title, url, at) }), writtenAtMillis = 0)
-        store.upsert(taskId, docs(30), null)
-        assertTrue("31" in refused(docs(31)))
-        store.upsert(taskId, docs(1, "t".repeat(80)), null)
-        assertTrue("title" in refused(docs(1, "t".repeat(81))))
-        assertTrue("no title" in refused(docs(1, title = " ")))
-        store.upsert(taskId, docs(1, url = "https://example.com/" + "a".repeat(1900)), null)
-        assertTrue("address" in refused(docs(1, url = "https://example.com/" + "a".repeat(2000))))
-        store.upsert(taskId, docs(1, at = 0L), null)
-        assertTrue("negative" in refused(docs(1, at = -1L)))
+    fun `a link keeps a short kind of any word and a time that is not negative`() {
+        fun link(kind: String = "PR", at: Long? = null) =
+            TaskPanelBlock("l", null, TaskBlockContent.Links(listOf(TaskLink(kind, "x", "https://a.b", at))), writtenAtMillis = 0)
+        for (ok in listOf("PR", "slack", "decision", "k".repeat(8), "anything")) store.upsert(taskId, link(ok), null)
+        assertTrue("kind" in refused(link("k".repeat(9))))
+        assertTrue("kind" in refused(link(" ")))
+        assertTrue("kind" in refused(link("P\nR")))
+        store.upsert(taskId, link(at = 0L), null)
+        assertTrue("negative" in refused(link(at = -1L)))
     }
 
     @Test
-    fun `a document keeps http, https and file addresses only`() {
-        fun doc(url: String) = TaskPanelBlock("d", null, TaskBlockContent.Documents(listOf(TaskDocument("x", url))), writtenAtMillis = 0)
-        for (ok in listOf("http://a.b/c", "https://a.b", "HTTPS://A.B", "file:///tmp/x.md")) store.upsert(taskId, doc(ok), null)
-        for (bad in listOf("javascript:alert(1)", "JavaScript:alert(1)", "data:text/html,x", "vbscript:x", "ftp://a.b", "//a.b", "a.b", "https://a b", "mailto:a@b.c")) {
-            val msg = refused(doc(bad))
-            assertTrue("'x'" in msg && "http" in msg, "$bad -> $msg")
-        }
+    fun `a link with a bad kind and a label that is too long is refused for the label, which is not echoed`() {
+        val longLabel = "L".repeat(81)
+        val msg = refused(TaskPanelBlock("l", null, TaskBlockContent.Links(listOf(TaskLink(" ", longLabel, "https://a.b", -1L))), writtenAtMillis = 0))
+        assertTrue("label" in msg, msg)
+        assertTrue(longLabel !in msg, msg)
     }
 
     @Test
-    fun `documents survive a restart with and without a time`() {
-        val content = TaskBlockContent.Documents(listOf(TaskDocument("With time", "https://a.b/1", 1_700_000_000_000L), TaskDocument("No time", "file:///tmp/x.md")))
-        store.upsert(taskId, TaskPanelBlock("d", "Documents", content, writtenAtMillis = 0), "writer")
+    fun `links survive a restart with their kind and with and without a time`() {
+        val content = TaskBlockContent.Links(
+            listOf(TaskLink("PR", "With time", "https://a.b/1", 1_700_000_000_000L), TaskLink("link", "No time", "file:///tmp/x.md")),
+        )
+        store.upsert(taskId, TaskPanelBlock("l", "Links", content, writtenAtMillis = 0), "writer")
         val reopened = TaskPanelStore(SettingsRepository(dbFile), index, clock = { now })
         assertEquals(content, reopened.blocksOf(taskId).single().content)
+    }
+
+    @Test
+    fun `a stored documents block, from before links carried their own kind, is dropped on load and the rest stays`() {
+        store.upsert(taskId, text("keep"), null)
+        val repo = SettingsRepository(dbFile)
+        val rows = repo.loadTaskPanelRows()
+        repo.replaceTaskPanel(
+            taskId,
+            rows + rows.single().copy(
+                blockId = "docs", position = 1, kind = "documents",
+                body = """{"kind":"documents","items":[{"title":"A","url":"https://a.b"}]}""",
+            ),
+        )
+        val reopened = TaskPanelStore(SettingsRepository(dbFile), index, clock = { now })
+        assertEquals(listOf("keep"), reopened.blocksOf(taskId).map { it.id })
     }
 
     @Test

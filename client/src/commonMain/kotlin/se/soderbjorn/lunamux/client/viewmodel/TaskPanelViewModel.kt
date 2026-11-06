@@ -29,6 +29,7 @@ import kotlinx.datetime.toLocalDateTime
 import se.soderbjorn.lunamux.AgentSessionSummary
 import se.soderbjorn.lunamux.AgentTask
 import se.soderbjorn.lunamux.TaskBlockContent
+import se.soderbjorn.lunamux.TaskLink
 import se.soderbjorn.lunamux.TaskPanelBlock
 import se.soderbjorn.lunamux.WindowCommand
 import se.soderbjorn.lunamux.WindowConfig
@@ -108,12 +109,12 @@ class TaskPanelViewModel(
     /**
      * One row of the links block.
      *
-     * @property kind the short word for what the link is: `slack`, `PR`, `issue`, `art`, `doc`,
-     *   `brief`, `decision` or `link`.
+     * @property kind the word the writer sent for what the link is, as sent (`link` when it sent
+     *   none). The panel knows no list of kinds.
      * @property title the words shown for the link.
      * @property url where it is; always http, https or file, and opened outside the app.
-     * @property time when it was written or changed, as a clock time in the viewer's time zone
-     *   (see [clockOf]).
+     * @property time the link's own time as a clock time in the viewer's time zone (see
+     *   [clockOf]), or empty when the writer gave none.
      */
     data class LinkRow(val kind: String, val title: String, val url: String, val time: String)
 
@@ -355,22 +356,23 @@ class TaskPanelViewModel(
     }
 
     /**
-     * Every link and document any block carries, newest first, each once. A link has no time of
-     * its own, so it takes the time its block was written.
+     * Every link any block carries, each once, newest first by the time the writer gave it. Links
+     * without a time come after the dated ones, in the order they were written. A link seen twice
+     * keeps its dated, newer row.
      */
     private fun linkRows(blocks: List<TaskPanelBlock>, now: Long): List<LinkRow> {
-        data class Found(val at: Long, val kind: String, val title: String, val url: String)
-        val found = blocks.flatMap { b ->
-            when (val c = b.content) {
-                is TaskBlockContent.Links -> c.items.map { Found(b.writtenAtMillis, kindOf(it.url, it.label, b.title, false), it.label, it.url) }
-                is TaskBlockContent.Documents ->
-                    c.items.map { Found(it.updatedMillis ?: b.writtenAtMillis, kindOf(it.url, it.title, b.title, true), it.title, it.url) }
-                else -> emptyList()
-            }
-        }.filter { PanelMarkdown.isSafeUrl(it.url) }
+        val found = blocks.flatMap { (it.content as? TaskBlockContent.Links)?.items.orEmpty() }
+            .filter { PanelMarkdown.isSafeUrl(it.url) }
+        val (dated, undated) = found.partition { it.at != null }
         val zone = zone()
-        return found.sortedByDescending { it.at }.distinctBy { it.url }
-            .map { LinkRow(it.kind, it.title.ifBlank { it.url }, it.url, clockOf(it.at, now, zone)) }
+        return (dated.sortedByDescending { it.at } + undated).distinctBy { it.url }.map {
+            LinkRow(
+                kind = it.kind.trim().ifEmpty { TaskLink.DEFAULT_KIND },
+                title = it.label.ifBlank { it.url },
+                url = it.url,
+                time = it.at?.let { at -> clockOf(at, now, zone) }.orEmpty(),
+            )
+        }
     }
 
     /** Every timeline entry of every block, newest first, one line each. */
@@ -411,34 +413,6 @@ class TaskPanelViewModel(
          */
         fun inWords(line: String?): String? =
             line?.trim()?.takeIf { it.isNotEmpty() && !BARE_TOOL.matches(it) }
-
-        /**
-         * The short word for what a link is, from where it points and what it is called.
-         *
-         * Called for every link row. A block titled "Decisions" or "Briefs" marks its links as
-         * such; any other link is told apart by its address.
-         *
-         * @param url the address.
-         * @param label the words shown for it.
-         * @param blockTitle the title of the block that holds it, or null.
-         * @param isDocument true for an entry of a documents block.
-         * @return `decision`, `brief`, `slack`, `PR`, `issue`, `art`, `doc` or `link`.
-         */
-        fun kindOf(url: String, label: String, blockTitle: String?, isDocument: Boolean): String {
-            val u = url.lowercase()
-            val where = (blockTitle ?: "").lowercase()
-            val words = label.lowercase()
-            return when {
-                "decision" in where || words.startsWith("you decided") -> "decision"
-                "brief" in where || words.startsWith("brief") -> "brief"
-                "slack.com" in u -> "slack"
-                "github.com" in u && "/pull/" in u -> "PR"
-                "github.com" in u && "/issues/" in u -> "issue"
-                "claude.ai" in u && "/artifact" in u -> "art"
-                isDocument || u.startsWith("file:") -> "doc"
-                else -> "link"
-            }
-        }
 
         /**
          * A compact age: `now`, `5m`, `3h` or `2d`. A time in the future reads `now`.
