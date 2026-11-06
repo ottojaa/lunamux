@@ -21,6 +21,7 @@ package se.soderbjorn.lunamux.client
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
+import se.soderbjorn.lunamux.client.viewmodel.AgentCounts
 import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel
 import se.soderbjorn.lunamux.client.viewmodel.OverviewChecks
 import se.soderbjorn.lunamux.client.viewmodel.TaskPanelViewModel
@@ -78,7 +79,7 @@ fun main(args: Array<String>) {
                 val now = System.currentTimeMillis()
                 tabs.observe(config, sessions, now)
                 return OverviewChecks.evaluate(
-                    OverviewChecks.Snapshot(sessions, client.windowState.agentTasks.value, config, overview.state, panel.state, now, expectedMain),
+                    OverviewChecks.Snapshot(sessions, AgentCounts.of(sessions, config), client.windowState.agentTasks.value, config, overview.state, panel.state, now, expectedMain),
                 )
             }
             val first = runOnce()

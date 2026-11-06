@@ -40,33 +40,28 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
     background          INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE TABLE IF NOT EXISTS agent_tasks (
-    id         TEXT NOT NULL PRIMARY KEY,
-    title      TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-);
-
--- What the server keeps about a task besides its name, for any task id (an agent-made task or a
--- task file's): when the server first saw it, the pane whose session speaks for it, and its
--- one-line status. A row is made on first sight of the task and never replaces another.
--- question_waits is 1 while the task's status says a question waits for the person; it is set and
--- cleared together with the status.
--- lead_leaf is the pane's layout leaf id, which survives a restart; lead_session is the terminal
--- session id the pane had when it was named, which does not (ids are handed out again from s1),
--- and is the only thing an older row has. lead_agent_session is the agent's own conversation id of
--- the session last seen in that pane, so the task can follow the conversation when it is reopened
--- in another pane.
-CREATE TABLE IF NOT EXISTS task_meta (
-    task_id      TEXT NOT NULL PRIMARY KEY,
-    started_at   INTEGER NOT NULL,
-    lead_session TEXT,
-    status       TEXT,
-    status_by    TEXT,
-    status_at    INTEGER,
-    lead_leaf    TEXT,
-    lead_agent_session TEXT,
-    question_waits INTEGER
+-- Every task the server keeps something about, any task id (an agent-made task or a task file's).
+-- A task file declares its own repo, open command and (when it has one) title, so none of those is
+-- stored for it: `title` is set only for a task an agent made, and is what tells the two apart.
+-- main_conversation is the agent's own conversation id of the conversation that speaks for the
+-- task, never a pane: pane ids are handed out again on every start. status and status_at are the
+-- task's one-line status; question_waits is 1 while that status says a question waits for the
+-- person and is set and cleared together with it. started_at is the time the task was first
+-- recorded: its first session's start, else its file's time, else the moment a status or main
+-- conversation was first set; the first stamp wins, so a task's place in the overview never moves.
+-- created_at and updated_at are the times an agent made and last renamed the task. Every column
+-- but id can be empty: a task that has only been named has no start yet, and a task file's task has
+-- no creation time.
+CREATE TABLE IF NOT EXISTS tasks (
+    id                TEXT NOT NULL PRIMARY KEY,
+    title             TEXT,
+    main_conversation TEXT,
+    status            TEXT,
+    status_at         INTEGER,
+    question_waits    INTEGER,
+    started_at        INTEGER,
+    created_at        INTEGER,
+    updated_at        INTEGER
 );
 
 -- The blocks agents write into a task's panel, any task id (an agent-made task or a task file's).
@@ -197,32 +192,33 @@ FROM agent_sessions WHERE background = 0 AND task_id IN :taskIds
 ORDER BY COALESCE(ended_at, state_since) DESC
 LIMIT 200;
 
--- Tasks agents made through the MCP tools. A task has no members of its own: a
--- session belongs to it through agent_sessions.task_id.
-selectAgentTasks:
-SELECT id, title, created_at, updated_at FROM agent_tasks ORDER BY created_at, id;
+-- A task has no members of its own: a session belongs to it through agent_sessions.task_id.
+selectTasks:
+SELECT id, title, main_conversation, status, status_at, question_waits, started_at, created_at, updated_at
+FROM tasks ORDER BY COALESCE(created_at, started_at), id;
 
-upsertAgentTask:
-INSERT OR REPLACE INTO agent_tasks(id, title, created_at, updated_at) VALUES (?, ?, ?, ?);
+-- A task an agent makes; its id is new. A row that exists is left as it is, never replaced, so
+-- what is stored about a task is never wiped.
+insertTask:
+INSERT OR IGNORE INTO tasks(id, title, created_at, updated_at) VALUES (?, ?, ?, ?);
 
-selectTaskMeta:
-SELECT task_id, started_at, status, status_by, status_at, lead_agent_session, question_waits FROM task_meta;
+renameTask:
+UPDATE tasks SET title = ?, updated_at = ? WHERE id = ?;
+
+-- A row for a task that has none yet, so something can be stored about it; changes nothing when
+-- the task has one.
+ensureTask:
+INSERT OR IGNORE INTO tasks(id) VALUES (?);
 
 -- The first stamp wins: a task's place in the overview must not move once it has one.
 stampTaskStart:
-INSERT OR IGNORE INTO task_meta(task_id, started_at) VALUES (?, ?);
+UPDATE tasks SET started_at = ? WHERE id = ? AND started_at IS NULL;
 
--- lead_agent_session holds the conversation that speaks for the task. The pane columns are no
--- longer read (a pane id names another pane after a restart); a write clears them.
 setTaskMainConversation:
-UPDATE task_meta SET lead_agent_session = ?, lead_session = NULL, lead_leaf = NULL WHERE task_id = ?;
-
--- Every pane an agent session ever ran in, so a leaf id is never handed out twice.
-selectAgentSessionLeafIds:
-SELECT DISTINCT leaf_id FROM agent_sessions WHERE leaf_id IS NOT NULL;
+UPDATE tasks SET main_conversation = ? WHERE id = ?;
 
 setTaskStatus:
-UPDATE task_meta SET status = ?, status_by = ?, status_at = ?, question_waits = ? WHERE task_id = ?;
+UPDATE tasks SET status = ?, status_at = ?, question_waits = ? WHERE id = ?;
 
 selectTaskPanelBlocks:
 SELECT task_id, block_id, position, kind, title, body, written_by, written_at

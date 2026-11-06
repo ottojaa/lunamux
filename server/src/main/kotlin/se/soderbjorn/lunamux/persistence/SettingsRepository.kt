@@ -178,34 +178,20 @@ class SettingsRepository(
             """.trimIndent(),
             parameters = 0,
         )
-        // Tasks that agents create through the MCP tools. Sessions belong to a task through
-        // agent_sessions.task_id; the table holds only the task's own name.
+        // Every task the server keeps something about; see Settings.sq for what each column holds.
         driver.execute(
             identifier = null,
             sql = """
-                CREATE TABLE IF NOT EXISTS agent_tasks (
-                    id         TEXT NOT NULL PRIMARY KEY,
-                    title      TEXT NOT NULL,
-                    created_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL
-                )
-            """.trimIndent(),
-            parameters = 0,
-        )
-        // The per-task facts (first seen, the session that speaks for it, status).
-        driver.execute(
-            identifier = null,
-            sql = """
-                CREATE TABLE IF NOT EXISTS task_meta (
-                    task_id      TEXT NOT NULL PRIMARY KEY,
-                    started_at   INTEGER NOT NULL,
-                    lead_session TEXT,
-                    status       TEXT,
-                    status_by    TEXT,
-                    status_at    INTEGER,
-                    lead_leaf    TEXT,
-                    lead_agent_session TEXT,
-                    question_waits INTEGER
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id                TEXT NOT NULL PRIMARY KEY,
+                    title             TEXT,
+                    main_conversation TEXT,
+                    status            TEXT,
+                    status_at         INTEGER,
+                    question_waits    INTEGER,
+                    started_at        INTEGER,
+                    created_at        INTEGER,
+                    updated_at        INTEGER
                 )
             """.trimIndent(),
             parameters = 0,
@@ -238,17 +224,6 @@ class SettingsRepository(
         runCatching {
             driver.execute(null, "ALTER TABLE pane_scrollback ADD COLUMN rows INTEGER", 0)
         }
-        // Appended in the same order as the CREATE TABLE above, so an upgraded
-        // database and a fresh one have identical column positions.
-        runCatching {
-            driver.execute(null, "ALTER TABLE task_meta ADD COLUMN lead_leaf TEXT", 0)
-        }
-        runCatching {
-            driver.execute(null, "ALTER TABLE task_meta ADD COLUMN lead_agent_session TEXT", 0)
-        }
-        runCatching {
-            driver.execute(null, "ALTER TABLE task_meta ADD COLUMN question_waits INTEGER", 0)
-        }
         runCatching {
             driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN repo_root TEXT", 0)
         }
@@ -268,6 +243,8 @@ class SettingsRepository(
         runCatching {
             driver.execute(null, "UPDATE agent_sessions SET state = 'done' WHERE state = 'idle'", 0)
         }
+        // Tasks used to live in two tables; move them into `tasks` once.
+        TasksMigration.run(driver) { block -> database.transaction { block() } }
     }
 
     /**
@@ -660,92 +637,99 @@ class SettingsRepository(
     )
 
     /**
-     * One task an agent created through the MCP tools.
+     * One row of the `tasks` table: what the server keeps about a task, an agent-made one or a task
+     * file's.
      *
-     * @property id the task's id, a slug of its title plus a short suffix.
-     * @property title the name the agent gave it.
-     * @property createdAt epoch millis when it was created.
-     * @property updatedAt epoch millis of the last rename.
-     */
-    data class AgentTaskRow(val id: String, val title: String, val createdAt: Long, val updatedAt: Long)
-
-    /**
-     * Insert or replace one agent-made task.
-     *
-     * Called by the MCP `create_task` and `rename_task` tools through the task index.
-     *
-     * @param task the row to store, keyed by [AgentTaskRow.id].
-     * @see loadAgentTasks
-     */
-    fun saveAgentTask(task: AgentTaskRow) {
-        database.settingsQueries.upsertAgentTask(task.id, task.title, task.createdAt, task.updatedAt)
-    }
-
-    /**
-     * Every agent-made task, oldest first.
-     *
-     * Called by the task index whenever it rebuilds the tasks it pushes and lists.
-     *
-     * @return all rows of `agent_tasks`.
-     */
-    fun loadAgentTasks(): List<AgentTaskRow> =
-        database.settingsQueries.selectAgentTasks { id, title, createdAt, updatedAt ->
-            AgentTaskRow(id, title, createdAt, updatedAt)
-        }.executeAsList()
-
-    /**
-     * What is kept about one task besides its name.
-     *
-     * @property taskId the task's id, an agent-made task's or a task file's.
-     * @property startedAt epoch millis the server first saw the task; never changes.
+     * @property id the task's id.
+     * @property title the name of a task an agent made, or null for a task a file declares (the file
+     *   owns its title).
      * @property mainConversation the conversation that speaks for the task (the agent's own session
      *   id, or the record id of a run that reported none), or null when none was named. It names a
-     *   conversation, never a pane: pane ids are handed out again on every start. Stored in the
-     *   `lead_agent_session` column.
+     *   conversation, never a pane: pane ids are handed out again on every start.
      * @property status the task's one-line status, or null.
-     * @property statusBy the terminal session id of the pane that set the status, or null.
      * @property statusAt epoch millis the status was set, or null with no status.
      * @property questionWaits whether the status says a question waits for the person; false
      *   whenever there is no status.
+     * @property startedAt epoch millis the task was first recorded (its first session's start, else
+     *   its file's time, else when a status or main conversation was first set), or null before
+     *   that; never changes once set.
+     * @property createdAt epoch millis an agent made the task, or null for a task file's task.
+     * @property updatedAt epoch millis an agent last renamed the task, or null for a task file's
+     *   task.
      */
-    data class TaskMetaRow(
-        val taskId: String,
-        val startedAt: Long,
-        val status: String? = null,
-        val statusBy: String? = null,
-        val statusAt: Long? = null,
+    data class TaskRow(
+        val id: String,
+        val title: String? = null,
         val mainConversation: String? = null,
+        val status: String? = null,
+        val statusAt: Long? = null,
         val questionWaits: Boolean = false,
+        val startedAt: Long? = null,
+        val createdAt: Long? = null,
+        val updatedAt: Long? = null,
     )
 
     /**
-     * Every task's stored facts.
+     * Every stored task, oldest first.
      *
-     * Called by [se.soderbjorn.lunamux.TaskIndex] when it starts; it keeps the rows in memory after that
-     * and writes through the methods below, so it is the only owner of this table.
+     * Called by [se.soderbjorn.lunamux.TaskIndex] when it starts; it keeps the rows in memory after
+     * that and writes through the methods below, so it is the only owner of this table.
      *
-     * @return one row per task the server has seen.
+     * @return one row per task the server has stored something about.
      */
-    fun loadTaskMeta(): List<TaskMetaRow> =
-        database.settingsQueries.selectTaskMeta { id, startedAt, status, by, at, conversation, waits ->
-            TaskMetaRow(id, startedAt, status, by, at, conversation, questionWaits = waits == 1L)
+    fun loadTasks(): List<TaskRow> =
+        database.settingsQueries.selectTasks { id, title, conversation, status, statusAt, waits, startedAt, createdAt, updatedAt ->
+            TaskRow(id, title, conversation, status, statusAt, waits == 1L, startedAt, createdAt, updatedAt)
         }.executeAsList()
 
     /**
-     * Record when the server first saw a task, unless it already has a row.
+     * Store a new agent-made task.
+     *
+     * Called by the MCP `create_task` tool through the task index, with an id nothing else has. A
+     * task that already has a row is left as it is.
+     *
+     * @param id the new task's id.
+     * @param title the task's name.
+     * @param at epoch millis stored as both the creation and the last-rename time.
+     * @see renameTask
+     */
+    fun insertTask(id: String, title: String, at: Long) {
+        database.settingsQueries.insertTask(id, title, at, at)
+    }
+
+    /**
+     * Change the name of an agent-made task; nothing else about it changes.
+     *
+     * Called by the MCP `rename_task` tool through the task index.
+     *
+     * @param id the task's id.
+     * @param title the new name.
+     * @param at epoch millis stored as the last-rename time.
+     */
+    fun renameTask(id: String, title: String, at: Long) {
+        database.settingsQueries.renameTask(title, at, id)
+    }
+
+    /**
+     * Record when a task started (see [TaskRow.startedAt] for what that time is), unless it already has a start.
+     *
+     * Makes a row for the task when it has none, so a task file's task gets one on first sight.
      *
      * @param taskId the task's id.
-     * @param startedAt epoch millis to store when the task has no row yet.
+     * @param startedAt epoch millis to store when the task has no start yet.
      */
     fun stampTaskStart(taskId: String, startedAt: Long) {
-        database.settingsQueries.stampTaskStart(taskId, startedAt)
+        database.settingsQueries.transaction {
+            database.settingsQueries.ensureTask(taskId)
+            database.settingsQueries.stampTaskStart(startedAt, taskId)
+        }
     }
 
     /**
      * Name the conversation that speaks for a task; the task needs a row (see [stampTaskStart]).
      *
      * Called by [se.soderbjorn.lunamux.TaskIndex] when a task is made or its main conversation
-     * changes. Any pane the row used to remember is forgotten with it.
+     * changes.
      *
      * @param taskId the task's id.
      * @param conversationId the conversation's id, or null to clear it.
@@ -755,30 +739,17 @@ class SettingsRepository(
     }
 
     /**
-     * Every layout leaf id any agent session has run in, ended sessions included.
-     *
-     * Called by `WindowState` when it restores the layout, so a pane made afterwards never gets
-     * the id of a pane that has gone but whose sessions are still on record.
-     *
-     * @return the distinct leaf ids.
-     */
-    fun allAgentSessionLeafIds(): List<String> =
-        database.settingsQueries.selectAgentSessionLeafIds().executeAsList().mapNotNull { it }
-
-    /**
      * Store a task's status line; the task needs a row (see [stampTaskStart]).
      *
      * @param taskId the task's id.
      * @param status the cleaned text, or null to clear the status.
-     * @param by the terminal session id of the pane that set it, or null.
-     * @param at epoch millis it was set.
+     * @param at epoch millis it was set; ignored when [status] is null.
      * @param questionWaits whether the status says a question waits for the person; stored as
      *   false when [status] is null.
      */
-    fun setTaskStatus(taskId: String, status: String?, by: String?, at: Long, questionWaits: Boolean = false) {
+    fun setTaskStatus(taskId: String, status: String?, at: Long, questionWaits: Boolean = false) {
         database.settingsQueries.setTaskStatus(
             status,
-            if (status == null) null else by,
             if (status == null) null else at,
             if (status != null && questionWaits) 1L else 0L,
             taskId,
@@ -791,7 +762,7 @@ class SettingsRepository(
      * @property taskId the task the block belongs to.
      * @property blockId the writer's id for the block, unique within the task.
      * @property position the block's place in the task's drawing order, counted from 0.
-     * @property kind the content's type name (`text`, `facts`, ...).
+     * @property kind the content's type name (`links`, `timeline` or `progress`).
      * @property title the block's heading, or null.
      * @property body the block's content as JSON.
      * @property writtenBy who wrote it, or null.

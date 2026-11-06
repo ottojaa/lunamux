@@ -55,7 +55,7 @@ class AgentSessionSearchTest {
     @Test
     fun `a session is found through the title of its task, however old, and ranked after its own title`() {
         // Out of memory (no tracker), nothing in its own fields matches, stored with only the task id.
-        repo.saveAgentTask(SettingsRepository.AgentTaskRow("access-1", "Access control rework", 1, 1))
+        repo.insertTask("access-1", "Access control rework", 1)
         repo.saveAgentSession(
             AgentSessionRecord(id = "old", agent = "claude", title = "wire the thing", firstPrompt = "do it",
                 branch = "main", state = "ended", stateSince = 1, createdAt = 1, endedAt = 1, taskId = "access-1"),
@@ -77,7 +77,7 @@ class AgentSessionSearchTest {
 
     @Test
     fun `a match on the session itself still names its task`() {
-        repo.saveAgentTask(SettingsRepository.AgentTaskRow("t-1", "Billing", 1, 1))
+        repo.insertTask("t-1", "Billing", 1)
         repo.saveAgentSession(
             AgentSessionRecord(id = "s", agent = "claude", title = "fix invoices", state = "ended",
                 stateSince = 1, createdAt = 1, endedAt = 1, taskId = "t-1"),

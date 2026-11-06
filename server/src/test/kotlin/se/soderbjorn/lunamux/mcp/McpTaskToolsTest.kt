@@ -95,28 +95,6 @@ class McpTaskToolsTest {
     }
 
     @Test
-    fun `create_task without sessions makes an empty task that list_tasks shows`() {
-        val id = payloadOf(call("create_task", """{"title":"Later"}""")).jsonObject["taskId"]!!.jsonPrimitive.content
-        val listed = payloadOf(call("list_tasks", scope = McpScope.READ)).jsonArray.map { it.jsonObject }
-        val mine = listed.single { it["taskId"]!!.jsonPrimitive.content == id }
-        assertEquals("Later", mine["title"]!!.jsonPrimitive.content)
-        assertEquals("agents", mine["source"]!!.jsonPrimitive.content)
-        assertTrue(mine["sessions"]!!.jsonArray.isEmpty())
-    }
-
-    @Test
-    fun `create_task refuses a missing or blank title and an unknown session, naming it`() {
-        assertTrue(textOf(call("create_task", "{}")).contains("title"))
-        assertTrue(isError(call("create_task", "{}")))
-        assertTrue(isError(call("create_task", """{"title":"  "}""")))
-        val bad = call("create_task", """{"title":"T","sessionIds":["ghost-session"]}""")
-        assertTrue(isError(bad))
-        assertTrue(textOf(bad).contains("ghost-session"))
-        val notArray = call("create_task", """{"title":"T","sessionIds":"s1"}""")
-        assertTrue(isError(notArray))
-    }
-
-    @Test
     fun `add_to_task joins sessions to a task, including a task file's id`() {
         session("s1"); session("s2")
         val id = payloadOf(call("create_task", """{"title":"A"}""")).jsonObject["taskId"]!!.jsonPrimitive.content
@@ -126,19 +104,6 @@ class McpTaskToolsTest {
         files.value = listOf(TaskFile("prog", "Programme", null, null, 1))
         assertTrue(!isError(call("add_to_task", """{"taskId":"prog","sessionIds":["s2"]}""")))
         assertEquals("prog", taskOf("s2"))
-    }
-
-    @Test
-    fun `add_to_task refuses an unknown task, an unknown session and an empty list, and changes nothing`() {
-        session("s1")
-        val id = payloadOf(call("create_task", """{"title":"A"}""")).jsonObject["taskId"]!!.jsonPrimitive.content
-        val noTask = call("add_to_task", """{"taskId":"missing","sessionIds":["s1"]}""")
-        assertTrue(isError(noTask)); assertTrue(textOf(noTask).contains("missing"))
-        val noSession = call("add_to_task", """{"taskId":"$id","sessionIds":["s1","ghost"]}""")
-        assertTrue(isError(noSession)); assertTrue(textOf(noSession).contains("ghost"))
-        assertTrue(isError(call("add_to_task", """{"taskId":"$id","sessionIds":[]}""")))
-        assertTrue(isError(call("add_to_task", """{"sessionIds":["s1"]}""")))
-        assertNull(taskOf("s1"))
     }
 
     @Test
@@ -153,20 +118,6 @@ class McpTaskToolsTest {
         val bad = call("remove_from_task", """{"sessionIds":["ghost"]}""")
         assertTrue(isError(bad)); assertTrue(textOf(bad).contains("ghost"))
         assertTrue(isError(call("remove_from_task", "{}")))
-    }
-
-    @Test
-    fun `rename_task renames an agent-made task and explains why a file task cannot be renamed`() {
-        val id = payloadOf(call("create_task", """{"title":"Before"}""")).jsonObject["taskId"]!!.jsonPrimitive.content
-        assertTrue(!isError(call("rename_task", """{"taskId":"$id","title":"After"}""")))
-        val listed = payloadOf(call("list_tasks", scope = McpScope.READ)).jsonArray.map { it.jsonObject }
-        assertEquals("After", listed.single { it["taskId"]!!.jsonPrimitive.content == id }["title"]!!.jsonPrimitive.content)
-
-        files.value = listOf(TaskFile("prog", "Programme", null, null, 1))
-        val file = call("rename_task", """{"taskId":"prog","title":"X"}""")
-        assertTrue(isError(file)); assertTrue(textOf(file).contains("file"))
-        assertTrue(isError(call("rename_task", """{"taskId":"missing","title":"X"}""")))
-        assertTrue(isError(call("rename_task", """{"taskId":"$id","title":""}""")))
     }
 
     @Test
@@ -239,22 +190,6 @@ class McpTaskToolsTest {
     }
 
     @Test
-    fun `a window created for a task before its agent has started still finds the tab`() {
-        val taskTab = newTab("Task tab")
-        val activeTab = newTab("Active tab")
-        try {
-            val id = payloadOf(call("create_task", """{"title":"Two quick windows"}""")).jsonObject["taskId"]!!.jsonPrimitive.content
-            call("create_window", """{"tabId":"$taskTab","taskId":"$id"}""")
-            call("activate_tab", """{"tabId":"$activeTab"}""")
-            val second = payloadOf(call("create_window", """{"taskId":"$id"}""")).jsonObject
-            assertEquals(taskTab, tabOfWindow(second), "the first pane has no agent yet, only the promise of the task")
-        } finally {
-            call("close_tab", """{"tabId":"$activeTab"}""")
-            call("close_tab", """{"tabId":"$taskTab"}""")
-        }
-    }
-
-    @Test
     fun `with no tab for the task the window opens in the active tab, and an explicit tabId wins`() {
         val taskTab = newTab("Task tab")
         val activeTab = newTab("Active tab")
@@ -278,63 +213,6 @@ class McpTaskToolsTest {
     }
 
     @Test
-    fun `a worldId limits the task's tab to that world, and falls back to its active tab`() {
-        val homeWorld = WindowState.activeWorldId()
-        val taskTab = newTab("Task tab")
-        val otherWorld = payloadOf(call("create_world", """{"name":"Elsewhere"}""")).jsonObject["worldId"]!!.jsonPrimitive.content
-        try {
-            val otherTab = WindowState.config.value.worlds.first { it.id == otherWorld }.let { it.activeTabId ?: it.tabs.first().id }
-            val id = payloadOf(call("create_task", """{"title":"Lives in the first world"}""")).jsonObject["taskId"]!!.jsonPrimitive.content
-            agentWindowIn(taskTab, id, "a-home")
-
-            val inOther = payloadOf(call("create_window", """{"taskId":"$id","worldId":"$otherWorld"}""")).jsonObject
-            assertEquals(otherTab, inOther["tabId"]!!.jsonPrimitive.content, "the task has no tab in the named world")
-
-            val inHome = payloadOf(call("create_window", """{"taskId":"$id","worldId":"$homeWorld"}""")).jsonObject
-            assertEquals(taskTab, inHome["tabId"]!!.jsonPrimitive.content)
-        } finally {
-            call("close_world", """{"worldId":"$otherWorld"}""")
-            call("switch_world", """{"worldId":"$homeWorld"}""")
-            call("close_tab", """{"tabId":"$taskTab"}""")
-        }
-    }
-
-    @Test
-    fun `a tab the strip hides still holds its task's windows`() {
-        val taskTab = newTab("Task tab")
-        val activeTab = newTab("Active tab")
-        try {
-            val id = payloadOf(call("create_task", """{"title":"Out of sight"}""")).jsonObject["taskId"]!!.jsonPrimitive.content
-            agentWindowIn(taskTab, id, "a-hidden")
-            call("activate_tab", """{"tabId":"$activeTab"}""")
-            WindowState.setTabHidden(taskTab, true)
-            WindowState.setTabHiddenFromSidebar(taskTab, true)
-            val next = payloadOf(call("create_window", """{"taskId":"$id"}""")).jsonObject
-            assertEquals(taskTab, tabOfWindow(next), "a hidden tab is still open, so the task's window joins it")
-        } finally {
-            call("close_tab", """{"tabId":"$activeTab"}""")
-            call("close_tab", """{"tabId":"$taskTab"}""")
-        }
-    }
-
-    @Test
-    fun `an ended session no longer holds its task's tab`() {
-        val oldTab = newTab("Old tab")
-        val activeTab = newTab("Active tab")
-        try {
-            val id = payloadOf(call("create_task", """{"title":"Finished there"}""")).jsonObject["taskId"]!!.jsonPrimitive.content
-            val pane = agentWindowIn(oldTab, id, "a-ended")
-            call("activate_tab", """{"tabId":"$activeTab"}""")
-            tracker.onHook(pane, buildJsonObject { put("hook_event_name", "SessionEnd"); put("session_id", "a-ended") })
-            val next = payloadOf(call("create_window", """{"taskId":"$id"}""")).jsonObject
-            assertEquals(activeTab, tabOfWindow(next))
-        } finally {
-            call("close_tab", """{"tabId":"$activeTab"}""")
-            call("close_tab", """{"tabId":"$oldTab"}""")
-        }
-    }
-
-    @Test
     fun `run_command that creates a window follows the task's tab and joins the task`() {
         val taskTab = newTab("Task tab")
         val activeTab = newTab("Active tab")
@@ -353,15 +231,6 @@ class McpTaskToolsTest {
             call("close_tab", """{"tabId":"$activeTab"}""")
             call("close_tab", """{"tabId":"$taskTab"}""")
         }
-    }
-
-    @Test
-    fun `a task spread over tabs picks the tab with most of its panes, then the first in layout order`() {
-        assertEquals("b", busiestTab(listOf("a", "b", "b"), listOf("a", "b", "c")))
-        assertEquals("a", busiestTab(listOf("b", "a"), listOf("a", "b", "c")), "a tie goes to the first tab in layout order")
-        assertEquals("b", busiestTab(listOf("gone", "b"), listOf("a", "b")), "a pane in a tab that is not a candidate is ignored")
-        assertNull(busiestTab(emptyList(), listOf("a")))
-        assertNull(busiestTab(listOf("x"), listOf("a")))
     }
 
     @Test

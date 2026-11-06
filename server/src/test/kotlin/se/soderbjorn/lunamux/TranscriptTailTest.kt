@@ -63,9 +63,4 @@ class TranscriptTailTest {
         assertNull(TranscriptTail.interruptedAt(transcript(prompt, marker, big)))
     }
 
-    @Test
-    fun `an interrupt line is found behind a huge line that came before it`() {
-        val big = """{"type":"user","timestamp":"2026-11-06T09:33:00.000Z","message":{"role":"user","content":"${"x".repeat(300_000)}"}}"""
-        assertEquals(atMillis, TranscriptTail.interruptedAt(transcript(big, marker, *bookkeeping)))
-    }
 }

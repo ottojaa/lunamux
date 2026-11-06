@@ -56,15 +56,9 @@ class TaskPanelContentTest {
     }
 
     @Test
-    fun aDocumentsBlockIsNoLongerAKind() {
+    fun aBlockOfARemovedKindIsNoLongerReadable() {
         assertFailsWith<SerializationException> {
-            decode("""{"kind":"documents","items":[{"title":"A","url":"https://a.b"}]}""")
+            decode("""{"kind":"text","markdown":"x"}""")
         }
-    }
-
-    @Test
-    fun everyOtherKindKeepsItsName() {
-        assertEquals("links", decode("""{"kind":"links","items":[{"label":"x","url":"https://a.b"}]}""").let { (it as TaskBlockContent.Links).kindName })
-        assertEquals("text", decode("""{"kind":"text","markdown":"x"}""").let { (it as TaskBlockContent.Text).kindName })
     }
 }

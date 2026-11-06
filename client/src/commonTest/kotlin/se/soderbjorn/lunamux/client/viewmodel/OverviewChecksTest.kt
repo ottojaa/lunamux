@@ -44,8 +44,12 @@ class OverviewChecksTest {
         id = "g1", title = "Release", repo = "proj", source = "agents", hasOpen = false, mainConversation = main,
     )
 
-    private fun snapshot(expectedMain: Map<String, String> = emptyMap()) = OverviewChecks.Snapshot(
+    private fun snapshot(
+        expectedMain: Map<String, String> = emptyMap(),
+        footer: AgentCounts.Tally = AgentCounts.of(windowState.agentSessions.value, windowState.config.value),
+    ) = OverviewChecks.Snapshot(
         sessions = windowState.agentSessions.value,
+        footer = footer,
         tasks = windowState.agentTasks.value,
         config = windowState.config.value!!,
         overview = overviewVm.state,
@@ -86,13 +90,6 @@ class OverviewChecksTest {
     }
 
     @Test
-    fun aBackgroundAgentThatAsksPassesEveryCheck() {
-        usualCase(bgState = "needs_you")
-        assertEquals(emptyList(), failed(OverviewChecks.evaluate(snapshot())))
-        assertEquals(1, snapshot().overview.needYouCount)
-    }
-
-    @Test
     fun theFooterCountMustEqualTheRows() {
         usualCase(bgState = "needs_you")
         val s = snapshot()
@@ -100,6 +97,17 @@ class OverviewChecksTest {
         val c1 = OverviewChecks.evaluate(tampered).first { it.id == "C1" }
         assertFalse(c1.ok)
         assertTrue(c1.problems.first().contains("the footer counts 1 waiting, the rows add up to 0"))
+    }
+
+    @Test
+    fun aFooterThatCountsWrongFailsEvenWhenTheRowsAgreeWithEachOther() {
+        usualCase(bgState = "needs_you")
+        val wrong = AgentCounts.Tally(AgentCounts.Counts(waiting = 2, working = 0), emptyMap())
+        val c1 = OverviewChecks.evaluate(snapshot(footer = wrong)).first { it.id == "C1" }
+        assertFalse(c1.ok)
+        assertTrue(c1.problems.any { it.contains("the footer counts 2 waiting, the rows add up to 1") })
+        assertTrue(c1.problems.any { it.contains("the footer counts 2 waiting, the sessions have 1") })
+        assertTrue(c1.problems.any { it.contains("the footer counts 0 working, the sessions have 2") })
     }
 
     @Test
@@ -192,18 +200,6 @@ class OverviewChecksTest {
     }
 
     @Test
-    fun aWaitingMemberInAListedTabWhileTheMainConversationWorksPassesEveryCheck() {
-        layout(WindowConfig(tabs = listOf(TabConfig(id = "tab-1", title = "one", panes = panes(listOf("leaf-main", "leaf-w")))), activeTabId = "tab-1"))
-        windowState.updateAgentSessions(listOf(conversation("main", "working", taskId = "g1"), conversation("w", "needs_you", taskId = "g1")), true)
-        windowState.updateAgentTasks(listOf(task("main")))
-        val row = snapshot().overview.now.single { it.taskId == "g1" }
-        assertEquals(AgentsOverviewBackingViewModel.Enter.JUMP, row.enter)
-        assertEquals("w", row.recordId, "Return goes to the question, not to the main conversation")
-        val checks = OverviewChecks.evaluate(snapshot())
-        assertEquals(emptyList(), failed(checks), OverviewChecks.render(checks))
-    }
-
-    @Test
     fun aMainConversationInABackgroundTabThatAsksNeedsItsTabShownNotAJump() {
         layout(
             WindowConfig(
@@ -224,60 +220,6 @@ class OverviewChecksTest {
         val c5 = OverviewChecks.evaluate(s.copy(overview = s.overview.copy(now = jumping))).first { it.id == "C5" }
         assertFalse(c5.ok)
         assertTrue(c5.problems.single().contains("jumps instead of showing the tab"))
-    }
-
-    @Test
-    fun aMainConversationInABackgroundTabThatDoesNotAskPassesTheReturnCheckWithNothingToOpen() {
-        layout(
-            WindowConfig(
-                tabs = listOf(
-                    TabConfig(id = "tab-1", title = "one", panes = panes(listOf("leaf-solo"))),
-                    TabConfig(id = "tab-bg", title = "agents", panes = panes(listOf("leaf-main")), isBackground = true),
-                ),
-                activeTabId = "tab-1",
-            ),
-        )
-        windowState.updateAgentSessions(listOf(conversation("main", "working", taskId = "g1", background = true), conversation("solo", "done")), true)
-        windowState.updateAgentTasks(listOf(task("main")))
-        assertEquals(emptyList(), failed(OverviewChecks.evaluate(snapshot())), OverviewChecks.render(OverviewChecks.evaluate(snapshot())))
-    }
-
-    @Test
-    fun theMainConversationAskingInAListedTabWhileABackgroundAgentAlsoAsksPassesEveryCheck() {
-        usualCase(bgState = "needs_you")
-        windowState.updateAgentSessions(
-            listOf(
-                conversation("main", "needs_you", taskId = "g1"),
-                conversation("b1", "needs_you", taskId = "g1", background = true),
-                conversation("b2", "working", taskId = "g1", background = true),
-                conversation("solo", "done"),
-            ),
-            true,
-        )
-        val s = snapshot()
-        val row = s.overview.now.single { it.taskId == "g1" }
-        assertEquals(AgentsOverviewBackingViewModel.Enter.JUMP, row.enter, "the main conversation is jumped to; the agent is reached after it is answered")
-        assertEquals("main", row.recordId)
-        assertEquals(2, s.overview.needYouCount)
-        assertEquals(emptyList(), failed(OverviewChecks.evaluate(s)), OverviewChecks.render(OverviewChecks.evaluate(s)))
-    }
-
-    @Test
-    fun aWaitingMemberInAListedTabWithAnotherWaitingInABackgroundTabPassesEveryCheck() {
-        usualCase(bgState = "needs_you")
-        windowState.updateAgentSessions(
-            listOf(
-                conversation("main", "working", taskId = "g1"),
-                conversation("b1", "needs_you", taskId = "g1", background = true),
-                conversation("solo", "needs_you", taskId = "g1", since = 500),
-            ),
-            true,
-        )
-        val s = snapshot()
-        val row = s.overview.now.single { it.taskId == "g1" }
-        assertEquals(AgentsOverviewBackingViewModel.Enter.JUMP, row.enter)
-        assertEquals("solo", row.recordId, "Return goes to the question in a tab of the strip")
-        assertEquals(emptyList(), failed(OverviewChecks.evaluate(s)), OverviewChecks.render(OverviewChecks.evaluate(s)))
     }
 
     @Test

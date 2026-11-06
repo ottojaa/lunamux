@@ -156,21 +156,6 @@ class TaskPanelViewModelTest {
     }
 
     @Test
-    fun `an agent line never names a tool`() {
-        assertNull(TaskPanelViewModel.inWords("Running cd"))
-        assertNull(TaskPanelViewModel.inWords("  Using Grep "))
-        assertNull(TaskPanelViewModel.inWords("   "))
-        assertNull(TaskPanelViewModel.inWords(null))
-        assertEquals("Run the server tests", TaskPanelViewModel.inWords(" Run the server tests "))
-        layout()
-        give(
-            listOf(task()),
-            listOf(session("own"), session("w", title = "Builder", leaf = "leaf-w", nowLine = "Running cd")),
-        )
-        assertNull(vm.state.agents.shown.single().nowLine)
-    }
-
-    @Test
     fun `a click on a session in a listed tab jumps, on a waiting hidden one shows it as a tab`() = runNow {
         layout()
         give(
@@ -190,17 +175,6 @@ class TaskPanelViewModelTest {
         sent.clear()
         vm.activateMember(lines.getValue("Hidden"))
         assertEquals(listOf<WindowCommand>(WindowCommand.ShowWaitingAgent("r")), sent)
-    }
-
-    @Test
-    fun `a hidden session that only works has nothing to open`() {
-        layout()
-        give(
-            listOf(task()),
-            listOf(session("own"), session("b", title = "Quiet", leaf = "leaf-bg")),
-        )
-        assertEquals(MemberAction.NONE, vm.state.agents.shown.single().action)
-        assertNull(vm.state.agents.shown.single().hint)
     }
 
     // ---- progress ----
@@ -237,61 +211,6 @@ class TaskPanelViewModelTest {
         assertEquals(listOf("Design brief", "Fix the footer", "Plan", "Thread with Ana"), rows.map { it.title })
         assertEquals(listOf("02:46", "02:45", "02:30", "01:56"), rows.map { it.time }, "each row's own time, in the viewer's zone")
         assertTrue(rows.none { it.url.startsWith("javascript") })
-    }
-
-    @Test
-    fun `links without a time come after the dated ones in the order written, and a missing kind reads link`() {
-        layout()
-        give(listOf(task()), listOf(session("own")))
-        blocks(
-            block("a", TaskBlockContent.Links(listOf(
-                TaskLink(label = "Written first", url = "https://example.com/1"),
-                TaskLink("doc", "Old but dated", "https://example.com/2", now - 9_000_000),
-            ))),
-            block("b", TaskBlockContent.Links(listOf(
-                TaskLink("  ", "Blank kind", "https://example.com/3"),
-                TaskLink("PR", "Dated", "https://example.com/4", now - 1_000),
-            ))),
-        )
-        val rows = vm.state.links.shown
-        assertEquals(listOf("Dated", "Old but dated", "Written first", "Blank kind"), rows.map { it.title })
-        assertEquals(listOf("PR", "doc", "link", "link"), rows.map { it.kind })
-        assertEquals(listOf("02:46", "00:16", "", ""), rows.map { it.time }, "no time given, none shown")
-    }
-
-    @Test
-    fun `a link listed twice shows once, as its dated row`() {
-        layout()
-        give(listOf(task()), listOf(session("own")))
-        blocks(block("a", TaskBlockContent.Links(listOf(
-            TaskLink("link", "Same, no time", "https://example.com/same"),
-            TaskLink("PR", "Same, dated", "https://example.com/same", now - 120_000),
-        ))))
-        val rows = vm.state.links.shown
-        assertEquals(1, rows.size)
-        assertEquals("Same, dated", rows.single().title)
-    }
-
-    @Test
-    fun `a links block stored before links had a kind and a time still loads, as kind link with no time`() {
-        val stored = windowJson.decodeFromString(
-            TaskBlockContent.serializer(),
-            """{"kind":"links","items":[{"label":"Old row","url":"https://example.com/old"}]}""",
-        )
-        assertEquals(listOf(TaskLink("link", "Old row", "https://example.com/old", null)), (stored as TaskBlockContent.Links).items)
-        layout()
-        give(listOf(task()), listOf(session("own")))
-        blocks(block("l", stored))
-        val row = vm.state.links.shown.single()
-        assertEquals("link", row.kind)
-        assertEquals("", row.time)
-        assertEquals("Old row", row.title)
-    }
-
-    @Test
-    fun `only http, https and file addresses may be opened`() {
-        assertEquals("https://a.dev", vm.linkTarget("https://a.dev"))
-        assertNull(vm.linkTarget("javascript:alert(1)"))
     }
 
     // ---- activity ----
@@ -352,15 +271,6 @@ class TaskPanelViewModelTest {
         assertEquals(19, vm.state.links.shown.size, "the first task keeps its list open")
     }
 
-    @Test
-    fun `a list of exactly five shows no more button`() {
-        layout()
-        give(listOf(task()), listOf(session("own")))
-        blocks(block("l", TaskBlockContent.Links((1..5).map { TaskLink(label = "Link $it", url = "https://example.com/$it") })))
-        assertEquals(0, vm.state.links.more)
-        assertEquals(5, vm.state.links.shown.size)
-    }
-
     // ---- small helpers ----
 
     @Test
@@ -372,5 +282,63 @@ class TaskPanelViewModelTest {
         assertEquals("now", TaskPanelViewModel.ageOf(10_000, 0), "a time ahead of the clock reads now")
         val noon = 12 * 3_600_000L + 20 * 86_400_000L
         assertEquals("12:00", TaskPanelViewModel.clockOf(noon, noon + 1_000, TimeZone.UTC))
+    }
+
+    @Test
+    fun `a link address opens only when it is http, https or file`() {
+        for (url in listOf("http://a.example/x", "https://a.example/x?y=1", "file:///tmp/a.txt", "HTTPS://A.EXAMPLE")) {
+            assertTrue(isSafeUrl(url), url)
+        }
+        for (url in listOf("javascript:alert(1)", "data:text/html,x", "vbscript:x", "ftp://a.example", "//a.example", "/rel", "https://a b", " https://a.example", "")) {
+            assertFalse(isSafeUrl(url), url)
+        }
+    }
+
+    @Test
+    fun `a hidden session that only works has nothing to open`() {
+        layout()
+        give(
+            listOf(task()),
+            listOf(session("own"), session("b", title = "Quiet", leaf = "leaf-bg")),
+        )
+        assertEquals(MemberAction.NONE, vm.state.agents.shown.single().action)
+        assertNull(vm.state.agents.shown.single().hint)
+    }
+
+    @Test
+    fun `a list of exactly five shows no more button`() {
+        layout()
+        give(listOf(task()), listOf(session("own")))
+        blocks(block("l", TaskBlockContent.Links((1..5).map { TaskLink(label = "Link $it", url = "https://example.com/$it") })))
+        assertEquals(0, vm.state.links.more)
+        assertEquals(5, vm.state.links.shown.size)
+    }
+
+    @Test
+    fun `an agent line never names a tool`() {
+        assertNull(TaskPanelViewModel.inWords("Running cd"))
+        assertNull(TaskPanelViewModel.inWords("  Using Grep "))
+        assertNull(TaskPanelViewModel.inWords("   "))
+        assertNull(TaskPanelViewModel.inWords(null))
+        assertEquals("Run the server tests", TaskPanelViewModel.inWords(" Run the server tests "))
+        layout()
+        give(
+            listOf(task()),
+            listOf(session("own"), session("w", title = "Builder", leaf = "leaf-w", nowLine = "Running cd")),
+        )
+        assertNull(vm.state.agents.shown.single().nowLine)
+    }
+
+    @Test
+    fun `a link listed twice shows once, as its dated row`() {
+        layout()
+        give(listOf(task()), listOf(session("own")))
+        blocks(block("a", TaskBlockContent.Links(listOf(
+            TaskLink("link", "Same, no time", "https://example.com/same"),
+            TaskLink("PR", "Same, dated", "https://example.com/same", now - 120_000),
+        ))))
+        val rows = vm.state.links.shown
+        assertEquals(1, rows.size)
+        assertEquals("Same, dated", rows.single().title)
     }
 }

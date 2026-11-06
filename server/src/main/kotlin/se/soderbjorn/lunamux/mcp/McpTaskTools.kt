@@ -210,12 +210,12 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
             "questionWaits" to schemaBool("True while a question waits for the person. Default false; an empty text clears it."),
             required = listOf("taskId", "text"),
         ),
-    ) { ctx, args ->
+    ) { _, args ->
         val taskId = args.requireString("taskId")
         val text = (args["text"] as? JsonPrimitive)?.contentOrNull
             ?: throw McpArgumentException("'text' must be a string")
         val questionWaits = args.optBool("questionWaits") == true
-        val stored = taskCall { taskIndex.setStatus(taskId, text, ctx.callerSessionId, questionWaits) }
+        val stored = taskCall { taskIndex.setStatus(taskId, text, questionWaits) }
         McpToolResult.json(buildJsonObject {
             put("taskId", taskId)
             put("status", stored?.let(::JsonPrimitive) ?: JsonNull)

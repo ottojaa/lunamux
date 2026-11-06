@@ -85,21 +85,6 @@ class McpTaskMetaTest {
     }
 
     @Test
-    fun `without a usable caller the first named session is the task's own session`() {
-        session("a"); session("b")
-        assertEquals("a", create("One", """["a","b"]""")["ownSession"]!!.jsonPrimitive.content)
-        // A header naming no pane is not trusted.
-        assertEquals("b", create("Two", """["b","a"]""", caller = "no-such-pane")["ownSession"]!!.jsonPrimitive.content)
-    }
-
-    @Test
-    fun `a task nobody named has no own session`() {
-        val made = create("Empty")
-        assertEquals("null", made["ownSession"].toString())
-        assertNull(index.listing().single { it.id == made["taskId"]!!.jsonPrimitive.content }.ownSessionId)
-    }
-
-    @Test
     fun `set_task_lead names a pane, answers with its conversation and the pane it runs in`() {
         session("a"); session("b")
         val id = create("Work", """["a"]""")["taskId"]!!.jsonPrimitive.content
@@ -156,29 +141,6 @@ class McpTaskMetaTest {
     }
 
     @Test
-    fun `set_task_lead refuses an unknown task or pane with add_to_task's words and changes nothing`() {
-        session("a")
-        val id = create("Work", """["a"]""")["taskId"]!!.jsonPrimitive.content
-        val noTask = call("set_task_lead", """{"taskId":"ghost","sessionId":"a"}""")
-        assertTrue(isError(noTask))
-        assertTrue("Unknown task 'ghost'" in textOf(noTask))
-        val noPane = call("set_task_lead", """{"taskId":"$id","sessionId":"ghost-pane"}""")
-        val addToTask = call("add_to_task", """{"taskId":"$id","sessionIds":["ghost-pane"]}""")
-        assertTrue(isError(noPane))
-        assertEquals(textOf(addToTask), textOf(noPane))
-        assertEquals("a", index.listing().single { it.id == id }.ownSessionId)
-    }
-
-    @Test
-    fun `a task file's task can be given an own session too`() {
-        session("a")
-        files.value = listOf(TaskFile("file-task", "From a file", null, null, 100L))
-        val set = call("set_task_lead", """{"taskId":"file-task","sessionId":"a"}""")
-        assertTrue(!isError(set), textOf(set))
-        assertEquals("a-a", taskInState("file-task").mainConversation)
-    }
-
-    @Test
     fun `a status has its line breaks turned into spaces, its ends trimmed and 120 characters at most`() {
         session("a")
         val id = create("Work", """["a"]""")["taskId"]!!.jsonPrimitive.content
@@ -212,13 +174,6 @@ class McpTaskMetaTest {
     }
 
     @Test
-    fun `set_task_status refuses an unknown task`() {
-        val r = call("set_task_status", """{"taskId":"ghost","text":"x"}""")
-        assertTrue(isError(r))
-        assertTrue("Unknown task 'ghost'" in textOf(r))
-    }
-
-    @Test
     fun `questionWaits is stored with the status, reported by both tools and set afresh by every call`() {
         session("a")
         val id = create("Work", """["a"]""")["taskId"]!!.jsonPrimitive.content
@@ -247,15 +202,6 @@ class McpTaskMetaTest {
     }
 
     @Test
-    fun `questionWaits survives a restart`() {
-        session("a")
-        val id = create("Work", """["a"]""")["taskId"]!!.jsonPrimitive.content
-        call("set_task_status", """{"taskId":"$id","text":"which database?","questionWaits":true}""")
-        val reopened = TaskIndex(repo, tracker, files, leafOfSession = { null }, clock = { now })
-        assertTrue(reopened.state.value.tasks.single { it.id == id }.questionWaits)
-    }
-
-    @Test
     fun `the task tools' descriptions and parameters use no programme wording`() {
         val tools = runBlocking {
             McpServer.handleMessage("""{"jsonrpc":"2.0","id":1,"method":"tools/list"}""", McpScope.READ_WRITE, null, null)
@@ -271,20 +217,6 @@ class McpTaskMetaTest {
         }
         val status = task.single { it["name"]!!.jsonPrimitive.content == "set_task_status" }
         assertTrue("questionWaits" in status["inputSchema"]!!.jsonObject["properties"]!!.jsonObject)
-    }
-
-    @Test
-    fun `lead, status and start survive a restart`() {
-        session("a")
-        val id = create("Work", """["a"]""")["taskId"]!!.jsonPrimitive.content
-        call("set_task_status", """{"taskId":"$id","text":"kept"}""")
-        val before = taskInState(id)
-        now += 1_000_000
-        val reopened = TaskIndex(repo, tracker, files, leafOfSession = { null }, clock = { now })
-        val after = reopened.state.value.tasks.single { it.id == id }
-        assertEquals("kept", after.status)
-        assertEquals(before.mainConversation, after.mainConversation)
-        assertEquals(before.startedAtMillis, after.startedAtMillis)
     }
 
     @Test

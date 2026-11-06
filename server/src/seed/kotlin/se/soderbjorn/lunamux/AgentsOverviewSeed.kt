@@ -42,7 +42,7 @@ import kotlin.system.exitProcess
  * reproduce. Sessions are written with source `hooks`, the one the overview lists under EARLIER.
  *
  * @see SettingsRepository.saveAgentSession
- * @see SettingsRepository.saveAgentTask
+ * @see SettingsRepository.insertTask
  */
 object AgentsOverviewSeed {
     private const val MINUTE = 60_000L
@@ -205,7 +205,7 @@ object AgentsOverviewSeed {
         repo.setMcpEnabled(true)
         DeviceAuth.addTrustedToken(repo, MCP_TOKEN, DeviceAuth.MCP_LABEL, DeviceAuth.MCP_SCOPE_READ_WRITE)
         for (t in tasks) {
-            repo.saveAgentTask(SettingsRepository.AgentTaskRow(t.id, t.title, now - t.createdAgo, now - t.createdAgo))
+            repo.insertTask(t.id, t.title, now - t.createdAgo)
         }
         for (s in sessions) {
             val ended = now - s.endedAgo
@@ -308,7 +308,7 @@ object AgentsOverviewSeed {
         record(3, "Screenshot refresh", "Retake the screenshots the notes link to", 2 * HOUR + 20 * MINUTE, null, background = true)
         repo.stampTaskStart("seed-task-notes", now - 3 * HOUR)
         repo.setTaskMainConversation("seed-task-notes", "5eed0002-0000-4000-8000-000000000001")
-        repo.setTaskStatus("seed-task-notes", NOTES_STATUS, NOTES_OWN_PANE, now - 2 * HOUR)
+        repo.setTaskStatus("seed-task-notes", NOTES_STATUS, now - 2 * HOUR)
         seedReleaseNotesPanel(repo, now)
     }
 

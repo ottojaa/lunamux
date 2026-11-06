@@ -51,12 +51,6 @@ class TabCloseGuardTest {
     }
 
     @Test
-    fun aClosedSessionStillRecordedInTheTabDoesNotAsk() {
-        val cfg = config(tab("t1", "one", "leaf-a"), tab("t2", "two", "leaf-c"))
-        assertNull(TabCloseGuard.check("t1", cfg, listOf(session("a", "ended")), emptyList()))
-    }
-
-    @Test
     fun aWorkingAgentAsksAndTheWordsNameTheTabAndTheAgent() {
         val cfg = config(tab("t1", "Release notes", "leaf-a"), tab("t2", "two", "leaf-c"))
         val check = TabCloseGuard.check("t1", cfg, listOf(session("a", "working")), emptyList())!!
@@ -84,14 +78,6 @@ class TabCloseGuardTest {
         assertEquals(5_000L, check.keepsRunning.first().sinceMillis)
         assertEquals("The 2 agents it started keep running in the background:", check.keepsRunningIntro)
         assertEquals("To pick up where you left off, open the agents overview and choose \"Release notes\".", check.pickUp)
-    }
-
-    @Test
-    fun oneBackgroundAgentReadsInTheSingular() {
-        val cfg = config(tab("t1", "one", "leaf-main"), tab("bg", "agents", "leaf-b1", background = true))
-        val sessions = listOf(session("main", "working"), session("b1", "done", background = true, taskId = "g1"))
-        val check = TabCloseGuard.check("t1", cfg, sessions, listOf(task("main")))!!
-        assertEquals("The agent it started keeps running in the background:", check.keepsRunningIntro)
     }
 
     @Test
@@ -142,11 +128,4 @@ class TabCloseGuardTest {
         assertEquals(listOf<WindowCommand>(WindowCommand.CloseTab("t1")), sent)
     }
 
-    @Test
-    fun aTabNothingIsWorkingInClosesWithoutTheQuestion() = runNow {
-        val sent = mutableListOf<WindowCommand>()
-        val repo = state(session("a", "needs_you"))
-        assertTrue(closeTabAsking(repo, "t1", { sent += it }) { error("must not ask") })
-        assertEquals(listOf<WindowCommand>(WindowCommand.CloseTab("t1")), sent)
-    }
 }

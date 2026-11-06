@@ -1,7 +1,6 @@
 /**
- * Tests for [TaskPanelStore], [TaskPanelLimits] and [pressTaskButton]: what a task's panel keeps,
- * every size and shape it refuses, that blocks survive a restart, and that a button press only
- * ever types a stored line into a live own session.
+ * Tests for [TaskPanelStore] and [TaskPanelLimits]: what a task's panel keeps, every size and
+ * shape it refuses, and that blocks survive a restart.
  *
  * @see TaskPanelStore
  * @see TaskPanelLimits
@@ -9,20 +8,16 @@
 package se.soderbjorn.lunamux
 
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 import se.soderbjorn.lunamux.persistence.SettingsRepository
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Tests for [TaskPanelStore]: ordering, replacing and removing blocks, persistence across a restart, every
- * limit and refusal, and what a button press types into the task's own session.
+ * Tests for [TaskPanelStore]: ordering, replacing and removing blocks, persistence across a
+ * restart, and every limit and refusal.
  *
  * Run by `:server:test`.
  *
@@ -41,7 +36,7 @@ class TaskPanelStoreTest {
     private val taskId = index.createTask("Release", emptyList())
 
     private fun text(id: String, body: String = "hello", title: String? = null) =
-        TaskPanelBlock(id, title, TaskBlockContent.Text(body), writtenAtMillis = 0)
+        TaskPanelBlock(id, title, TaskBlockContent.Progress(phase = body), writtenAtMillis = 0)
 
     private fun refused(block: TaskPanelBlock): String =
         assertFailsWith<TaskException> { store.upsert(taskId, block, null) }.message!!
@@ -67,7 +62,7 @@ class TaskPanelStoreTest {
         store.setPanel(taskId, listOf(text("a"), text("b"), text("c")), null)
         store.upsert(taskId, text("b", "changed"), "other")
         assertEquals(listOf("a", "b", "c"), store.blocksOf(taskId).map { it.id })
-        assertEquals(TaskBlockContent.Text("changed"), store.blocksOf(taskId)[1].content)
+        assertEquals(TaskBlockContent.Progress(phase = "changed"), store.blocksOf(taskId)[1].content)
         assertEquals("other", store.blocksOf(taskId)[1].writtenBy)
         store.upsert(taskId, text("d"), null)
         assertEquals(listOf("a", "b", "c", "d"), store.blocksOf(taskId).map { it.id })
@@ -103,17 +98,16 @@ class TaskPanelStoreTest {
         store.setPanel(
             taskId,
             listOf(
-                text("t", "**bold**", "Title"),
-                TaskPanelBlock("f", null, TaskBlockContent.Facts(listOf(TaskFact("k", "v"))), writtenAtMillis = 0),
+                text("t", "Writing", "Title"),
+                TaskPanelBlock("l", null, TaskBlockContent.Links(listOf(TaskLink("PR", "Fix", "https://a.b/1"))), writtenAtMillis = 0),
                 TaskPanelBlock("p", null, TaskBlockContent.Progress(done = 1, total = 3, label = "x"), writtenAtMillis = 0),
-                TaskPanelBlock("a", null, TaskBlockContent.Actions(listOf(TaskButton("go", "Go", "/go"))), writtenAtMillis = 0),
             ),
             "writer",
         )
         val before = store.blocksOf(taskId)
         val reopened = TaskPanelStore(SettingsRepository(dbFile), index, clock = { now })
         assertEquals(before, reopened.blocksOf(taskId))
-        assertEquals(listOf("t", "f", "p", "a"), reopened.blocksOf(taskId).map { it.id })
+        assertEquals(listOf("t", "l", "p"), reopened.blocksOf(taskId).map { it.id })
     }
 
     // ── Limits ──────────────────────────────────────────────────────────
@@ -158,22 +152,7 @@ class TaskPanelStoreTest {
     }
 
     @Test
-    fun `text is 4000 characters at most`() {
-        store.upsert(taskId, text("t", "x".repeat(4000)), null)
-        assertTrue("'t'" in refused(text("t", "x".repeat(4001))))
-    }
-
-    @Test
-    fun `facts and links hold 30 items at most, with label and value lengths`() {
-        fun facts(n: Int, label: String = "k", value: String = "v") =
-            TaskPanelBlock("f", null, TaskBlockContent.Facts(List(n) { TaskFact(label, value) }), writtenAtMillis = 0)
-        store.upsert(taskId, facts(30), null)
-        assertTrue("31" in refused(facts(31)))
-        store.upsert(taskId, facts(1, "l".repeat(80), "v".repeat(200)), null)
-        assertTrue("label" in refused(facts(1, "l".repeat(81))))
-        assertTrue("value" in refused(facts(1, value = "v".repeat(201))))
-        assertTrue("no label" in refused(facts(1, label = " ")))
-
+    fun `links hold 30 items at most, with an address of 2000 characters`() {
         fun links(n: Int, url: String = "https://example.com") =
             TaskPanelBlock("l", null, TaskBlockContent.Links(List(n) { TaskLink("link", "l", url) }), writtenAtMillis = 0)
         store.upsert(taskId, links(30), null)
@@ -222,16 +201,13 @@ class TaskPanelStoreTest {
     }
 
     @Test
-    fun `a stored documents block, from before links carried their own kind, is dropped on load and the rest stays`() {
+    fun `a stored block of a kind the panel no longer has is dropped on load and the rest stays`() {
         store.upsert(taskId, text("keep"), null)
         val repo = SettingsRepository(dbFile)
         val rows = repo.loadTaskPanelRows()
         repo.replaceTaskPanel(
             taskId,
-            rows + rows.single().copy(
-                blockId = "docs", position = 1, kind = "documents",
-                body = """{"kind":"documents","items":[{"title":"A","url":"https://a.b"}]}""",
-            ),
+            rows + rows.single().copy(blockId = "old", position = 1, kind = "text", body = """{"kind":"text","markdown":"x"}"""),
         )
         val reopened = TaskPanelStore(SettingsRepository(dbFile), index, clock = { now })
         assertEquals(listOf("keep"), reopened.blocksOf(taskId).map { it.id })
@@ -259,89 +235,5 @@ class TaskPanelStoreTest {
         assertTrue("between" in refused(progress(TaskBlockContent.Progress(done = 6, total = 5))))
         assertTrue("between" in refused(progress(TaskBlockContent.Progress(done = -1, total = 5))))
         assertTrue("phase" in refused(progress(TaskBlockContent.Progress(phase = "p".repeat(81)))))
-    }
-
-    @Test
-    fun `actions hold 8 buttons at most with label 40, text 500 and no control characters`() {
-        fun actions(vararg b: TaskButton) = TaskPanelBlock("a", null, TaskBlockContent.Actions(b.toList()), writtenAtMillis = 0)
-        store.upsert(taskId, actions(TaskButton("go", "l".repeat(40), "t".repeat(500))), null)
-        assertTrue("9" in refused(actions(*Array(9) { TaskButton("b$it", "L", "t") })))
-        assertTrue("label" in refused(actions(TaskButton("go", "l".repeat(41), "t"))))
-        assertTrue("text" in refused(actions(TaskButton("go", "L", "t".repeat(501)))))
-        for (bad in listOf("a\nb", "a\rb", "a\tb", "a\u001b[31mb", "a\u007fb")) {
-            assertTrue("control" in refused(actions(TaskButton("go", "L", bad))), bad)
-        }
-        assertTrue("control" in refused(actions(TaskButton("go", "L\nM", "t"))))
-        assertTrue("two buttons" in refused(actions(TaskButton("go", "A", "t"), TaskButton("go", "B", "t"))))
-        assertTrue("at least one" in refused(actions()))
-    }
-
-    // ── pressTaskButton ─────────────────────────────────────────────────
-
-    private val written = mutableListOf<Pair<String, String>>()
-    private val live = mutableSetOf("own")
-
-    private fun press(blockId: String = "act", buttonId: String = "go") =
-        pressTaskButton(store, index, tracker, taskId, blockId, buttonId) { sid, bytes ->
-            if (sid !in live) false else { written += sid to bytes.toString(Charsets.UTF_8); true }
-        }
-
-    private fun openAgentIn(pane: String) {
-        now += 10
-        tracker.onHook(
-            PaneSnapshot(pane, "leaf-$pane", "/work", null, screenText = { "x" }),
-            buildJsonObject { put("hook_event_name", "SessionStart"); put("session_id", "a-$pane") },
-        )
-    }
-
-    private fun withButton() {
-        store.setPanel(taskId, listOf(TaskPanelBlock("act", null, TaskBlockContent.Actions(listOf(TaskButton("go", "Go", "/release 4.2"))), writtenAtMillis = 0)), null)
-    }
-
-    @Test
-    fun `a press types the stored text and Enter into the task's own session and nothing else`() {
-        openAgentIn("own"); openAgentIn("other")
-        index.setOwnSession(taskId, "own")
-        withButton()
-        assertTrue(press())
-        assertEquals(listOf("own" to "/release 4.2\r"), written)
-    }
-
-    @Test
-    fun `an unknown block, button or task writes nothing`() {
-        openAgentIn("own"); index.setOwnSession(taskId, "own"); withButton()
-        assertFalse(press(blockId = "ghost"))
-        assertFalse(press(buttonId = "ghost"))
-        assertFalse(pressTaskButton(store, index, tracker, "ghost-task", "act", "go") { _, _ -> true })
-        store.upsert(taskId, text("act"), null)
-        assertFalse(press(), "a block that is not an actions block has no buttons")
-        assertTrue(written.isEmpty())
-    }
-
-    @Test
-    fun `a task without an own session refuses the press`() {
-        withButton()
-        assertFalse(press())
-        assertTrue(written.isEmpty())
-    }
-
-    @Test
-    fun `an own session whose agent has ended is refused even though its terminal is still there`() {
-        openAgentIn("own"); index.setOwnSession(taskId, "own"); withButton()
-        tracker.onHook(
-            PaneSnapshot("own", "leaf-own", "/work", null, screenText = { "x" }),
-            buildJsonObject { put("hook_event_name", "SessionEnd"); put("session_id", "a-own") },
-        )
-        assertTrue("own" in live, "the terminal is still alive: it is now a bare shell")
-        assertFalse(press())
-        assertTrue(written.isEmpty())
-    }
-
-    @Test
-    fun `an own session whose terminal is gone is refused`() {
-        openAgentIn("own"); index.setOwnSession(taskId, "own"); withButton()
-        live.clear()
-        assertFalse(press())
-        assertNull(written.firstOrNull())
     }
 }
