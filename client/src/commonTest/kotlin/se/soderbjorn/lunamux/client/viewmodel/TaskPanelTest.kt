@@ -227,4 +227,14 @@ class TaskPanelTest {
         vm.toggleInActiveTab()
         assertFalse(vm.state.visible)
     }
+
+    @Test
+    fun timesReadAsAgesAndAsClockTimesInTheViewersZone() {
+        val at = 1_700_000_000_000L // Tuesday 22:13 UTC
+        val day = 24 * 60 * 60_000L
+        assertEquals("22:13", TaskPanelViewModel.clockOf(at - 1_000, at, TimeZone.UTC))
+        assertEquals("Sun 22:13", TaskPanelViewModel.clockOf(at - 2 * day, at, TimeZone.UTC))
+        assertEquals("4 Nov 22:13", TaskPanelViewModel.clockOf(at - 10 * day, at, TimeZone.UTC))
+        assertEquals(listOf("now", "6m", "3h", "2d"), listOf(30_000L, 6 * 60_000L, 3 * 3_600_000L, 2 * day).map { AgentFacts.ageText(at - it, at) })
+    }
 }

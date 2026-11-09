@@ -306,4 +306,123 @@ class AgentsOverviewTest {
         assertNull(vm.state.peek)
         assertTrue(vm.state.open, "esc leaves the peek first")
     }
+
+    private fun taskRow() = vm.state.rows.first { it.id == "task:g1" }
+
+    @Test
+    fun returnOnATaskReachesWhoeverNeedsYouThenItsMainConversation() {
+        layout(listed = listOf("main", "helper"))
+        sessions(session("main", taskId = "g1"), session("helper", taskId = "g1", state = "needs_you", since = now - minute))
+        windowState.updateAgentTasks(listOf(task("main")))
+        vm.open()
+        assertEquals("helper", taskRow().recordId, "a helper that asks is reached while the main one only works")
+        sessions(session("main", taskId = "g1", state = "needs_you"), session("helper", taskId = "g1", state = "needs_you", since = now - minute))
+        assertEquals("main", taskRow().recordId, "when the main conversation asks too, it comes first")
+        sessions(session("main", taskId = "g1"), session("helper", taskId = "g1"))
+        assertEquals("main", taskRow().recordId)
+        assertEquals(Enter.JUMP, taskRow().enter)
+    }
+
+    @Test
+    fun aMainConversationInABackgroundTabIsShownWhileItAsksAndOtherwiseOnlyPeekedAt() {
+        layout(listed = listOf("helper"), background = listOf("main"))
+        sessions(session("main", taskId = "g1", background = true), session("helper", taskId = "g1", state = "done"))
+        windowState.updateAgentTasks(listOf(task("main")))
+        vm.open()
+        assertEquals("helper", taskRow().recordId, "a working main one hides nothing: Return goes to a conversation in a listed tab")
+        sessions(session("main", taskId = "g1", background = true))
+        assertEquals(Enter.NONE, taskRow().enter)
+        assertEquals(AgentsOverviewBackingViewModel.HIDDEN_MAIN_NOTE, taskRow().extra)
+        assertTrue(vm.state.footer.none { it.key == "↵" } && vm.state.footer.any { it.key == "→" })
+        sessions(session("main", taskId = "g1", background = true, state = "needs_you"))
+        assertEquals(Enter.SHOW_WAITING, taskRow().enter)
+    }
+
+    @Test
+    fun aClosedMainConversationStaysInNowWhileItsQuestionWaitsAndAsksBeforeResuming() = runNow {
+        layout(listed = listOf("a"))
+        sessions(session("a"), session("main", taskId = "g1", state = "ended", endedAt = now - minute))
+        windowState.updateAgentTasks(listOf(task("main").copy(questionWaits = true, status = "A question waits for you")))
+        vm.open()
+        assertEquals(setOf("a", "task:g1"), vm.state.now.map { it.id }.toSet())
+        assertEquals(0, vm.state.needYouCount, "nothing counts until the resumed conversation asks")
+        vm.select("task:g1")
+        vm.activateSelected()
+        assertEquals("conversation closed", vm.state.ask?.tag)
+        vm.activateSelected()
+        assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("main", inTab = false)), sent)
+    }
+
+    @Test
+    fun aTaskWhoseMainConversationIsOnlyAStoredIdResumesThatIdAndOneWithNothingStartsItsOpenCommand() = runNow {
+        layout(listed = listOf("a"))
+        sessions(session("a", state = "done"))
+        windowState.updateAgentTasks(
+            listOf(
+                task("gone-id", id = "g1").copy(hasOpen = true, startedAtMillis = now - minute),
+                task(null, id = "g2", title = "Fresh").copy(hasOpen = true, startedAtMillis = now - 2 * minute),
+            ),
+        )
+        vm.open()
+        vm.select("task:g1")
+        vm.activateSelected()
+        vm.activateSelected()
+        assertEquals(WindowCommand.ResumeAgentSession("gone-id", inTab = false), sent.last(), "resumed by its stored id, never another session")
+        vm.open()
+        vm.select("task:g2")
+        vm.activateSelected()
+        assertEquals("Start one in a new tab?", vm.state.ask?.question)
+        vm.activateSelected()
+        assertEquals(WindowCommand.OpenTask("g2"), sent.last())
+    }
+
+    @Test
+    fun nowKeepsStartOrderWhateverTheStatesDoAndAClosedConversationLeavesAtOnce() {
+        layout(listed = listOf("a", "b", "c"))
+        sessions(session("a", since = now - 30 * minute), session("b", state = "needs_you", since = now - 20 * minute), session("c", state = "done", since = now - 10 * minute))
+        vm.open()
+        assertEquals(listOf("a", "b", "c"), vm.state.now.map { it.id })
+        sessions(session("a", state = "done", since = now - 30 * minute), session("b", since = now - 20 * minute), session("c", state = "needs_you", since = now - 10 * minute))
+        assertEquals(listOf("a", "b", "c"), vm.state.now.map { it.id }, "a state change never moves a row")
+        sessions(session("a", state = "ended", endedAt = now - 1), session("b"), session("c", state = "done"))
+        assertEquals(listOf("b", "c"), vm.state.now.map { it.id })
+        assertEquals(listOf("a"), vm.state.recent.map { it.id })
+    }
+
+    @Test
+    fun aRowSaysWhereItRunsAndNamesItsTabUnlessTheTabNameSaysTheTitleAlready() {
+        layout(listed = listOf("a"), second = listOf("b"), background = listOf("bg"))
+        sessions(session("a"), session("b", title = "two"), session("bg", state = "needs_you", background = true))
+        vm.open()
+        val a = vm.state.now.first { it.id == "a" }
+        assertEquals("proj", a.where)
+        assertEquals(
+            listOf(AgentsOverviewBackingViewModel.Chip(AgentsOverviewBackingViewModel.ChipKind.FOLDER, "~/work/proj"), AgentsOverviewBackingViewModel.Chip(AgentsOverviewBackingViewModel.ChipKind.TAB, "one")),
+            a.chips,
+        )
+        assertEquals(listOf(AgentsOverviewBackingViewModel.ChipKind.FOLDER), vm.state.now.first { it.id == "bg" }.chips.map { it.kind }, "a background tab is not named")
+        assertTrue(vm.state.now.first { it.id == "b" }.chips.none { it.kind == AgentsOverviewBackingViewModel.ChipKind.TAB })
+    }
+
+    @Test
+    fun aSearchHitInOneConversationOfATaskIsOneRowThatOpensThatConversation() {
+        layout(listed = listOf("s1", "s2"))
+        val s1 = session("s1", taskId = "g1")
+        val s2 = session("s2", taskId = "g1")
+        sessions(s1, s2)
+        windowState.updateAgentTasks(listOf(task("s1")))
+        vm.open()
+        vm.setQuery("migration")
+        windowState.updateAgentMatches(
+            WindowEnvelope.AgentSessionMatches(
+                "migration",
+                listOf(AgentSessionMatch(summary = s2, field = "transcript", snippet = "ran the migration", start = 8, length = 9), AgentSessionMatch(summary = s1, field = "transcript", snippet = "migration", start = 0, length = 9)),
+            ),
+        )
+        val row = vm.state.matches.single()
+        assertEquals("task:g1", row.id)
+        assertEquals("s2", row.recordId, "the conversation that matched, not the task's main one")
+        assertEquals("in transcript of session s2", row.extra)
+        assertEquals("1 MATCH", vm.state.matchHeading)
+    }
 }
