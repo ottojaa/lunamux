@@ -459,7 +459,9 @@ internal fun Route.windowRoutes(
                 claudeHooks.connected,
                 taskIndex?.state ?: MutableStateFlow(TaskSnapshot()),
             ) { sessions, connected, snapshot ->
-                val withTasks = sessions.map { it.copy(taskId = snapshot.assignment[it.id]) }
+                val withTasks = sessions.map {
+                    it.copy(taskId = snapshot.assignment[it.id], inTab = it.endedAt != null && agentTracker.find(it.id)?.let(::paneToResumeIn) != null)
+                }
                 Triple(withTasks, connected, snapshot.tasks)
             }.collect { (sessions, connected, tasks) ->
                 if (sentSessions != sessions to connected) {
@@ -812,7 +814,7 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
             val worldId = if (ctx.supportsWorlds) WindowState.activeWorldId() else WindowState.defaultWorldId()
             WindowState.addTab(worldId = worldId)
         }
-        is WindowCommand.ResumeAgentSession -> resumeAgentSession(cmd.recordId, ctx)
+        is WindowCommand.ResumeAgentSession -> resumeAgentSession(cmd.recordId, ctx, inTab = cmd.inTab)
         is WindowCommand.OpenTask -> openTask(cmd.taskId, ctx)
         is WindowCommand.SearchAgentSessions -> ctx.scope.launch {
             // Off the socket's loop: the query reads SQLite and may run git for resume notes.
@@ -1162,6 +1164,7 @@ internal fun resumeNoteOf(rec: AgentSessionRecord, open: TaskOpen?): String? {
 internal suspend fun resumeAgentSession(
     recordId: String,
     ctx: WindowConnectionContext,
+    inTab: Boolean = false,
     open: (folder: String, title: String, command: String?) -> Unit = ::openTabRunning,
 ) {
     val rec = ctx.agentTracker?.find(recordId)
@@ -1185,7 +1188,29 @@ internal suspend fun resumeAgentSession(
         ctx.send(WindowEnvelope.AgentSessionError(recordId, "This conversation has no session id Lunamux can resume."))
         return
     }
-    open(folder, rec.title ?: rec.branch ?: java.io.File(recorded).name, command)
+    val pane = if (inTab && command != null) paneToResumeIn(rec) else null
+    if (pane == null || !typeInPane(pane, command!!)) open(folder, rec.title ?: rec.branch ?: java.io.File(recorded).name, command)
+}
+
+/**
+ * The id of the pane session [rec] ran in, when resuming there is safe: the pane still exists, its
+ * shell is in the folder the agent ran in, and nothing runs under that shell. Anything else,
+ * including a failed look, is null and the conversation gets a new tab.
+ */
+internal fun paneToResumeIn(rec: AgentSessionRecord): String? {
+    val id = rec.terminalSessionId ?: return null
+    val session = TerminalSessions.get(id) ?: return null
+    return id.takeIf { sameFolder(session.cwd.value, rec.cwd) && session.isIdleShell() }
+}
+
+/** Show the tab that holds pane session [sessionId] and type [command] into it; false when no tab holds it. */
+private fun typeInPane(sessionId: String, command: String): Boolean {
+    val (tab, pane) = WindowState.config.value.worlds.asSequence().flatMap { it.tabs }
+        .firstNotNullOfOrNull { t -> t.panes.firstOrNull { it.leaf.sessionId == sessionId }?.let { t to it } } ?: return false
+    WindowState.setActiveTab(tab.id)
+    WindowState.setFocusedPane(tab.id, pane.leaf.id)
+    TerminalSessions.get(sessionId)?.write((command + "\r").toByteArray(Charsets.UTF_8))
+    return true
 }
 
 /**

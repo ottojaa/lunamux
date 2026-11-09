@@ -149,6 +149,9 @@ interface TermSession {
     /** Deliver user input bytes into the session. */
     fun write(bytes: ByteArray)
 
+    /** Whether the shell in this session is waiting at its prompt, with no program running under it. */
+    fun isIdleShell(): Boolean = false
+
     /**
      * Record that [clientId] just delivered user input; drives the
      * latest-active-client size arbitration (typing on a client makes it the
@@ -703,6 +706,10 @@ class TerminalSession private constructor(
             }
         }
     }
+
+    override fun isIdleShell(): Boolean = try {
+        ProcessHandle.of(pty.pid()).map { it.children().findAny().isEmpty }.orElse(false)
+    } catch (_: Throwable) { false }
 
     /** Write raw bytes to the PTY's stdin. */
     override fun write(bytes: ByteArray) {

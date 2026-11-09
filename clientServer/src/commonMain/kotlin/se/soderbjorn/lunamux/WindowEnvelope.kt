@@ -326,6 +326,8 @@ data class AgentSessionSummary(
     val background: Boolean = false,
     val startedAt: Long? = null,
     val conversationId: String = id,
+    /** A closed conversation whose own pane is still at an idle shell in the same folder, so Resume can reuse it. */
+    val inTab: Boolean = false,
 )
 
 /**

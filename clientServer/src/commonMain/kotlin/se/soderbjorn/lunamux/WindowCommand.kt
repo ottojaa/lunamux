@@ -278,10 +278,14 @@ sealed class WindowCommand {
      * folder was removed, the tab opens in the nearest folder above it that exists, and the server
      * runs no git command: the agent rebuilds a removed worktree itself. A conversation with no
      * recorded folder is answered with [WindowEnvelope.AgentSessionError].
+     *
+     * With [inTab] the command is typed into the conversation's own pane instead, when that pane is
+     * still there, in the same folder and at an idle shell (the row says so in
+     * [AgentSessionSummary.inTab]); the server checks again, and on any doubt opens a new tab.
      */
     @Serializable
     @SerialName("resumeAgentSession")
-    data class ResumeAgentSession(val recordId: String) : WindowCommand()
+    data class ResumeAgentSession(val recordId: String, val inTab: Boolean = false) : WindowCommand()
 
     /**
      * Run a task's `open` action. The server looks the task up among the task files it reads, so
