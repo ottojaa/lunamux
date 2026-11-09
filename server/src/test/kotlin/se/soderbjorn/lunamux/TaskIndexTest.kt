@@ -3,7 +3,8 @@
  * belongs to (the task whose id it carries, else none; a task file lists no sessions), how a
  * resumed conversation keeps its task, how a task promised to a pane with no agent yet is handed
  * to the session that starts there, which record stands for a task's own session (the pane it ran
- * in, also when a restart has renumbered the terminal ids), and the operations behind the MCP task tools.
+ * in, also when a restart has renumbered the terminal ids). The operations the MCP task tools
+ * expose are tested through those tools, in [se.soderbjorn.lunamux.mcp.McpTaskToolsTest].
  *
  * Runs against a real SQLite database with fake git, clock, ids and pane lookup, so no terminal
  * is needed.
@@ -24,7 +25,6 @@ import se.soderbjorn.lunamux.persistence.SettingsRepository
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -106,8 +106,6 @@ class TaskIndexTest {
         repo, over, files, leafOfSession = { panesNow[it] }, clock = { now }, newSuffix = { suffixes.next() },
     )
 
-    private fun storedMain(task: String) = repo.loadTasks().single { it.id == task }.mainConversation
-
     @Test
     fun `a record belongs to the task whose id it carries, and a session opened where a task file opens does not join it`() {
         val wt = folder("wt")
@@ -141,23 +139,6 @@ class TaskIndexTest {
         )
         assertEquals(listOf("shared" to "File title", "used" to "Used"), snap.map { it.id to it.title })
         assertEquals(listOf("file", "agents"), snap.map { it.source })
-    }
-
-    @Test
-    fun `create_task and set_task_lead name the conversation running in a pane, and refuse what they cannot name`() {
-        session("s1")
-        session("s2")
-        pane("s7")
-        val id = index.createTask("Plan", listOf("s1"))
-        assertEquals("a-s1", storedMain(id))
-
-        index.setOwnSession(id, "s2")
-        assertEquals(listOf("a-s2", "s2"), index.listing().single { it.id == id }.let { listOf(it.mainConversation, it.ownSessionId) })
-
-        assertFailsWith<TaskException> { index.setOwnSession(id, "s7") }
-        index.setMainConversation(id, "a-s1")
-        assertFailsWith<TaskException> { index.setMainConversation(id, "nobody") }
-        assertEquals("a-s1", storedMain(id))
     }
 
     @Test
@@ -211,31 +192,6 @@ class TaskIndexTest {
         tracker.onSessionDestroyed("s5", null)
         tracker.onHook(pane("s5"), event("SessionStart", "a-other"))
         assertNull(tracker.openRecordOf("s5")!!.taskId, "the promise was used up")
-    }
-
-    @Test
-    fun `tasks are made, filled, emptied and renamed, and listed with what is in them`() {
-        files.value = listOf(file("prog"))
-        session("s1")
-        session("s2")
-        val id = index.createTask("  Fix   the flaky login test  ", listOf("s1"))
-        assertEquals("fix-the-flaky-login-test-s1", id)
-        assertEquals("Fix the flaky login test", index.state.value.first { it.id == id }.title)
-
-        index.addToTask("prog", listOf("s2"))
-        index.renameTask(id, "After")
-        assertFailsWith<TaskException> { index.renameTask(id, "  ") }
-        assertTrue("file" in assertFailsWith<TaskException> { index.renameTask("prog", "Nope") }.message!!)
-        val empty = index.createTask("Empty", emptyList())
-        val listing = index.listing().associateBy { it.id }
-        assertEquals(listOf("file" to listOf("s2"), "agents" to listOf("s1"), "agents" to emptyList()),
-            listOf("prog", id, empty).map { listing.getValue(it).let { t -> t.source to t.sessions.map { s -> s.sessionId } } })
-        assertEquals("After", listing.getValue(id).title)
-        assertEquals("After", TaskIndex(repo, tracker, files, leafOfSession = { null }).state.value.first { it.id == id }.title, "kept across a restart")
-
-        assertEquals(mapOf<String, String?>("s1" to null), index.removeFromTask(listOf("s1")))
-        assertNull(tracker.openRecordOf("s1")!!.taskId)
-        assertEquals(listOf("prog"), index.state.value.map { it.id }, "an agent-made task holding nothing is not shown")
     }
 
     @Test

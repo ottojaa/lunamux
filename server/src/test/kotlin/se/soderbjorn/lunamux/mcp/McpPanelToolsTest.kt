@@ -121,18 +121,68 @@ class McpPanelToolsTest {
         assertTrue(isError(call("set_task_panel", """{"taskId":"$taskId","blocks":[]}""", scope = McpScope.READ)))
     }
 
+    private fun links(vararg items: String) = """[{"id":"l","type":"links","items":[${items.joinToString(",")}]}]"""
+
+    /** A link item; [at] is raw JSON. */
+    private fun item(url: String = "https://a.b", kind: String? = null, at: String? = null) =
+        """{"label":"x","url":"$url"${kind?.let { ""","kind":"$it"""" } ?: ""}${at?.let { ""","at":$it""" } ?: ""}}"""
+
+    private fun progress(phase: String? = null, done: Int? = null, total: Int? = null, id: String = "p") =
+        """[{"id":"$id","type":"progress"${phase?.let { ""","phase":"$it"""" } ?: ""}${done?.let { ""","done":$it""" } ?: ""}${total?.let { ""","total":$it""" } ?: ""}}]"""
+
     @Test
-    fun `a refusal names the offender and the panel keeps what it had`() {
-        set("""[{"id":"keep","type":"progress","phase":"old"}]""")
-        val unknown = refusal(call("upsert_task_block", """{"taskId":"$taskId","block":{"id":"d","type":"text","text":"hello"}}"""))
-        assertTrue("unknown type 'text'" in unknown && "links, timeline, progress" in unknown, unknown)
-        assertTrue("'click me'" in refusal(set("""[{"id":"d","type":"links","items":[{"label":"click me","url":"javascript:alert(1)"}]}]""")))
-        assertTrue("link 1 needs a text 'label'" in refusal(set("""[{"id":"d","type":"links","items":[{"url":"https://a.b"}]}]""")))
-        assertTrue("'at'" in refusal(set("""[{"id":"d","type":"links","items":[{"label":"x","url":"https://a.b","at":"yesterday"}]}]""")))
+    fun `every refusal names the offender and the panel keeps what it had`() {
+        set(progress("old", id = "keep"))
+        val refused = listOf(
+            """[{"id":"d","type":"text","text":"hello"}]""" to "unknown type 'text'",
+            progress("x", id = "bad id") to "'bad id'",
+            progress("x", id = "") to "not allowed",
+            progress("x", id = "x".repeat(65)) to "not allowed",
+            progress("x", id = "Agents") to "reserved",
+        )
+        for ((blocks, why) in refused) assertTrue(why in refusal(set(blocks)), blocks)
+
+        val duplicate = """[{"id":"a","type":"progress","phase":"x"},{"id":"a","type":"progress","phase":"y"}]"""
+        assertTrue("'a'" in refusal(set(duplicate)))
+        assertTrue("24" in refusal(set((1..25).joinToString(",", "[", "]") { """{"id":"b$it","type":"progress","phase":"x"}""" })))
+        assertTrue("title" in refusal(set("""[{"id":"t","title":"${"x".repeat(81)}","type":"progress","phase":"x"}]""")))
+
+        assertTrue("needs" in refusal(set(progress())))
+        assertTrue("both" in refusal(set(progress(done = 1))))
+        assertTrue("between" in refusal(set(progress(done = 6, total = 5))))
+        assertTrue("phase" in refusal(set(progress("p".repeat(81)))))
+
+        for (url in listOf("javascript:alert(1)", "data:text/html,x", "ftp://a.b", "//a.b", "a.b", "https://a b")) {
+            assertTrue("'x'" in refusal(set(links(item(url)))), url)
+        }
+        assertTrue("link 1 needs a text 'label'" in refusal(set(links("""{"url":"https://a.b"}"""))))
+        assertTrue("address" in refusal(set(links(item("https://a.b/" + "a".repeat(2000))))))
+        assertTrue("31" in refusal(set(links(*Array(31) { item() }))))
+        assertTrue("kind" in refusal(set(links(item(kind = "k".repeat(9))))))
+        assertTrue("negative" in refusal(set(links(item(at = "-1")))))
+        assertTrue("'at'" in refusal(set(links(item(at = "\"yesterday\"")))))
         assertTrue("Block 'tl'" in refusal(set("""[{"id":"tl","type":"timeline","items":[{"at":"yesterday","text":"x"}]}]""")))
+        assertTrue("entry 1" in refusal(set("""[{"id":"tl","type":"timeline","items":[{"at":1,"text":"${"x".repeat(201)}"}]}]""")))
+
         assertTrue("Unknown task 'ghost'" in refusal(call("get_task_panel", """{"taskId":"ghost"}""", scope = McpScope.READ)))
         assertTrue("'nope'" in refusal(call("remove_task_block", """{"taskId":"$taskId","id":"nope"}""")))
         assertEquals(listOf("keep"), store.blocksOf(taskId).map { it.id })
+    }
+
+    @Test
+    fun `what the limits allow is kept, with safe addresses, a kind of any word, a full panel still replaced, the newest 50 timeline entries`() {
+        for (url in listOf("http://a.b/c", "HTTPS://A.B", "file:///tmp/x.md")) assertFalse(isError(set(links(item(url)))), url)
+        assertFalse(isError(set(links(*Array(30) { item() }))))
+        assertFalse(isError(set(links(item(kind = "anything", at = "0"), item(kind = "  ")))))
+        assertFalse(isError(set((1..24).joinToString(",", "[", "]") { """{"id":"b$it","type":"progress","phase":"x"}""" })))
+        assertFalse(isError(call("upsert_task_block", """{"taskId":"$taskId","block":{"id":"b7","type":"progress","phase":"new"}}""")))
+        assertEquals(24, store.blocksOf(taskId).size)
+
+        val at = { i: Int -> if (i % 2 == 0) i else 1000 - i }
+        set("""[{"id":"t","type":"timeline","items":[${(0 until 60).joinToString(",") { """{"at":${at(it)},"text":"e$it"}""" }}]}]""")
+        val kept = (store.blocksOf(taskId).single().content as TaskBlockContent.Timeline).items.map { it.text }
+        val newest = (0 until 60).sortedByDescending(at).take(50).toSet()
+        assertEquals((0 until 60).filter { it in newest }.map { "e$it" }, kept, "the newest 50 by time, in the order they came")
     }
 
     @Test
@@ -147,5 +197,20 @@ class McpPanelToolsTest {
         set(one, caller = "no-such-pane")
         assertNull(store.blocksOf(taskId)[0].writtenBy)
         assertTrue("limit is 40" in refusal(set(one, ""","by":"${"n".repeat(41)}"""")))
+    }
+
+    @Test
+    fun `a panel survives a restart with order, writer, time and links, and a block of a kind the panel no longer has is dropped`() {
+        set(
+            """[{"id":"t","title":"Title","type":"progress","phase":"Writing"},
+               {"id":"l","type":"links","items":[{"kind":"PR","label":"With time","url":"https://a.b/1","at":1700000000000},{"label":"No time","url":"file:///tmp/x.md"}]}]""",
+            ""","by":"writer"""",
+        )
+        val old = repo.loadTaskPanelRows().first()
+        repo.replaceTaskPanel(taskId, repo.loadTaskPanelRows() + old.copy(blockId = "old", position = 2, kind = "text", body = """{"kind":"text","markdown":"x"}"""))
+        val reopened = TaskPanelStore(SettingsRepository(dbFile), index, clock = { now })
+        assertEquals(store.blocksOf(taskId), reopened.blocksOf(taskId))
+        assertEquals(listOf("t", "l"), reopened.blocksOf(taskId).map { it.id })
+        assertEquals("writer", reopened.blocksOf(taskId)[0].writtenBy)
     }
 }
