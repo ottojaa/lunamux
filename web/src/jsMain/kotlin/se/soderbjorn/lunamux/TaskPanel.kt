@@ -72,11 +72,15 @@ internal class PanelParts {
         close.title = "Hide the task panel (⌘I)"
         close.addEventListener("click", { _: Event -> toggleTaskPanel() })
         val head = div("tp-head")
-        head.appendChild(title)
-        head.appendChild(span("tp-hint", "· ⌘I hides"))
-        head.appendChild(close)
+        val side = div("tp-side")
+        side.appendChild(close)
+        side.appendChild(span("tp-hint", "⌘I"))
+        val main = div("tp-main")
+        main.appendChild(title)
+        main.appendChild(status)
+        head.appendChild(main)
+        head.appendChild(side)
         root.appendChild(head)
-        root.appendChild(status)
         root.appendChild(scroll)
     }
 

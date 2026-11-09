@@ -3863,11 +3863,15 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     font: 12px/1.45 var(--ao-mono);
 }
 /* The header stays put above the scrolling blocks: it sits outside .tp-scroll. */
-.tp-head { flex: none; display: flex; align-items: baseline; gap: 8px; min-height: 44px; box-sizing: border-box; padding: 10px 8px 10px var(--tp-pad); border-bottom: 1px solid var(--ao-line); }
-/* A long title wraps onto as many lines as it needs; the hint and the × stay level with its first line. */
-.tp-title { flex: 0 1 auto; min-width: 0; white-space: normal; overflow-wrap: anywhere; font-weight: 600; font-size: 13px; line-height: 20px; }
-.tp-hint { flex: none; white-space: nowrap; color: var(--ao-dim); font-size: 11px; }
-.tp-close { margin-left: auto; align-self: flex-start; border: 0; border-radius: 4px; background: transparent; color: var(--ao-dim); font: inherit; font-size: 16px; line-height: 1; cursor: pointer; padding: 4px 6px; }
+.tp-head { flex: none; display: flex; align-items: flex-start; gap: 8px; box-sizing: border-box; padding: 10px 8px 10px var(--tp-pad); border-bottom: 1px solid var(--ao-line); }
+/* The title and the status line under it take all the width the side column leaves; the header's divider falls under them both. */
+.tp-main { flex: 1 1 auto; min-width: 0; }
+/* The title wraps onto as many lines as it needs. */
+.tp-title { display: block; white-space: normal; overflow-wrap: anywhere; font-weight: 600; font-size: 13px; line-height: 20px; }
+/* The × with the shortcut under it. The column's height is what keeps a one-line header the same as a two-line one. */
+.tp-side { flex: none; display: flex; flex-direction: column; align-items: flex-end; }
+.tp-hint { padding-right: 6px; white-space: nowrap; color: var(--ao-dim); font-size: 11px; line-height: 14px; }
+.tp-close { border: 0; border-radius: 4px; background: transparent; color: var(--ao-dim); font: inherit; font-size: 16px; line-height: 1; cursor: pointer; padding: 4px 6px; }
 /* The screen of an agent in a hidden tab, read-only, over the blocks (its top is set from the blocks' own). */
 .tp-peek { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; overflow: auto; background: var(--ao-surface); }
 .tp-peek .ao-peek { margin: 0; padding: 12px var(--tp-pad); border-left: 0; }
@@ -3879,8 +3883,8 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 /* A block's heading is its name alone, set like the sidebar's group labels. */
 .tp-block-title { margin-bottom: 8px; color: var(--ao-dim); font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
 .tp-muted { color: var(--ao-dim); }
-/* The task's own status line, under the header. */
-.tp-status { flex: none; padding: 8px var(--tp-pad); border-bottom: 1px solid var(--ao-line); color: var(--ao-muted); overflow-wrap: anywhere; }
+/* The task's own status line, under its title. */
+.tp-status { padding-top: 4px; color: var(--ao-muted); overflow-wrap: anywhere; }
 .tp-setup { display: flex; flex-direction: column; gap: 12px; padding: 14px var(--tp-pad); overflow-wrap: anywhere; }
 .tp-setup-prompt { padding: 10px 12px; border: 1px solid var(--ao-line); border-radius: 6px; user-select: text; -webkit-user-select: text; }
 
