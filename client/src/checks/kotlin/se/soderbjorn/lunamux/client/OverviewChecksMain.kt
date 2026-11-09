@@ -31,11 +31,6 @@ private const val INITIAL_STATE_TIMEOUT_MS = 20_000L
 /**
  * Connect, wait for the first full state, run the checks once, keep watching the tabs for
  * [watchSeconds], and print one PASS or FAIL line per check.
- *
- * Called by the `overviewChecks` Gradle task, which passes the options as arguments.
- *
- * @param args `url=<server>`, `token=<token>`, optionally `watch=<seconds>` and any number of
- *   `main=<task id>=<conversation id start>`.
  */
 fun main(args: Array<String>) {
     val opts = args.mapNotNull { a -> a.substringBefore('=', "").takeIf { it.isNotEmpty() }?.let { it to a.substringAfter('=') } }

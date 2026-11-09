@@ -22,14 +22,7 @@ import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 import java.io.File
 
-/**
- * One task file as written by the tool that owns it.
- *
- * Everything is nullable or defaulted so a file with a missing field fails the explicit checks in
- * [TaskFilesWatcher] (one warning, task skipped) instead of failing JSON decoding with a less
- * helpful message. Unknown fields are ignored, which is how a file written for an older version,
- * with a member list, a `lead` action or a `version`, still parses: those keys say nothing now.
- */
+/** One task file as written by the tool that owns it. */
 @Serializable
 internal data class TaskFileJson(
     val id: String? = null,
@@ -45,11 +38,7 @@ internal data class OpenJson(val command: String? = null, val folder: String? = 
 /** The `open` action of a parsed task: the command the server types and where. */
 data class TaskOpen(val command: String, val folder: String)
 
-/**
- * A parsed, validated task file: what [TaskFilesWatcher] keeps per file between polls.
- *
- * The folder of the `open` action is already expanded and canonical.
- */
+/** A parsed, validated task file: what [TaskFilesWatcher] keeps per file between polls. */
 data class TaskFile(
     val id: String,
     val title: String,
@@ -61,17 +50,7 @@ data class TaskFile(
 /** What the watcher remembers about one file: enough to see that it changed, and what it parsed to. */
 private class Seen(val modified: Long, val length: Long, val parsed: TaskFile?)
 
-/**
- * Watches folders of task files and publishes the tasks they declare.
- *
- * The watcher re-reads a file only when its modified time or size changes ([reload]). The result is
- * [files]. A file that is not valid JSON, or lacks `id` or `title`, or has an `open` action without
- * a command or an absolute folder, is skipped with a single warning until it changes again; nothing
- * here throws.
- *
- * Created once by `main()`; the [TaskIndex] collects [files] and answers every question about a
- * task, including which `open` command the open-task route runs.
- */
+/** Watches folders of task files and publishes the tasks they declare. */
 class TaskFilesWatcher(
     private val dir: File,
     private val warn: (String) -> Unit = { LoggerFactory.getLogger(TaskFilesWatcher::class.java).warn(it) },

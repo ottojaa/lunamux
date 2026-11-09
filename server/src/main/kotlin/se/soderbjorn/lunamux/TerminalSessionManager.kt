@@ -306,12 +306,7 @@ object TerminalSessions {
     @Volatile
     var onDestroy: ((sessionId: String, screen: String?) -> Unit)? = null
 
-    /**
-     * Which agent CLI the screen detector last saw in a session.
-     *
-     * Updated by [resolveStates], so it follows the same poll and the same grace period as the
-     * state itself.
-     */
+    /** Which agent CLI the screen detector last saw in a session. */
     fun agentOf(sessionId: String): String? = lastCli[sessionId]
     private const val STATE_GRACE_POLLS = 3  // 3 polls × 3 s = 9 s grace
 

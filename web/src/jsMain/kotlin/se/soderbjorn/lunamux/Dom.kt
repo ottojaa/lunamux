@@ -19,14 +19,7 @@ internal fun span(className: String, text: String = ""): HTMLElement =
 private const val KEY_ATTRIBUTE = "data-key"
 private const val ITEM_PROPERTY = "__item"
 
-/**
- * Makes the children of [parent] match [items], one child per item in the same order. A child whose
- * key and item are equal to the last draw's stays as it is, so its animation, scroll and focus are
- * untouched; a changed item gets a new child from [build], which takes the focus if the old one had it.
- *
- * @param key a stable, unique name for an item.
- * @param build draws one item; the result must be a single element.
- */
+/** Makes the children of [parent] match [items], one child per item in the same order. */
 internal fun <T : Any> syncChildren(parent: HTMLElement, items: List<T>, key: (T) -> String, build: (T) -> HTMLElement) {
     val old = HashMap<String, HTMLElement>()
     for (i in 0 until parent.children.length) {
@@ -57,11 +50,7 @@ private val SPIN_FRAMES = listOf("⠆", "⠒", "⠰", "⠤")
 private const val SPIN_STEP_MS = 300
 private const val SPIN_CYCLE_MS = 4 * SPIN_STEP_MS
 
-/**
- * The turning glyph in front of "working". It is four stacked frames that the stylesheet fades one
- * into the next over [SPIN_CYCLE_MS]; each frame's negative `animation-delay` puts the turn where
- * the wall clock says it is, so a glyph built again in a rebuilt row is in step with the old one.
- */
+/** The turning glyph in front of "working". */
 internal fun spinner(): HTMLElement {
     val box = span("ao-work")
     box.setAttribute("aria-hidden", "true")

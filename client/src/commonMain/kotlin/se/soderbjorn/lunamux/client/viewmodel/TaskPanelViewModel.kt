@@ -55,9 +55,9 @@ class TaskPanelViewModel(
     enum class Section { AGENTS, LINKS, ACTIVITY }
 
     /**
-     * One line of the agents block. [name] says what the agent is doing (or asking) in words, or the
-     * session's title when it says nothing; [title] is the session's title as the quieter second
-     * line, null when it is already the name. [sinceMillis] lets the view keep the age current.
+     * One line of the agents block. [name] says what the agent is doing (or asking) in words, or
+     * the session's title when it says nothing; [title] is the session's title as the quieter
+     * second line, null when it is already the name.
      */
     data class AgentLine(
         val name: String,
@@ -84,11 +84,7 @@ class TaskPanelViewModel(
     /** How to set the panel up, shown in place of the four blocks when it has nothing to show. */
     data class Setup(val lead: String, val prompt: String)
 
-    /**
-     * Everything a view needs to draw the panel. [open] is the person's choice beside a main
-     * conversation; [visible] says whether to draw the column at all; [beside] whether the task's
-     * main conversation is live in the active tab; [status] is the task's status line.
-     */
+    /** Everything a view needs to draw the panel. */
     data class State(
         val open: Boolean = true,
         val visible: Boolean = false,

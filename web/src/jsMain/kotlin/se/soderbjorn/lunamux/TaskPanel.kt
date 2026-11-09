@@ -222,8 +222,7 @@ private fun buildMore(line: TpMore): HTMLElement {
 
 /**
  * One agent: the state mark (the spinner while it works, ◆ while it waits), what it is doing (or
- * asking) with its age, and the session's title as a quieter line under it. A line with an action
- * can be focused; ↵ or a click runs it, and a hint says what that does.
+ * asking) with its age, and the session's title as a quieter line under it.
  */
 @OptIn(DelicateCoroutinesApi::class)
 private fun buildAgent(line: AgentLine): HTMLElement {
@@ -312,12 +311,8 @@ private var waitingTabTag: HTMLElement? = null
 
 /**
  * Show or remove the tag that marks the active tab as a background agent's tab shown while it
- * waits. The tag floats over the top edge of the window body, centred, and says the tab hides
- * again once the agent works on. Called whenever the tab list is pushed, with whether the active
- * tab is such a tab.
- *
- * @param shown true while the active tab is a background agent's tab shown while it waits.
- * @see TabConfig.shownWhileWaiting
+ * waits. The tag floats over the top edge of the window body, centred, and says the tab hides again
+ * once the agent works on.
  */
 internal fun updateWaitingTabTag(shown: Boolean) {
     val body = document.querySelector(".${AppFrameClassNames.BODY}") as? HTMLElement

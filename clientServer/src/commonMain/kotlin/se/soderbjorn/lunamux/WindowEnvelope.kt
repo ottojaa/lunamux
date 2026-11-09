@@ -232,10 +232,7 @@ sealed class WindowEnvelope {
 
     /**
      * Every agentic-CLI session the server tracks: the open ones plus the most recent ended ones,
-     * without their saved screen text. Sent on connect and again whenever any record changes, so
-     * the agents overview (toolbar chip and overlay) follows a session within a moment of a hook
-     * event or a poll result. Older clients fail to decode this frame and drop it, which is
-     * harmless.
+     * without their saved screen text.
      */
     @Serializable
     @SerialName("agentSessions")
@@ -246,23 +243,13 @@ sealed class WindowEnvelope {
 
     /**
      * The tasks that have something to say beyond their sessions: every task a task file declares
-     * and every task agents made that holds at least one session. A session joins a task through
-     * [AgentSessionSummary.taskId]; this frame names the tasks, their titles, their start times and
-     * whether the task has an `open` action. The `open` command is deliberately not part of it: the
-     * server keeps it and [WindowCommand.OpenTask] names the task instead. Sent on connect, right
-     * after [AgentSessions], and again whenever a task file, a task or a session record changes.
-     * Older clients fail to decode this frame and drop it, which is harmless.
+     * and every task agents made that holds at least one session.
      */
     @Serializable
     @SerialName("agentTasks")
     data class AgentTasks(val tasks: List<AgentTask>) : WindowEnvelope()
 
-    /**
-     * The blocks agents wrote into one task's panel. Sent for every task that has blocks when a
-     * window connects, and again for a task whenever its blocks change; after the last block of a
-     * task is removed the list is sent empty once so windows drop it. Older clients fail to decode
-     * this frame and drop it, which is harmless.
-     */
+    /** The blocks agents wrote into one task's panel. */
     @Serializable
     @SerialName("taskPanel")
     data class TaskPanel(val taskId: String, val blocks: List<TaskPanelBlock>) : WindowEnvelope()
@@ -496,11 +483,7 @@ enum class DiffLineType {
 
 /**
  * One task as the agents overview draws it: a name and the sessions that belong to it, which are
- * the ones that carry its id in [AgentSessionSummary.taskId]. A task has no member list of its own;
- * the sessions are the only source of who is in it.
- *
- * A task with several sessions, or with an `open` action, is drawn as one task row; a task with one
- * session and no `open` is drawn as that session's plain row.
+ * the ones that carry its id in [AgentSessionSummary.taskId].
  */
 @Serializable
 data class AgentTask(

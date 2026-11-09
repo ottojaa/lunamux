@@ -29,18 +29,7 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 
-/**
- * Reads and edits the `hooks` section of a Claude Code settings file.
- *
- * Every other key in the file is passed through untouched. The file is parsed first and never
- * written if it is not valid JSON. Before the first change the user's file is copied to
- * `<name>.bak` (later edits leave that copy alone), and the new content is written to a temporary
- * file next to the real file and moved into place, so a crash cannot leave a half-written file and
- * a symlinked settings file stays a symlink.
- *
- * Created once in `main()`; the `/window` socket reads [connected] and calls [connect] /
- * [disconnect] for the App Settings row.
- */
+/** Reads and edits the `hooks` section of a Claude Code settings file. */
 class ClaudeHooks(
     private val file: File = File(
         System.getProperty("lunamux.claudeSettings")

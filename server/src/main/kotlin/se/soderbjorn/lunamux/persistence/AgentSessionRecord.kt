@@ -8,11 +8,7 @@
  */
 package se.soderbjorn.lunamux.persistence
 
-/**
- * One agentic-CLI session as stored in `agent_sessions`.
- *
- * Read back at startup and by the "resume" path.
- */
+/** One agentic-CLI session as stored in `agent_sessions`. */
 data class AgentSessionRecord(
     val id: String,
     val agent: String,
@@ -43,10 +39,6 @@ data class AgentSessionRecord(
     /**
      * The conversation this record is a run of: the agent's own session id when it is known, else
      * this record's id.
-     *
-     * A resumed conversation has one record per run in a pane, but is one conversation; the tracker
-     * publishes one summary per conversation by this key. Codex and Gemini report no id, so each of
-     * their runs is its own conversation.
      */
     val conversationId: String get() = agentSessionId ?: id
 }

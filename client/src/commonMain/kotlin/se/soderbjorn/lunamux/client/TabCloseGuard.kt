@@ -21,8 +21,8 @@ import se.soderbjorn.lunamux.client.viewmodel.Layout
 data class KeepsRunning(val title: String, val state: String, val sinceMillis: Long)
 
 /**
- * What the close question says. [doing] is what the working agent is doing right now, when it
- * says; [taskTitle] is a task whose own session is in this tab, to pick up again from the overview.
+ * What the close question says. [doing] is what the working agent is doing right now, when it says;
+ * [taskTitle] is a task whose own session is in this tab, to pick up again from the overview.
  */
 data class TabCloseCheck(
     val tabTitle: String,
@@ -52,8 +52,8 @@ data class TabCloseCheck(
 object TabCloseGuard {
     /**
      * What to tell the person about closing [tabId], or null unless a pane in it has a working
-     * session. The agents that keep running are the live background sessions of every task whose own
-     * session sits in this tab.
+     * session. The agents that keep running are the live background sessions of every task whose
+     * own session sits in this tab.
      */
     fun check(
         tabId: String,

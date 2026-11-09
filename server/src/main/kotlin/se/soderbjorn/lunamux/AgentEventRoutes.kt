@@ -35,11 +35,7 @@ internal const val EVENTS_TOKEN_HEADER = "X-Lunamux-Events-Token"
 /** Header carrying the id of the terminal session the hook ran in. */
 internal const val EVENTS_SESSION_HEADER = "X-Lunamux-Session"
 
-/**
- * Credentials and addresses for the agent-events endpoint.
- *
- * The token is random per server start, so a stale shell from an earlier run cannot post.
- */
+/** Credentials and addresses for the agent-events endpoint. */
 object AgentEvents {
     /** Random secret that must accompany every event; regenerated on each server start. */
     val token: String = ByteArray(32).also { SecureRandom().nextBytes(it) }
@@ -61,14 +57,7 @@ object AgentEvents {
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 private val eventScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
 
-/**
- * Mount `POST /api/agent-events` on this route.
- *
- * Accepts a Claude Code hook's stdin JSON from loopback callers that present [AgentEvents.token].
- * Answers 204 immediately and hands the event to [AgentSessionTracker.onHook] on a background
- * coroutine, so a hook never waits on the server. The body is parsed and discarded; nothing but the
- * tracker's short fields is kept.
- */
+/** Mount `POST /api/agent-events` on this route. */
 internal fun Route.agentEventRoutes(
     tracker: AgentSessionTracker,
     snapshot: (String) -> PaneSnapshot? = { livePaneSnapshot(it) },

@@ -109,9 +109,9 @@ class AgentsOverviewBackingViewModel(
     data class Ask(val rowId: String, val tag: String, val question: String, val keys: List<FooterKey>, val inTab: Boolean = false)
 
     /**
-     * One line of the overview. [detail] is the one-line status (the task's, or the question or what
-     * the agent is doing); [extra] is what else matters for opening it (a search hit's place, a
-     * resume note, an error). A search hit also carries [snippet] and where it matched.
+     * One line of the overview. [detail] is the one-line status (the task's, or the question or
+     * what the agent is doing); [extra] is what else matters for opening it (a search hit's place,
+     * a resume note, an error).
      */
     data class Row(
         val id: String,

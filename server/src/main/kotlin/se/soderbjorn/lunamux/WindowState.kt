@@ -567,9 +567,6 @@ object WindowState {
     /**
      * Show the background tab a waiting agent runs in, make it the active tab of its world and
      * switch to that world when it is another one.
-     *
-     * The tab and the world the person was on are remembered so [hideSettledWaitingTabs] can bring
-     * both back.
      */
     fun showWaitingAgent(leafId: String): Boolean = synchronized(this) {
         val cfg = _config.value
@@ -602,10 +599,6 @@ object WindowState {
      * Hide every background tab that is shown while its agent waits and no longer has a waiting
      * agent in it, and bring back the tab and the world the person was on, if they are still on the
      * shown tab.
-     *
-     * An agent that was answered, whether Yes or No, or that ended leaves the waiting state, so its
-     * tab goes away again. A person who has moved on to another tab or world in the meantime is
-     * left where they are.
      */
     fun hideSettledWaitingTabs(waitingLeafIds: Set<String>) = synchronized(this) {
         var cfg = _config.value

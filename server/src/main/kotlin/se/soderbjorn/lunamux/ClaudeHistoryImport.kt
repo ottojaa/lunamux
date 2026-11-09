@@ -22,33 +22,12 @@ object ClaudeHistoryImport {
     /** Folder inside a repository that Claude Code puts its linked worktrees in. */
     private const val WORKTREES = "/.claude/worktrees/"
 
-    /**
-     * The folder holding Claude Code's per-project transcript folders.
-     *
-     * The `lunamux.claudeProjects` system property overrides it, so tests and dev servers can point
-     * at a copy.
-     */
+    /** The folder holding Claude Code's per-project transcript folders. */
     fun projectsDir(): File =
         System.getProperty("lunamux.claudeProjects")?.takeIf { it.isNotBlank() }?.let(::File)
             ?: File(System.getProperty("user.home"), ".claude/projects")
 
-    /**
-     * Import every interactive transcript that has no record yet.
-     *
-     * A transcript counts when its first `entrypoint` is `cli` (the kind Lunamux panes host;
-     * `claude -p` and background sessions are skipped). A session that already has a record
-     * (whether Lunamux ran it or an earlier import made it) is left alone. Each import writes the
-     * record and its search text; one unreadable file does not stop the rest.
-     *
-     * Files not modified since the previous complete run are skipped without being opened: that run
-     * already imported them or decided to leave them out. The time the previous run began is kept
-     * in the settings store under [WATERMARK_KEY], and moves forward only when no file failed or
-     * was held back, so an unreadable one is tried again.
-     *
-     * A transcript whose folder has a Claude session open in a pane that Lunamux has seen only on
-     * screen (no session id yet) is held back: that session may be this very transcript, and
-     * importing it would leave two records for one conversation once its first hook arrives.
-     */
+    /** Import every interactive transcript that has no record yet. */
     fun run(
         repo: SettingsRepository,
         projects: File = projectsDir(),

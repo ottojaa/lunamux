@@ -137,12 +137,7 @@ internal fun panelBlockJson(b: TaskPanelBlock): JsonObject = buildJsonObject {
     put("writtenAt", Instant.ofEpochMilli(b.writtenAtMillis).toString())
 }
 
-/**
- * Register `set_task_panel`, `upsert_task_block`, `remove_task_block` and `get_task_panel`.
- *
- * The three tools that change the panel need a `read+write` token; `get_task_panel` needs only
- * `read`.
- */
+/** Register `set_task_panel`, `upsert_task_block`, `remove_task_block` and `get_task_panel`. */
 fun registerMcpPanelTools(store: TaskPanelStore, tracker: AgentSessionTracker) {
     val blockSchema = schemaObject(
         "id" to schemaString(

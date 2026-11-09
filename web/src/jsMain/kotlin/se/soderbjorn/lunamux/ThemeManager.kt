@@ -90,18 +90,8 @@ private object LunamuxThemeManagerHost : ThemeManagerHost {
     }
 
     /**
-     * Like [launch], but runs [block] at once on the caller's stack up to its
-     * first suspension, instead of on the next dispatcher turn.
-     *
-     * Used by the Style and Navigation setters. The toolkit calls the host
-     * setter and then immediately re-reads the getter to apply the choice
-     * (`ShellState.setShellStyle` / `setNavigationMode` re-run
-     * `applyHostFontVars`), and [AppBackingViewModel]'s setters emit the new
-     * state before their persist call suspends, so starting them undispatched
-     * makes that re-read see the new value rather than the old one.
-     *
-     * @param block the suspending work; its persist step still completes
-     *   asynchronously.
+     * Like [launch], but runs [block] at once on the caller's stack up to its first suspension,
+     * instead of on the next dispatcher turn.
      */
     private fun launchNow(block: suspend () -> Unit) {
         @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
@@ -180,33 +170,29 @@ private object LunamuxThemeManagerHost : ThemeManagerHost {
     override val selectionStyle: SelectionStyle?
         get() = appVm.stateFlow.value.selectionStyle
     /**
-     * The user's surface style (Depth / Flat), or `null` when never picked,
-     * which the toolkit resolves to Depth. Read by the Appearance settings'
-     * Surfaces row and the shell's host-apply pass.
+     * The user's surface style (Depth / Flat), or `null` when never picked, which the toolkit
+     * resolves to Depth. Read by the Appearance settings' Surfaces row and the shell's host-apply
+     * pass.
      */
     override val surfaceStyle: SurfaceStyle?
         get() = appVm.stateFlow.value.surfaceStyle
     /**
-     * The user's legacy look shorthand (Classic / Calm), or `null` when never picked,
-     * which the toolkit resolves to Classic. Read by the Appearance settings'
-     * Style row and by the shell's host-apply pass, which stamps
-     * `data-dt-style` on `:root`.
+     * The user's legacy look shorthand (Classic / Calm), or `null` when never picked, which the
+     * toolkit resolves to Classic. Read by the Appearance settings' Style row and by the shell's
+     * host-apply pass, which stamps `data-dt-style` on `:root`.
      */
     override val shellStyle: ShellStyle?
         get() = appVm.stateFlow.value.shellStyle
     /**
-     * The user's navigation mode (sidebar / tab strip / both), or `null` when
-     * never picked, which the toolkit resolves to Both. Read by the
-     * Appearance settings' Navigation row and the shell's host-apply pass.
+     * The user's navigation mode (sidebar / tab strip / both), or `null` when never picked, which
+     * the toolkit resolves to Both. Read by the Appearance settings' Navigation row and the shell's
+     * host-apply pass.
      */
     override val navigationMode: NavigationMode?
         get() = appVm.stateFlow.value.navigationMode
     /**
-     * The user's style settings for dark and light mode, or `null` when never
-     * edited (the toolkit then reads the single-mode getters above for both
-     * modes). Read by the toolkit's apply pass, which picks the entry for the
-     * active appearance, and by the Appearance settings' "Style for this mode"
-     * group.
+     * The user's style settings for dark and light mode, or `null` when never edited (the toolkit
+     * then reads the single-mode getters above for both modes).
      */
     override val modeStyles: ModeStyles?
         get() = appVm.stateFlow.value.modeStyles
@@ -247,41 +233,31 @@ private object LunamuxThemeManagerHost : ThemeManagerHost {
         launch { appVm.setSelectionStyle(value) }
     }
     /**
-     * Persists the Surfaces pick through [AppBackingViewModel.setSurfaceStyle].
-     * Started undispatched (see [launchNow]) so a host-apply pass right after
-     * the pick already reads the new value instead of reverting it.
-     *
-     * @param value the chosen style, or `null` to clear the preference.
+     * Persists the Surfaces pick through [AppBackingViewModel.setSurfaceStyle]. Started
+     * undispatched (see [launchNow]) so a host-apply pass right after the pick already reads the
+     * new value instead of reverting it.
      */
     override fun setSurfaceStyle(value: SurfaceStyle?) {
         launchNow { appVm.setSurfaceStyle(value) }
     }
     /**
-     * Persists the Style pick through [AppBackingViewModel.setShellStyle].
-     * Started undispatched (see [launchNow]) so the toolkit's re-apply right
-     * after this call already reads the new style.
-     *
-     * @param value the chosen style, or `null` to clear the preference.
+     * Persists the Style pick through [AppBackingViewModel.setShellStyle]. Started undispatched
+     * (see [launchNow]) so the toolkit's re-apply right after this call already reads the new
+     * style.
      */
     override fun setShellStyle(value: ShellStyle?) {
         launchNow { appVm.setShellStyle(value) }
     }
     /**
-     * Persists the Navigation pick through
-     * [AppBackingViewModel.setNavigationMode], undispatched for the same
-     * reason as [setShellStyle].
-     *
-     * @param value the chosen mode, or `null` to clear the preference.
+     * Persists the Navigation pick through [AppBackingViewModel.setNavigationMode], undispatched
+     * for the same reason as [setShellStyle].
      */
     override fun setNavigationMode(value: NavigationMode?) {
         launchNow { appVm.setNavigationMode(value) }
     }
     /**
-     * Persists both modes' style settings through
-     * [AppBackingViewModel.setModeStyles], undispatched (see [launchNow]) so
-     * the toolkit's re-apply right after this call already reads them.
-     *
-     * @param value both modes' settings, or `null` to forget them.
+     * Persists both modes' style settings through [AppBackingViewModel.setModeStyles], undispatched
+     * (see [launchNow]) so the toolkit's re-apply right after this call already reads them.
      */
     override fun setModeStyles(value: ModeStyles?) {
         launchNow { appVm.setModeStyles(value) }

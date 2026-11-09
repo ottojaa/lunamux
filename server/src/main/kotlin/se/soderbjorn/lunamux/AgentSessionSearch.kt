@@ -15,12 +15,7 @@ import se.soderbjorn.lunamux.persistence.SettingsRepository.AgentSessionHit
 import java.io.File
 import java.nio.file.Path
 
-/**
- * Search ranking, snippets and per-session details for the agents overview.
- *
- * Stateless; every function may block on SQLite or git, so callers run them off the socket's
- * coroutine.
- */
+/** Search ranking, snippets and per-session details for the agents overview. */
 object AgentSessionSearch {
     /** The most matches returned for one query. */
     const val MAX_MATCHES = 50
@@ -39,23 +34,7 @@ object AgentSessionSearch {
         "title" to 0, "task" to 1, "prompt" to 2, "branch" to 3, "links" to 3, "transcript" to 4, "screen" to 4,
     )
 
-    /**
-     * Find and rank the sessions that contain [query].
-     *
-     * Case-insensitive substring match over the session's title, the title of its task, first
-     * prompt, branch, ticket links, the conversation text and the last screen. Each session appears
-     * once, labelled with its best field. Order: title, then task title, then first prompt, then
-     * branch or links, then transcript or screen; within a tier open sessions come first, then the
-     * newest.
-     *
-     * A stored title that only says where the session ran (`~`, `HEAD`, a folder, the branch or a
-     * run id) is not searched, because the row shows a title made from the prompt instead and a hit
-     * on a word the row never shows would look like a mistake.
-     *
-     * A task's title is not a column of the session, so the sessions of every task whose title
-     * matches are read by task id as well, however old they are, and merged with the rows the
-     * ordinary query found.
-     */
+    /** Find and rank the sessions that contain [query]. */
     fun search(
         repo: SettingsRepository,
         tracker: AgentSessionTracker?,
@@ -98,12 +77,7 @@ object AgentSessionSearch {
             }
     }
 
-    /**
-     * Gather what peek, the close confirmation and the resume note need for one session.
-     *
-     * The screen of an open session is read live; an ended one gives its saved last screen. Unsaved
-     * work is read from the session's folder when it still exists.
-     */
+    /** Gather what peek, the close confirmation and the resume note need for one session. */
     fun inspect(recordId: String, tracker: AgentSessionTracker?, tasks: TaskIndex? = null): WindowEnvelope.AgentSessionInspection? {
         val rec = tracker?.find(recordId) ?: return null
         val open = rec.state != "ended"
@@ -149,13 +123,7 @@ object AgentSessionSearch {
         return null
     }
 
-    /**
-     * About 40 characters either side of the first match of [q] in [text], on one line.
-     *
-     * Only the line holding the match is used, shown as the plain text it reads as
-     * ([AgentSessionText.plain]) unless cleaning would break the match. A cut end is shown with `…`.
-     * The result is the snippet and where the match starts in it.
-     */
+    /** About 40 characters either side of the first match of [q] in [text], on one line. */
     internal fun snip(text: String, q: String): Pair<String, Int>? {
         val first = text.indexOf(q, ignoreCase = true)
         if (first < 0) return null

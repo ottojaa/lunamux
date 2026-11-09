@@ -14,13 +14,7 @@ package se.soderbjorn.lunamux
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/**
- * One block an agent wrote into a task's panel.
- *
- * Stored by the server per task and sent to the windows in the order the agents gave. A writer
- * names the block with its own [id] so it can replace or remove that block later without touching
- * the others.
- */
+/** One block an agent wrote into a task's panel. */
 @Serializable
 data class TaskPanelBlock(
     val id: String,
@@ -73,9 +67,6 @@ sealed class TaskBlockContent {
 /**
  * A link in a [TaskBlockContent.Links] block. The server only stores `http`, `https` and `file`
  * addresses.
- *
- * The writer says what the link is and when it happened; the panel shows both as given and guesses
- * neither. A row stored before these fields existed reads back as kind `link` with no time.
  */
 @Serializable
 data class TaskLink(

@@ -23,8 +23,7 @@ import java.util.UUID
 
 /**
  * Thrown by [TaskIndex] when a request names a task or a session that does not exist, or a task
- * that cannot be changed that way. The message names the offender and says what to do instead; the
- * MCP tools hand it to the agent as the tool's error.
+ * that cannot be changed that way.
  */
 class TaskException(message: String) : IllegalArgumentException(message)
 
@@ -43,18 +42,7 @@ data class TaskListing(
     val questionWaits: Boolean = false,
 )
 
-/**
- * Decides each session's task and carries the operations that change it.
- *
- * A session's task is the task its record names (an agent put it there through `add_to_task` or
- * `create_window`), or none. Where a session runs, and what a task file lists, never places it. A
- * task file and an agent-made task with one id are one task; the file's title wins. A task named by
- * no file and no row is ignored, so removing a task file does not leave sessions pointing at a
- * ghost.
- *
- * Created once by `main()`. [start] keeps [state] current as files and records change; the mutating
- * methods publish immediately so a tool's answer already reflects its own change.
- */
+/** Decides each session's task and carries the operations that change it. */
 class TaskIndex(
     private val repo: SettingsRepository,
     private val tracker: AgentSessionTracker,
@@ -86,12 +74,7 @@ class TaskIndex(
     /** Look up a task file by id, for the route that runs its `open` action. */
     fun fileTask(taskId: String): TaskFile? = files.value.firstOrNull { it.id == taskId }
 
-    /**
-     * The name of a task, whether or not any session of it is in memory.
-     *
-     * Unlike [state], which lists only tasks that hold a session in memory, this knows every task
-     * file and every agent-made task row. A task file's title wins over the row with the same id.
-     */
+    /** The name of a task, whether or not any session of it is in memory. */
     fun titleOf(taskId: String): String? = synchronized(lock) {
         files.value.firstOrNull { it.id == taskId }?.title ?: tasks[taskId]?.title
     }
@@ -121,13 +104,7 @@ class TaskIndex(
         }
     }
 
-    /**
-     * Make a new task.
-     *
-     * The task's main conversation is the one running in the caller's pane when the caller is a
-     * known pane, else the one in the first of [sessionIds], else none. The pane is turned into its
-     * conversation once, here; what the task stores is the conversation.
-     */
+    /** Make a new task. */
     fun createTask(title: String, sessionIds: List<String>, callerSessionId: String? = null): String {
         val clean = cleanTitle(title)
         val targets = sessionIds.map(::targetOf)
@@ -148,13 +125,7 @@ class TaskIndex(
         return id
     }
 
-    /**
-     * Name the conversation that speaks for a task, from the pane it runs in.
-     *
-     * The pane is looked up the way `add_to_task` looks up its panes, so the same mistake gets the
-     * same error, and is turned into the conversation running in it right now; the task stores that
-     * conversation and forgets the pane. It is not moved into the task.
-     */
+    /** Name the conversation that speaks for a task, from the pane it runs in. */
     fun setOwnSession(taskId: String, sessionId: String) {
         requireTask(taskId)
         targetOf(sessionId)
@@ -172,15 +143,8 @@ class TaskIndex(
     }
 
     /**
-     * Set or clear a task's one-line status.
-     *
-     * Line breaks become single spaces, the ends are trimmed and the text is cut at [STATUS_MAX]
-     * characters; nothing left clears the status.
-     *
-     * [questionWaits] belongs to the status: every call sets both, so a later status that does not
-     * repeat the flag takes it back, and clearing the status clears it too. The overview reads it
-     * to keep the row of a task whose main conversation is closed where the person looks, since
-     * resuming that conversation is what asks the question.
+     * Set or clear a task's one-line status. [questionWaits] goes with it (a later call that omits it
+     * takes it back): the overview keeps a closed main conversation's row in view while it is set.
      */
     fun setStatus(taskId: String, text: String, questionWaits: Boolean = false): String? {
         requireTask(taskId)
@@ -229,11 +193,7 @@ class TaskIndex(
     private fun isKnownPane(sessionId: String): Boolean =
         tracker.openRecordOf(sessionId) != null || leafOfSession(sessionId) != null
 
-    /**
-     * Move sessions into a task, out of whatever task they were in.
-     *
-     * A pane with no agent yet is promised the task for the next session that starts in it.
-     */
+    /** Move sessions into a task, out of whatever task they were in. */
     fun addToTask(taskId: String, sessionIds: List<String>) {
         requireTask(taskId)
         val targets = sessionIds.map(::targetOf)
@@ -264,11 +224,7 @@ class TaskIndex(
         recompute()
     }
 
-    /**
-     * Every task there is, with what is in it.
-     *
-     * Includes agent-made tasks that hold no session yet.
-     */
+    /** Every task there is, with what is in it. */
     fun listing(): List<TaskListing> {
         val records = tracker.snapshot()
         val byTask = records.groupBy { taskIdOf(it) }
@@ -281,21 +237,17 @@ class TaskIndex(
                     state = r.state,
                 )
             }
-        val fileListings = files.value.sortedBy { it.id }.map { f ->
-            TaskListing(f.id, f.title, "file", sessionsOf(f.id), mainConversationOf(f.id), ownSessionOf(f.id), statusOf(f.id), questionWaitsOf(f.id))
+        fun listing(id: String, title: String, source: String): TaskListing {
+            val row = synchronized(lock) { tasks[id] }
+            return TaskListing(id, title, source, sessionsOf(id), mainConversationOf(id), ownSessionOf(id), row?.status, row?.questionWaits == true)
         }
         val fileIds = files.value.map { it.id }.toSet()
-        val agentListings = synchronized(lock) { agentMade() }.filter { it.id !in fileIds }.sortedBy { it.id }
-            .map { TaskListing(it.id, it.title.orEmpty(), "agents", sessionsOf(it.id), mainConversationOf(it.id), ownSessionOf(it.id), statusOf(it.id), questionWaitsOf(it.id)) }
-        return fileListings + agentListings
+        val agentMade = synchronized(lock) { agentMade() }.filter { it.id !in fileIds }
+        return files.value.sortedBy { it.id }.map { listing(it.id, it.title, "file") } +
+            agentMade.sortedBy { it.id }.map { listing(it.id, it.title.orEmpty(), "agents") }
     }
 
-    /**
-     * The terminal session id of the pane where a task's main conversation runs now.
-     *
-     * Looked up from the conversation's open record each time, because pane ids are handed out
-     * again on every start and only the conversation is stored.
-     */
+    /** The terminal session id of the pane where a task's main conversation runs now. */
     fun ownSessionOf(taskId: String): String? = synchronized(lock) {
         val conversation = tasks[taskId]?.mainConversation ?: return@synchronized null
         tracker.snapshot().firstOrNull { (it.conversationId == conversation || it.id == conversation) && it.state != ENDED }
@@ -308,17 +260,7 @@ class TaskIndex(
         tracker.snapshot().firstOrNull { it.conversationId == stored || it.id == stored }?.conversationId ?: stored
     }
 
-    private fun statusOf(taskId: String): String? = synchronized(lock) { tasks[taskId]?.status }
-
-    private fun questionWaitsOf(taskId: String): Boolean = synchronized(lock) { tasks[taskId]?.questionWaits == true }
-
-    /**
-     * The `open` action a task file declares for the task whose main conversation is [record].
-     *
-     * The match is by conversation id, so every run of the conversation counts as the main one.
-     * When several tasks name the conversation, the first by id that declares an `open` action
-     * wins.
-     */
+    /** The `open` action a task file declares for the task whose main conversation is [record]. */
     fun openOfMain(record: AgentSessionRecord): TaskOpen? = synchronized(lock) {
         _state.value.filter { it.mainConversation == record.conversationId }.sortedBy { it.id }
             .firstNotNullOfOrNull { t -> files.value.firstOrNull { it.id == t.id }?.open }
@@ -344,8 +286,6 @@ class TaskIndex(
     /**
      * The panes a task's sessions are in: the layout leaf of each of its open sessions, and of each
      * pane promised the task whose agent has not started.
-     *
-     * A session that has ended no longer counts, because its pane is gone or only holds a shell.
      */
     fun openLeavesOf(taskId: String): List<String> {
         val sessions = tracker.snapshot()
@@ -382,8 +322,8 @@ class TaskIndex(
         private fun isOpen(r: AgentSessionRecord) = r.state != ENDED && r.leafId != null
 
         /**
-         * Work out the tasks to show from the three inputs. A record belongs to the task it names if
-         * that task exists. Pure, so tests and [recompute] share it.
+         * Work out the tasks to show from the three inputs. A record belongs to the task it names
+         * if that task exists. Pure, so tests and [recompute] share it.
          */
         fun resolve(
             records: List<AgentSessionRecord>,

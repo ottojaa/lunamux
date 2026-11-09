@@ -188,85 +188,39 @@ class WindowStateRepository {
         _states.value = states
     }
 
-    /**
-     * Replace the cached agent sessions and the Claude Code connection flag.
-     *
-     * Called by [WindowSocket] when an `AgentSessions` envelope arrives.
-     *
-     * @param sessions the server's current rows.
-     * @param claudeConnected whether Lunamux's Claude Code hooks are installed.
-     */
+    /** Replace the cached agent sessions and the Claude Code connection flag. */
     fun updateAgentSessions(sessions: List<AgentSessionSummary>, claudeConnected: Boolean) {
         _agentSessions.value = sessions
         _claudeConnected.value = claudeConnected
     }
 
-    /**
-     * Replace the cached tasks.
-     *
-     * Called by [WindowSocket] when an `AgentTasks` envelope arrives.
-     *
-     * @param tasks the server's current tasks.
-     */
+    /** Replace the cached tasks. */
     fun updateAgentTasks(tasks: List<AgentTask>) {
         _agentTasks.value = tasks
     }
 
-    /**
-     * Replace one task's panel blocks.
-     *
-     * Called by [WindowSocket] when a `TaskPanel` envelope arrives. An empty list removes the
-     * task's entry, so the map only holds tasks that have blocks.
-     *
-     * @param taskId the task the blocks belong to.
-     * @param blocks all its blocks, in drawing order.
-     */
+    /** Replace one task's panel blocks. */
     fun updateTaskPanel(taskId: String, blocks: List<TaskPanelBlock>) {
         _taskPanels.value =
             if (blocks.isEmpty()) _taskPanels.value - taskId else _taskPanels.value + (taskId to blocks)
     }
 
-    /**
-     * Forget every task's panel blocks.
-     *
-     * Called by [RealWindowSocket] each time a connection completes its handshake, just before the
-     * server sends the panels of every task that has blocks. The server cannot tell which tasks
-     * this window still holds, so a task that lost its last block while the window was away would
-     * otherwise keep showing the old blocks.
-     */
+    /** Forget every task's panel blocks. */
     fun clearTaskPanels() {
         _taskPanels.value = emptyMap()
     }
 
-    /**
-     * Remember the server's explanation of a failed resume or connect.
-     *
-     * Called by [WindowSocket] when an `AgentSessionError` envelope arrives.
-     *
-     * @param message text to show the user, for example "folder no longer exists".
-     */
+    /** Remember the server's explanation of a failed resume or connect. */
     fun setAgentSessionError(message: String) {
         _agentSessionError.value = message
     }
 
-    /**
-     * Remember the server's answer to the latest agents-overview search.
-     *
-     * Called by [WindowSocket] when an `AgentSessionMatches` envelope arrives.
-     *
-     * @param matches the matches and the query they answer.
-     */
+    /** Remember the server's answer to the latest agents-overview search. */
     fun updateAgentMatches(matches: WindowEnvelope.AgentSessionMatches) {
         _agentMatches.value = matches
     }
 
-    /**
-     * Remember the server's inspection of one agent session.
-     *
-     * Called by [WindowSocket] when an `AgentSessionInspection` envelope arrives.
-     *
-     * @param inspection the screen, unsaved-work counts and resume note.
-     */
+    /** Remember the server's inspection of one agent session. */
     fun updateAgentInspection(inspection: WindowEnvelope.AgentSessionInspection) {
         _agentInspection.value = inspection
     }

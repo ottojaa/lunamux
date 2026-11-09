@@ -423,11 +423,7 @@ class SettingsRepository(
         database.settingsQueries.deleteAgentSession(id)
     }
 
-    /**
-     * The most recently ended records that ended at or after [since], newest first.
-     *
-     * Imported history is never returned: it is only found by search.
-     */
+    /** The most recently ended records that ended at or after [since], newest first. */
     fun loadRecentEndedAgentSessions(since: Long, limit: Long): List<AgentSessionRecord> =
         database.settingsQueries.selectRecentEndedAgentSessions(since, limit, ::toAgentSessionRecord).executeAsList()
 
@@ -448,14 +444,7 @@ class SettingsRepository(
         database.settingsQueries.selectAgentSessionByConversation(conversationId, ::toAgentSessionRecord)
             .executeAsOneOrNull()
 
-    /**
-     * Mark every still-open record as ended, each at the last time it was known to be alive.
-     *
-     * A record is ended at [lastSeen] when that is later than the time it entered its state, else
-     * at that time, and never later than [now]; stamping them all with the time of the restart
-     * would make a session last used days ago read as if it had just ended, and place it in the
-     * wrong band of the agents overview.
-     */
+    /** Mark every still-open record as ended, each at the last time it was known to be alive. */
     fun endOpenAgentSessions(now: Long, lastSeen: (AgentSessionRecord) -> Long? = { null }) {
         database.settingsQueries.selectOpenAgentSessions(::toAgentSessionRecord).executeAsList().forEach { rec ->
             val at = minOf(now, maxOf(rec.stateSince, lastSeen(rec) ?: 0L))
@@ -499,11 +488,7 @@ class SettingsRepository(
             TaskRow(id, title, conversation, status, statusAt, waits == 1L, startedAt, createdAt, updatedAt)
         }.executeAsList()
 
-    /**
-     * Store a new agent-made task.
-     *
-     * A task that already has a row is left as it is.
-     */
+    /** Store a new agent-made task. */
     fun insertTask(id: String, title: String, at: Long) {
         database.settingsQueries.insertTask(id, title, at, at)
     }
@@ -516,8 +501,6 @@ class SettingsRepository(
     /**
      * Record when a task started (see [TaskRow.startedAt] for what that time is), unless it already
      * has a start.
-     *
-     * Makes a row for the task when it has none, so a task file's task gets one on first sight.
      */
     fun stampTaskStart(taskId: String, startedAt: Long) {
         database.settingsQueries.transaction {
@@ -584,12 +567,7 @@ class SettingsRepository(
         database.settingsQueries.deleteTaskPanel(taskId)
     }
 
-    /**
-     * Store the searchable conversation text of one record.
-     *
-     * It is a separate write because the long text is never part of an in-memory
-     * [AgentSessionRecord]; the regular [saveAgentSession] keeps whatever is stored.
-     */
+    /** Store the searchable conversation text of one record. */
     fun setAgentSessionSearchText(id: String, text: String) {
         database.settingsQueries.setAgentSessionSearchText(text, id)
     }
@@ -606,12 +584,7 @@ class SettingsRepository(
         val screenWindow: String?,
     )
 
-    /**
-     * Find records containing [query] in any searchable column.
-     *
-     * The match is a case-insensitive substring match; `%`, `_` and `\` in [query] are matched
-     * literally. Ranking is the caller's job: this returns the newest 200 candidates.
-     */
+    /** Find records containing [query] in any searchable column. */
     fun searchAgentSessions(query: String): List<AgentSessionHit> {
         val pattern = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         return database.settingsQueries.searchAgentSessions(pattern, query) {
@@ -632,11 +605,7 @@ class SettingsRepository(
         }.executeAsList()
     }
 
-    /**
-     * The records stored with one of [taskIds], newest first, at most 200.
-     *
-     * Imported history is included.
-     */
+    /** The records stored with one of [taskIds], newest first, at most 200. */
     fun loadAgentSessionsOfTasks(taskIds: Collection<String>): List<AgentSessionRecord> =
         if (taskIds.isEmpty()) emptyList()
         else database.settingsQueries.selectAgentSessionsByTaskIds(taskIds, ::toAgentSessionRecord).executeAsList()

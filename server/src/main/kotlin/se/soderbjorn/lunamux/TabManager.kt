@@ -141,11 +141,7 @@ internal object TabManager {
         return cfg.copy(activeTabId = tabId)
     }
 
-    /**
-     * Show a background tab whose agent waits for the person, and make it the active tab.
-     *
-     * The tab stays a background tab; [TabConfig.shownWhileWaiting] makes it listed and marks it.
-     */
+    /** Show a background tab whose agent waits for the person, and make it the active tab. */
     fun showWaitingTab(cfg: WindowConfig, tabId: String): WindowConfig? {
         val idx = cfg.tabs.indexOfFirst { it.id == tabId }
         if (idx < 0) return null

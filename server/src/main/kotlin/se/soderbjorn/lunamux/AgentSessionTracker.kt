@@ -57,13 +57,7 @@ data class GitInfo(
     val repoRoot: String? = null,
 )
 
-/**
- * Owns the `agent_sessions` table and the in-memory view of it.
- *
- * Keeps at most one open record per terminal session. All mutation goes through one lock, so the
- * poll coroutine and the endpoint's coroutines never interleave; nothing inside the lock calls back
- * into [WindowState].
- */
+/** Owns the `agent_sessions` table and the in-memory view of it. */
 class AgentSessionTracker(
     private val repo: SettingsRepository,
     private val gitInfo: (String?) -> GitInfo = ::readGitInfo,
@@ -82,9 +76,7 @@ class AgentSessionTracker(
 
     /**
      * Open records whose last `PreToolUse` has not been followed by its `PostToolUse` yet, each
-     * with that call's [rawToolLine] (the actual command, file or pattern). A prompt that arrives
-     * while one is in flight is about that tool call, and names it exactly; one that arrives with
-     * none in flight is about something else, so the row must not name a stale tool call.
+     * with that call's [rawToolLine] (the actual command, file or pattern).
      */
     private val toolInFlight = HashMap<String, String?>()
 
@@ -93,9 +85,7 @@ class AgentSessionTracker(
 
     /**
      * For each open hook-fed `working` record, how many polls in a row have shown no agent at all
-     * on its pane since its last hook. A screen that stays blank this long means the turn is over
-     * without a hook saying so (the process was killed, or the turn ended with an error that sends
-     * no Stop). Any hook, and any poll that shows an agent, starts the count again.
+     * on its pane since its last hook.
      */
     private val idlePolls = HashMap<String, Int>()
 
@@ -105,18 +95,12 @@ class AgentSessionTracker(
      */
     private val lastActivity = HashMap<String, Long>()
 
-    /**
-     * When each open hook-fed record's last hook event arrived, by record id. Unlike [lastActivity]
-     * the screen never renews it, so an interrupt line written after it is news and one written
-     * before it belongs to a turn that has since been replaced.
-     */
+    /** When each open hook-fed record's last hook event arrived, by record id. */
     private val lastHookAt = HashMap<String, Long>()
 
     /**
      * What [TranscriptTail] said about each hook-fed record's transcript, by record id, with the
-     * file's size and last write it was read at. The file is read again only when one of them
-     * moves, so a record that is idle on a 3 s poll costs a `stat`, not a read. Written outside the
-     * lock by [onPoll]; hence concurrent.
+     * file's size and last write it was read at.
      */
     private val tailReads = ConcurrentHashMap<String, TailRead>()
 
@@ -129,7 +113,6 @@ class AgentSessionTracker(
     /**
      * Tasks promised to panes whose agent has not started yet, by layout leaf id (leaf ids survive
      * restarts, terminal session ids do not). The next record opened in the leaf takes the task.
-     * Kept in memory only: a promise the server forgets on restart is one the agent can repeat.
      */
     private val pendingTasks = HashMap<String, String>()
 
@@ -138,14 +121,7 @@ class AgentSessionTracker(
     /** The rows to show clients, republished after every change. */
     val summaries: StateFlow<List<AgentSessionSummary>> = _summaries.asStateFlow()
 
-    /**
-     * Close records a previous server run left open and load the recent ended ones.
-     *
-     * Terminal sessions do not survive a restart, so any record still open belongs to a process
-     * that is gone. Each is ended when it was last known alive (its state's start, or its
-     * transcript file's last write if later), not at the restart, so how long ago a session was
-     * used survives the restart.
-     */
+    /** Close records a previous server run left open and load the recent ended ones. */
     fun start() = synchronized(lock) {
         repo.endOpenAgentSessions(clock()) { rec ->
             rec.transcriptPath?.let { File(it).takeIf(File::isFile)?.lastModified() }
@@ -155,15 +131,7 @@ class AgentSessionTracker(
         publish()
     }
 
-    /**
-     * Fold one screen-poll result into the records.
-     *
-     * Opens a record for a pane that newly shows an agent, follows `waiting`/`working`/none into
-     * `needs_you`/`working`/`done` for records not fed by hooks, and ends records whose session is
-     * gone. A hook-fed record is moved only where no hook can say what happened: a refused prompt
-     * or an interrupted turn (read from the end of its transcript), and a prompt the screen shows
-     * answered.
-     */
+    /** Fold one screen-poll result into the records. */
     fun onPoll(panes: List<PaneSnapshot>) {
         val toOpen = synchronized(lock) {
             panes.filter { it.alive && it.agent != null && it.state != null && openFor(it.terminalSessionId) == null }
@@ -175,9 +143,6 @@ class AgentSessionTracker(
     /**
      * When the person interrupted the turn of each hook-fed record that is working or asks them
      * something, read from the end of its transcript (see [TranscriptTail]).
-     *
-     * Runs outside the lock like [warmGit]: it touches files. A file is read again only when its
-     * size or last write has moved since the last read.
      */
     private fun interruptsOfHookFed(): Map<String, Long> {
         val candidates = synchronized(lock) {
@@ -301,26 +266,14 @@ class AgentSessionTracker(
         return rec.copy(state = DONE, stateSince = clock(), nowLine = null, question = null).also { put(it) }
     }
 
-    /**
-     * Note that the screen shows [recordId]'s agent at work: the one sign of life both feeds give.
-     *
-     * A screen-fed record has nothing else, and a hook-fed one may go minutes between hooks (a long
-     * build), so work on screen keeps its activity time current. The stamp is renewed only once it
-     * is [ACTIVITY_REFRESH_MS] old: the overlay needs minute precision, and a stamp that moved on
-     * every poll would push a new frame to every client every few seconds.
-     */
+    /** Note that the screen shows [recordId]'s agent at work: the one sign of life both feeds give. */
     private fun noteWork(recordId: String) {
         val now = clock()
         val last = lastActivity[recordId]
         if (last == null || now - last >= ACTIVITY_REFRESH_MS) lastActivity[recordId] = now
     }
 
-    /**
-     * Fold one Claude Code hook event into the records.
-     *
-     * Events for a session id the tracker has not seen yet behave as an implicit SessionStart, so
-     * connecting hooks while Claude is already running still works.
-     */
+    /** Fold one Claude Code hook event into the records. */
     fun onHook(pane: PaneSnapshot?, event: JsonObject) {
         if (pane == null) return
         val known = synchronized(lock) { openFor(pane.terminalSessionId)?.agentSessionId }
@@ -410,13 +363,7 @@ class AgentSessionTracker(
         publish()
     }
 
-    /**
-     * Look up a record for the resume command.
-     *
-     * [id] is a record id, else the agent's own conversation id: a task stores its main
-     * conversation that way, and the record of a conversation older than the ones held in memory is
-     * found by it in the database.
-     */
+    /** Look up a record for the resume command. */
     fun find(id: String): AgentSessionRecord? = synchronized(lock) {
         records[id] ?: repo.findAgentSessionById(id)
             ?: records.values.filter { it.conversationId == id }.maxByOrNull { it.createdAt }
@@ -432,11 +379,7 @@ class AgentSessionTracker(
     /** The open record of a terminal session, if an agent runs in it. */
     fun openRecordOf(terminalSessionId: String): AgentSessionRecord? = synchronized(lock) { openFor(terminalSessionId) }
 
-    /**
-     * Put a record in a task, or take it out of its task.
-     *
-     * The change is stored and pushed like any other change to the record.
-     */
+    /** Put a record in a task, or take it out of its task. */
     fun setTask(recordId: String, taskId: String?): Boolean = synchronized(lock) {
         val rec = records[recordId] ?: return false
         if (rec.taskId != taskId) {
@@ -446,11 +389,7 @@ class AgentSessionTracker(
         true
     }
 
-    /**
-     * Promise a task to the next agent session that opens in a pane.
-     *
-     * [open] and the reopening of a resumed record read the promise and clear it.
-     */
+    /** Promise a task to the next agent session that opens in a pane. */
     fun setPendingTask(leafId: String, taskId: String?) = synchronized(lock) {
         if (taskId == null) pendingTasks.remove(leafId) else pendingTasks[leafId] = taskId
         Unit
@@ -472,16 +411,7 @@ class AgentSessionTracker(
         openRecords().any { it.agent == CLAUDE && it.agentSessionId == null && it.cwd == cwd }
     }
 
-    /**
-     * Pick the record a hook event belongs to, creating, adopting or reopening one.
-     *
-     * Keeps one record per conversation. The pane's open record is reused when it has the same
-     * agent session id, and ended otherwise. A record that was opened from the screen before any id
-     * was known is adopted when the conversation has no record yet; when it already has one (a
-     * resumed conversation whose pane was seen before its first hook), the older record is reopened
-     * in this pane and the screen record is dropped, in memory and in the database, so the
-     * conversation is one record and search lists it once.
-     */
+    /** Pick the record a hook event belongs to, creating, adopting or reopening one. */
     private fun attach(pane: PaneSnapshot, agentId: String?, transcript: String?): AgentSessionRecord {
         val current = openFor(pane.terminalSessionId)
         if (current != null && current.agent == CLAUDE) {
@@ -530,12 +460,7 @@ class AgentSessionTracker(
         return open(pane, CLAUDE, SOURCE_HOOKS, agentId, transcript)
     }
 
-    /**
-     * Forget a record that duplicates a conversation another record already carries.
-     *
-     * Not an end: nothing is saved for search and the ended-session hook is not called, because the
-     * record never held anything but what the screen showed.
-     */
+    /** Forget a record that duplicates a conversation another record already carries. */
     private fun discard(rec: AgentSessionRecord) {
         records.remove(rec.id)
         forgetTurn(rec.id)
@@ -690,7 +615,7 @@ class AgentSessionTracker(
         /**
          * Polls in a row (3 s apart, after the poller's own hold of the last state) that must show
          * no agent on a hook-fed working record's pane, since its last hook, before the turn counts
-         * as over. Long enough for the screen to catch up with a prompt just sent.
+         * as over.
          */
         const val IDLE_POLLS_TO_DONE = 3
         const val PROMPT_MAX = 500
@@ -727,8 +652,7 @@ private const val LAST_SAID_MAX = 160
 
 /**
  * The part of an assistant reply worth showing as "what it last said": the first line of the last
- * paragraph, cut to [LAST_SAID_MAX] characters. A line that is only a code fence says nothing, so
- * it is passed over; when the last paragraph holds nothing else, the one before it is used.
+ * paragraph, cut to [LAST_SAID_MAX] characters.
  */
 internal fun lastSaidOf(message: String): String {
     val paragraphs = message.trim().split("\n\n").asReversed()
@@ -759,24 +683,7 @@ internal fun cleanTitle(raw: String?): String? {
     return if (t.lowercase() in setOf("claude", "claude code", "codex", "gemini", "gemini cli")) null else t
 }
 
-/**
- * One line saying in words what a tool call does, for the row of a working session.
- *
- * The row is read at a glance across many terminals, so it never shows a raw command, a long
- * path or a whole `tool_input`. Each kind of tool gets a short phrase instead:
- * - `Bash` uses the `description` Claude Code sends with the call, or `Running a command` when there
- *   is none (a program's name is not words a person reads);
- * - the file tools name the file only (`Editing card-check`, `Reading tick.py`, `Writing notes.md`);
- * - searches name their pattern (`Searching for "fun toolLine"`), web fetches the host
- *   (`Fetching example.com`);
- * - an MCP tool is `<server>: <tool name in words>` (`lunamux: list tasks`);
- * - an agent is `Running an agent: <its description>`, and the other tools Claude Code ships get
- *   a plain verb phrase (`Stopping a background task`, `Updating the task list`);
- * - a tool this code does not know is `Using <its name>`, never its arguments.
- *
- * A question put to the person through `AskUserQuestion` is kept as `Asks: <question>`, so the row
- * shows what is asked. Every line is cut at [TOOL_LINE_MAX], which is ample for a row.
- */
+/** One line saying in words what a tool call does, for the row of a working session. */
 internal fun toolLine(event: JsonObject): String? {
     val tool = event.str("tool_name") ?: return null
     val input = event["tool_input"] as? JsonObject
@@ -787,10 +694,6 @@ internal fun toolLine(event: JsonObject): String? {
 /**
  * The tool call as Claude Code made it: the tool name and its main argument (the command, file
  * path, pattern, URL or query), which is what a permission prompt asks the person to allow.
- *
- * Only that one argument is read; the rest of `tool_input` (which can hold a whole file) is never
- * kept. A question put to the person is `Asks: <question>`, as in [toolLine]. Cut at
- * [TOOL_LINE_MAX].
  */
 internal fun rawToolLine(event: JsonObject): String? {
     val tool = event.str("tool_name") ?: return null
@@ -810,12 +713,7 @@ internal fun askedQuestionOf(event: JsonObject): String? {
     return asked?.trim()?.takeIf { it.isNotEmpty() } ?: "A question is waiting"
 }
 
-/**
- * Whether a Notification hook is a prompt the person has to answer.
- *
- * A permission prompt and an elicitation dialog are; the idle reminder, the sign-in notice and any
- * other type are not. A version that sends no type is read by its text.
- */
+/** Whether a Notification hook is a prompt the person has to answer. */
 internal fun isPromptNotification(type: String?, message: String?): Boolean = when (type) {
     "permission_prompt", "elicitation_dialog" -> true
     null -> message != null && !message.contains("waiting for your input", ignoreCase = true) &&
@@ -872,12 +770,7 @@ private fun hostOf(url: String): String =
     url.substringAfter("://").substringBefore('/').substringBefore('?').substringBefore('#')
         .substringAfter('@').ifEmpty { url }
 
-/**
- * `<server>: <tool in words>` for an MCP tool named `mcp__<server>__<tool>`, else null.
- *
- * A connector's own `claude_ai_` prefix is dropped and underscores become spaces, so
- * `mcp__lunamux__list_tasks` reads `lunamux: list tasks`.
- */
+/** `<server>: <tool in words>` for an MCP tool named `mcp__<server>__<tool>`, else null. */
 private fun mcpWords(tool: String): String? {
     if (!tool.startsWith("mcp__")) return null
     val rest = tool.removePrefix("mcp__")
@@ -896,14 +789,7 @@ private const val ASK_TOOL = "AskUserQuestion"
 /** Marks a [toolLine] that holds a question put to the person rather than a command. */
 private const val ASK_PREFIX = "Asks: "
 
-/**
- * What a `needs_you` row should say for a prompt Claude Code raised through a Notification hook.
- *
- * A question put to the person is shown as the question itself; a permission prompt as `Allow <tool
- * line>?`, so the row names the command instead of the hook's generic text. Any other kind of
- * notification (a tool asking for input, for example) keeps the hook's own message, since it is not
- * a request to allow the tool.
- */
+/** What a `needs_you` row should say for a prompt Claude Code raised through a Notification hook. */
 internal fun pendingQuestionOf(pending: String?, message: String?, type: String? = null): String? = when {
     pending == null -> message
     pending.startsWith(ASK_PREFIX) -> pending.removePrefix(ASK_PREFIX)
@@ -914,11 +800,7 @@ internal fun pendingQuestionOf(pending: String?, message: String?, type: String?
 private fun JsonObject.str(key: String): String? =
     (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
 
-/**
- * Read repository, branch and worktree for [cwd] with `git`.
- *
- * Any failure (no git, not a repository, a timeout) yields an empty [GitInfo].
- */
+/** Read repository, branch and worktree for [cwd] with `git`. */
 fun readGitInfo(cwd: String?): GitInfo {
     if (cwd.isNullOrBlank() || !File(cwd).isDirectory) return GitInfo()
     val top = git(cwd, "rev-parse", "--show-toplevel") ?: return GitInfo()
@@ -937,11 +819,7 @@ fun readGitInfo(cwd: String?): GitInfo {
 private fun git(cwd: String, vararg args: String): String? =
     GitCatalog.runGit(Path.of(cwd), *args)?.trim()
 
-/**
- * Snapshot a live terminal session for the tracker.
- *
- * Reads [WindowState] to find the pane that shows the session.
- */
+/** Snapshot a live terminal session for the tracker. */
 internal fun livePaneSnapshot(id: String, states: Map<String, String?> = emptyMap()): PaneSnapshot? {
     val session = TerminalSessions.get(id) ?: return null
     return PaneSnapshot(

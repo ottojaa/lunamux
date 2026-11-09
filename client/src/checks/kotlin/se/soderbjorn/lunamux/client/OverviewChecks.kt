@@ -120,7 +120,7 @@ object OverviewChecks {
     /**
      * C4: ↵ on a task's row reaches or resumes its main conversation. Another conversation of the
      * task may stand in when it asks, or when the main one sits in a background tab that cannot be
-     * jumped to. A row that opens nothing is right only in that background case.
+     * jumped to.
      */
     private fun returnReachesMain(s: Snapshot): Check {
         val problems = mutableListOf<String>()

@@ -28,22 +28,7 @@ import se.soderbjorn.lunamux.persistence.SettingsRepository
 import java.io.File
 import kotlin.system.exitProcess
 
-/**
- * Seeds a scratch database and a scratch task folder for the agents overview.
- *
- * Called from [main] (run by the `seedAgentsOverview` Gradle task) and from the seeder's test.
- * Everything it writes has a fixed id (`seed-…` for sessions, `seed-task-…` for agent-made
- * tasks, `seed-*.json` for files), so running it again replaces its own records instead of
- * adding to them, and it leaves whatever else is in the database alone.
- *
- * Every session but two is stored as `ended` with an explicit end time, and the live cases come
- * from the task files. The two exceptions are left open on purpose, with a state that is days
- * old: a server ends the sessions still open when it starts, and that restart is the case they
- * reproduce. Sessions are written with source `hooks`, the one the overview lists under EARLIER.
- *
- * @see SettingsRepository.saveAgentSession
- * @see SettingsRepository.insertTask
- */
+/** Seeds a scratch database and a scratch task folder for the agents overview. */
 object AgentsOverviewSeed {
     private const val MINUTE = 60_000L
     private const val HOUR = 60 * MINUTE
@@ -53,18 +38,10 @@ object AgentsOverviewSeed {
      * The read+write MCP token the seed adds to the scratch database. It is a fixed, well-known
      * string, which is fine because the seed refuses every real installation's database; a server
      * that reads it is a scratch server on the loopback.
-     *
-     * Used by `scripts/seed-agents-overview-live.sh` as the `X-Termtastic-Auth` header.
      */
     const val MCP_TOKEN = "aov-seed-mcp-token"
 
-    /**
-     * What a run wrote, for the caller to print and for the test to check.
-     *
-     * @property sessions how many session records were written.
-     * @property tasks how many agent-made tasks were written.
-     * @property files how many task files were written.
-     */
+    /** What a run wrote, for the caller to print and for the test to check. */
     data class Summary(val sessions: Int, val tasks: Int, val files: Int)
 
     /** One seeded session: its fields and how long before the seed time it ended. */
@@ -81,17 +58,6 @@ object AgentsOverviewSeed {
     /**
      * One seeded session with the awkward fields spelled out, for the cases the overview has to
      * read correctly whatever the record holds.
-     *
-     * @property id the record id.
-     * @property title the stored title, null when nothing named the work.
-     * @property repo the repository folder name, null outside a repository.
-     * @property branch the branch, null when none was recorded or HEAD was detached.
-     * @property inHome true to give the session the user's home folder as its working folder.
-     * @property prompt what was first asked, possibly several lines; null for none.
-     * @property lastSaid the stored preview of the last reply, null for none.
-     * @property ago how long before the seed time it ended, or for an open record how long it has
-     *   been in [state].
-     * @property state `ended`, or the open state a restart will end.
      */
     private class Case(
         val id: String,
@@ -160,13 +126,7 @@ object AgentsOverviewSeed {
         Seeded(21, "seed-task-token", "Refresh docs", "Describe the refresh flow for the docs", "gateway", "docs/refresh", 10 * DAY),
     )
 
-    /**
-     * The sessions that name their work badly or carry markdown in a preview.
-     *
-     * Each one is a case the overview must handle: the home folder, a branch named after a run,
-     * a stored title that is a run id or a folder name, a preview in bold, a preview that is a
-     * bare code fence, and two sessions still open whose state is days old.
-     */
+    /** The sessions that name their work badly or carry markdown in a preview. */
     private val cases = listOf(
         Case("seed-home", null, null, null, inHome = true, prompt = "Why did the nightly backup email never arrive?", lastSaid = "The mail relay rejected it; I resent it.", ago = 3 * HOUR),
         Case("seed-branch-only", null, "lunamux-agent-overview", "aov-21-impl", prompt = "Add the task rows to the overview and keep their order stable", lastSaid = "Done; the rows keep their order.", ago = 5 * HOUR),
@@ -178,20 +138,7 @@ object AgentsOverviewSeed {
         Case("seed-open-working", "Rebuild the search index", "billing", "chore/search-index", prompt = "Rebuild the search index with the new analyser", lastSaid = null, ago = 5 * HOUR, state = "working"),
     )
 
-    /**
-     * Write the seed into [dbFile] and [tasksDir].
-     *
-     * Called by [main] and the seeder's test. The database is opened through
-     * [SettingsRepository], which creates or migrates its schema, so a path that does not exist
-     * yet becomes a valid database. The caller must make sure no server is running on it: a
-     * server reads its sessions and tasks once when it starts.
-     *
-     * @param dbFile the scratch database; refused when it is a real installation's.
-     * @param tasksDir the scratch task folder; refused when it is the folder Lunamux reads by default.
-     * @param now the time the ages are counted back from, epoch millis.
-     * @return how much was written.
-     * @throws IllegalArgumentException when a path is one a real installation uses.
-     */
+    /** Write the seed into [dbFile] and [tasksDir]. */
     fun seed(dbFile: File, tasksDir: File, now: Long = System.currentTimeMillis()): Summary {
         refuseRealPaths(dbFile, tasksDir)
         tasksDir.mkdirs()
@@ -265,17 +212,7 @@ object AgentsOverviewSeed {
     /** How many session records [seedReleaseNotes] writes: the task's own session and two background ones. */
     private const val NOTES_SESSIONS = 3
 
-    /**
-     * Write the "Release 4.2 notes" task: an own session, a status line and two background members.
-     *
-     * Called by [seed]. The own session is an ordinary ended record; the two members ran in
-     * background tabs, so they are marked as background and search never finds them. The task's
-     * own pane and status are stored the way the MCP tools store them.
-     *
-     * @param repo the scratch database.
-     * @param workdir an absolute folder for the records' working folder.
-     * @param now the time the ages are counted back from.
-     */
+    /** Write the "Release 4.2 notes" task: an own session, a status line and two background members. */
     private fun seedReleaseNotes(repo: SettingsRepository, workdir: String, now: Long) {
         fun record(n: Int, title: String, prompt: String, agoEnded: Long, pane: String?, background: Boolean) {
             val ended = now - agoEnded
@@ -320,21 +257,6 @@ object AgentsOverviewSeed {
      * hand and how far it is), links of every kind (a Slack thread, pull requests, a Claude
      * artifact, documents, a brief and the person's decisions, each carrying its own kind word and
      * time) and an activity list.
-     *
-     * The links and the activity are longer than the five lines the panel shows, so the seeded
-     * panel shows "+ N more". The activity list holds the awkward cases on purpose: one entry long
-     * enough to wrap to three lines at the panel's narrowest width, directly followed by a
-     * one-line entry (the gap between the two must stay a full line). It carries no test payload:
-     * the seed is what the design screenshots are taken from.
-     *
-     * Called by [seedReleaseNotes]. The blocks are stored the way the panel store stores them, so
-     * a server that starts on the seeded database shows them as soon as the task's main
-     * conversation is in a tab. (The static seed has no such conversation;
-     * `scripts/seed-agents-overview-live.sh` writes the same kinds of block over MCP for the live
-     * one.)
-     *
-     * @param repo the scratch database.
-     * @param now the time the ages are counted back from.
      */
     private fun seedReleaseNotesPanel(repo: SettingsRepository, now: Long) {
         val blocks = listOf(
@@ -397,18 +319,8 @@ object AgentsOverviewSeed {
 
     /**
      * Write the task files and the sessions that belong to them: tasks whose sessions need the
-     * person or work, tasks whose sessions are all done but have not ended, and tasks whose sessions
-     * have all ended.
-     *
-     * Called by [seed]. A task file only declares the task (id, title, repository and an `open`
-     * action); the sessions that make it up are records carrying the task's id. Each file is
-     * written under a dot-name and renamed into place, as a real writer would.
-     *
-     * @param repo the database the session records are saved to.
-     * @param tasksDir the folder to write the files into.
-     * @param workdir an absolute folder for the files' `open` actions and the records' folder.
-     * @param now the time the ages are counted back from.
-     * @return how many files were written.
+     * person or work, tasks whose sessions are all done but have not ended, and tasks whose
+     * sessions have all ended.
      */
     private fun writeTaskFiles(repo: SettingsRepository, tasksDir: File, workdir: String, now: Long): Int {
         class Member(val title: String, val state: String, val ago: Long, val line: String? = null)
@@ -500,16 +412,7 @@ object AgentsOverviewSeed {
         return 6
     }
 
-    /**
-     * Refuse a path a real installation uses.
-     *
-     * Called by [seed] before it touches anything: the production and dev databases live in
-     * `~/Library/Application Support/Termtastic`, and the real tasks are in `~/.lunamux/tasks`.
-     *
-     * @param dbFile the database path to check.
-     * @param tasksDir the task folder to check.
-     * @throws IllegalArgumentException when either is a real installation's.
-     */
+    /** Refuse a path a real installation uses. */
     private fun refuseRealPaths(dbFile: File, tasksDir: File) {
         val home = File(System.getProperty("user.home")).canonicalFile
         val db = dbFile.absoluteFile.canonicalFile
@@ -523,14 +426,7 @@ object AgentsOverviewSeed {
         }
     }
 
-    /**
-     * Command-line entry: `AgentsOverviewSeed <db file> <tasks folder>`.
-     *
-     * Run by the `seedAgentsOverview` Gradle task. Prints what it wrote, or the reason it
-     * refused, and exits non-zero on a refusal or wrong arguments.
-     *
-     * @param args the database file and the task folder.
-     */
+    /** Command-line entry: `AgentsOverviewSeed <db file> <tasks folder>`. */
     @JvmStatic
     fun main(args: Array<String>) {
         if (args.size != 2) {

@@ -15,35 +15,21 @@ import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
-/**
- * Writes `search_text` for ended Claude sessions and imports Claude Code history.
- *
- * Tests construct it over a temporary database and call [awaitIdle].
- */
+/** Writes `search_text` for ended Claude sessions and imports Claude Code history. */
 class AgentSearchIndexer(
     private val repo: SettingsRepository,
     private val projects: () -> File = ClaudeHistoryImport::projectsDir,
 ) {
     private val log = LoggerFactory.getLogger(AgentSearchIndexer::class.java)
 
-    /**
-     * Tells whether a Claude session without a known id is open in a folder.
-     *
-     * `main()` sets it once the tracker exists (the tracker needs this indexer first). Used by
-     * [importHistory] to hold back a transcript that may belong to a session still running.
-     */
+    /** Tells whether a Claude session without a known id is open in a folder. */
     @Volatile
     var runningIn: (String) -> Boolean = { false }
     private val worker: ExecutorService = Executors.newSingleThreadExecutor { r ->
         Thread(r, "agent-search-indexer").apply { isDaemon = true }
     }
 
-    /**
-     * Queue the transcript text of a record that just ended.
-     *
-     * Records of other agents and records without a transcript path are ignored: they match on
-     * their last screen.
-     */
+    /** Queue the transcript text of a record that just ended. */
     fun indexEnded(record: AgentSessionRecord) {
         val path = record.transcriptPath ?: return
         if (record.agent != "claude") return

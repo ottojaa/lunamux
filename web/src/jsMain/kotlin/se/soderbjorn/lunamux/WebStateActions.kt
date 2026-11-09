@@ -336,16 +336,9 @@ internal fun buildXtermTheme(): dynamic {
 }
 
 /**
- * Whether the toolkit's Tone setting (Active window: Tone) is in effect, read
- * from the `data-dt-focus` stamp the shell puts on `:root` for the active
- * appearance mode (the user's pick, then the app default, then Accent).
- *
- * Read from the DOM rather than from [appVm] so it can never disagree with
- * what the toolkit's CSS is actually drawing — the stamp is the resolved
- * value for whichever of dark and light mode is active. Called by
- * [buildPaneXtermTheme].
- *
- * @return `true` under Tone, `false` under Accent.
+ * Whether the toolkit's Tone setting (Active window: Tone) is in effect, read from the `data-dt-
+ * focus` stamp the shell puts on `:root` for the active appearance mode (the user's pick, then the
+ * app default, then Accent).
  */
 internal fun isToneFocusStyle(): Boolean {
     val root = kotlinx.browser.document.documentElement as? HTMLElement ?: return false
@@ -353,35 +346,8 @@ internal fun isToneFocusStyle(): Boolean {
 }
 
 /**
- * The xterm.js theme for a live terminal window in the 2D layout: exactly
- * [buildXtermTheme] under an Accent active window, and the same theme with a
- * fully transparent background under Tone.
- *
- * Under Tone the toolkit colours each window body by focus
- * (`--t-window-active` for the active window, `--t-window-idle` for the rest)
- * and Lunamux's pane roots follow it through `--dt-window-bg` (see
- * `styles.css`). xterm's DOM
- * renderer paints `theme.background` on its viewport, so the canvas has to
- * go transparent too for the terminal to dim and brighten with its window.
- * Doing it in CSS keeps focus changes free: no per-focus theme pushes, and
- * the colour follows the toolkit's own transitions.
- *
- * The transparent colour keeps the surface's RGB (`rgba(r, g, b, 0)`), so
- * everything xterm derives from the background still matches Classic:
- * inverse-video text (drawn in the opaque background colour), the opaque
- * selection blend and the `minimumContrastRatio` check. Lunamux uses xterm's
- * default DOM renderer, which honours an alpha background without
- * `allowTransparency` (that option only concerns the canvas/WebGL addons,
- * which Lunamux does not load).
- *
- * Called by [applyThemeToTerminals] and by the terminal factory in
- * `LayoutBuilder.kt`. Other xterm instances (3D world, overview thumbnails,
- * pane-type previews) keep [buildXtermTheme], since they do not sit on a
- * window body coloured by the Tone setting.
- *
- * @return a dynamic xterm.js `ITheme` object.
- * @see buildXtermTheme
- * @see isToneFocusStyle
+ * The xterm.js theme for a live terminal window in the 2D layout: exactly [buildXtermTheme] under
+ * an Accent active window, and the same theme with a fully transparent background under Tone.
  */
 internal fun buildPaneXtermTheme(): dynamic {
     val base = buildXtermTheme()

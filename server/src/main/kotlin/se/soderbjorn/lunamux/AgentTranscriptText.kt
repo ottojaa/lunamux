@@ -33,11 +33,7 @@ data class TranscriptInfo(
     val endedAt: Long?,
 )
 
-/**
- * Extracts searchable text and session facts from Claude Code transcripts.
- *
- * Stateless; safe to call from any thread.
- */
+/** Extracts searchable text and session facts from Claude Code transcripts. */
 object AgentTranscriptText {
     /** The most text kept per transcript; when there is more, the end is kept. */
     const val MAX_CHARS = 256 * 1024
@@ -49,13 +45,7 @@ object AgentTranscriptText {
     /** The conversation text of one transcript. */
     fun extract(path: String): String? = read(File(path))?.text
 
-    /**
-     * Read a whole transcript in one pass.
-     *
-     * Lines that are not JSON objects, side-chain lines (a sub-agent's own conversation) and meta
-     * lines are skipped. From `user` and `assistant` lines only plain text parts are kept: tool
-     * calls, tool results and thinking are dropped.
-     */
+    /** Read a whole transcript in one pass. */
     fun read(file: File, onlyEntrypoint: String? = null): TranscriptInfo? {
         if (!file.isFile) return null
         val text = StringBuilder()

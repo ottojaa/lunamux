@@ -117,22 +117,8 @@ internal fun refreshAndApplyActiveTheme() {
 }
 
 /**
- * Re-applies the user's style settings and navigation mode to the mounted
- * shell and re-themes the live terminals to match.
- *
- * Pushing the effective theme snapshot is how Lunamux asks the toolkit to
- * re-run its host-apply pass (`AppShellHandle.setThemeSnapshot` repaints the
- * palette and then re-reads every appearance setting from
- * `LunamuxThemeManagerHost`, restamping the style attributes for the active
- * appearance mode and redrawing the chrome when the navigation surfaces
- * change). It does not persist anything. The terminals are re-themed
- * afterwards, so they read the new stamps.
- *
- * Called by the settings collector in [start] when a style setting or the
- * navigation mode changes in [appVm] (see [styleSettingsKey]), whether picked
- * here or pushed by another client.
- *
- * @see buildPaneXtermTheme
+ * Re-applies the user's style settings and navigation mode to the mounted shell and re-themes the
+ * live terminals to match.
  */
 private fun reapplyShellAppearance() {
     appShellHandle?.setThemeSnapshot(effectiveThemeSnapshot())

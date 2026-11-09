@@ -165,23 +165,12 @@ private fun resolveTargetTab(args: JsonObject): String {
         ?: throw McpArgumentException("No tabs exist")
 }
 
-/**
- * The tab, among [tabOrder], that holds the most of a task's panes.
- *
- * A task normally lives in one tab; when its panes are spread over several, the tab with the most
- * of them wins and a tie goes to the tab that comes first in [tabOrder], so the answer does not
- * depend on the order the panes were found in.
- */
+/** The tab, among [tabOrder], that holds the most of a task's panes. */
 internal fun busiestTab(tabOfPane: List<String>, tabOrder: List<String>): String? =
     tabOfPane.filter { it in tabOrder }.groupingBy { it }.eachCount().entries
         .maxWithOrNull(compareBy({ it.value }, { -tabOrder.indexOf(it.key) }))?.key
 
-/**
- * The tab a task's sessions are already in, for a new window of the task to open next to them.
- *
- * One tab is one task, so the task's next window belongs beside the others and not in whichever tab
- * happens to be active.
- */
+/** The tab a task's sessions are already in, for a new window of the task to open next to them. */
 private fun taskTab(index: TaskIndex, taskId: String, worldId: String?): String? {
     val cfg = WindowState.config.value
     val tabs = cfg.worlds.filter { worldId == null || it.id == worldId }.flatMap { it.tabs }
@@ -197,16 +186,6 @@ private class NewWindow(val leaf: LeafNode, val tabId: String)
 /**
  * Open a new window for `create_window` and `run_command`, and put its session in the task when the
  * call names one.
- *
- * The tab is, in this order: an explicit `tabId`; the tab the task's sessions are already in, when
- * a `taskId` is given; else the active tab of the target world as [resolveTargetTab] picks it. A
- * `taskId` that names no task is refused before any pane is opened.
- *
- * With `background: true` the window is meant to run out of sight: without a `tabId` it opens a new
- * background tab (named by `title` when given) and is that tab's one window, never activated and
- * never taking focus, and the task's own tab is not used; with the `tabId` of a background tab it
- * joins that tab. A normal tab is refused for a background window, and a background tab for a
- * normal one, so a background window never ends up where the person is looking.
  */
 private fun openWindow(args: JsonObject, taskIndex: TaskIndex?): NewWindow {
     val taskId = args.optString("taskId")

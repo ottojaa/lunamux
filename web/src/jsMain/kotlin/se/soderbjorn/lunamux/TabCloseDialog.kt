@@ -27,25 +27,14 @@ import se.soderbjorn.lunamux.client.closeTabAsking
 import se.soderbjorn.lunamux.client.viewmodel.AgentFacts
 import kotlin.coroutines.resume
 
-/**
- * Close [tabId] for a person: asks first when an agent is working in it, then sends the close.
- *
- * Called by the tab strip's × and the 3D view's remove. Closing a pane, and an agent closing a
- * tab through MCP, do not come through here.
- *
- * @param tabId the tab to close.
- * @return true when the close was sent, false when the person kept the tab.
- * @see closeTabAsking
- */
+/** Close [tabId] for a person: asks first when an agent is working in it, then sends the close. */
 internal suspend fun closeTabFromPerson(tabId: String): Boolean =
     closeTabAsking(lunamuxClient.windowState, tabId, { windowSocket.send(it) }) { showTabCloseDialog(it) }
 
 /**
  * Makes a tab's × ask once. The toolkit's own "Are you sure you want to close …?" has no switch in
  * the version we use, and it appears for every tab, so a tab with a working agent would ask it and
- * then ours. For such a tab this listener runs first (capture phase), keeps the toolkit from seeing
- * the click, and shows our one dialog, which says what the agent is doing. Any other tab is left
- * to the toolkit.
+ * then ours.
  */
 @OptIn(DelicateCoroutinesApi::class)
 internal fun installTabCloseTakeover() {
@@ -61,15 +50,7 @@ internal fun installTabCloseTakeover() {
     }, true)
 }
 
-/**
- * Show the dialog for [check] and wait for the person's answer.
- *
- * Only one is shown at a time; asking again while one is open answers false at once so the first
- * stays the one in front. Cancel, esc and a click outside the card keep the tab.
- *
- * @param check what the dialog says.
- * @return true when the person chose to close the tab.
- */
+/** Show the dialog for [check] and wait for the person's answer. */
 internal suspend fun showTabCloseDialog(check: TabCloseCheck): Boolean {
     if (document.getElementById(DIALOG_ID) != null) return false
     return suspendCancellableCoroutine { cont ->
@@ -135,12 +116,7 @@ internal suspend fun showTabCloseDialog(check: TabCloseCheck): Boolean {
 /** The id of the dialog's backdrop, so a second question does not stack on the first. */
 private const val DIALOG_ID = "tab-close-dialog"
 
-/**
- * The state of a session in the dialog's list: `working`, `needs you` or `idle`.
- *
- * @param state the session's state as the server names it.
- * @return the words shown.
- */
+/** The state of a session in the dialog's list: `working`, `needs you` or `idle`. */
 private fun stateWords(state: String): String = when (state) {
     "needs_you" -> "needs you"
     else -> state

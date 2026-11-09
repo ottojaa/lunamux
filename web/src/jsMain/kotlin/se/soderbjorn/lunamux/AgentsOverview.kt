@@ -269,8 +269,7 @@ private fun renderList(state: AgentsOverviewBackingViewModel.State) {
 
 /**
  * Shows the selected row's status in full under it when its detail cell cut the text short (an
- * ellipsis, or hidden in a narrow panel), and takes it away when the cell fits again. Only the
- * browser knows the width, so this runs after drawing and on resize; it changes the DOM and nothing else.
+ * ellipsis, or hidden in a narrow panel), and takes it away when the cell fits again.
  */
 private fun fitSelectedStatus() {
     val list = listElement ?: return
@@ -362,7 +361,7 @@ private fun buildState(row: Row): HTMLElement {
 /**
  * What the selected row shows under its columns: the question before a resume or a start, then the
  * chips (folder, and the tab when it says something), then any extra text (where a search matched,
- * a failed resume in the error colour). Null when there is nothing to show.
+ * a failed resume in the error colour).
  */
 private fun buildFocus(row: Row, ask: Ask?): HTMLElement? {
     val focus = div("ao-focus")

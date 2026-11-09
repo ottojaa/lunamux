@@ -49,8 +49,6 @@ private fun JsonObject.stringList(name: String): List<String> {
 /**
  * Register `create_task`, `add_to_task`, `remove_from_task`, `rename_task`, `set_task_lead`,
  * `set_task_status` and `list_tasks`.
- *
- * The tools that change tasks need a `read+write` token; `list_tasks` needs only `read`.
  */
 fun registerMcpTaskTools(taskIndex: TaskIndex) {
     val sessionIdsSchema = schemaArray(

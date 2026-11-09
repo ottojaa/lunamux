@@ -57,12 +57,7 @@ object TaskPanelLimits {
     /** Whether [s] holds a control character (anything below space, DEL, or a C1 control). */
     fun hasControlChars(s: String): Boolean = s.any { it < ' ' || it == '\u007f' || it in '\u0080'..'\u009f' }
 
-    /**
-     * Check one block and return the form that is stored.
-     *
-     * Timelines longer than [TIMELINE_MAX] are cut to their newest entries (by time, keeping the
-     * order they came in); every other broken rule throws.
-     */
+    /** Check one block and return the form that is stored. */
     fun check(block: TaskPanelBlock): TaskPanelBlock {
         val id = block.id
         if (id.isEmpty() || id.length > ID_MAX || !idPattern.matches(id)) {
@@ -134,14 +129,7 @@ object TaskPanelLimits {
     }
 }
 
-/**
- * Holds every task's panel blocks and keeps them across restarts.
- *
- * Created once at boot in `Application.module`. The MCP panel tools call [setPanel], [upsert] and
- * [remove]; the window routes collect [state] to push [WindowEnvelope.TaskPanel] frames. Reads are
- * lock-free through [state]; writes serialise on one lock and are stored before the new state is
- * published, so a window never sees a block that a restart would lose.
- */
+/** Holds every task's panel blocks and keeps them across restarts. */
 class TaskPanelStore(
     private val repo: SettingsRepository,
     private val taskIndex: TaskIndex,
@@ -182,11 +170,7 @@ class TaskPanelStore(
         return blocksOf(taskId)
     }
 
-    /**
-     * Replace all of a task's blocks with [blocks], in the order given.
-     *
-     * Nothing is changed when any block breaks a rule.
-     */
+    /** Replace all of a task's blocks with [blocks], in the order given. */
     fun setPanel(taskId: String, blocks: List<TaskPanelBlock>, writer: String?): List<TaskPanelBlock> {
         taskIndex.requireTask(taskId)
         if (blocks.size > TaskPanelLimits.MAX_BLOCKS) {
@@ -203,12 +187,7 @@ class TaskPanelStore(
         }
     }
 
-    /**
-     * Replace the block with [block]'s id where it stands, or add it at the end.
-     *
-     * Replacing never counts against the block limit; adding a new block to a full panel is
-     * refused.
-     */
+    /** Replace the block with [block]'s id where it stands, or add it at the end. */
     fun upsert(taskId: String, block: TaskPanelBlock, writer: String?): TaskPanelBlock {
         taskIndex.requireTask(taskId)
         synchronized(lock) {

@@ -102,12 +102,6 @@ val WindowConfig.effectiveTabs: List<TabConfig>
 /**
  * The tabs a person is shown and can switch to: [effectiveTabs] without the background tabs an
  * agent opened to work out of sight, except one shown while its agent waits.
- *
- * Code that only looks a pane or tab up by id must keep reading [effectiveTabs], so a background
- * pane is still found.
- *
- * Android's tab screens read the same tab list; they should read this one too once they draw
- * background work.
  */
 val WindowConfig.listedTabs: List<TabConfig>
     get() = effectiveTabs.filter { it.isListed }
@@ -115,9 +109,6 @@ val WindowConfig.listedTabs: List<TabConfig>
 /**
  * Whether a person can see and switch to this tab: it is not a background tab, or it is one that is
  * shown while its agent waits for the person.
- *
- * This is separate from [TabConfig.isHidden], which is the person's own choice and still shows the
- * tab in the tab bar's overflow menu.
  */
 val TabConfig.isListed: Boolean
     get() = !isBackground || shownWhileWaiting
@@ -245,21 +236,13 @@ data class TabConfig(
     /**
      * Whether an agent opened this tab to work out of sight. A background tab exists with all its
      * panes and sessions, but it appears in no tab strip, sidebar, overflow menu, 3D overview or
-     * keyboard tab cycle, and it is never the active tab. Its sessions still count as members of
-     * their task and can still ask for the person. Only an agent sets it (through the MCP tools),
-     * and it stays set for the tab's life: the person looks at a background tab only while its
-     * agent waits ([shownWhileWaiting]). Defaults to `false` so persisted configs round-trip
-     * unchanged.
-     *
-     * Orthogonal to [isHidden], which is the person's own choice and keeps the tab reachable.
+     * keyboard tab cycle, and it is never the active tab.
      */
     val isBackground: Boolean = false,
     /**
      * Whether this background tab is shown for now because its agent waits for the person. It is
      * listed, can be active and wears the header tag "background agent · hides again once it works
-     * on". The server sets it for [WindowCommand.ShowWaitingAgent] and clears it, bringing the
-     * previously active tab back, when the agent stops waiting. A restart clears it. Always `false`
-     * on a tab that is not a background tab.
+     * on".
      */
     val shownWhileWaiting: Boolean = false,
 )

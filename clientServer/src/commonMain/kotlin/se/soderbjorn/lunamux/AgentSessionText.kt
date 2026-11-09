@@ -10,12 +10,7 @@
  */
 package se.soderbjorn.lunamux
 
-/**
- * Pure text helpers for agent session rows: no state, no clock, no I/O.
- *
- * Every function takes the text as it was stored (possibly markdown, possibly a path) and returns
- * what the overview should show, so the same input gives the same row on every platform.
- */
+/** Pure text helpers for agent session rows: no state, no clock, no I/O. */
 object AgentSessionText {
     /** The most words a title taken from a prompt keeps. */
     private const val TITLE_WORDS = 8
@@ -46,13 +41,7 @@ object AgentSessionText {
      */
     fun isFenceLine(line: String): Boolean = FENCE.matches(line)
 
-    /**
-     * Turn one line of markdown into the text it reads as.
-     *
-     * Removes a heading, quote or list marker at the start, then bold, italic, strike-through,
-     * inline code and the markup of links and images (keeping their text), and collapses runs of
-     * white space. Underscores and stars inside a word, such as `snake_case`, are left alone.
-     */
+    /** Turn one line of markdown into the text it reads as. */
     fun plain(line: String): String {
         var t = line.replace(HEADING, "").replace(QUOTE, "").replace(LIST_MARKER, "")
         t = t.replace(IMAGE) { it.groupValues[1] }.replace(LINK) { it.groupValues[1] }
@@ -64,24 +53,14 @@ object AgentSessionText {
         return t.replace(SPACES, " ").trim()
     }
 
-    /**
-     * The first line of [text] worth showing as a preview, as plain text.
-     *
-     * Blank lines, lines that are only a code fence and rules are passed over, so a reply whose
-     * stored first line is a bare fence still gives the line after it.
-     */
+    /** The first line of [text] worth showing as a preview, as plain text. */
     fun previewOf(text: String?): String? =
         text?.lineSequence()
             ?.filterNot { isFenceLine(it) || RULE.matches(it) }
             ?.map(::plain)
             ?.firstOrNull { it.isNotEmpty() }
 
-    /**
-     * A title made from the first words of a prompt.
-     *
-     * Takes the first line with content, strips markdown, drops the slash command or path words it
-     * starts with, and keeps the first few words, ending with an ellipsis when it cut something off.
-     */
+    /** A title made from the first words of a prompt. */
     fun titleFromPrompt(prompt: String?): String? {
         val line = previewOf(prompt) ?: return null
         val words = line.split(' ').filter { it.isNotEmpty() }
@@ -98,14 +77,7 @@ object AgentSessionText {
         return if (cut) "$kept…" else kept
     }
 
-    /**
-     * Whether a stored title says what the work is, as opposed to where it ran.
-     *
-     * A title that is the home folder (`~`), a detached `HEAD`, a path, the session's own branch,
-     * repository or folder name, or a run id (`<ticket>-<number>-impl` or `-plan`, as in
-     * `abc-21-impl`) is what a terminal or a git checkout calls itself; none of them tells the
-     * person what the session was for.
-     */
+    /** Whether a stored title says what the work is, as opposed to where it ran. */
     fun isMeaningfulTitle(title: String?, branch: String?, repo: String?, folder: String?): Boolean {
         val t = title?.trim().orEmpty()
         if (t.isEmpty()) return false

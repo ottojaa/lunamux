@@ -20,17 +20,9 @@ import java.io.File
 import java.io.RandomAccessFile
 import java.time.Instant
 
-/**
- * Looks at the last conversation line of a transcript file.
- *
- * Stateless; safe to call from any thread.
- */
+/** Looks at the last conversation line of a transcript file. */
 object TranscriptTail {
-    /**
-     * How many bytes from the end of the file are looked at. The lines after the last conversation
-     * line (cost and snapshot bookkeeping) are small, and an interrupt marker is a line of its own,
-     * so a window this size holds it however large the tool output before it was.
-     */
+    /** How many bytes from the end of the file are looked at. */
     private const val WINDOW_BYTES = 128 * 1024L
 
     /** The start of the text Claude Code writes for an interrupted turn. */
@@ -38,14 +30,7 @@ object TranscriptTail {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    /**
-     * When the person interrupted the turn, if that is the last thing the transcript says.
-     *
-     * Only the last `user` or `assistant` line counts, so a marker that a later prompt or reply has
-     * followed is history and returns null. A tail whose last conversation line cannot be read (it
-     * is larger than the window, or half written) returns null too: no evidence is never taken as
-     * an interrupt.
-     */
+    /** When the person interrupted the turn, if that is the last thing the transcript says. */
     fun interruptedAt(path: String): Long? {
         val file = File(path)
         if (!file.isFile) return null
