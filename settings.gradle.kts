@@ -36,20 +36,23 @@ dependencyResolutionManagement {
     }
 }
 
-// Auto-detect a sibling lunula checkout. When present, switch to a
-// Gradle composite build so toolkit edits flow into Lunamux with no extra
-// steps. Pass -Plunula.toolkit.useArtifacts=true to force resolution from
-// Maven Central even when sources are present (verifies published
-// artifacts). Pass -Plunula.toolkit.path=… to point at an explicit checkout.
+// Lunula toolkit source. Pass -Plunula.toolkit.useArtifacts=true to resolve the published artifacts
+// from Maven Central. Otherwise a sibling checkout (../../lunula/develop, then ../../lunula/main) is
+// used as a composite build when it exists, and the published artifacts when it does not.
+// -Plunula.toolkit.path=<dir> names a checkout explicitly; a path that holds no checkout fails the
+// build here, because quietly falling back to the published artifacts would build against a
+// different toolkit than the one asked for.
 val toolkitOverride: String? = settings.providers.gradleProperty("lunula.toolkit.path").orNull
 val useArtifacts: Boolean = settings.providers.gradleProperty("lunula.toolkit.useArtifacts").orNull == "true"
-val toolkitCandidates: List<String> = listOfNotNull(
-    toolkitOverride,
-    "../../lunula/develop",
-    "../../lunula/main",
-)
-val toolkitPath: String? = if (useArtifacts) null else toolkitCandidates
-    .firstOrNull { File(rootDir, it).resolve("settings.gradle.kts").exists() }
+fun isToolkit(path: String) = File(rootDir, path).resolve("settings.gradle.kts").exists()
+if (toolkitOverride != null && !useArtifacts && !isToolkit(toolkitOverride)) {
+    throw GradleException(
+        "lunula.toolkit.path=$toolkitOverride (relative to $rootDir) holds no Lunula checkout. " +
+            "Fix the path, drop the property, or pass -Plunula.toolkit.useArtifacts=true."
+    )
+}
+val toolkitPath: String? = if (useArtifacts) null else
+    listOfNotNull(toolkitOverride, "../../lunula/develop", "../../lunula/main").firstOrNull(::isToolkit)
 if (toolkitPath != null) {
     includeBuild(toolkitPath) {
         dependencySubstitution {
