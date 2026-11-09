@@ -297,9 +297,8 @@ object TerminalSessions {
     private val lastCli = ConcurrentHashMap<String, String>()
 
     /**
-     * Called by [destroy] just before a session shuts down, with the session id and its final
-     * screen text. `main()` points this at [AgentSessionTracker.onSessionDestroyed] so a closed
-     * pane's agent record is ended while the screen can still be read.
+     * `main()` points this at [AgentSessionTracker.onSessionDestroyed] so a closed pane's agent
+     * record is ended while the screen can still be read.
      */
     @Volatile
     var onDestroy: ((sessionId: String, screen: String?) -> Unit)? = null
@@ -307,11 +306,8 @@ object TerminalSessions {
     /**
      * Which agent CLI the screen detector last saw in a session.
      *
-     * Read by [livePaneSnapshot] for the agent session tracker. Updated by [resolveStates], so it
-     * follows the same poll and the same grace period as the state itself.
-     *
-     * @param sessionId a terminal session id.
-     * @return `claude`, `codex` or `gemini`, or null if none has been seen.
+     * Updated by [resolveStates], so it follows the same poll and the same grace period as the
+     * state itself.
      */
     fun agentOf(sessionId: String): String? = lastCli[sessionId]
     private const val STATE_GRACE_POLLS = 3  // 3 polls × 3 s = 9 s grace

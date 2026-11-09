@@ -53,12 +53,10 @@ object AppPaths {
     /**
      * The folder the agents overview reads task files from.
      *
-     * Called by [Application.main] for the task file watcher. With no override that is
-     * `~/.lunamux/tasks`. `-Dlunamux.tasksDir=<dir>` names the folder to read instead (dev servers
-     * and tests set it to a scratch folder). The folder is deliberately not under [dataDir]: other
-     * tools write there, so it must be easy to find and independent of the database location.
-     *
-     * @return the folder; it may not exist.
+     * With no override that is `~/.lunamux/tasks`. `-Dlunamux.tasksDir=<dir>` names the folder to
+     * read instead (dev servers and tests set it to a scratch folder). The folder is deliberately
+     * not under [dataDir]: other tools write there, so it must be easy to find and independent of
+     * the database location.
      */
     fun taskDir(): File {
         val tasks = System.getProperty("lunamux.tasksDir")?.takeIf { it.isNotBlank() }

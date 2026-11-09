@@ -68,15 +68,8 @@ object WindowState {
     private fun newNodeId(): String = mintId("n", nodeIdCounter)
 
     /**
-     * The number in a pane (layout leaf) id: `n7-ab12` and the older `n7` both give 7. Null for an id
-     * of any other shape.
-     *
-     * Called by [rehydrate] for every leaf id it meets; the counter
-     * that [newNodeId] counts from must start above every number returned here.
-     *
-     * @param id a layout leaf id.
-     * @return the counter value the id was minted from, or null.
-     * @see newNodeId
+     * The number in a pane (layout leaf) id: `n7-ab12` and the older `n7` both give 7. Null for an
+     * id of any other shape.
      */
     internal fun nodeIdNumber(id: String): Long? = id.removePrefix("n").substringBefore('-').toLongOrNull()
 
@@ -133,8 +126,6 @@ object WindowState {
     /**
      * [cfg] with every [TabConfig.shownWhileWaiting] flag cleared, and a world whose active tab
      * that made unlisted pointing at its first listed tab instead.
-     *
-     * Called by [initialize] on the persisted config.
      */
     private fun withoutShownWaitingTabs(cfg: WindowConfig): WindowConfig {
         if (cfg.worlds.none { w -> w.tabs.any { it.shownWhileWaiting } }) return cfg
@@ -562,14 +553,14 @@ object WindowState {
 
     /**
      * Where the person was before a waiting background tab was shown: the tab that was active in
-     * the shown tab's own world, and the world they were in (which differs when the shown tab is
-     * in another world).
+     * the shown tab's own world, and the world they were in (which differs when the shown tab is in
+     * another world).
      */
     private data class WaitingReturn(val tabId: String?, val worldId: String?)
 
     /**
-     * What to bring back when a shown waiting tab hides again, by the shown tab's id.
-     * Memory only: a restart forgets it, and clears the shown flag with it (see [initialize]).
+     * What to bring back when a shown waiting tab hides again, by the shown tab's id. Memory only:
+     * a restart forgets it, and clears the shown flag with it (see [initialize]).
      */
     private val returnTabOf = HashMap<String, WaitingReturn>()
 
@@ -577,12 +568,8 @@ object WindowState {
      * Show the background tab a waiting agent runs in, make it the active tab of its world and
      * switch to that world when it is another one.
      *
-     * Called by the `ShowWaitingAgent` window command. The tab and the world the person was on
-     * are remembered so [hideSettledWaitingTabs] can bring both back.
-     *
-     * @param leafId the layout leaf (pane) of the waiting agent.
-     * @return true when a tab holds that pane.
-     * @see TabConfig.shownWhileWaiting
+     * The tab and the world the person was on are remembered so [hideSettledWaitingTabs] can bring
+     * both back.
      */
     fun showWaitingAgent(leafId: String): Boolean = synchronized(this) {
         val cfg = _config.value
@@ -607,26 +594,18 @@ object WindowState {
     /**
      * [hideSettledWaitingTabs] for the agent records as the tracker publishes them: the agents
      * whose state is `needs_you` are the ones that still wait.
-     *
-     * Called by the server's start-up code whenever the tracker's rows change, and by the tests
-     * that follow a refused prompt from its record to its tab.
-     *
-     * @param summaries every agent row the tracker published.
-     * @see hideSettledWaitingTabs
      */
     fun hideSettledWaitingTabsFor(summaries: List<AgentSessionSummary>) =
         hideSettledWaitingTabs(summaries.filter { it.state == "needs_you" }.mapNotNull { it.leafId }.toSet())
 
     /**
      * Hide every background tab that is shown while its agent waits and no longer has a waiting
-     * agent in it, and bring back the tab and the world the person was on, if they are still on
-     * the shown tab.
+     * agent in it, and bring back the tab and the world the person was on, if they are still on the
+     * shown tab.
      *
-     * Called whenever the agent records change. An agent that was answered, whether Yes or No, or
-     * that ended leaves the waiting state, so its tab goes away again. A person who has moved on
-     * to another tab or world in the meantime is left where they are.
-     *
-     * @param waitingLeafIds the layout leaves of every agent that waits for the person now.
+     * An agent that was answered, whether Yes or No, or that ended leaves the waiting state, so its
+     * tab goes away again. A person who has moved on to another tab or world in the meantime is
+     * left where they are.
      */
     fun hideSettledWaitingTabs(waitingLeafIds: Set<String>) = synchronized(this) {
         var cfg = _config.value
@@ -652,24 +631,12 @@ object WindowState {
     private fun activeWorldIdOf(cfg: WindowConfig): String? =
         cfg.activeWorldId?.takeIf { id -> cfg.worlds.any { it.id == id } } ?: cfg.worlds.firstOrNull()?.id
 
-    /**
-     * Whether [tabId] is a background tab.
-     *
-     * @param tabId the tab to look up.
-     * @return true when the tab exists and is a background tab.
-     */
+    /** Whether [tabId] is a background tab. */
     fun isBackgroundTab(tabId: String): Boolean = synchronized(this) {
         allTabs(_config.value).any { it.id == tabId && it.isBackground }
     }
 
-    /**
-     * Whether the pane showing terminal session [sessionId] sits in a background tab.
-     *
-     * Called by [livePaneSnapshot] so a new agent record knows whether it runs out of sight.
-     *
-     * @param sessionId a terminal session id.
-     * @return true for a pane in a background tab; false for any other pane or an unknown session.
-     */
+    /** Whether the pane showing terminal session [sessionId] sits in a background tab. */
     fun isBackgroundSession(sessionId: String): Boolean = synchronized(this) {
         allTabs(_config.value).any { tab -> tab.isBackground && tab.panes.any { it.leaf.sessionId == sessionId } }
     }
@@ -869,40 +836,19 @@ object WindowState {
         null
     }
 
-    /**
-     * The id of the pane showing terminal session [sessionId].
-     *
-     * Called by [livePaneSnapshot] so agent records can name their pane.
-     *
-     * @param sessionId a live terminal session id.
-     * @return the leaf id, or null if no pane shows the session.
-     */
+    /** The id of the pane showing terminal session [sessionId]. */
     fun leafIdOfSession(sessionId: String): String? = synchronized(this) {
         findLeafBySession(_config.value, sessionId)?.id
     }
 
-    /**
-     * The name the user gave (F2) the pane showing terminal session [sessionId].
-     *
-     * Called by [livePaneSnapshot] so the agent record can keep the name after the pane is gone.
-     *
-     * @param sessionId a live terminal session id.
-     * @return the custom name, or null if the pane has none or no pane shows the session.
-     */
+    /** The name the user gave (F2) the pane showing terminal session [sessionId]. */
     fun customNameOfSession(sessionId: String): String? = synchronized(this) {
         findLeafBySession(_config.value, sessionId)?.customName
     }
 
     /**
-     * The terminal session id of the pane with layout leaf id [leafId], the reverse of [leafIdOfSession].
-     *
-     * Called by `TaskIndex` to tell an agent which session id names a task's own pane now, because
-     * the task remembers the pane by its leaf id and the session id changes with every restart.
-     *
-     * @param leafId a layout leaf id.
-     * @return the pane's terminal session id, or null when no pane has that id or the pane has no
-     *   terminal session (a file browser, say).
-     * @see leafIdOfSession
+     * The terminal session id of the pane with layout leaf id [leafId], the reverse of
+     * [leafIdOfSession].
      */
     fun sessionIdOfLeaf(leafId: String): String? = synchronized(this) {
         allTabs(_config.value).firstNotNullOfOrNull { tab -> tab.panes.firstOrNull { it.leaf.id == leafId } }
