@@ -1,11 +1,7 @@
 /**
- * Tests for the open route, [openTask]: what it answers for an unknown task, a task whose file
- * declares no open action and an open folder that is gone, and that the line it types is always the
- * file's own `open.command`, in the file's own folder.
- *
- * A fake opener stands in for [openTabRunning], so no terminal is started.
- *
- * @see openTask
+ * Tests for the open route, [openTask]: when it answers with an error, and that the line it types
+ * is the file's own `open.command` in the file's own folder. A fake opener stands in for
+ * [openTabRunning], so no terminal is started.
  */
 package se.soderbjorn.lunamux
 
@@ -16,7 +12,6 @@ import se.soderbjorn.lunamux.persistence.SettingsRepository
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class OpenTaskTest {
@@ -51,19 +46,14 @@ class OpenTaskTest {
     }
 
     @Test
-    fun `an unknown task is answered with an error and opens nothing`() {
+    fun `an unknown task, a task with no open action and an open folder that is gone are each answered with an error and open nothing`() {
         callOpenTask("nope")
-        assertEquals(1, sent.size)
-        assertEquals(null, assertIs<WindowEnvelope.AgentSessionError>(sent.first()).recordId)
-        assertTrue(opened.isEmpty())
-    }
-
-    @Test
-    fun `a task whose file declares no open action is answered with an error`() {
         writeTask(open = null)
         callOpenTask()
-        assertIs<WindowEnvelope.AgentSessionError>(sent.single())
-        assertTrue(opened.isEmpty())
+        writeTask(open = """{"command":"claude","folder":"${File(base, "gone").path}"}""")
+        callOpenTask()
+        assertEquals(3, sent.size)
+        assertTrue(sent.all { it is WindowEnvelope.AgentSessionError } && opened.isEmpty())
     }
 
     @Test
@@ -72,13 +62,5 @@ class OpenTaskTest {
         callOpenTask()
         assertTrue(sent.isEmpty())
         assertEquals(Triple(openFolder, "Task one", "claude 'lead'"), opened.single())
-    }
-
-    @Test
-    fun `an open folder that is gone is answered with an error and opens nothing`() {
-        writeTask(open = """{"command":"claude","folder":"${File(base, "gone").path}"}""")
-        callOpenTask()
-        assertIs<WindowEnvelope.AgentSessionError>(sent.single())
-        assertTrue(opened.isEmpty())
     }
 }

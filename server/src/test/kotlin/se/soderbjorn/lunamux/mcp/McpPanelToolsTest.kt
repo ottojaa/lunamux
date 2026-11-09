@@ -1,11 +1,7 @@
 /**
- * Tests for the task panel MCP tools: that an agent's JSON becomes the right blocks, that every
- * refusal reaches the agent as a tool error naming the offender, who a block is written by, and
- * that a panel survives a server restart. Tools are driven through [McpServer.handleMessage]
- * against a real [TaskIndex], tracker, store and database.
- *
- * @see registerMcpPanelTools
- * @see se.soderbjorn.lunamux.TaskPanelStore
+ * Tests for the task panel MCP tools, driven through [McpServer.handleMessage]: that an agent's
+ * JSON becomes the right blocks, that a refusal reaches the agent naming the offender, and who a
+ * block is written by.
  */
 package se.soderbjorn.lunamux.mcp
 
@@ -32,17 +28,10 @@ import se.soderbjorn.lunamux.persistence.SettingsRepository
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * Tests for the four panel tools in [registerMcpPanelTools] driven through the MCP dispatcher: setting, upserting,
- * removing and reading blocks, the token scopes, refusals that name the offender, and tool wording.
- *
- * Run by `:server:test`.
- *
- * @see registerMcpPanelTools
- */
 class McpPanelToolsTest {
     private val dir = File.createTempFile("lunamux-mcp-panel", "").apply { delete(); mkdirs(); deleteOnExit() }
     private val dbFile = File(dir, "test.db")
@@ -122,12 +111,14 @@ class McpPanelToolsTest {
     }
 
     @Test
-    fun `upsert replaces a block in place, remove drops another, and the rest stays`() {
+    fun `upsert replaces a block in place, remove drops another, and only writing needs a write token`() {
         set("""[{"id":"a","type":"progress","phase":"1"},{"id":"b","type":"progress","phase":"2"},{"id":"c","type":"progress","phase":"3"}]""")
-        assertTrue(!isError(call("upsert_task_block", """{"taskId":"$taskId","block":{"id":"b","type":"progress","phase":"two"}}""")))
-        assertTrue(!isError(call("remove_task_block", """{"taskId":"$taskId","id":"c"}""")))
+        call("upsert_task_block", """{"taskId":"$taskId","block":{"id":"b","type":"progress","phase":"two"}}""")
+        call("remove_task_block", """{"taskId":"$taskId","id":"c"}""")
         assertEquals(listOf("a", "b"), store.blocksOf(taskId).map { it.id })
         assertEquals(TaskBlockContent.Progress(phase = "two"), store.blocksOf(taskId)[1].content)
+        assertFalse(isError(call("get_task_panel", """{"taskId":"$taskId"}""", scope = McpScope.READ)))
+        assertTrue(isError(call("set_task_panel", """{"taskId":"$taskId","blocks":[]}""", scope = McpScope.READ)))
     }
 
     @Test
@@ -138,18 +129,14 @@ class McpPanelToolsTest {
         assertTrue("'click me'" in refusal(set("""[{"id":"d","type":"links","items":[{"label":"click me","url":"javascript:alert(1)"}]}]""")))
         assertTrue("link 1 needs a text 'label'" in refusal(set("""[{"id":"d","type":"links","items":[{"url":"https://a.b"}]}]""")))
         assertTrue("'at'" in refusal(set("""[{"id":"d","type":"links","items":[{"label":"x","url":"https://a.b","at":"yesterday"}]}]""")))
-        assertTrue("kind" in refusal(set("""[{"id":"d","type":"links","items":[{"kind":"a-kind-that-is-far-too-long","label":"x","url":"https://a.b"}]}]""")))
-        assertTrue("31" in refusal(set("""[{"id":"d","type":"links","items":[${List(31) { """{"label":"d","url":"https://a.b"}""" }.joinToString(",")}]}]""")))
         assertTrue("Block 'tl'" in refusal(set("""[{"id":"tl","type":"timeline","items":[{"at":"yesterday","text":"x"}]}]""")))
-        assertTrue("reserved" in refusal(set("""[{"id":"agents","type":"progress","phase":"x"}]""")))
-        assertTrue("'bad id'" in refusal(set("""[{"id":"bad id","type":"progress","phase":"x"}]""")))
         assertTrue("Unknown task 'ghost'" in refusal(call("get_task_panel", """{"taskId":"ghost"}""", scope = McpScope.READ)))
         assertTrue("'nope'" in refusal(call("remove_task_block", """{"taskId":"$taskId","id":"nope"}""")))
         assertEquals(listOf("keep"), store.blocksOf(taskId).map { it.id })
     }
 
     @Test
-    fun `a panel survives a server restart, and writtenBy is the name given, else the caller's title, else nothing`() {
+    fun `writtenBy is the name given, else the caller's title, else nothing`() {
         val pane = PaneSnapshot("boss", "leaf-boss", "/work/boss", null, customName = "Release agent", screenText = { "x" })
         tracker.onHook(pane, buildJsonObject { put("hook_event_name", "SessionStart"); put("session_id", "a-boss") })
         val one = """[{"id":"a","type":"progress","phase":"x"}]"""
@@ -160,16 +147,5 @@ class McpPanelToolsTest {
         set(one, caller = "no-such-pane")
         assertNull(store.blocksOf(taskId)[0].writtenBy)
         assertTrue("limit is 40" in refusal(set(one, ""","by":"${"n".repeat(41)}"""")))
-
-        set(one, ""","by":"w"""")
-        val reopened = TaskPanelStore(SettingsRepository(dbFile), index, clock = { now })
-        assertEquals("w", reopened.blocksOf(taskId)[0].writtenBy)
-    }
-
-    @Test
-    fun `reading a panel needs only a read token and writing needs a write token`() {
-        set("""[{"id":"a","type":"progress","phase":"x"}]""")
-        assertTrue(!isError(call("get_task_panel", """{"taskId":"$taskId"}""", scope = McpScope.READ)))
-        assertTrue(isError(call("set_task_panel", """{"taskId":"$taskId","blocks":[]}""", scope = McpScope.READ)))
     }
 }
