@@ -1,10 +1,10 @@
 /**
- * Server-side record of every agentic-CLI session (Claude Code, Codex,
- * Gemini) that runs in a Lunamux pane.
+ * Server-side record of every agentic-CLI session (Claude Code, Codex, Gemini) that runs in a
+ * Lunamux pane.
  *
- * This file contains [AgentSessionTracker], which owns the `agent_sessions`
- * table, plus the small value types it is fed with ([PaneSnapshot],
- * [GitInfo]) and the helpers that read git metadata and the live panes.
+ * This file contains [AgentSessionTracker], which owns the `agent_sessions` table, plus the small
+ * value types it is fed with ([PaneSnapshot], [GitInfo]) and the helpers that read git metadata and
+ * the live panes.
  *
  * Two sources feed the tracker:
  *  - the 3 s screen poll ([AgentSessionTracker.onPoll]) for every agent, from
@@ -13,9 +13,8 @@
  *    `/api/agent-events`, which are exact and win over the screen for the
  *    records they feed.
  *
- * The tracker publishes its current rows as [AgentSessionTracker.summaries];
- * `WindowRoutes` pushes that to every client as
- * [WindowEnvelope.AgentSessions].
+ * The tracker publishes its current rows as [AgentSessionTracker.summaries]; `WindowRoutes` pushes
+ * that to every client as [WindowEnvelope.AgentSessions].
  */
 package se.soderbjorn.lunamux
 
@@ -36,13 +35,7 @@ import java.util.UUID
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 
-/**
- * What the tracker needs to know about one live terminal session.
- *
- * Built by [livePaneSnapshot] from [TerminalSessions] and [WindowState] so the
- * tracker itself never calls into either (it is invoked while
- * [WindowState] holds its lock, during session teardown).
- */
+/** What the tracker needs to know about one live terminal session. */
 data class PaneSnapshot(
     val terminalSessionId: String,
     val leafId: String?,
@@ -67,12 +60,9 @@ data class GitInfo(
 /**
  * Owns the `agent_sessions` table and the in-memory view of it.
  *
- * Keeps at most one open record per terminal session. All mutation goes
- * through one lock, so the poll coroutine and the endpoint's coroutines never
- * interleave; nothing inside the lock calls back into [WindowState].
- *
- * Constructed once in `main()` with the shared [SettingsRepository]; tests
- * construct it over a temporary database with a fake [gitInfo] and [clock].
+ * Keeps at most one open record per terminal session. All mutation goes through one lock, so the
+ * poll coroutine and the endpoint's coroutines never interleave; nothing inside the lock calls back
+ * into [WindowState].
  */
 class AgentSessionTracker(
     private val repo: SettingsRepository,
@@ -110,8 +100,8 @@ class AgentSessionTracker(
     private val idlePolls = HashMap<String, Int>()
 
     /**
-     * When each open record last received a hook event, by record id. Kept in memory only: it
-     * is empty after a restart, and a record with no entry publishes no activity time.
+     * When each open record last received a hook event, by record id. Kept in memory only: it is
+     * empty after a restart, and a record with no entry publishes no activity time.
      */
     private val lastActivity = HashMap<String, Long>()
 
@@ -125,14 +115,14 @@ class AgentSessionTracker(
     /**
      * What [TranscriptTail] said about each hook-fed record's transcript, by record id, with the
      * file's size and last write it was read at. The file is read again only when one of them
-     * moves, so a record that is idle on a 3 s poll costs a `stat`, not a read. Written outside
-     * the lock by [onPoll]; hence concurrent.
+     * moves, so a record that is idle on a 3 s poll costs a `stat`, not a read. Written outside the
+     * lock by [onPoll]; hence concurrent.
      */
     private val tailReads = ConcurrentHashMap<String, TailRead>()
 
     /**
-     * Git facts per folder, filled by [warmGit] before the lock is taken so a slow
-     * repository never holds up closing panes; [open] only reads it.
+     * Git facts per folder, filled by [warmGit] before the lock is taken so a slow repository never
+     * holds up closing panes; [open] only reads it.
      */
     private val gitCache = ConcurrentHashMap<String, Pair<Long, GitInfo>>()
 
@@ -145,20 +135,16 @@ class AgentSessionTracker(
 
     private val _summaries = MutableStateFlow<List<AgentSessionSummary>>(emptyList())
 
-    /**
-     * The rows to show clients, republished after every change.
-     * Collected per socket by `WindowRoutes`.
-     */
+    /** The rows to show clients, republished after every change. */
     val summaries: StateFlow<List<AgentSessionSummary>> = _summaries.asStateFlow()
 
     /**
      * Close records a previous server run left open and load the recent ended ones.
      *
-     * Terminal sessions do not survive a restart, so any record still open
-     * belongs to a process that is gone. Called once from `main()` before the
-     * server starts taking connections. Each is ended when it was last known alive (its state's
-     * start, or its transcript file's last write if later), not at the restart, so how long ago
-     * a session was used survives the restart.
+     * Terminal sessions do not survive a restart, so any record still open belongs to a process
+     * that is gone. Each is ended when it was last known alive (its state's start, or its
+     * transcript file's last write if later), not at the restart, so how long ago a session was
+     * used survives the restart.
      */
     fun start() = synchronized(lock) {
         repo.endOpenAgentSessions(clock()) { rec ->
@@ -172,13 +158,11 @@ class AgentSessionTracker(
     /**
      * Fold one screen-poll result into the records.
      *
-     * Opens a record for a pane that newly shows an agent, follows
-     * `waiting`/`working`/none into `needs_you`/`working`/`done` for records
-     * not fed by hooks, and ends records whose session is gone. A hook-fed
-     * record is moved only where no hook can say what happened: a refused
-     * prompt or an interrupted turn (read from the end of its transcript), and a
-     * prompt the screen shows answered.
-     * Called every 3 s by the state poller with a snapshot of all live panes.
+     * Opens a record for a pane that newly shows an agent, follows `waiting`/`working`/none into
+     * `needs_you`/`working`/`done` for records not fed by hooks, and ends records whose session is
+     * gone. A hook-fed record is moved only where no hook can say what happened: a refused prompt
+     * or an interrupted turn (read from the end of its transcript), and a prompt the screen shows
+     * answered.
      */
     fun onPoll(panes: List<PaneSnapshot>) {
         val toOpen = synchronized(lock) {
@@ -308,9 +292,6 @@ class AgentSessionTracker(
     /**
      * End the turn of the open hook-fed record [rec] without a hook: it becomes done, with no tool
      * line and no question, and the poll counts as its last sign of life.
-     *
-     * Called by [applyPoll] with the lock held, when the transcript or the screen shows that the
-     * turn is over.
      */
     private fun settleDone(rec: AgentSessionRecord): AgentSessionRecord {
         promptSeen.remove(rec.id)
@@ -327,8 +308,6 @@ class AgentSessionTracker(
      * build), so work on screen keeps its activity time current. The stamp is renewed only once it
      * is [ACTIVITY_REFRESH_MS] old: the overlay needs minute precision, and a stamp that moved on
      * every poll would push a new frame to every client every few seconds.
-     *
-     * Called by [applyPoll] with the lock held.
      */
     private fun noteWork(recordId: String) {
         val now = clock()
@@ -339,10 +318,8 @@ class AgentSessionTracker(
     /**
      * Fold one Claude Code hook event into the records.
      *
-     * Called by the `/api/agent-events` handler, off the request thread.
-     * Events for a session id the tracker has not seen yet behave as an
-     * implicit SessionStart, so connecting hooks while Claude is already
-     * running still works.
+     * Events for a session id the tracker has not seen yet behave as an implicit SessionStart, so
+     * connecting hooks while Claude is already running still works.
      */
     fun onHook(pane: PaneSnapshot?, event: JsonObject) {
         if (pane == null) return
@@ -419,23 +396,14 @@ class AgentSessionTracker(
         publish()
     }
 
-    /**
-     * End the open record of a terminal session that is being torn down.
-     *
-     * Called from [TerminalSessions.destroy] just before the session shuts
-     * down, so the screen can still be read.
-     */
+    /** End the open record of a terminal session that is being torn down. */
     fun onSessionDestroyed(terminalSessionId: String, screen: String?) = synchronized(lock) {
         awaitScreenClear.remove(terminalSessionId)
         openFor(terminalSessionId)?.let { end(it, screen) }
         publish()
     }
 
-    /**
-     * Mark every open record ended, saving each pane's screen.
-     *
-     * Called from the JVM shutdown hook so a clean stop leaves nothing open.
-     */
+    /** Mark every open record ended, saving each pane's screen. */
     fun endAll(panes: List<PaneSnapshot>) = synchronized(lock) {
         val live = panes.associateBy { it.terminalSessionId }
         openRecords().forEach { end(it, live[it.terminalSessionId]?.screenText?.invoke()) }
@@ -446,8 +414,8 @@ class AgentSessionTracker(
      * Look up a record for the resume command.
      *
      * [id] is a record id, else the agent's own conversation id: a task stores its main
-     * conversation that way, and the record of a conversation older than the ones held in memory
-     * is found by it in the database.
+     * conversation that way, and the record of a conversation older than the ones held in memory is
+     * found by it in the database.
      */
     fun find(id: String): AgentSessionRecord? = synchronized(lock) {
         records[id] ?: repo.findAgentSessionById(id)
@@ -458,25 +426,16 @@ class AgentSessionTracker(
     /**
      * One record per conversation held in memory (the open run of it, else the newest ended one),
      * copied under the lock: the records [summaries] is made of.
-     *
-     * Called by [TaskIndex] whenever [summaries] changes, because a summary lacks the agent's own
-     * session id that a task's main conversation is found by.
      */
     fun snapshot(): List<AgentSessionRecord> = synchronized(lock) { conversationRecords() }
 
-    /**
-     * The open record of a terminal session, if an agent runs in it.
-     *
-     * Called by [TaskIndex] when an agent joins a pane to a task: the id the MCP tools use for a
-     * pane is its terminal session id.
-     */
+    /** The open record of a terminal session, if an agent runs in it. */
     fun openRecordOf(terminalSessionId: String): AgentSessionRecord? = synchronized(lock) { openFor(terminalSessionId) }
 
     /**
      * Put a record in a task, or take it out of its task.
      *
-     * Called by [TaskIndex] for the MCP `add_to_task` and `remove_from_task` tools. The change is
-     * stored and pushed like any other change to the record.
+     * The change is stored and pushed like any other change to the record.
      */
     fun setTask(recordId: String, taskId: String?): Boolean = synchronized(lock) {
         val rec = records[recordId] ?: return false
@@ -490,39 +449,25 @@ class AgentSessionTracker(
     /**
      * Promise a task to the next agent session that opens in a pane.
      *
-     * Called by [TaskIndex] for a pane that has no agent yet (a window just created with a task,
-     * or a shell the agent grouped before starting a session in it). [open] and the reopening of a
-     * resumed record read the promise and clear it.
+     * [open] and the reopening of a resumed record read the promise and clear it.
      */
     fun setPendingTask(leafId: String, taskId: String?) = synchronized(lock) {
         if (taskId == null) pendingTasks.remove(leafId) else pendingTasks[leafId] = taskId
         Unit
     }
 
-    /**
-     * The panes that were promised [taskId] and have no agent yet.
-     *
-     * Called by [TaskIndex.openLeavesOf], so a second window created for a task before the first
-     * one's agent has started still finds the first one's tab.
-     */
+    /** The panes that were promised [taskId] and have no agent yet. */
     fun pendingLeavesOf(taskId: String): List<String> = synchronized(lock) {
         pendingTasks.filterValues { it == taskId }.keys.toList()
     }
 
     /**
-     * The record held in memory (every open one and the recent ended ones), without
-     * touching the database.
-     *
-     * Called by search so a hit on an open session shows its live state.
+     * The record held in memory (every open one and the recent ended ones), without touching the
+     * database.
      */
     fun cached(id: String): AgentSessionRecord? = synchronized(lock) { records[id] }
 
-    /**
-     * Whether a Claude session that has no agent session id yet is open in [cwd].
-     *
-     * Called by the history import through [AgentSearchIndexer.runningIn]: such a session was
-     * seen on screen only, so its transcript cannot be matched to it by id.
-     */
+    /** Whether a Claude session that has no agent session id yet is open in [cwd]. */
     fun hasUnidentifiedClaudeIn(cwd: String): Boolean = synchronized(lock) {
         openRecords().any { it.agent == CLAUDE && it.agentSessionId == null && it.cwd == cwd }
     }
@@ -531,11 +476,11 @@ class AgentSessionTracker(
      * Pick the record a hook event belongs to, creating, adopting or reopening one.
      *
      * Keeps one record per conversation. The pane's open record is reused when it has the same
-     * agent session id, and ended otherwise. A record that was opened from the screen before any
-     * id was known is adopted when the conversation has no record yet; when it already has one (a
-     * resumed conversation whose pane was seen before its first hook), the older record is
-     * reopened in this pane and the screen record is dropped, in memory and in the database, so
-     * the conversation is one record and search lists it once.
+     * agent session id, and ended otherwise. A record that was opened from the screen before any id
+     * was known is adopted when the conversation has no record yet; when it already has one (a
+     * resumed conversation whose pane was seen before its first hook), the older record is reopened
+     * in this pane and the screen record is dropped, in memory and in the database, so the
+     * conversation is one record and search lists it once.
      */
     private fun attach(pane: PaneSnapshot, agentId: String?, transcript: String?): AgentSessionRecord {
         val current = openFor(pane.terminalSessionId)
@@ -679,9 +624,8 @@ class AgentSessionTracker(
     }
 
     /**
-     * Drop ended records from memory once they are older than [HISTORY_WINDOW_MS]
-     * or beyond the newest [HISTORY_MAX]; they stay in the database and search
-     * still finds them. Called after a record ends.
+     * Drop ended records from memory once they are older than [HISTORY_WINDOW_MS] or beyond the
+     * newest [HISTORY_MAX]; they stay in the database and search still finds them.
      */
     private fun trim() {
         val oldest = clock() - HISTORY_WINDOW_MS
@@ -697,8 +641,8 @@ class AgentSessionTracker(
         records.values.firstOrNull { it.state != ENDED && it.terminalSessionId == terminalSessionId }
 
     /**
-     * Publish one summary per conversation. A conversation that ran in several panes over time
-     * has several records; its summary is the open record's, else the newest one's.
+     * Publish one summary per conversation. A conversation that ran in several panes over time has
+     * several records; its summary is the open record's, else the newest one's.
      */
     private fun publish() {
         _summaries.value = conversationRecords().map { it.toSummary().copy(lastActivityAt = lastActivity[it.id]) }
@@ -720,16 +664,16 @@ class AgentSessionTracker(
         const val ENDED = "ended"
 
         /**
-         * How far back ended sessions are kept in memory and pushed to clients: the
-         * overview lists two weeks. The edge is inclusive here; the client lists no
-         * more than this, so a row it shows is never missing from the server.
+         * How far back ended sessions are kept in memory and pushed to clients: the overview lists
+         * two weeks. The edge is inclusive here; the client lists no more than this, so a row it
+         * shows is never missing from the server.
          */
         const val HISTORY_WINDOW_MS = 14L * 24 * 60 * 60 * 1000
 
         /**
-         * Most ended records held in memory. [publish] sends every record held on each
-         * change, so this bounds the payload (a summary is a few hundred bytes, so
-         * 300 is about 100 KB at worst) however busy two weeks were.
+         * Most ended records held in memory. [publish] sends every record held on each change, so
+         * this bounds the payload (a summary is a few hundred bytes, so 300 is about 100 KB at
+         * worst) however busy two weeks were.
          */
         const val HISTORY_MAX = 300L
 
@@ -737,8 +681,8 @@ class AgentSessionTracker(
         const val ACTIVITY_REFRESH_MS = 30_000L
 
         /**
-         * How much earlier than a hook's arrival an interrupt line may be stamped and still count as
-         * newer: the hook reaches the server a moment after Claude Code ran it, and the person's
+         * How much earlier than a hook's arrival an interrupt line may be stamped and still count
+         * as newer: the hook reaches the server a moment after Claude Code ran it, and the person's
          * interrupt can land in between.
          */
         const val HOOK_LAG_MS = 1_000L
@@ -758,11 +702,7 @@ class AgentSessionTracker(
 /** One read of a hook-fed record's transcript tail, kept so the file is read again only when it changes. */
 internal data class TailRead(val size: Long, val written: Long, val interruptedAt: Long?)
 
-/**
- * The row the clients see for this record.
- *
- * Used by the tracker's published list and by search results.
- */
+/** The row the clients see for this record. */
 internal fun AgentSessionRecord.toSummary() = AgentSessionSummary(
     id = id, agent = agent, state = state, stateSince = stateSince,
     title = title, links = links, repo = repo, branch = branch, cwd = cwd,
@@ -780,23 +720,15 @@ internal fun AgentSessionRecord.toSummary() = AgentSessionSummary(
 private const val TOOL_LINE_MAX = 160
 private const val FIRST_PROMPT_MAX = 160
 
-/**
- * The first line of what the user first asked a session, cut for a status cell.
- *
- * Called by [toSummary]; the overview shows it after "❯" for a row that has no tool line or
- * last reply to show.
- */
+/** The first line of what the user first asked a session, cut for a status cell. */
 internal fun firstPromptLine(prompt: String): String? =
     prompt.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }?.take(FIRST_PROMPT_MAX)
 private const val LAST_SAID_MAX = 160
 
 /**
- * The part of an assistant reply worth showing as "what it last said": the first line of
- * the last paragraph, cut to [LAST_SAID_MAX] characters. A line that is only a code fence says
- * nothing, so it is passed over; when the last paragraph holds nothing else, the one before it
- * is used.
- *
- * Called by [AgentSessionTracker] on every Stop hook, for questions and statements alike.
+ * The part of an assistant reply worth showing as "what it last said": the first line of the last
+ * paragraph, cut to [LAST_SAID_MAX] characters. A line that is only a code fence says nothing, so
+ * it is passed over; when the last paragraph holds nothing else, the one before it is used.
  */
 internal fun lastSaidOf(message: String): String {
     val paragraphs = message.trim().split("\n\n").asReversed()
@@ -818,8 +750,8 @@ internal fun lastLines(screen: String): String =
     screen.trimEnd().lines().takeLast(SCREEN_LINES).joinToString("\n")
 
 /**
- * Tidy a program-set terminal title for display: strips the spinner or
- * status glyph an agent prefixes and drops titles that only name the agent.
+ * Tidy a program-set terminal title for display: strips the spinner or status glyph an agent
+ * prefixes and drops titles that only name the agent.
  */
 internal fun cleanTitle(raw: String?): String? {
     val t = raw?.trim()?.dropWhile { !it.isLetterOrDigit() }?.trim().orEmpty()
@@ -844,8 +776,6 @@ internal fun cleanTitle(raw: String?): String? {
  *
  * A question put to the person through `AskUserQuestion` is kept as `Asks: <question>`, so the row
  * shows what is asked. Every line is cut at [TOOL_LINE_MAX], which is ample for a row.
- *
- * Called from the tracker's `PreToolUse` handling.
  */
 internal fun toolLine(event: JsonObject): String? {
     val tool = event.str("tool_name") ?: return null
@@ -861,8 +791,6 @@ internal fun toolLine(event: JsonObject): String? {
  * Only that one argument is read; the rest of `tool_input` (which can hold a whole file) is never
  * kept. A question put to the person is `Asks: <question>`, as in [toolLine]. Cut at
  * [TOOL_LINE_MAX].
- *
- * Called from the tracker's `PreToolUse` handling, which keeps it while the call is in flight.
  */
 internal fun rawToolLine(event: JsonObject): String? {
     val tool = event.str("tool_name") ?: return null
@@ -874,12 +802,7 @@ internal fun rawToolLine(event: JsonObject): String? {
     return (if (arg == null) tool else "$tool $arg").take(TOOL_LINE_MAX)
 }
 
-/**
- * The question an `AskUserQuestion` call puts to the person, or null for any other call.
- *
- * Called from the tracker's `PreToolUse` handling: that call is a prompt on screen, so the
- * conversation needs the person from the moment it starts.
- */
+/** The question an `AskUserQuestion` call puts to the person, or null for any other call. */
 internal fun askedQuestionOf(event: JsonObject): String? {
     if (event.str("tool_name") != ASK_TOOL) return null
     val asked = (((event["tool_input"] as? JsonObject)?.get("questions") as? JsonArray)?.firstOrNull() as? JsonObject)
@@ -890,10 +813,8 @@ internal fun askedQuestionOf(event: JsonObject): String? {
 /**
  * Whether a Notification hook is a prompt the person has to answer.
  *
- * A permission prompt and an elicitation dialog are; the idle reminder, the sign-in notice and
- * any other type are not. A version that sends no type is read by its text.
- *
- * Called from the tracker's `Notification` handling.
+ * A permission prompt and an elicitation dialog are; the idle reminder, the sign-in notice and any
+ * other type are not. A version that sends no type is read by its text.
  */
 internal fun isPromptNotification(type: String?, message: String?): Boolean = when (type) {
     "permission_prompt", "elicitation_dialog" -> true
@@ -978,12 +899,10 @@ private const val ASK_PREFIX = "Asks: "
 /**
  * What a `needs_you` row should say for a prompt Claude Code raised through a Notification hook.
  *
- * A question put to the person is shown as the question itself; a permission prompt as
- * `Allow <tool line>?`, so the row names the command instead of the hook's generic text. Any other
- * kind of notification (a tool asking for input, for example) keeps the hook's own message, since
- * it is not a request to allow the tool.
- *
- * Called from the tracker's `Notification` hook handling.
+ * A question put to the person is shown as the question itself; a permission prompt as `Allow <tool
+ * line>?`, so the row names the command instead of the hook's generic text. Any other kind of
+ * notification (a tool asking for input, for example) keeps the hook's own message, since it is not
+ * a request to allow the tool.
  */
 internal fun pendingQuestionOf(pending: String?, message: String?, type: String? = null): String? = when {
     pending == null -> message
@@ -998,8 +917,7 @@ private fun JsonObject.str(key: String): String? =
 /**
  * Read repository, branch and worktree for [cwd] with `git`.
  *
- * Called when a record opens. Any failure (no git, not a repository, a
- * timeout) yields an empty [GitInfo].
+ * Any failure (no git, not a repository, a timeout) yields an empty [GitInfo].
  */
 fun readGitInfo(cwd: String?): GitInfo {
     if (cwd.isNullOrBlank() || !File(cwd).isDirectory) return GitInfo()
@@ -1022,7 +940,6 @@ private fun git(cwd: String, vararg args: String): String? =
 /**
  * Snapshot a live terminal session for the tracker.
  *
- * Called by the state poller, the events endpoint and the shutdown hook.
  * Reads [WindowState] to find the pane that shows the session.
  */
 internal fun livePaneSnapshot(id: String, states: Map<String, String?> = emptyMap()): PaneSnapshot? {

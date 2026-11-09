@@ -1,20 +1,17 @@
 /**
- * Row type for the `agent_sessions` table: one record per run of an
- * agentic CLI (Claude Code, Codex, Gemini) inside a Lunamux pane.
+ * Row type for the `agent_sessions` table: one record per run of an agentic CLI (Claude Code,
+ * Codex, Gemini) inside a Lunamux pane.
  *
  * This file contains [AgentSessionRecord], the immutable value the
- * [se.soderbjorn.lunamux.AgentSessionTracker] keeps in memory and persists
- * through [SettingsRepository.saveAgentSession].
+ * [se.soderbjorn.lunamux.AgentSessionTracker] keeps in memory and persists through
+ * [SettingsRepository.saveAgentSession].
  */
 package se.soderbjorn.lunamux.persistence
 
 /**
  * One agentic-CLI session as stored in `agent_sessions`.
  *
- * Created by the tracker when a pane first shows an agent or a hook reports
- * a new session, updated on every state change, and closed (state
- * `ended`) when the pane or process goes away. Read back at startup and by
- * the "resume" path.
+ * Read back at startup and by the "resume" path.
  */
 data class AgentSessionRecord(
     val id: String,
@@ -44,15 +41,12 @@ data class AgentSessionRecord(
     val background: Boolean = false,
 ) {
     /**
-     * The conversation this record is a run of: the agent's own session id when it is known,
-     * else this record's id.
+     * The conversation this record is a run of: the agent's own session id when it is known, else
+     * this record's id.
      *
-     * A resumed conversation has one record per run in a pane, but is one conversation; the
-     * tracker publishes one summary per conversation by this key. Codex and Gemini report no id,
-     * so each of their runs is its own conversation.
-     *
-     * Called by the tracker when it groups records and by the task index when it stores or
-     * resolves a task's main conversation.
+     * A resumed conversation has one record per run in a pane, but is one conversation; the tracker
+     * publishes one summary per conversation by this key. Codex and Gemini report no id, so each of
+     * their runs is its own conversation.
      */
     val conversationId: String get() = agentSessionId ?: id
 }

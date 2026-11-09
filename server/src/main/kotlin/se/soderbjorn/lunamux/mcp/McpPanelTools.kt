@@ -3,11 +3,11 @@
  *
  * An agent that works on a task can show the person what it is doing in blocks next to the task's
  * own session. The panel draws four things: the task's agents (it makes that block itself), a
- * progress block, links and a timeline. `set_task_panel` replaces
- * all of them, `upsert_task_block` and `remove_task_block` change one, and `get_task_panel` reads
- * them back. This file turns an agent's JSON into [TaskPanelBlock]s and the stored blocks back
- * into JSON; the rules about sizes and shapes live in [se.soderbjorn.lunamux.TaskPanelLimits] and
- * are applied by [TaskPanelStore], and its refusals reach the agent as tool errors.
+ * progress block, links and a timeline. `set_task_panel` replaces all of them, `upsert_task_block`
+ * and `remove_task_block` change one, and `get_task_panel` reads them back. This file turns an
+ * agent's JSON into [TaskPanelBlock]s and the stored blocks back into JSON; the rules about sizes
+ * and shapes live in [se.soderbjorn.lunamux.TaskPanelLimits] and are applied by [TaskPanelStore],
+ * and its refusals reach the agent as tool errors.
  */
 package se.soderbjorn.lunamux.mcp
 
@@ -140,9 +140,8 @@ internal fun panelBlockJson(b: TaskPanelBlock): JsonObject = buildJsonObject {
 /**
  * Register `set_task_panel`, `upsert_task_block`, `remove_task_block` and `get_task_panel`.
  *
- * Called once at boot from [mcpRoutes] next to [registerMcpTaskTools], when the server has a task
- * index and a panel store. The three tools that change the panel need a `read+write` token;
- * `get_task_panel` needs only `read`.
+ * The three tools that change the panel need a `read+write` token; `get_task_panel` needs only
+ * `read`.
  */
 fun registerMcpPanelTools(store: TaskPanelStore, tracker: AgentSessionTracker) {
     val blockSchema = schemaObject(

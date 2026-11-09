@@ -2,12 +2,11 @@
  * MCP tools that let an agent group its own sessions into tasks.
  *
  * Every agent session belongs to one task, and the agents overview shows tasks. An agent that
- * splits its work over several sessions calls these tools, unprompted, so the person sees one
- * task with its sessions rather than a flat list: `create_task`, `add_to_task`, `remove_from_task`,
+ * splits its work over several sessions calls these tools, unprompted, so the person sees one task
+ * with its sessions rather than a flat list: `create_task`, `add_to_task`, `remove_from_task`,
  * `rename_task`, `set_task_lead` and `set_task_status` change tasks, and `list_tasks` reads them.
  * Every task has one session that speaks for it (the one that made it, unless another is named) and
- * a one-line status. `create_window` in
- * [registerMcpWriteTools] also takes a `taskId`.
+ * a one-line status. `create_window` in [registerMcpWriteTools] also takes a `taskId`.
  *
  * The rules (what counts as a known task, what happens to a pane with no agent yet) live in
  * [TaskIndex]; this file only maps its answers to tool results and its [TaskException]s to
@@ -29,10 +28,8 @@ import se.soderbjorn.lunamux.TaskIndex
 import se.soderbjorn.lunamux.TaskListing
 
 /**
- * Run [block] and turn a [TaskException] into the [McpArgumentException] the MCP layer reports
- * as a tool error.
- *
- * Called by every tool here and by `create_window` when it is given a task.
+ * Run [block] and turn a [TaskException] into the [McpArgumentException] the MCP layer reports as a
+ * tool error.
  */
 internal fun <T> taskCall(block: () -> T): T =
     try {
@@ -53,8 +50,7 @@ private fun JsonObject.stringList(name: String): List<String> {
  * Register `create_task`, `add_to_task`, `remove_from_task`, `rename_task`, `set_task_lead`,
  * `set_task_status` and `list_tasks`.
  *
- * Called once at boot from [mcpRoutes], when the server has a [TaskIndex]. The tools that
- * change tasks need a `read+write` token; `list_tasks` needs only `read`.
+ * The tools that change tasks need a `read+write` token; `list_tasks` needs only `read`.
  */
 fun registerMcpTaskTools(taskIndex: TaskIndex) {
     val sessionIdsSchema = schemaArray(
@@ -241,10 +237,8 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
 }
 
 /**
- * The `mainConversation` value of a task as the tools return it: `{conversationId, sessionId}`, with
- * a null sessionId while the conversation is closed, or null when no conversation was named.
- *
- * Called by `create_task`, `set_task_lead` and `list_tasks`.
+ * The `mainConversation` value of a task as the tools return it: `{conversationId, sessionId}`,
+ * with a null sessionId while the conversation is closed, or null when no conversation was named.
  */
 private fun mainConversationJson(listed: TaskListing?): JsonElement {
     val conversation = listed?.mainConversation ?: return JsonNull

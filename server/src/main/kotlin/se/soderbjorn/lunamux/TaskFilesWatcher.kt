@@ -5,8 +5,8 @@
  * This file contains [TaskFilesWatcher], which polls the folder and parses each `<id>.json`, the
  * parsed model ([TaskFile], [TaskOpen]) and the private model of the JSON itself ([TaskFileJson]
  * and [OpenJson]). The format is described in `docs/tasks.md`. A file only declares a task: its id,
- * its title, its repository and how to start a session for it. Who is in the task is not written
- * in the file; it is the sessions that carry the task's id. Lunamux only ever reads these files.
+ * its title, its repository and how to start a session for it. Who is in the task is not written in
+ * the file; it is the sessions that carry the task's id. Lunamux only ever reads these files.
  */
 package se.soderbjorn.lunamux
 
@@ -25,8 +25,8 @@ import java.io.File
 /**
  * One task file as written by the tool that owns it.
  *
- * Everything is nullable or defaulted so a file with a missing field fails the explicit checks
- * in [TaskFilesWatcher] (one warning, task skipped) instead of failing JSON decoding with a less
+ * Everything is nullable or defaulted so a file with a missing field fails the explicit checks in
+ * [TaskFilesWatcher] (one warning, task skipped) instead of failing JSON decoding with a less
  * helpful message. Unknown fields are ignored, which is how a file written for an older version,
  * with a member list, a `lead` action or a `version`, still parses: those keys say nothing now.
  */
@@ -64,10 +64,10 @@ private class Seen(val modified: Long, val length: Long, val parsed: TaskFile?)
 /**
  * Watches folders of task files and publishes the tasks they declare.
  *
- * The watcher re-reads a file only when its modified time or size changes ([reload]). The result
- * is [files]. A file that is not valid JSON, or lacks `id` or `title`, or has an `open` action
- * without a command or an absolute folder, is skipped with a single warning until it changes
- * again; nothing here throws.
+ * The watcher re-reads a file only when its modified time or size changes ([reload]). The result is
+ * [files]. A file that is not valid JSON, or lacks `id` or `title`, or has an `open` action without
+ * a command or an absolute folder, is skipped with a single warning until it changes again; nothing
+ * here throws.
  *
  * Created once by `main()`; the [TaskIndex] collects [files] and answers every question about a
  * task, including which `open` command the open-task route runs.
@@ -83,11 +83,7 @@ class TaskFilesWatcher(
     /** The parsed task files, sorted by id. Collected by the [TaskIndex]. */
     val files: StateFlow<List<TaskFile>> = _files.asStateFlow()
 
-    /**
-     * Start watching: poll the folder every 3 seconds.
-     *
-     * Called once from `main()` with the server's background scope.
-     */
+    /** Start watching: poll the folder every 3 seconds. */
     fun start(scope: CoroutineScope) {
         scope.launch {
             while (isActive) {
@@ -97,11 +93,7 @@ class TaskFilesWatcher(
         }
     }
 
-    /**
-     * Re-read the folder: parse files that are new or changed, forget removed ones, then publish.
-     *
-     * Called by the polling loop; tests call it directly.
-     */
+    /** Re-read the folder: parse files that are new or changed, forget removed ones, then publish. */
     fun reload() {
         val found = dir.listFiles { f -> f.isFile && f.name.endsWith(".json") && !f.name.startsWith(".") }
             ?.sortedBy { it.name }.orEmpty()
@@ -164,11 +156,6 @@ class TaskFilesWatcher(
     }
 }
 
-/**
- * The canonical form of a path, or its absolute form when the file system cannot resolve it.
- *
- * Used by the watcher for the folder of a task file's `open` action, so that a symlinked folder
- * compares equal to its target.
- */
+/** The canonical form of a path, or its absolute form when the file system cannot resolve it. */
 internal fun canonical(path: String): String =
     try { File(path).canonicalPath } catch (_: Exception) { File(path).absolutePath }

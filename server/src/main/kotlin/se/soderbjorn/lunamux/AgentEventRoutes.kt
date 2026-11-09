@@ -1,11 +1,10 @@
 /**
- * The `POST /api/agent-events` endpoint Claude Code hooks report to, and the
- * per-server-start credentials that guard it.
+ * The `POST /api/agent-events` endpoint Claude Code hooks report to, and the per-server-start
+ * credentials that guard it.
  *
- * This file contains [AgentEvents] (the token, URL and the environment
- * variables handed to every terminal session) and [agentEventRoutes] (the
- * route itself). The hook command that calls the endpoint is installed by
- * [ClaudeHooks] and reads the three `LUNAMUX_*` variables from the pane's
+ * This file contains [AgentEvents] (the token, URL and the environment variables handed to every
+ * terminal session) and [agentEventRoutes] (the route itself). The hook command that calls the
+ * endpoint is installed by [ClaudeHooks] and reads the three `LUNAMUX_*` variables from the pane's
  * environment, so a Claude Code run outside Lunamux posts nothing.
  */
 package se.soderbjorn.lunamux
@@ -39,9 +38,7 @@ internal const val EVENTS_SESSION_HEADER = "X-Lunamux-Session"
 /**
  * Credentials and addresses for the agent-events endpoint.
  *
- * The token is random per server start, so a stale shell from an earlier run
- * cannot post. Read by [TerminalSession.create] when it builds a pane's
- * environment and by [agentEventRoutes] when it checks a request.
+ * The token is random per server start, so a stale shell from an earlier run cannot post.
  */
 object AgentEvents {
     /** Random secret that must accompany every event; regenerated on each server start. */
@@ -67,13 +64,10 @@ private val eventScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limited
 /**
  * Mount `POST /api/agent-events` on this route.
  *
- * Accepts a Claude Code hook's stdin JSON from loopback callers that present
- * [AgentEvents.token]. Answers 204 immediately and hands the event to
- * [AgentSessionTracker.onHook] on a background coroutine, so a hook never
- * waits on the server. The body is parsed and discarded; nothing but the
+ * Accepts a Claude Code hook's stdin JSON from loopback callers that present [AgentEvents.token].
+ * Answers 204 immediately and hands the event to [AgentSessionTracker.onHook] on a background
+ * coroutine, so a hook never waits on the server. The body is parsed and discarded; nothing but the
  * tracker's short fields is kept.
- *
- * Called by `Application.module`.
  */
 internal fun Route.agentEventRoutes(
     tracker: AgentSessionTracker,

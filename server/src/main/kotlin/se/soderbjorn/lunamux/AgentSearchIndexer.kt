@@ -1,11 +1,10 @@
 /**
  * Background worker that keeps the searchable text of agent sessions up to date.
  *
- * Reading a transcript can take a while, so none of it happens on the tracker's
- * lock or on a request thread. This file contains [AgentSearchIndexer], which
- * runs three kinds of job one at a time on a single daemon thread: index a
- * session that just ended, backfill sessions recorded before search existed,
- * and import Claude Code history.
+ * Reading a transcript can take a while, so none of it happens on the tracker's lock or on a
+ * request thread. This file contains [AgentSearchIndexer], which runs three kinds of job one at a
+ * time on a single daemon thread: index a session that just ended, backfill sessions recorded
+ * before search existed, and import Claude Code history.
  */
 package se.soderbjorn.lunamux
 
@@ -19,10 +18,7 @@ import java.util.concurrent.Executors
 /**
  * Writes `search_text` for ended Claude sessions and imports Claude Code history.
  *
- * Constructed once in `main()`; [indexEnded] is handed to the
- * [AgentSessionTracker] as its end-of-session hook, and `main()` calls [backfill]
- * and [importHistory] at start-up and when Claude Code becomes connected. Tests
- * construct it over a temporary database and call [awaitIdle].
+ * Tests construct it over a temporary database and call [awaitIdle].
  */
 class AgentSearchIndexer(
     private val repo: SettingsRepository,
@@ -45,8 +41,8 @@ class AgentSearchIndexer(
     /**
      * Queue the transcript text of a record that just ended.
      *
-     * Called by the tracker (with its lock held, so it only queues). Records of other agents
-     * and records without a transcript path are ignored: they match on their last screen.
+     * Records of other agents and records without a transcript path are ignored: they match on
+     * their last screen.
      */
     fun indexEnded(record: AgentSessionRecord) {
         val path = record.transcriptPath ?: return
@@ -54,28 +50,15 @@ class AgentSearchIndexer(
         submit("index ${record.id}") { storeText(record.id, path) }
     }
 
-    /**
-     * Queue a pass over ended records that have a transcript but no search text yet.
-     *
-     * Called once at start-up so sessions recorded before search existed become findable.
-     */
+    /** Queue a pass over ended records that have a transcript but no search text yet. */
     fun backfill() = submit("backfill") {
         repo.loadAgentSessionsMissingSearchText().forEach { (id, path) -> storeText(id, path) }
     }
 
-    /**
-     * Queue an import of Claude Code's own transcript history.
-     *
-     * Called at start-up and when the user connects Claude Code, never while it is
-     * disconnected.
-     */
+    /** Queue an import of Claude Code's own transcript history. */
     fun importHistory() = submit("import") { ClaudeHistoryImport.run(repo, projects(), runningIn) }
 
-    /**
-     * Wait until every queued job has finished.
-     *
-     * Called by tests so they can assert on the stored text.
-     */
+    /** Wait until every queued job has finished. */
     fun awaitIdle() {
         worker.submit {}.get()
     }

@@ -1,11 +1,10 @@
 /**
- * Brings Claude Code sessions that ran before Lunamux recorded them into the
- * `agent_sessions` table, so search can find them.
+ * Brings Claude Code sessions that ran before Lunamux recorded them into the `agent_sessions`
+ * table, so search can find them.
  *
- * Claude Code keeps every conversation as a transcript file under
- * `~/.claude/projects/`. This file contains [ClaudeHistoryImport], which turns
- * the interactive ones into ended records with `source = "import"`. Those
- * records are kept out of the "Earlier" list (it shows only sessions run in
+ * Claude Code keeps every conversation as a transcript file under `~/.claude/projects/`. This file
+ * contains [ClaudeHistoryImport], which turns the interactive ones into ended records with `source
+ * = "import"`. Those records are kept out of the "Earlier" list (it shows only sessions run in
  * Lunamux) and are found by search alone.
  */
 package se.soderbjorn.lunamux
@@ -16,13 +15,7 @@ import se.soderbjorn.lunamux.persistence.SettingsRepository
 import java.io.File
 import java.util.UUID
 
-/**
- * Imports Claude Code transcripts as ended session records.
- *
- * Called by [AgentSearchIndexer] on its background thread, once at start-up and again
- * whenever Claude Code becomes connected, and only then (reading the transcripts of an
- * agent the user has not connected would surprise them).
- */
+/** Imports Claude Code transcripts as ended session records. */
 object ClaudeHistoryImport {
     private val log = LoggerFactory.getLogger(ClaudeHistoryImport::class.java)
 
@@ -32,8 +25,8 @@ object ClaudeHistoryImport {
     /**
      * The folder holding Claude Code's per-project transcript folders.
      *
-     * The `lunamux.claudeProjects` system property overrides it, so tests and dev servers can
-     * point at a copy.
+     * The `lunamux.claudeProjects` system property overrides it, so tests and dev servers can point
+     * at a copy.
      */
     fun projectsDir(): File =
         System.getProperty("lunamux.claudeProjects")?.takeIf { it.isNotBlank() }?.let(::File)
@@ -44,16 +37,16 @@ object ClaudeHistoryImport {
      *
      * A transcript counts when its first `entrypoint` is `cli` (the kind Lunamux panes host;
      * `claude -p` and background sessions are skipped). A session that already has a record
-     * (whether Lunamux ran it or an earlier import made it) is left alone. Each import writes
-     * the record and its search text; one unreadable file does not stop the rest.
+     * (whether Lunamux ran it or an earlier import made it) is left alone. Each import writes the
+     * record and its search text; one unreadable file does not stop the rest.
      *
-     * Files not modified since the previous complete run are skipped without being opened: that
-     * run already imported them or decided to leave them out. The time the previous run began is
-     * kept in the settings store under [WATERMARK_KEY], and moves forward only when no file
-     * failed or was held back, so an unreadable one is tried again.
+     * Files not modified since the previous complete run are skipped without being opened: that run
+     * already imported them or decided to leave them out. The time the previous run began is kept
+     * in the settings store under [WATERMARK_KEY], and moves forward only when no file failed or
+     * was held back, so an unreadable one is tried again.
      *
-     * A transcript whose folder has a Claude session open in a pane that Lunamux has seen only
-     * on screen (no session id yet) is held back: that session may be this very transcript, and
+     * A transcript whose folder has a Claude session open in a pane that Lunamux has seen only on
+     * screen (no session id yet) is held back: that session may be this very transcript, and
      * importing it would leave two records for one conversation once its first hook arrives.
      */
     fun run(

@@ -3,8 +3,8 @@
  *
  * This file contains [TaskPanelStore], which keeps the blocks in memory as a [StateFlow] for the
  * windows' push, writes every change through to the `task_panel_blocks` table, and checks every
- * block against [TaskPanelLimits] before it is kept; [TaskPanelLimits.check] is the one place
- * those rules live, so the MCP tools only turn an agent's JSON into blocks.
+ * block against [TaskPanelLimits] before it is kept; [TaskPanelLimits.check] is the one place those
+ * rules live, so the MCP tools only turn an agent's JSON into blocks.
  */
 package se.soderbjorn.lunamux
 
@@ -18,9 +18,9 @@ import se.soderbjorn.lunamux.persistence.SettingsRepository.TaskPanelRow
 private val log = LoggerFactory.getLogger("TaskPanelStore")
 
 /**
- * The sizes and shapes a task panel block may have. Every refusal message names the block, item
- * or field that broke the rule and what the limit is, so an agent can fix its call from the
- * message alone.
+ * The sizes and shapes a task panel block may have. Every refusal message names the block, item or
+ * field that broke the rule and what the limit is, so an agent can fix its call from the message
+ * alone.
  */
 object TaskPanelLimits {
     /** Most blocks one task's panel holds. */
@@ -60,9 +60,8 @@ object TaskPanelLimits {
     /**
      * Check one block and return the form that is stored.
      *
-     * Called by [TaskPanelStore] for every block of a write. Timelines longer than
-     * [TIMELINE_MAX] are cut to their newest entries (by time, keeping the order they came in);
-     * every other broken rule throws.
+     * Timelines longer than [TIMELINE_MAX] are cut to their newest entries (by time, keeping the
+     * order they came in); every other broken rule throws.
      */
     fun check(block: TaskPanelBlock): TaskPanelBlock {
         val id = block.id
@@ -155,9 +154,9 @@ class TaskPanelStore(
     val state: StateFlow<Map<String, List<TaskPanelBlock>>> = _state.asStateFlow()
 
     /**
-     * Read every stored block. A row whose kind is no longer one of [TaskBlockContent]'s cases
-     * (the panel once kept text, facts and buttons) is skipped with a warning, so an old database
-     * opens without error and the block simply is not there.
+     * Read every stored block. A row whose kind is no longer one of [TaskBlockContent]'s cases (the
+     * panel once kept text, facts and buttons) is skipped with a warning, so an old database opens
+     * without error and the block simply is not there.
      */
     private fun load(): Map<String, List<TaskPanelBlock>> {
         val byTask = LinkedHashMap<String, MutableList<TaskPanelBlock>>()
@@ -177,12 +176,7 @@ class TaskPanelStore(
     /** One task's blocks. */
     fun blocksOf(taskId: String): List<TaskPanelBlock> = _state.value[taskId].orEmpty()
 
-    /**
-     * One task's blocks, for a task that must exist.
-     *
-     * Called by `get_task_panel`, so an agent that mistypes a task id is told so instead of
-     * reading an empty panel.
-     */
+    /** One task's blocks, for a task that must exist. */
     fun blocksOfKnown(taskId: String): List<TaskPanelBlock> {
         taskIndex.requireTask(taskId)
         return blocksOf(taskId)
@@ -191,7 +185,7 @@ class TaskPanelStore(
     /**
      * Replace all of a task's blocks with [blocks], in the order given.
      *
-     * Called by `set_task_panel`. Nothing is changed when any block breaks a rule.
+     * Nothing is changed when any block breaks a rule.
      */
     fun setPanel(taskId: String, blocks: List<TaskPanelBlock>, writer: String?): List<TaskPanelBlock> {
         taskIndex.requireTask(taskId)
@@ -212,8 +206,8 @@ class TaskPanelStore(
     /**
      * Replace the block with [block]'s id where it stands, or add it at the end.
      *
-     * Called by `upsert_task_block`. Replacing never counts against the block limit; adding a
-     * new block to a full panel is refused.
+     * Replacing never counts against the block limit; adding a new block to a full panel is
+     * refused.
      */
     fun upsert(taskId: String, block: TaskPanelBlock, writer: String?): TaskPanelBlock {
         taskIndex.requireTask(taskId)
@@ -233,11 +227,7 @@ class TaskPanelStore(
         }
     }
 
-    /**
-     * Remove one block, keeping the order of the others.
-     *
-     * Called by `remove_task_block`.
-     */
+    /** Remove one block, keeping the order of the others. */
     fun remove(taskId: String, blockId: String) {
         taskIndex.requireTask(taskId)
         synchronized(lock) {

@@ -1,12 +1,12 @@
 /**
  * The one place that decides which task each agent session belongs to.
  *
- * This file contains [TaskIndex], which combines the tasks agents made through the MCP tools
- * (rows of `tasks` that carry a title), the tasks that task files declare ([TaskFile]) and the session records,
- * and publishes the result as [AgentTask]s plus an assignment of every record to at most one task.
- * A task's members are the sessions whose record carries the task's id, and nothing else. It also
- * holds the operations behind the MCP task tools, so that the tools and the overview agree on
- * every rule.
+ * This file contains [TaskIndex], which combines the tasks agents made through the MCP tools (rows
+ * of `tasks` that carry a title), the tasks that task files declare ([TaskFile]) and the session
+ * records, and publishes the result as [AgentTask]s plus an assignment of every record to at most
+ * one task. A task's members are the sessions whose record carries the task's id, and nothing else.
+ * It also holds the operations behind the MCP task tools, so that the tools and the overview agree
+ * on every rule.
  */
 package se.soderbjorn.lunamux
 
@@ -58,8 +58,8 @@ data class TaskListing(
  * no file and no row is ignored, so removing a task file does not leave sessions pointing at a
  * ghost.
  *
- * Created once by `main()`. [start] keeps [state] current as files and records change; the
- * mutating methods publish immediately so a tool's answer already reflects its own change.
+ * Created once by `main()`. [start] keeps [state] current as files and records change; the mutating
+ * methods publish immediately so a tool's answer already reflects its own change.
  */
 class TaskIndex(
     private val repo: SettingsRepository,
@@ -84,11 +84,7 @@ class TaskIndex(
         recompute()
     }
 
-    /**
-     * Keep [state] current: recompute whenever the session records or the task files change.
-     *
-     * Called once from `main()` with the server's background scope.
-     */
+    /** Keep [state] current: recompute whenever the session records or the task files change. */
     fun start(scope: CoroutineScope) {
         scope.launch { combine(tracker.summaries, files) { _, _ -> }.collect { recompute() } }
     }
@@ -99,21 +95,14 @@ class TaskIndex(
     /**
      * The name of a task, whether or not any session of it is in memory.
      *
-     * Called by [AgentSessionSearch] to label a match and to find the sessions of a task whose
-     * title matches the query. Unlike [state], which lists only tasks that hold a session in
-     * memory, this knows every task file and every agent-made task row. A task file's title wins
-     * over the row with the same id.
+     * Unlike [state], which lists only tasks that hold a session in memory, this knows every task
+     * file and every agent-made task row. A task file's title wins over the row with the same id.
      */
     fun titleOf(taskId: String): String? = synchronized(lock) {
         files.value.firstOrNull { it.id == taskId }?.title ?: tasks[taskId]?.title
     }
 
-    /**
-     * The ids of the tasks whose title contains [text], ignoring case.
-     *
-     * Called by [AgentSessionSearch] before it queries, so sessions that ended long ago are
-     * found through their task even though no field of their own matches.
-     */
+    /** The ids of the tasks whose title contains [text], ignoring case. */
     fun taskIdsTitled(text: String): Set<String> = synchronized(lock) {
         (files.value.map { it.id } + agentMade().map { it.id }).toSet()
             .filter { titleOf(it)?.contains(text, ignoreCase = true) == true }
@@ -123,9 +112,8 @@ class TaskIndex(
     /**
      * The task a record belongs to, as the overview shows it.
      *
-     * Called by [AgentSessionSearch]. A session in memory takes the assignment [state] made; one
-     * that is only in the database falls back to the task id it was stored with, if that task
-     * still exists.
+     * A session in memory takes the assignment [state] made; one that is only in the database falls
+     * back to the task id it was stored with, if that task still exists.
      */
     fun taskIdOf(record: AgentSessionRecord): String? =
         _state.value.assignment[record.id] ?: record.taskId?.takeIf { titleOf(it) != null }
@@ -147,8 +135,6 @@ class TaskIndex(
 
     /**
      * Make a new task.
-     *
-     * Called by the MCP `create_task` tool.
      *
      * The task's main conversation is the one running in the caller's pane when the caller is a
      * known pane, else the one in the first of [sessionIds], else none. The pane is turned into its
@@ -177,10 +163,9 @@ class TaskIndex(
     /**
      * Name the conversation that speaks for a task, from the pane it runs in.
      *
-     * Called by the MCP `set_task_lead` tool when it is given a pane. The pane is looked up the way
-     * `add_to_task` looks up its panes, so the same mistake gets the same error, and is turned into
-     * the conversation running in it right now; the task stores that conversation and forgets the
-     * pane. It is not moved into the task.
+     * The pane is looked up the way `add_to_task` looks up its panes, so the same mistake gets the
+     * same error, and is turned into the conversation running in it right now; the task stores that
+     * conversation and forgets the pane. It is not moved into the task.
      */
     fun setOwnSession(taskId: String, sessionId: String) {
         requireTask(taskId)
@@ -190,12 +175,7 @@ class TaskIndex(
         storeMainConversation(taskId, conversation)
     }
 
-    /**
-     * Name the conversation that speaks for a task, directly.
-     *
-     * Called by the MCP `set_task_lead` tool when it is given a conversation id (the agent's own
-     * session id, which `claude --resume` takes).
-     */
+    /** Name the conversation that speaks for a task, directly. */
     fun setMainConversation(taskId: String, conversationId: String) {
         requireTask(taskId)
         val known = tracker.find(conversationId)
@@ -206,8 +186,8 @@ class TaskIndex(
     /**
      * Set or clear a task's one-line status.
      *
-     * Called by the MCP `set_task_status` tool. Line breaks become single spaces, the ends are
-     * trimmed and the text is cut at [STATUS_MAX] characters; nothing left clears the status.
+     * Line breaks become single spaces, the ends are trimmed and the text is cut at [STATUS_MAX]
+     * characters; nothing left clears the status.
      *
      * [questionWaits] belongs to the status: every call sets both, so a later status that does not
      * repeat the flag takes it back, and clearing the status clears it too. The overview reads it
@@ -230,8 +210,8 @@ class TaskIndex(
     }
 
     /**
-     * The conversation running in a pane right now: its open record's [AgentSessionRecord.conversationId],
-     * or null when no agent runs there.
+     * The conversation running in a pane right now: its open record's
+     * [AgentSessionRecord.conversationId], or null when no agent runs there.
      */
     private fun conversationOf(sessionId: String): String? = tracker.openRecordOf(sessionId)?.conversationId
 
@@ -264,8 +244,7 @@ class TaskIndex(
     /**
      * Move sessions into a task, out of whatever task they were in.
      *
-     * Called by the MCP `add_to_task` tool and by `create_window` with a task. A pane with no agent
-     * yet is promised the task for the next session that starts in it.
+     * A pane with no agent yet is promised the task for the next session that starts in it.
      */
     fun addToTask(taskId: String, sessionIds: List<String>) {
         requireTask(taskId)
@@ -274,11 +253,7 @@ class TaskIndex(
         recompute()
     }
 
-    /**
-     * Take sessions out of the task an agent put them in, so each is a task of its own again.
-     *
-     * Called by the MCP `remove_from_task` tool.
-     */
+    /** Take sessions out of the task an agent put them in, so each is a task of its own again. */
     fun removeFromTask(sessionIds: List<String>): Map<String, String?> {
         val targets = sessionIds.map(::targetOf)
         targets.forEach { apply(it, null) }
@@ -287,11 +262,7 @@ class TaskIndex(
         return sessionIds.associateWith { sid -> tracker.openRecordOf(sid)?.let { snapshot.assignment[it.id] } }
     }
 
-    /**
-     * Rename an agent-made task.
-     *
-     * Called by the MCP `rename_task` tool.
-     */
+    /** Rename an agent-made task. */
     fun renameTask(taskId: String, title: String) {
         val clean = cleanTitle(title)
         synchronized(lock) {
@@ -309,7 +280,7 @@ class TaskIndex(
     /**
      * Every task there is, with what is in it.
      *
-     * Called by the MCP `list_tasks` tool. Includes agent-made tasks that hold no session yet.
+     * Includes agent-made tasks that hold no session yet.
      */
     fun listing(): List<TaskListing> {
         val records = tracker.snapshot()
@@ -338,8 +309,6 @@ class TaskIndex(
      *
      * Looked up from the conversation's open record each time, because pane ids are handed out
      * again on every start and only the conversation is stored.
-     *
-     * Called by [listing] for `list_tasks`.
      */
     fun ownSessionOf(taskId: String): String? = synchronized(lock) {
         val conversation = tasks[taskId]?.mainConversation ?: return@synchronized null
@@ -360,11 +329,9 @@ class TaskIndex(
     /**
      * The `open` action a task file declares for the task whose main conversation is [record].
      *
-     * Called by `resumeAgentSession`: a task's main conversation is picked up again with the
-     * command its task declares, so it starts the way it always starts, and any other conversation
-     * is resumed plainly. The match is by conversation id, so every run of the conversation counts as
-     * the main one. When several tasks name the conversation, the first by id that declares an
-     * `open` action wins.
+     * The match is by conversation id, so every run of the conversation counts as the main one.
+     * When several tasks name the conversation, the first by id that declares an `open` action
+     * wins.
      */
     fun openOfMain(record: AgentSessionRecord): TaskOpen? = synchronized(lock) {
         _state.value.tasks.filter { it.mainConversation == record.conversationId }.sortedBy { it.id }
@@ -392,9 +359,7 @@ class TaskIndex(
      * The panes a task's sessions are in: the layout leaf of each of its open sessions, and of each
      * pane promised the task whose agent has not started.
      *
-     * Called by the MCP `create_window` and `run_command` tools to open a task's next window in the
-     * tab the task already uses. A session that has ended no longer counts, because its pane is
-     * gone or only holds a shell.
+     * A session that has ended no longer counts, because its pane is gone or only holds a shell.
      */
     fun openLeavesOf(taskId: String): List<String> {
         val sessions = tracker.snapshot()
@@ -403,11 +368,7 @@ class TaskIndex(
         return sessions + tracker.pendingLeavesOf(taskId)
     }
 
-    /**
-     * Check that a task exists, before something is created for it.
-     *
-     * Called by `create_window` so a mistyped task id fails before a pane is opened.
-     */
+    /** Check that a task exists, before something is created for it. */
     fun requireTask(taskId: String) {
         val known = synchronized(lock) { tasks[taskId]?.title != null } || files.value.any { it.id == taskId }
         if (!known) throw unknownTask(taskId)
@@ -436,8 +397,8 @@ class TaskIndex(
 
         /**
          * Work out the tasks and every record's task from the three inputs. A record belongs to the
-         * task it names if that task exists, and to none otherwise. Pure, so tests and
-         * [recompute] share it.
+         * task it names if that task exists, and to none otherwise. Pure, so tests and [recompute]
+         * share it.
          */
         fun resolve(
             records: List<AgentSessionRecord>,

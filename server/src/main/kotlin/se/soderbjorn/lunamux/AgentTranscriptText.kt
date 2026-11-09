@@ -1,12 +1,10 @@
 /**
- * Reads a Claude Code transcript (`~/.claude/projects/<folder>/<session>.jsonl`)
- * and pulls out what the agents overview needs: the words of the conversation,
- * for search, and the few facts that describe the session (folder, branch,
- * title, first prompt, start and end time).
+ * Reads a Claude Code transcript (`~/.claude/projects/<folder>/<session>.jsonl`) and pulls out what
+ * the agents overview needs: the words of the conversation, for search, and the few facts that
+ * describe the session (folder, branch, title, first prompt, start and end time).
  *
- * A transcript is mostly tool output; only the text the user typed and the text
- * the assistant wrote are kept, so a 700 KB transcript yields a few KB of
- * searchable text.
+ * A transcript is mostly tool output; only the text the user typed and the text the assistant wrote
+ * are kept, so a 700 KB transcript yields a few KB of searchable text.
  *
  * This file contains [AgentTranscriptText] and its result type [TranscriptInfo].
  */
@@ -38,9 +36,7 @@ data class TranscriptInfo(
 /**
  * Extracts searchable text and session facts from Claude Code transcripts.
  *
- * Called by [AgentSearchIndexer] when a session ends and for the one-off backfill,
- * and by [ClaudeHistoryImport] for transcripts written before Lunamux recorded
- * sessions. Stateless; safe to call from any thread.
+ * Stateless; safe to call from any thread.
  */
 object AgentTranscriptText {
     /** The most text kept per transcript; when there is more, the end is kept. */
@@ -50,19 +46,15 @@ object AgentTranscriptText {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    /**
-     * The conversation text of one transcript.
-     *
-     * Called when a Claude record ends, to fill its `search_text`.
-     */
+    /** The conversation text of one transcript. */
     fun extract(path: String): String? = read(File(path))?.text
 
     /**
      * Read a whole transcript in one pass.
      *
-     * Lines that are not JSON objects, side-chain lines (a sub-agent's own conversation) and
-     * meta lines are skipped. From `user` and `assistant` lines only plain text parts are kept:
-     * tool calls, tool results and thinking are dropped.
+     * Lines that are not JSON objects, side-chain lines (a sub-agent's own conversation) and meta
+     * lines are skipped. From `user` and `assistant` lines only plain text parts are kept: tool
+     * calls, tool results and thinking are dropped.
      */
     fun read(file: File, onlyEntrypoint: String? = null): TranscriptInfo? {
         if (!file.isFile) return null
@@ -120,8 +112,8 @@ object AgentTranscriptText {
     }
 
     /**
-     * The text parts of a message's `content`, which is a string or a list of typed parts.
-     * Also read by [TranscriptTail] to recognise the interrupt marker.
+     * The text parts of a message's `content`, which is a string or a list of typed parts. Also
+     * read by [TranscriptTail] to recognise the interrupt marker.
      */
     internal fun textOf(content: JsonElement?): String = when (content) {
         is JsonPrimitive -> if (content.isString) content.content else ""

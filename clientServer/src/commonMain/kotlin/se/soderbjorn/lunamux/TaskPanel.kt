@@ -1,8 +1,8 @@
 /**
- * The shared model of a task's panel: the blocks an agent writes about a task and the content
- * each block can hold. The server stores and validates these ([TaskPanelBlock] in the
- * `task_panel_blocks` table), pushes them to every window as [WindowEnvelope.TaskPanel], and
- * the clients draw them in the panel beside the task's own session.
+ * The shared model of a task's panel: the blocks an agent writes about a task and the content each
+ * block can hold. The server stores and validates these ([TaskPanelBlock] in the
+ * `task_panel_blocks` table), pushes them to every window as [WindowEnvelope.TaskPanel], and the
+ * clients draw them in the panel beside the task's own session.
  *
  * Contains [TaskPanelBlock], the sealed [TaskBlockContent] with its three cases (links, a timeline
  * and progress), and the small item types those cases carry. Everything here is plain data; the
@@ -18,11 +18,8 @@ import kotlinx.serialization.Serializable
  * One block an agent wrote into a task's panel.
  *
  * Stored by the server per task and sent to the windows in the order the agents gave. A writer
- * names the block with its own [id] so it can replace or remove that block later without
- * touching the others.
- *
- * Built by the server's panel store when an agent calls `set_task_panel` or `upsert_task_block`;
- * read by the panel's view model, which turns it into a drawn block.
+ * names the block with its own [id] so it can replace or remove that block later without touching
+ * the others.
  */
 @Serializable
 data class TaskPanelBlock(
@@ -77,12 +74,8 @@ sealed class TaskBlockContent {
  * A link in a [TaskBlockContent.Links] block. The server only stores `http`, `https` and `file`
  * addresses.
  *
- * The writer says what the link is and when it happened; the panel shows both as given and
- * guesses neither. A row stored before these fields existed reads back as kind `link` with no
- * time.
- *
- * Built by the server's MCP panel tools from an agent's `links` items, and by the panel store when
- * it reads a stored block; read by the panel's view model for the Links list.
+ * The writer says what the link is and when it happened; the panel shows both as given and guesses
+ * neither. A row stored before these fields existed reads back as kind `link` with no time.
  */
 @Serializable
 data class TaskLink(

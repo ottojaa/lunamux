@@ -4,8 +4,8 @@
  * A database written by an earlier version keeps a task's name in `agent_tasks` and everything else
  * about it (start, status, the conversation that speaks for it) in a second table. Opening such a
  * database copies both into `tasks` and drops them. A database that has neither table, which is a
- * new one or one that has been moved already, is left alone, so running this on every start
- * changes nothing after the first.
+ * new one or one that has been moved already, is left alone, so running this on every start changes
+ * nothing after the first.
  *
  * Contains [TasksMigration].
  */
@@ -18,7 +18,6 @@ import app.cash.sqldelight.db.SqlDriver
 /**
  * Copies the old task tables into `tasks` and removes them.
  *
- * Called by [SettingsRepository] while it opens the database, after every table it needs exists.
  * The copy and the drops happen in one transaction, so a failure leaves the old tables as they were
  * and the next start tries again. It is the only code that still names the old tables and columns.
  */
@@ -35,7 +34,8 @@ internal object TasksMigration {
      * held. A task whose main is named only by a pane (an older row has no conversation) takes the
      * conversation of the newest session record that ran in that pane, preferring a record that
      * carries the task's id: the pane may have been the person's own session, which never carried
-     * it. A record that carries another task's id is never taken. A pane with no record gives no main.
+     * it. A record that carries another task's id is never taken. A pane with no record gives no
+     * main.
      */
     fun run(driver: SqlDriver, inTransaction: (() -> Unit) -> Unit) {
         val tables = tableNames(driver)
