@@ -260,26 +260,11 @@ object GitCatalog {
         return if (result.success) null else (result.stderr.ifBlank { "Failed to create worktree" })
     }
 
-    /**
-     * How many files have uncommitted changes (staged, unstaged or untracked).
-     *
-     * Called for the close confirmation in the agents overview.
-     *
-     * @param cwd the working directory to inspect
-     * @return the number of changed files, or null when [cwd] is not a git folder
-     */
+    /** How many files have uncommitted changes (staged, unstaged or untracked). */
     fun uncommittedCount(cwd: Path): Int? =
         runGit(cwd, "status", "--porcelain=v1", "-uall")?.lines()?.count { it.isNotBlank() }
 
-    /**
-     * How many commits on the current branch exist on no remote.
-     *
-     * Called for the close confirmation in the agents overview.
-     *
-     * @param cwd the working directory to inspect
-     * @return the commit count, or null when [cwd] is not a git folder or the repository has no
-     *   remote (every commit would count as unpushed, which is no use as a warning)
-     */
+    /** How many commits on the current branch exist on no remote. */
     fun unpushedCount(cwd: Path): Int? {
         if (runGit(cwd, "remote").isNullOrBlank()) return null
         return runGit(cwd, "rev-list", "--count", "HEAD", "--not", "--remotes")?.trim()?.toIntOrNull()

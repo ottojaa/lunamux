@@ -12,37 +12,62 @@
 package se.soderbjorn.lunamux
 
 import kotlinx.browser.document
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import org.w3c.dom.Element
 import org.w3c.dom.HTMLButtonElement
 import org.w3c.dom.HTMLElement
 import org.w3c.dom.events.Event
 import org.w3c.dom.events.KeyboardEvent
 import se.soderbjorn.lunamux.client.TabCloseCheck
+import se.soderbjorn.lunamux.client.TabCloseGuard
 import se.soderbjorn.lunamux.client.closeTabAsking
+import se.soderbjorn.lunamux.client.viewmodel.AgentFacts
 import kotlin.coroutines.resume
 
-/**
- * Close [tabId] for a person: asks first when an agent is working in it, then sends the close.
- *
- * Called by the tab strip's × and the 3D view's remove. Closing a pane, and an agent closing a
- * tab through MCP, do not come through here.
- *
- * @param tabId the tab to close.
- * @return true when the close was sent, false when the person kept the tab.
- * @see closeTabAsking
- */
+/** Close [tabId] for a person: asks first when an agent is working in it, then sends the close. */
 internal suspend fun closeTabFromPerson(tabId: String): Boolean =
     closeTabAsking(lunamuxClient.windowState, tabId, { windowSocket.send(it) }) { showTabCloseDialog(it) }
 
 /**
- * Show the dialog for [check] and wait for the person's answer.
+ * Makes closing a tab with an agent working in it ask once. The toolkit's own "Are you sure you
+ * want to close …?" has no switch in the version we use and it asks for every tab, so a working tab
+ * would ask it and then ours. A click on the Close row of a tab's ⋮ menu (the only way the strip
+ * closes a tab) is caught before the toolkit sees it, and ours is asked instead. A tab with no
+ * agent working in it closes as before.
  *
- * Only one is shown at a time; asking again while one is open answers false at once so the first
- * stays the one in front. Cancel, esc and a click outside the card keep the tab.
- *
- * @param check what the dialog says.
- * @return true when the person chose to close the tab.
+ * Called once at start-up by the toolkit bootstrap.
  */
+@OptIn(DelicateCoroutinesApi::class)
+internal fun installTabCloseTakeover() {
+    document.addEventListener("click", { e: Event ->
+        val target = e.target as? Element ?: return@addEventListener
+        val tabId = tabIdOfCloseClick(target) ?: return@addEventListener
+        val windowState = lunamuxClient.windowState
+        if (TabCloseGuard.check(tabId, windowState.config.value, windowState.agentSessions.value, windowState.agentTasks.value) == null) {
+            return@addEventListener
+        }
+        e.stopImmediatePropagation()
+        e.preventDefault()
+        // The menu stays open when its row is swallowed; its backdrop closes it on mousedown.
+        document.querySelector(".dt-menu-backdrop")?.dispatchEvent(Event("mousedown"))
+        GlobalScope.launch { closeTabFromPerson(tabId) }
+    }, true)
+}
+
+/**
+ * The id of the tab that a click on [target] asks to close, or null when the click is not the Close
+ * row of a tab's ⋮ menu. The menu is a panel on `body`; its tab is the one whose menu button is open.
+ */
+private fun tabIdOfCloseClick(target: Element): String? {
+    val row = target.closest(".dt-tab-menu-panel .dt-hover-menu-item") ?: return null
+    if (row.querySelector(".dt-hover-menu-label")?.textContent != "Close") return null
+    return document.querySelector(".dt-tab-menu.dt-open")?.closest("[data-tab-id]")?.getAttribute("data-tab-id")
+}
+
+/** Show the dialog for [check] and wait for the person's answer. */
 internal suspend fun showTabCloseDialog(check: TabCloseCheck): Boolean {
     if (document.getElementById(DIALOG_ID) != null) return false
     return suspendCancellableCoroutine { cont ->
@@ -55,7 +80,7 @@ internal suspend fun showTabCloseDialog(check: TabCloseCheck): Boolean {
             val list = element("ul", "tab-close-list")
             check.keepsRunning.forEach { running ->
                 list.appendChild(element("li", "").also {
-                    it.textContent = "${running.title} · ${stateWords(running.state)}, ${ageWords(running.sinceMillis)}"
+                    it.textContent = "${running.title} · ${stateWords(running.state)}, ${AgentFacts.ageText(running.sinceMillis, kotlin.js.Date.now().toLong())}"
                 })
             }
             card.appendChild(list)
@@ -108,31 +133,10 @@ internal suspend fun showTabCloseDialog(check: TabCloseCheck): Boolean {
 /** The id of the dialog's backdrop, so a second question does not stack on the first. */
 private const val DIALOG_ID = "tab-close-dialog"
 
-/**
- * The state of a session in the dialog's list: `working`, `needs you` or `idle`.
- *
- * @param state the session's state as the server names it.
- * @return the words shown.
- */
+/** The state of a session in the dialog's list: `working`, `needs you` or `idle`. */
 private fun stateWords(state: String): String = when (state) {
     "needs_you" -> "needs you"
     else -> state
-}
-
-/**
- * How long a session has been in its state, as "now", "4 min", "3 h" or "2 d".
- *
- * @param sinceMillis epoch millis the session entered its state.
- * @return the age words.
- */
-private fun ageWords(sinceMillis: Long): String {
-    val seconds = ((kotlin.js.Date.now() - sinceMillis) / 1000).toLong().coerceAtLeast(0)
-    return when {
-        seconds < 60 -> "just now"
-        seconds < 3600 -> "${seconds / 60} min"
-        seconds < 86_400 -> "${seconds / 3600} h"
-        else -> "${seconds / 86_400} d"
-    }
 }
 
 private fun element(tag: String, className: String): HTMLElement =

@@ -149,6 +149,9 @@ interface TermSession {
     /** Deliver user input bytes into the session. */
     fun write(bytes: ByteArray)
 
+    /** Whether the shell in this session is waiting at its prompt, with no program running under it. */
+    fun isIdleShell(): Boolean = false
+
     /**
      * Record that [clientId] just delivered user input; drives the
      * latest-active-client size arbitration (typing on a client makes it the
@@ -297,22 +300,13 @@ object TerminalSessions {
     private val lastCli = ConcurrentHashMap<String, String>()
 
     /**
-     * Called by [destroy] just before a session shuts down, with the session id and its final
-     * screen text. `main()` points this at [AgentSessionTracker.onSessionDestroyed] so a closed
-     * pane's agent record is ended while the screen can still be read.
+     * `main()` points this at [AgentSessionTracker.onSessionDestroyed] so a closed pane's agent
+     * record is ended while the screen can still be read.
      */
     @Volatile
     var onDestroy: ((sessionId: String, screen: String?) -> Unit)? = null
 
-    /**
-     * Which agent CLI the screen detector last saw in a session.
-     *
-     * Read by [livePaneSnapshot] for the agent session tracker. Updated by [resolveStates], so it
-     * follows the same poll and the same grace period as the state itself.
-     *
-     * @param sessionId a terminal session id.
-     * @return `claude`, `codex` or `gemini`, or null if none has been seen.
-     */
+    /** Which agent CLI the screen detector last saw in a session. */
     fun agentOf(sessionId: String): String? = lastCli[sessionId]
     private const val STATE_GRACE_POLLS = 3  // 3 polls × 3 s = 9 s grace
 
@@ -707,6 +701,10 @@ class TerminalSession private constructor(
             }
         }
     }
+
+    override fun isIdleShell(): Boolean = try {
+        ProcessHandle.of(pty.pid()).map { it.children().findAny().isEmpty }.orElse(false)
+    } catch (_: Throwable) { false }
 
     /** Write raw bytes to the PTY's stdin. */
     override fun write(bytes: ByteArray) {

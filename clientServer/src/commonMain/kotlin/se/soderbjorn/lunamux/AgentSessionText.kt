@@ -5,17 +5,12 @@
  * This file contains [AgentSessionText]: it turns a line of markdown into the text a reader sees,
  * skips lines that are only a code fence, derives a title from the first words of a prompt, and
  * says whether a stored title actually names the work. The overview's view model uses it to title
- * rows and clean previews, and the server's session search and last-reply capture use it so a
- * title that only says where a session ran is not searched and a fence is not stored as a reply.
+ * rows and clean previews, and the server's session search and last-reply capture use it so a title
+ * that only says where a session ran is not searched and a fence is not stored as a reply.
  */
 package se.soderbjorn.lunamux
 
-/**
- * Pure text helpers for agent session rows: no state, no clock, no I/O.
- *
- * Every function takes the text as it was stored (possibly markdown, possibly a path) and returns
- * what the overview should show, so the same input gives the same row on every platform.
- */
+/** Pure text helpers for agent session rows: no state, no clock, no I/O. */
 object AgentSessionText {
     /** The most words a title taken from a prompt keeps. */
     private const val TITLE_WORDS = 8
@@ -43,25 +38,10 @@ object AgentSessionText {
     /**
      * Whether [line] is only a code fence (``` or ~~~, with or without a language), which says
      * nothing and so is never shown as a preview.
-     *
-     * @param line one line of text.
-     * @return true for a line that is just a fence.
      */
     fun isFenceLine(line: String): Boolean = FENCE.matches(line)
 
-    /**
-     * Turn one line of markdown into the text it reads as.
-     *
-     * Removes a heading, quote or list marker at the start, then bold, italic, strike-through,
-     * inline code and the markup of links and images (keeping their text), and collapses runs of
-     * white space. Underscores and stars inside a word, such as `snake_case`, are left alone.
-     *
-     * Called by [previewOf] and [titleFromPrompt]; the view model calls it directly for lines it
-     * already has.
-     *
-     * @param line one line of possibly marked-up text.
-     * @return the plain text, possibly empty.
-     */
+    /** Turn one line of markdown into the text it reads as. */
     fun plain(line: String): String {
         var t = line.replace(HEADING, "").replace(QUOTE, "").replace(LIST_MARKER, "")
         t = t.replace(IMAGE) { it.groupValues[1] }.replace(LINK) { it.groupValues[1] }
@@ -73,39 +53,20 @@ object AgentSessionText {
         return t.replace(SPACES, " ").trim()
     }
 
-    /**
-     * The first line of [text] worth showing as a preview, as plain text.
-     *
-     * Blank lines, lines that are only a code fence and rules are passed over, so a reply whose
-     * stored first line is a bare fence still gives the line after it.
-     *
-     * @param text a stored reply, prompt or status, possibly several lines; null for none.
-     * @return the plain first line with content, or null when there is none.
-     */
+    /** The first line of [text] worth showing as a preview, as plain text. */
     fun previewOf(text: String?): String? =
         text?.lineSequence()
             ?.filterNot { isFenceLine(it) || RULE.matches(it) }
             ?.map(::plain)
             ?.firstOrNull { it.isNotEmpty() }
 
-    /**
-     * A title made from the first words of a prompt.
-     *
-     * Takes the first line with content, drops a leading slash command and any word that is a
-     * path (starts with `/`, `~/` or `./`), strips markdown, and keeps the first few words,
-     * ending with an ellipsis when it cut something off.
-     *
-     * Called by the view model for a session that has no stored title worth showing.
-     *
-     * @param prompt the first prompt or its first line; null for none.
-     * @return the title, or null when the prompt holds nothing but commands, paths or markup.
-     */
+    /** A title made from the first words of a prompt. */
     fun titleFromPrompt(prompt: String?): String? {
         val line = previewOf(prompt) ?: return null
         val words = line.split(' ').filter { it.isNotEmpty() }
-        // A leading slash command ("/review ...") is how the prompt was typed, not what it asks.
-        val first = words.first()
-        val prose = (if (first.startsWith("/") && !isPathWord(first)) words.drop(1) else words).filterNot(::isPathWord)
+        // Only the words the prompt starts with are dropped (a slash command, a path): they say how it
+        // was started, not what it asks. The same words later on are code the person typed and stay.
+        val prose = words.dropWhile { it.startsWith("/") || isPathWord(it) }
         if (prose.isEmpty()) return null
         var kept = prose.take(TITLE_WORDS).joinToString(" ")
         var cut = prose.size > TITLE_WORDS
@@ -116,21 +77,7 @@ object AgentSessionText {
         return if (cut) "$kept…" else kept
     }
 
-    /**
-     * Whether a stored title says what the work is, as opposed to where it ran.
-     *
-     * A title that is the home folder (`~`), a detached `HEAD`, a path, the session's own branch,
-     * repository or folder name, or a run id (`<ticket>-<number>-impl` or `-plan`, as in `abc-21-impl`) is what a terminal or a git
-     * checkout calls itself; none of them tells the person what the session was for.
-     *
-     * Called by the view model's title rule.
-     *
-     * @param title the stored title; null or blank is never meaningful.
-     * @param branch the session's branch, if any.
-     * @param repo the session's repository folder name, if any.
-     * @param folder the last segment of the session's working folder, if any.
-     * @return true when [title] can be shown as it is.
-     */
+    /** Whether a stored title says what the work is, as opposed to where it ran. */
     fun isMeaningfulTitle(title: String?, branch: String?, repo: String?, folder: String?): Boolean {
         val t = title?.trim().orEmpty()
         if (t.isEmpty()) return false

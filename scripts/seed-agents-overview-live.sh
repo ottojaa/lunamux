@@ -1,57 +1,33 @@
 #!/usr/bin/env bash
 #
 # Put live agent sessions in the tabs of a seeded scratch server, so the agents overview (⌘⇧A),
-# the waiting count under the Claude usage display and a task's panel can be looked at with
-# something live, and so a task's second window can be seen landing in the task's tab.
+# the footer count and a task's panel can be looked at with something live.
 #
 #   scripts/seed-agents-overview-live.sh [server url] [moment]   (default https://localhost:8471, moment 1)
 #
-# Run scripts/seed-agents-overview.sh first and start the scratch server it describes: the seed
-# turns the MCP endpoint on and adds the read+write token this script sends. The script talks to the
-# scratch server only: it refuses any URL that is not on localhost or that names port 8443, the
-# production port.
+# Run scripts/seed-agents-overview.sh first and start the scratch server: the seed turns on the MCP
+# endpoint and adds the token this script sends. It refuses any URL that is not on localhost or
+# that names port 8443, the production port. It uses no real agent: each "session" is a plain shell
+# pane that posts the hook events a Claude Code session would, through the pane's LUNAMUX_*
+# variables. What it builds:
 #
-# It uses no real agent. Each "session" is a plain shell pane that posts the hook events a Claude
-# Code session would post (`UserPromptSubmit`, `PreToolUse`, `Notification`, `Stop`), through the
-# pane's own LUNAMUX_* variables, so the server tracks it as a hosted conversation. What it builds:
-#
-#   tab "Checkout"   a working conversation "Rate limiter" in a task of its own; then a second window
-#                    made for that task with `create_window` and a `taskId` but no `tabId` while the
-#                    tab "Docs" is the active one. The second window lands in "Checkout", beside the
-#                    first, and its conversation joins the task: the script prints the tab it landed in.
-#   tab "Docs"       a working conversation "Docs sweep", one that needs you ("Which branch?") and one
-#                    that has finished its turn ("Fix the typo"), which is done.
-#   tab "Release notes"  the main conversation of a task of the same name. It is working and gives the
-#                    task a status line, and it started two agents out of sight (create_window with
-#                    background and the task's id), in background tabs that no tab strip lists:
-#                    "Changelog check" and "Screenshot refresh". The task has a panel (progress, links of
-#                    every kind, recent activity) written by "release notes agent"; ⌘I in this tab shows
-#                    it, in any other tab there is no panel.
+#   tab "Checkout"   a working conversation "Rate limiter" in a task of its own, then a second
+#                    window made for that task with `create_window` and a `taskId` while the tab
+#                    "Docs" is active: it must land in "Checkout" (the script fails if it does not).
+#   tab "Docs"       a working conversation "Docs sweep" (its long command description is cut by
+#                    the row), one that needs you ("Which branch?") and one that is done.
+#   tab "Release notes"  the main conversation of a task of the same name, with a status line, a
+#                    panel (⌘I in this tab) and two agents it started in background tabs.
 #
 # The moment (second argument) says what the background agents are doing:
 #
-#   1  (default)     both background agents work: the usual case.
-#   4                "Screenshot refresh" stops on a permission prompt: it is a background agent that
-#                    needs you. The footer reads "▲ 1 waiting"; ↵ on the task's row opens it as a tab
-#                    marked "background agent · hides again once it works on"; when it works on (answer
-#                    the prompt, or say No) the tab hides again.
-#   5                the "Release notes" tab is closed, which ends the main conversation while both
-#                    background agents keep working. The row reads "2 working" and ↵ on it asks
-#                    "conversation closed / Resume it in a new tab?" before it resumes the conversation.
+#   1  both work.
+#   4  "Screenshot refresh" stops on a permission prompt: the footer reads "▲ 1 waiting", and ↵ on
+#      the task's row shows its tab, which hides again once the prompt is answered.
+#   5  the "Release notes" tab is closed while both agents keep working: the row reads "2 working"
+#      and ↵ asks "Resume it in a new tab?".
 #
-# What to look at (⌘⇧A):
-#
-#   NOW              one row per live conversation in a tab: "Rate limiter" ("2 working": its two
-#                    Checkout panes are the same task), "Release notes" (its status as the detail, the two
-#                    background agents counted as "2 working" and never rows of their own), "Docs sweep",
-#                    the ◆ "needs you" row with its question in quotes, and "Fix the typo" as "done". Each
-#                    working row says what the tool call does in words ("Editing TokenBucket.kt",
-#                    "Reading CHANGELOG.md"); "Docs sweep" runs a shell command and shows the call's
-#                    description, long enough that the row cuts it.
-#   EARLIER          "Nightly sync" and "Billing cleanup" (task files whose members are in no open tab).
-#   Footer           under the Claude usage display: "▲ N waiting" and the spinner with the working count.
-#   Close "Docs"     close the tab in the app: its panes close and their conversations end, so they leave NOW
-#                    at once and are in EARLIER as "finished".
+# Closing "Docs" ends its conversations: they leave NOW at once and are in EARLIER as "finished".
 
 set -euo pipefail
 
@@ -164,40 +140,31 @@ hook "$SES7" live-screens '{"hook_event_name":"PreToolUse","tool_name":"Bash","t
 sleep 1
 call set_task_lead "{\"taskId\":\"$NOTES\",\"sessionId\":\"$SES5\"}" >/dev/null
 call set_task_status "{\"taskId\":\"$NOTES\",\"text\":\"Notes drafted, waiting on the changelog check\"}" >/dev/null
-# The task's panel (⌘I in the "Release notes" tab): what a writing agent would put there. Four
-# blocks show: the agents (the server's own), the progress, the links and the recent activity. The
-# links are several kinds (a Slack thread, pull requests, a Claude artifact, documents, a brief and
-# the decisions, each carrying its own kind word and time) and more than five, so the panel says
-# "+ N more". One activity line wraps to three lines at the narrowest width and is followed by a
-# one-line entry.
-call set_task_panel "$(python3 -I -c 'import json,sys
-import time
+# The task's panel (⌘I in the "Release notes" tab), as a writing agent would set it: progress,
+# eight links of several kinds (more than the five the panel shows, so it says "+ N more") and an
+# activity list whose first line wraps to three lines at the narrowest width.
+call set_task_panel "$(python3 -I -c 'import json,sys,time
 now = int(time.time() * 1000)
+def link(kind, label, url, ago): return {"kind": kind, "label": label, "url": url, "at": now - ago * 60000}
 print(json.dumps({"taskId": sys.argv[1], "by": "release notes agent", "blocks": [
   {"id": "progress", "type": "progress", "title": "Progress", "done": 3, "total": 5, "label": "Matching the changelog entries to merged pull requests"},
   {"id": "links", "type": "links", "title": "Links", "items": [
-    {"kind": "doc", "label": "Release 4.3 notes, first draft", "url": "https://example.com/notes/4.3", "at": now - 2400000},
-    {"kind": "slack", "label": "Release thread", "url": "https://example.slack.com/archives/C0RELEASE/p1730800000", "at": now - 720000},
-    {"kind": "PR", "label": "Changelog check", "url": "https://github.com/example/lunamux/pull/412", "at": now - 180000},
-    {"kind": "PR", "label": "Screenshot refresh", "url": "https://github.com/example/lunamux/pull/415", "at": now - 1200000},
-    {"kind": "art", "label": "Notes preview", "url": "https://claude.ai/artifact/seed-release-notes", "at": now - 300000},
-    {"kind": "doc", "label": "Upgrade guide", "url": "https://example.com/upgrade", "at": now - 4200000},
-    {"kind": "doc", "label": "Screenshot list", "url": "file:///tmp/release-4.3/screenshots.md", "at": now - 1500000},
-    {"kind": "issue", "label": "Known issues", "url": "https://github.com/example/lunamux/issues/398", "at": now - 10800000}]},
-  {"id": "brief", "type": "links", "title": "Brief", "items": [
-    {"kind": "brief", "label": "Brief: release notes for 4.3", "url": "https://example.com/briefs/release-4.3", "at": now - 18000000}]},
-  {"id": "decisions", "type": "links", "title": "Decisions", "items": [
-    {"kind": "doc", "label": "You decided: notes stay one page", "url": "https://example.com/decisions/one-page", "at": now - 14400000},
-    {"kind": "doc", "label": "You decided: screenshots are retaken", "url": "https://example.com/decisions/screenshots", "at": now - 5400000}]},
+    link("doc", "Release 4.3 notes, first draft", "https://example.com/notes/4.3", 40),
+    link("slack", "Release thread", "https://example.slack.com/archives/C0RELEASE/p1730800000", 12),
+    link("PR", "Changelog check", "https://github.com/example/lunamux/pull/412", 3),
+    link("art", "Notes preview", "https://claude.ai/artifact/seed-release-notes", 5),
+    link("doc", "Screenshot list", "file:///tmp/release-4.3/screenshots.md", 25),
+    link("issue", "Known issues", "https://github.com/example/lunamux/issues/398", 180),
+    link("brief", "Brief: release notes for 4.3", "https://example.com/briefs/release-4.3", 300),
+    link("doc", "You decided: notes stay one page", "https://example.com/decisions/one-page", 240)]},
   {"id": "activity", "type": "timeline", "title": "Recent activity", "items": [
-    {"at": now - 120000, "text": "Changelog check found two gaps: the entry for the sidebar fix has no merged pull request, and the one for the search change points at a pull request that was closed without merging"},
-    {"at": now - 300000, "text": "Draft sent for review"},
-    {"at": now - 720000, "text": "Release thread opened for sign-off"},
-    {"at": now - 1200000, "text": "Screenshot refresh started"},
-    {"at": now - 2400000, "text": "Draft written"},
-    {"at": now - 4200000, "text": "Upgrade guide linked"},
-    {"at": now - 6000000, "text": "Notes outline agreed"},
-    {"at": now - 7200000, "text": "Branch cut"}]},
+    {"at": now - 2 * 60000, "text": "Changelog check found two gaps: the entry for the sidebar fix has no merged pull request, and the one for the search change points at a pull request that was closed without merging"},
+    {"at": now - 5 * 60000, "text": "Draft sent for review"},
+    {"at": now - 12 * 60000, "text": "Release thread opened for sign-off"},
+    {"at": now - 20 * 60000, "text": "Screenshot refresh started"},
+    {"at": now - 40 * 60000, "text": "Draft written"},
+    {"at": now - 70 * 60000, "text": "Upgrade guide linked"},
+    {"at": now - 120 * 60000, "text": "Branch cut"}]},
 ]}))' "$NOTES")" >/dev/null
 echo "task \"Release notes\" ($NOTES): main conversation in tab $TAB3, two background tabs, status and panel set"
 

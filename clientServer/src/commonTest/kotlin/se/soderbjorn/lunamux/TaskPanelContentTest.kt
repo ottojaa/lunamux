@@ -1,13 +1,10 @@
 /**
- * Tests for how a task panel block's content is read and written as JSON, shared by every
- * platform that decodes a stored or pushed block.
+ * Tests for how a task panel block's content is read and written as JSON, shared by every platform
+ * that decodes a stored or pushed block.
  *
  * Runs on every :clientServer target: the server encodes a block with [windowJson] and stores it,
- * and the web, Android and iOS clients decode it with the same configuration, so all of them
- * must agree on a link's own kind and time and on what a missing one means.
- *
- * @see TaskBlockContent.Links
- * @see TaskLink
+ * and the web, Android and iOS clients decode it with the same configuration, so all of them must
+ * agree on a link's own kind and time and on what a missing one means.
  */
 package se.soderbjorn.lunamux
 

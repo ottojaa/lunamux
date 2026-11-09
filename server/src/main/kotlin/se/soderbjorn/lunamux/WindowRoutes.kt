@@ -457,10 +457,12 @@ internal fun Route.windowRoutes(
             combine(
                 agentTracker.summaries,
                 claudeHooks.connected,
-                taskIndex?.state ?: MutableStateFlow(TaskSnapshot()),
-            ) { sessions, connected, snapshot ->
-                val withTasks = sessions.map { it.copy(taskId = snapshot.assignment[it.id]) }
-                Triple(withTasks, connected, snapshot.tasks)
+                taskIndex?.state ?: MutableStateFlow(emptyList<AgentTask>()),
+            ) { sessions, connected, tasks ->
+                val withTasks = sessions.map {
+                    it.copy(taskId = it.taskId?.takeIf { id -> taskIndex?.titleOf(id) != null }, inTab = it.endedAt != null && agentTracker.find(it.id)?.let { rec -> paneToResumeIn(rec, taskIndex?.openOfMain(rec)) } != null)
+                }
+                Triple(withTasks, connected, tasks)
             }.collect { (sessions, connected, tasks) ->
                 if (sentSessions != sessions to connected) {
                     sentSessions = sessions to connected
@@ -812,7 +814,7 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
             val worldId = if (ctx.supportsWorlds) WindowState.activeWorldId() else WindowState.defaultWorldId()
             WindowState.addTab(worldId = worldId)
         }
-        is WindowCommand.ResumeAgentSession -> resumeAgentSession(cmd.recordId, ctx)
+        is WindowCommand.ResumeAgentSession -> resumeAgentSession(cmd.recordId, ctx, inTab = cmd.inTab)
         is WindowCommand.OpenTask -> openTask(cmd.taskId, ctx)
         is WindowCommand.SearchAgentSessions -> ctx.scope.launch {
             // Off the socket's loop: the query reads SQLite and may run git for resume notes.
@@ -1018,33 +1020,13 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
 }
 
 /**
- * Whether [id] is safe to type into a shell as an argument: letters, digits,
- * `-` and `_` only. Claude's own ids are UUIDs, but the id in a record came
- * from a hook request body, so it is checked before it reaches the PTY.
- *
- * @param id the agent's session id as stored on the record.
- * @return true when it contains nothing the shell would interpret.
+ * Whether [id] is safe to type into a shell as an argument: letters, digits, `-` and `_` only.
+ * Claude's own ids are UUIDs, but the id in a record came from a hook request body, so it is
+ * checked before it reaches the PTY.
  */
 private fun isPlainSessionId(id: String): Boolean = id.isNotEmpty() && id.length <= 100 && id.all { it.isLetterOrDigit() || it == '-' || it == '_' }
 
-/**
- * The line that picks a conversation back up, typed into a new tab's shell.
- *
- * Called by [resumeAgentSession]. It names the conversation, so it resumes that one and never the
- * newest conversation of the folder: Claude Code takes `claude --resume <conversationId>`, and
- * Codex takes `codex resume <id>` when its id is known (a run Lunamux saw only on screen has none,
- * so it gets plain `codex resume`, which asks which one). Gemini has no resume, and an id with a
- * character a shell would interpret is refused.
- *
- * This is the plain line. A Claude Code conversation that is a task's main one is resumed with the
- * command its task file declares instead, when [declaredResumeFor] says it can be; this line is what
- * every other conversation gets, and what the main gets when it cannot.
- *
- * @param rec the record of the conversation, the newest of its runs.
- * @return the command line, or null when there is nothing to type: Gemini, or a Claude Code
- *   conversation with no usable id.
- * @see declaredResumeFor
- */
+/** The line that picks a conversation back up, typed into a new tab's shell. */
 internal fun resumeCommandOf(rec: AgentSessionRecord): String? {
     val id = rec.agentSessionId?.takeIf(::isPlainSessionId)
     return when (rec.agent) {
@@ -1054,19 +1036,7 @@ internal fun resumeCommandOf(rec: AgentSessionRecord): String? {
     }
 }
 
-/**
- * A task's declared `open` command made to resume conversation [id].
- *
- * Called by [declaredResumeFor]. A command that already holds the id is
- * returned as it is. Otherwise `--resume <id>` is put after the program word, ahead of any prompt
- * words, but only when the command is a plain `claude` line (see [isPlainClaudeLine]): a line that
- * already resumes or continues something, names another program, or chains commands cannot take
- * the flag without resuming the wrong conversation or none, so it gets null.
- *
- * @param command the text of the task's `open` action, or null when it declares none.
- * @param id the conversation id, already checked by [isPlainSessionId].
- * @return the line to type, or null when [command] is null, blank or not a line the id can be put in.
- */
+/** A task's declared `open` command made to resume conversation [id]. */
 internal fun declaredResumeLine(command: String?, id: String): String? {
     val line = command?.trim()?.takeIf { it.isNotEmpty() } ?: return null
     if (id in line) return line
@@ -1075,63 +1045,18 @@ internal fun declaredResumeLine(command: String?, id: String): String? {
     return line.substring(0, firstWordEnd) + " --resume " + id + line.substring(firstWordEnd)
 }
 
-/**
- * Whether [line] is one `claude` command that does not yet resume or continue a conversation.
- *
- * Called by [declaredResumeLine]. The line is read the way a shell would split it, with quotes
- * honoured: its first word must be the program `claude` (a path to it will do), written without
- * quotes, and nothing outside single quotes may chain or expand (`&`, `;`, `|`, `<`, `>`, `$`,
- * backquote, parentheses, a backslash, a line break). None of its words may be a resume or continue
- * flag.
- *
- * @param line the trimmed, non-blank declared command.
- * @return true when `--resume <id>` can be put right after the first word.
- */
-internal fun isPlainClaudeLine(line: String): Boolean {
-    val words = mutableListOf<String>()
-    val word = StringBuilder()
-    var inWord = false
-    var quote: Char? = null
-    for (c in line) {
-        when {
-            quote == '\'' -> if (c == '\'') quote = null else word.append(c)
-            quote == '"' -> when (c) {
-                '"' -> quote = null
-                '$', '`', '\\' -> return false
-                else -> word.append(c)
-            }
-            c == '\'' || c == '"' -> { quote = c; inWord = true }
-            c.isWhitespace() -> {
-                if (c == '\n' || c == '\r') return false
-                if (inWord) { words += word.toString(); word.clear(); inWord = false }
-            }
-            c in "&;|<>$`()\\" -> return false
-            else -> { word.append(c); inWord = true }
-        }
-    }
-    if (quote != null) return false
-    if (inWord) words += word.toString()
-    val firstWordEnd = line.indexOfFirst { it.isWhitespace() }.takeIf { it >= 0 } ?: line.length
-    val program = words.firstOrNull() ?: return false
-    if (line.substring(0, firstWordEnd) != program || program.substringAfterLast('/') != "claude") return false
-    return words.drop(1).none { it == "-r" || it == "-c" || it == "--continue" || it == "--resume" || it.startsWith("--resume=") ||
-            it == "--session-id" || it.startsWith("--session-id=") }
-}
+/** One `claude` command whose words are plain or quoted text, with nothing that chains or expands. */
+private val PLAIN_CLAUDE = Regex("""^(\S*/)?claude(\s+([\w./:@=+-]+|'[^']*'|"[^"$`\\]*"))*$""")
+
+/** A flag that already picks a conversation. */
+private val PICKS_CONVERSATION = Regex("""\s(-r|-c|--continue|--resume|--session-id)(\s|=|$)""")
+
+/** Whether [line] is a plain `claude` command that does not yet resume or continue a conversation. */
+internal fun isPlainClaudeLine(line: String): Boolean = PLAIN_CLAUDE.matches(line) && !PICKS_CONVERSATION.containsMatchIn(line)
 
 /**
  * The line to type, in the task's declared folder, to resume [rec] as the task's main conversation,
  * or null when the conversation is to be resumed the plain way.
- *
- * Called by [resumeAgentSession]. Only a Claude Code conversation with a usable id takes the
- * declared command, and only when [declaredResumeLine] can make it resume that conversation. A
- * line that had to be given `--resume <id>` is used only when the conversation ran in the
- * declared folder (a conversation that ran elsewhere is resumed plainly, in its own folder); a
- * line that already names the conversation is used as it stands. `claude --resume <id>` finds the
- * conversation from any folder, so this is a choice about which line starts it, not a limit of the tool.
- *
- * @param rec the record of the conversation.
- * @param open the `open` action of the task this conversation is the main one of.
- * @return the declared line to type in `open.folder`, or null for the plain path.
  */
 internal fun declaredResumeFor(rec: AgentSessionRecord, open: TaskOpen): String? {
     if (rec.agent != "claude") return null
@@ -1142,10 +1067,8 @@ internal fun declaredResumeFor(rec: AgentSessionRecord, open: TaskOpen): String?
 }
 
 /**
- * Whether two folder paths name the same folder, compared as written after tidying (`.`, `..`,
- * a trailing slash). No disk access; a null or blank path is never the same as another.
- *
- * Called by [declaredResumeFor].
+ * Whether two folder paths name the same folder, compared as written after tidying (`.`, `..`, a
+ * trailing slash). No disk access; a null or blank path is never the same as another.
  */
 private fun sameFolder(a: String?, b: String?): Boolean {
     if (a.isNullOrBlank() || b.isNullOrBlank()) return false
@@ -1153,33 +1076,13 @@ private fun sameFolder(a: String?, b: String?): Boolean {
 }
 
 /**
- * The folder text a closed conversation is picked up from, before any walk up to a folder that exists.
- *
- * Called by [resumeAgentSession] to open the tab and by [resumeNoteOf] to word the note under the
- * row, so the two always name the same folder. A conversation that resumes with its task's declared
- * line (see [declaredResumeFor]) starts from the folder that line is declared for; every other
- * conversation starts from the folder it ran in.
- *
- * @param rec the record of the conversation.
- * @param open the `open` action of the task this conversation is the main one of, or null.
- * @return the recorded folder, or null when none was recorded or it is blank.
- * @see nearestExistingFolder
+ * The folder text a closed conversation is picked up from, before any walk up to a folder that
+ * exists.
  */
 internal fun startFolderOf(rec: AgentSessionRecord, open: TaskOpen?): String? =
     (if (open != null && declaredResumeFor(rec, open) != null) open.folder else rec.cwd)?.takeIf { it.isNotBlank() }
 
-/**
- * The first folder at or above [path] that exists on disk.
- *
- * Called by [resumeAgentSession] and [resumeNoteOf]. A conversation whose folder was removed, such
- * as a worktree that was cleaned up, is opened here instead: Claude Code finds the conversation by
- * its id, so any folder will do, and the agent can rebuild the worktree itself. Looks at the disk
- * only; no git command runs.
- *
- * @param path an absolute folder path that may no longer exist.
- * @return the path itself when it is a folder, else its nearest ancestor that is one; null when
- *   no ancestor exists either (a relative path with nothing above it).
- */
+/** The first folder at or above [path] that exists on disk. */
 internal fun nearestExistingFolder(path: String): String? {
     if (java.io.File(path).isDirectory) return path
     var dir: java.io.File? = java.io.File(path).parentFile
@@ -1194,16 +1097,8 @@ private const val NO_FOLDER_RECORDED = "No folder was recorded for this session.
 private const val NO_FOLDER_ABOVE = "Its folder is gone, and no folder above it exists."
 
 /**
- * The one line shown under a closed row, and in its inspection, when Resume would not simply run
- * in the folder the conversation ran in.
- *
- * Called by [AgentSessionSearch.search] and [AgentSessionSearch.inspect]. It reads the disk the
- * way [resumeAgentSession] does, through [startFolderOf] and [nearestExistingFolder].
- *
- * @param rec the closed conversation.
- * @param open the `open` action of the task the conversation is the main one of, or null.
- * @return "Its folder is gone. It resumes in <nearest folder>.", the reason Resume cannot open a
- *   tab at all, or null when the folder exists and nothing needs saying.
+ * The one line shown under a closed row, and in its inspection, when Resume would not simply run in
+ * the folder the conversation ran in.
  */
 internal fun resumeNoteOf(rec: AgentSessionRecord, open: TaskOpen?): String? {
     val recorded = startFolderOf(rec, open) ?: return NO_FOLDER_RECORDED
@@ -1212,31 +1107,11 @@ internal fun resumeNoteOf(rec: AgentSessionRecord, open: TaskOpen?): String? {
     return "Its folder is gone. It resumes in $nearest."
 }
 
-/**
- * Open a new tab for an agent session and start its agent again.
- *
- * Called by [handleWindowCommand] for [WindowCommand.ResumeAgentSession]. The
- * tab is titled like the overview row and starts in the folder the agent ran
- * in; the resume command is typed into its shell the way the MCP `run`
- * tool does. Gemini has no resume command, so its tab just opens in the
- * folder.
- *
- * A Claude Code conversation that is the main one of a task whose file declares an `open` action
- * is resumed with that command, in the folder the action names (see [declaredResumeFor]). Every
- * other conversation is resumed plainly, in its own folder. When that folder is gone, the tab
- * opens in the nearest folder above it that exists ([nearestExistingFolder]) and nothing else is
- * done: no git command runs, and the agent rebuilds a removed worktree itself. A conversation with
- * no recorded folder, or no id to resume, is answered with an [WindowEnvelope.AgentSessionError]
- * and no tab is created.
- *
- * @param recordId the [AgentSessionSummary.id] of the row, or a conversation id.
- * @param ctx the connection that asked, which receives any error.
- * @param open opens the tab and types the command; [openTabRunning] except in tests.
- * @see resumeNoteOf
- */
+/** Open a new tab for an agent session and start its agent again. */
 internal suspend fun resumeAgentSession(
     recordId: String,
     ctx: WindowConnectionContext,
+    inTab: Boolean = false,
     open: (folder: String, title: String, command: String?) -> Unit = ::openTabRunning,
 ) {
     val rec = ctx.agentTracker?.find(recordId)
@@ -1260,23 +1135,43 @@ internal suspend fun resumeAgentSession(
         ctx.send(WindowEnvelope.AgentSessionError(recordId, "This conversation has no session id Lunamux can resume."))
         return
     }
-    open(folder, rec.title ?: rec.branch ?: java.io.File(recorded).name, command)
+    val pane = if (inTab && command != null) paneToResumeIn(rec, declared) else null
+    if (pane == null || !typeInPane(pane, command!!)) open(folder, rec.title ?: rec.branch ?: java.io.File(recorded).name, command)
 }
 
 /**
- * Start a task's declared `open` action in a new tab.
- *
- * Called by [handleWindowCommand] for [WindowCommand.OpenTask], when a person presses ↵ on a
- * task whose file declares an `open` action and none of its sessions is live. The task is
- * looked up in the index, so the line that gets typed is the one the task file declares, never
- * anything the client sent. A task that no longer exists, a task whose file declares no `open`
- * action and an `open` folder that is gone are answered with an
- * [WindowEnvelope.AgentSessionError] (record id null) and no tab is created.
- *
- * @param taskId the [AgentTask.id] named by the client.
- * @param ctx the connection that asked, which receives any error.
- * @param open opens the tab and types the command; [openTabRunning] except in tests.
+ * The id of the pane session [rec] ran in, when resuming there is safe: the pane still exists, its
+ * shell is in the folder the conversation is picked up from ([startFolderOf]), nothing runs under
+ * that shell, and its tab is one the person can see (not an unlisted background tab). The pane is
+ * found by its layout leaf, which survives a restart; the terminal session id the record stored
+ * does not (every pane gets a new one then).
  */
+internal fun paneToResumeIn(rec: AgentSessionRecord, open: TaskOpen? = null): String? {
+    val id = rec.leafId?.let(WindowState::sessionIdOfLeaf) ?: rec.terminalSessionId ?: return null
+    // A pane in a background tab nobody lists cannot be shown, so typing there would run the agent out of sight.
+    val tab = WindowState.config.value.worlds.asSequence().flatMap { it.tabs }
+        .firstOrNull { t -> t.panes.any { it.leaf.sessionId == id } }
+    if (tab != null && !tab.isListed) return null
+    val session = TerminalSessions.get(id) ?: return null
+    return id.takeIf { sameFolder(session.cwd.value, startFolderOf(rec, open)) && session.isIdleShell() }
+}
+
+/**
+ * Show the tab that holds pane session [sessionId] (switching to its world when that is another
+ * one) and type [command] into it; false when no tab holds it.
+ */
+internal fun typeInPane(sessionId: String, command: String): Boolean {
+    val (world, tab, pane) = WindowState.config.value.worlds.asSequence()
+        .flatMap { w -> w.tabs.map { w to it } }
+        .firstNotNullOfOrNull { (w, t) -> t.panes.firstOrNull { it.leaf.sessionId == sessionId }?.let { Triple(w, t, it) } } ?: return false
+    WindowState.setActiveWorld(world.id)
+    WindowState.setActiveTab(tab.id)
+    WindowState.setFocusedPane(tab.id, pane.leaf.id)
+    TerminalSessions.get(sessionId)?.write((command + "\r").toByteArray(Charsets.UTF_8))
+    return true
+}
+
+/** Start a task's declared `open` action in a new tab. */
 internal suspend fun openTask(
     taskId: String,
     ctx: WindowConnectionContext,
@@ -1301,17 +1196,8 @@ internal suspend fun openTask(
 }
 
 /**
- * Open a new tab in the active world, starting in [folder], and type [command]
- * into its shell the way the MCP `run` tool does.
- *
- * Called by [resumeAgentSession] to start an agent again and by the
- * open-task route to run a task file's `open` action. The command is typed,
- * not executed by Lunamux, so the user's own shell and profile run it.
- *
- * @param folder absolute folder the tab's shell starts in; the caller has checked it exists.
- * @param title the tab's name.
- * @param command the line to type, or null to open the tab and type nothing.
- * @see WindowState.addTab
+ * Open a new tab in the active world, starting in [folder], and type [command] into its shell the
+ * way the MCP `run` tool does.
  */
 internal fun openTabRunning(folder: String, title: String, command: String?) {
     val tabId = WindowState.addTab(WindowState.activeWorldId(), initialCwd = folder)

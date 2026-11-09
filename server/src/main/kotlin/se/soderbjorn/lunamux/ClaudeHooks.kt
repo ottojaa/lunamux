@@ -1,19 +1,15 @@
 /**
- * Connects Lunamux to Claude Code by adding its hook entries to the Claude
- * Code settings file, and removes them again.
+ * Connects Lunamux to Claude Code by adding its hook entries to the Claude Code settings file, and
+ * removes them again.
  *
- * This file contains [ClaudeHooks]. Connecting adds one command hook per
- * event listed in [ClaudeHooks.EVENTS]; each is recognised later by the
- * [ClaudeHooks.MARKER] comment at the end of its command, so disconnecting
- * removes exactly those entries and nothing the user or another tool wrote.
+ * This file contains [ClaudeHooks]. Connecting adds one command hook per event listed in
+ * [ClaudeHooks.EVENTS]; each is recognised later by the [ClaudeHooks.MARKER] comment at the end of
+ * its command, so disconnecting removes exactly those entries and nothing the user or another tool
+ * wrote.
  *
- * The hook command posts the event JSON to the Lunamux events endpoint using
- * the `LUNAMUX_*` variables every Lunamux pane exports, and does nothing
- * (exit 0, no output) when they are absent, so Claude Code runs outside
- * Lunamux are unaffected.
- *
- * @see agentEventRoutes
- * @see AgentSessionTracker
+ * The hook command posts the event JSON to the Lunamux events endpoint using the `LUNAMUX_*`
+ * variables every Lunamux pane exports, and does nothing (exit 0, no output) when they are absent,
+ * so Claude Code runs outside Lunamux are unaffected.
  */
 package se.soderbjorn.lunamux
 
@@ -33,23 +29,7 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 
-/**
- * Reads and edits the `hooks` section of a Claude Code settings file.
- *
- * Every other key in the file is passed through untouched. The file is
- * parsed first and never written if it is not valid JSON. Before the first
- * change the user's file is copied to `<name>.bak` (later edits leave that copy
- * alone), and the new content is written to a temporary file next to the real
- * file and moved into place, so a crash cannot leave a half-written file and a
- * symlinked settings file stays a symlink.
- *
- * Created once in `main()`; the `/window` socket reads [connected] and calls
- * [connect] / [disconnect] for the App Settings row.
- *
- * @param file the settings file. Defaults to `~/.claude/settings.json`, or the
- *   path in the `lunamux.claudeSettings` system property when set (used to try
- *   the feature against a throwaway file).
- */
+/** Reads and edits the `hooks` section of a Claude Code settings file. */
 class ClaudeHooks(
     private val file: File = File(
         System.getProperty("lunamux.claudeSettings")
@@ -61,20 +41,12 @@ class ClaudeHooks(
     /** Whether every event in [EVENTS] currently has a Lunamux hook in the file. */
     val connected: StateFlow<Boolean> = _connected.asStateFlow()
 
-    /**
-     * Re-read the file and update [connected].
-     *
-     * Called when a client connects, since the file may have been edited by hand.
-     *
-     * @return the new value of [connected].
-     */
+    /** Re-read the file and update [connected]. */
     fun refresh(): Boolean = readConnected().also { _connected.value = it }
 
     /**
-     * Add a Lunamux hook entry for each event in [EVENTS], replacing any
-     * Lunamux entries already present so the call is idempotent.
-     *
-     * @return null on success, or a message for the user (invalid JSON, unwritable file).
+     * Add a Lunamux hook entry for each event in [EVENTS], replacing any Lunamux entries already
+     * present so the call is idempotent.
      */
     fun connect(): String? = edit { root ->
         val hooks = (root["hooks"] as? JsonObject).orEmpty().withoutOurs()
@@ -87,11 +59,8 @@ class ClaudeHooks(
     }
 
     /**
-     * Remove every Lunamux hook entry, leaving other hooks and keys alone.
-     * Event lists and the `hooks` object are dropped only if removing ours
-     * left them empty.
-     *
-     * @return null on success, or a message for the user.
+     * Remove every Lunamux hook entry, leaving other hooks and keys alone. Event lists and the
+     * `hooks` object are dropped only if removing ours left them empty.
      */
     fun disconnect(): String? {
         if (!file.exists()) return null
@@ -151,9 +120,9 @@ class ClaudeHooks(
         const val MARKER = "# lunamux-agent-events"
 
         /**
-         * The shell command each hook runs: post stdin to the events URL when the
-         * pane's `LUNAMUX_*` variables are set, otherwise do nothing; always exit 0
-         * so a failing post never blocks Claude Code.
+         * The shell command each hook runs: post stdin to the events URL when the pane's
+         * `LUNAMUX_*` variables are set, otherwise do nothing; always exit 0 so a failing post
+         * never blocks Claude Code.
          */
         val COMMAND = "[ -n \"\$LUNAMUX_EVENTS_URL\" ] && curl -sk -m 2 -X POST " +
             "-H \"$EVENTS_TOKEN_HEADER: \$LUNAMUX_EVENTS_TOKEN\" " +
@@ -181,8 +150,8 @@ class ClaudeHooks(
             }
 
         /**
-         * A copy of this `hooks` object with every Lunamux group removed. A group that
-         * mixes Lunamux and foreign commands keeps the foreign ones.
+         * A copy of this `hooks` object with every Lunamux group removed. A group that mixes
+         * Lunamux and foreign commands keeps the foreign ones.
          */
         private fun JsonObject.withoutOurs(): JsonObject {
             val out = LinkedHashMap<String, JsonElement>()

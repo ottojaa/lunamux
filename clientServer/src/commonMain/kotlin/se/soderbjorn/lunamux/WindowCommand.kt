@@ -269,67 +269,39 @@ sealed class WindowCommand {
     object AddTab : WindowCommand()
 
     /**
-     * Pick a closed conversation back up: the server opens a new
-     * tab named like the row, in the folder the agent ran in, and types the
-     * agent's resume command for that conversation (`claude --resume <conversationId>`,
-     * or `codex resume <id>` when Codex's id is known). A conversation with no id to resume is
-     * answered with [WindowEnvelope.AgentSessionError], and `claude --continue` is never typed,
-     * because it picks the newest conversation of the folder, which may be another one. Gemini has
-     * no resume; for it the tab just opens in the folder. When the folder was removed, the tab opens
-     * in the nearest folder above it that exists, and the server runs no git command: the agent
-     * rebuilds a removed worktree itself. A conversation with no recorded folder is answered with
-     * [WindowEnvelope.AgentSessionError].
-     *
-     * @param recordId the [AgentSessionSummary.id] of the row
+     * Pick a closed conversation back up: the server opens a new tab named like the row, in the
+     * folder the agent ran in, and types the agent's resume command for that conversation (`claude
+     * --resume <conversationId>`, or `codex resume <id>` when Codex's id is known).
      */
     @Serializable
     @SerialName("resumeAgentSession")
-    data class ResumeAgentSession(val recordId: String) : WindowCommand()
+    data class ResumeAgentSession(val recordId: String, val inTab: Boolean = false) : WindowCommand()
 
-    /**
-     * Run a task's `open` action. The server looks the task up among the task files it reads, so
-     * the command that gets typed always comes from the file and never from a client: it opens a
-     * tab named like the task in the action's folder and types the action's command. A task
-     * without an `open` action, or a folder that no longer exists, is answered with
-     * [WindowEnvelope.AgentSessionError] (record id null).
-     *
-     * @param taskId the [AgentTask.id] of the task whose header asked to open
-     */
+    /** Run a task's `open` action. */
     @Serializable
     @SerialName("openTask")
     data class OpenTask(val taskId: String) : WindowCommand()
 
     /**
-     * Search every agent session ever recorded, open or closed, plus Claude Code
-     * sessions imported from before Lunamux recorded them. The server answers
-     * on the asking connection only with [WindowEnvelope.AgentSessionMatches].
-     * A query shorter than two characters has no matches.
-     *
-     * @param query the text typed in the agents overview search box
+     * Search every agent session ever recorded, open or closed, plus Claude Code sessions imported
+     * from before Lunamux recorded them. The server answers on the asking connection only with
+     * [WindowEnvelope.AgentSessionMatches].
      */
     @Serializable
     @SerialName("searchAgentSessions")
     data class SearchAgentSessions(val query: String) : WindowCommand()
 
     /**
-     * Ask for the details the agents overview needs about one session: its
-     * screen (for peek), uncommitted and unpushed work (for the close
-     * confirmation) and how Resume would work. The server answers on the
-     * asking connection only with [WindowEnvelope.AgentSessionInspection].
-     *
-     * @param recordId the [AgentSessionSummary.id] of the row
+     * Ask for the details the agents overview needs about one session: its screen (for peek),
+     * uncommitted and unpushed work (for the close confirmation) and how Resume would work.
      */
     @Serializable
     @SerialName("inspectAgentSession")
     data class InspectAgentSession(val recordId: String) : WindowCommand()
 
     /**
-     * Add or remove Lunamux's hook entries in the user's Claude Code settings
-     * file. Sent when the App Settings "Connect Claude Code" row is pressed.
-     * The result arrives as the next [WindowEnvelope.AgentSessions]
-     * (`claudeConnected`) or a [WindowEnvelope.AgentSessionError].
-     *
-     * @param connected true to connect, false to disconnect
+     * Add or remove Lunamux's hook entries in the user's Claude Code settings file. Sent when the
+     * App Settings "Connect Claude Code" row is pressed.
      */
     @Serializable
     @SerialName("setClaudeHooks")
@@ -344,20 +316,7 @@ sealed class WindowCommand {
     @SerialName("closeTab")
     data class CloseTab(val tabId: String) : WindowCommand()
 
-    /**
-     * Show the background tab of an agent that waits for the person, so they can answer it.
-     *
-     * The tab stays a background tab: it is listed, active and marked ([TabConfig.shownWhileWaiting])
-     * only while the agent waits. The server remembers the tab that was active and brings it back
-     * when the agent stops waiting, whether it was answered Yes or No. The agent keeps its
-     * background flag, so it still gets no row of its own.
-     *
-     * Sent by the agents overview for ↵ on a waiting background member.
-     *
-     * @param recordId the [AgentSessionSummary.id] of the waiting member; an id that names no live
-     *   pane is ignored.
-     * @see TabConfig.shownWhileWaiting
-     */
+    /** Show the background tab of an agent that waits for the person, so they can answer it. */
     @Serializable
     @SerialName("showWaitingAgent")
     data class ShowWaitingAgent(val recordId: String) : WindowCommand()

@@ -76,6 +76,18 @@ class AgentSessionSearchTest {
     }
 
     @Test
+    fun `a background session is never found, by its own words or through its task`() {
+        repo.insertTask("t-bg", "Release notes", 1)
+        repo.saveAgentSession(
+            AgentSessionRecord(id = "bg", agent = "claude", title = "Changelog check", state = "ended", stateSince = 1,
+                createdAt = 1, endedAt = 1, taskId = "t-bg", background = true),
+        )
+        val tasks = TaskIndex(repo, AgentSessionTracker(repo), kotlinx.coroutines.flow.MutableStateFlow(emptyList()), { null })
+        assertEquals(emptyList(), AgentSessionSearch.search(repo, null, "changelog", tasks).map { it.summary.id })
+        assertEquals(emptyList(), AgentSessionSearch.search(repo, null, "release notes", tasks).map { it.summary.id })
+    }
+
+    @Test
     fun `a match on the session itself still names its task`() {
         repo.insertTask("t-1", "Billing", 1)
         repo.saveAgentSession(

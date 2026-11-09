@@ -1,22 +1,15 @@
 /**
  * A seeder that fills a scratch database and task folder with the cases the agents overview has
- * to show, so the overview can be looked at (or reviewed) without weeks of real use.
+ * to show, so it can be looked at without weeks of real use.
  *
- * It holds [AgentsOverviewSeed]: about twenty ended agent sessions that were last active today,
- * two, six, twelve and thirty days ago, some of them grouped into agent-made tasks, plus a few
- * task files whose sessions are open. It also seeds the awkward rows a real installation produces:
- * sessions that say nothing about what the work is (a home folder, a branch named after a run, a
- * detached HEAD), previews written in markdown, a bare code fence, and sessions a server restart
- * ends. It also seeds one agent-made task, "Release 4.2 notes", with its own session, a one-line status
- * and two members that ran out of sight in background tabs (their records stay out of search); its
- * panel holds a progress block, several kinds of link and an activity list long enough to show
- * "+ N more". It turns the scratch server's MCP endpoint on and adds a read+write MCP token
- * ([MCP_TOKEN]), so `scripts/seed-agents-overview-live.sh` can open tabs and windows and a script
- * can post hook events from panes. It is run by the Gradle task `seedAgentsOverview` (through
- * `scripts/seed-agents-overview.sh`) while the scratch server is stopped, and by a test.
- *
- * The seeder only ever writes to the paths it is given and refuses the folders a real
- * installation uses.
+ * It holds [AgentsOverviewSeed]: ended sessions last active within the hour and 2, 6, 12 and 30
+ * days ago, three agent-made tasks, two task files, the awkward rows a real installation produces
+ * (a home folder, a branch named after a run, a bare code fence, markdown, sessions a restart
+ * ends), and it turns the scratch server's MCP endpoint on with a read+write token
+ * ([MCP_TOKEN]) so `scripts/seed-agents-overview-live.sh` can drive the server. It is run by the
+ * Gradle task `seedAgentsOverview` (through `scripts/seed-agents-overview.sh`) while the scratch
+ * server is stopped, and by a test. It only writes to the paths it is given and refuses the
+ * folders a real installation uses.
  */
 package se.soderbjorn.lunamux
 
@@ -28,170 +21,30 @@ import se.soderbjorn.lunamux.persistence.SettingsRepository
 import java.io.File
 import kotlin.system.exitProcess
 
-/**
- * Seeds a scratch database and a scratch task folder for the agents overview.
- *
- * Called from [main] (run by the `seedAgentsOverview` Gradle task) and from the seeder's test.
- * Everything it writes has a fixed id (`seed-…` for sessions, `seed-task-…` for agent-made
- * tasks, `seed-*.json` for files), so running it again replaces its own records instead of
- * adding to them, and it leaves whatever else is in the database alone.
- *
- * Every session but two is stored as `ended` with an explicit end time, and the live cases come
- * from the task files. The two exceptions are left open on purpose, with a state that is days
- * old: a server ends the sessions still open when it starts, and that restart is the case they
- * reproduce. Sessions are written with source `hooks`, the one the overview lists under EARLIER.
- *
- * @see SettingsRepository.saveAgentSession
- * @see SettingsRepository.insertTask
- */
+/** Seeds a scratch database and a scratch task folder for the agents overview. */
 object AgentsOverviewSeed {
     private const val MINUTE = 60_000L
     private const val HOUR = 60 * MINUTE
     private const val DAY = 24 * HOUR
 
     /**
-     * The read+write MCP token the seed adds to the scratch database. It is a fixed, well-known
-     * string, which is fine because the seed refuses every real installation's database; a server
-     * that reads it is a scratch server on the loopback.
-     *
-     * Used by `scripts/seed-agents-overview-live.sh` as the `X-Termtastic-Auth` header.
+     * The read+write MCP token the seed adds. It is a fixed, well-known string, which is fine
+     * because the seed refuses every real installation's database.
      */
     const val MCP_TOKEN = "aov-seed-mcp-token"
 
-    /**
-     * What a run wrote, for the caller to print and for the test to check.
-     *
-     * @property sessions how many session records were written.
-     * @property tasks how many agent-made tasks were written.
-     * @property files how many task files were written.
-     */
+    /** What a run wrote, for the caller to print and the test to check. */
     data class Summary(val sessions: Int, val tasks: Int, val files: Int)
 
-    /** One seeded session: its fields and how long before the seed time it ended. */
-    private class Seeded(
-        val n: Int,
-        val task: String?,
-        val title: String,
-        val prompt: String,
-        val repo: String,
-        val branch: String,
-        val endedAgo: Long,
+    /** The agent-made tasks: id to title and the age of the task. */
+    private val tasks = mapOf(
+        "seed-task-limiter" to ("Rate limiter rewrite" to 4 * DAY),
+        "seed-task-checkout" to ("Flaky checkout tests" to 7 * DAY),
+        // Its sessions say nothing of "invoice", so searching it can only find them through the title.
+        "seed-task-invoice" to ("Invoice export migration" to 32 * DAY),
     )
 
-    /**
-     * One seeded session with the awkward fields spelled out, for the cases the overview has to
-     * read correctly whatever the record holds.
-     *
-     * @property id the record id.
-     * @property title the stored title, null when nothing named the work.
-     * @property repo the repository folder name, null outside a repository.
-     * @property branch the branch, null when none was recorded or HEAD was detached.
-     * @property inHome true to give the session the user's home folder as its working folder.
-     * @property prompt what was first asked, possibly several lines; null for none.
-     * @property lastSaid the stored preview of the last reply, null for none.
-     * @property ago how long before the seed time it ended, or for an open record how long it has
-     *   been in [state].
-     * @property state `ended`, or the open state a restart will end.
-     */
-    private class Case(
-        val id: String,
-        val title: String?,
-        val repo: String?,
-        val branch: String?,
-        val inHome: Boolean = false,
-        val prompt: String?,
-        val lastSaid: String?,
-        val ago: Long,
-        val state: String = "ended",
-    )
-
-    /** An agent-made task: its id, its title, and the age of its oldest session. */
-    private class SeededTask(val id: String, val title: String, val createdAgo: Long)
-
-    private val tasks = listOf(
-        SeededTask("seed-task-rate-limiter", "Rate limiter rewrite", 4 * DAY),
-        SeededTask("seed-task-checkout", "Flaky checkout tests", 7 * DAY),
-        SeededTask("seed-task-emails", "Onboarding emails", 14 * DAY),
-        // The 30-day-old sessions of this task say nothing of "invoice", so searching it can only
-        // find them through the task's title.
-        SeededTask("seed-task-invoice", "Invoice export migration", 32 * DAY),
-        // One session from yesterday and one from ten days ago: the task is as recent as its newest.
-        SeededTask("seed-task-token", "Auth token refresh", 11 * DAY),
-        // The task's own session plus two members that ran in background tabs, all ended.
-        SeededTask("seed-task-notes", "Release 4.2 notes", 3 * HOUR),
-    )
-
-    /** The terminal session id the seeded "Release 4.2 notes" task names as its own session's pane. */
-    private const val NOTES_OWN_PANE = "seed-pty-notes"
-
-    /** The layout leaf the own session of the "Release 4.2 notes" task ran in, which is what the task remembers. */
-    private const val NOTES_OWN_LEAF = "seed-leaf-notes"
-
-    /** The one-line status the seeded "Release 4.2 notes" task carries. */
-    private const val NOTES_STATUS = "Notes drafted, waiting on the changelog check"
-
-    private val sessions = listOf(
-        // Tasks of their own.
-        Seeded(1, null, "Bump kotlinx-serialization", "Bump kotlinx-serialization to the latest minor and fix what breaks", "lunamux", "chore/bump-serialization", 25 * MINUTE),
-        Seeded(2, null, "Sidebar flicker on resize", "Why does the sidebar flicker while the window is resized?", "lunamux", "fix/sidebar-flicker", 3 * HOUR),
-        Seeded(3, null, "Tidy the release notes script", "Make the release notes script skip merge commits", "release-tools", "main", 2 * DAY),
-        Seeded(4, null, "Spike: websocket backpressure", "Try a bounded queue in front of the window socket and measure it", "lunamux", "spike/backpressure", 6 * DAY),
-        Seeded(5, null, "Review of the permissions page", "Review the permissions page change and list what is unclear", "work-app", "review/permissions", 6 * DAY + 2 * HOUR),
-        Seeded(6, null, "Rename the config keys", "Rename the config keys to the new scheme with a fallback for the old ones", "work-app", "chore/config-keys", 12 * DAY),
-        Seeded(7, null, "Explain the tile layout code", "Walk me through how tiles are laid out", "lunamux", "main", 12 * DAY + 3 * HOUR),
-        Seeded(8, null, "Dark mode contrast", "The grey on the badge is hard to read in dark mode", "lunamux", "fix/badge-contrast", 30 * DAY),
-        // Rate limiter rewrite: three sessions, the newest from yesterday.
-        Seeded(9, "seed-task-rate-limiter", "Token bucket", "Write a token bucket for the API gateway", "gateway", "feat/token-bucket", 1 * DAY),
-        Seeded(10, "seed-task-rate-limiter", "Limiter tests", "Cover the limiter with tests for bursts and refills", "gateway", "feat/token-bucket", 1 * DAY + 12 * HOUR),
-        Seeded(11, "seed-task-rate-limiter", "Limiter docs", "Document the limiter's settings", "gateway", "docs/limiter", 2 * DAY),
-        // Flaky checkout tests: second band.
-        Seeded(12, "seed-task-checkout", "Find the flaky one", "Run the checkout suite twenty times and name the test that fails", "shop", "test/flaky", 5 * DAY),
-        Seeded(13, "seed-task-checkout", "Fix the race", "Fix the race in the cart total test", "shop", "test/flaky", 6 * DAY + 4 * HOUR),
-        // Onboarding emails: edge of the second band.
-        Seeded(14, "seed-task-emails", "Welcome email", "Draft the welcome email template", "shop", "feat/welcome-email", 11 * DAY),
-        Seeded(15, "seed-task-emails", "Reminder email", "Draft the day-three reminder", "shop", "feat/welcome-email", 12 * DAY),
-        Seeded(16, "seed-task-emails", "Unsubscribe link", "Add the unsubscribe link and its page", "shop", "feat/unsubscribe", 13 * DAY),
-        // Invoice export migration: older than the server keeps, found only by search.
-        Seeded(17, "seed-task-invoice", "Duplicate header row", "Why is the header row of the csv written twice?", "billing", "fix/csv-header", 30 * DAY),
-        Seeded(18, "seed-task-invoice", "Currency rounding", "Totals differ by a cent after the move; find the rounding", "billing", "fix/rounding", 31 * DAY),
-        Seeded(19, "seed-task-invoice", "Backfill script", "Write the script that backfills last year", "billing", "feat/backfill", 32 * DAY),
-        // Auth token refresh: one recent, one old, still in the first band.
-        Seeded(20, "seed-task-token", "Refresh endpoint", "Add the refresh endpoint", "gateway", "feat/refresh", 1 * DAY + 3 * HOUR),
-        Seeded(21, "seed-task-token", "Refresh docs", "Describe the refresh flow for the docs", "gateway", "docs/refresh", 10 * DAY),
-    )
-
-    /**
-     * The sessions that name their work badly or carry markdown in a preview.
-     *
-     * Each one is a case the overview must handle: the home folder, a branch named after a run,
-     * a stored title that is a run id or a folder name, a preview in bold, a preview that is a
-     * bare code fence, and two sessions still open whose state is days old.
-     */
-    private val cases = listOf(
-        Case("seed-home", null, null, null, inHome = true, prompt = "Why did the nightly backup email never arrive?", lastSaid = "The mail relay rejected it; I resent it.", ago = 3 * HOUR),
-        Case("seed-branch-only", null, "lunamux-agent-overview", "aov-21-impl", prompt = "Add the task rows to the overview and keep their order stable", lastSaid = "Done; the rows keep their order.", ago = 5 * HOUR),
-        Case("seed-run-id-title", "aov-11-impl", "lunamux", "aov-11-impl", prompt = "Fix the waiting count when two sessions share a pane", lastSaid = "The count now ignores a session that has ended.", ago = 20 * HOUR),
-        Case("seed-folder-title", "lunamux-agent-overview", "lunamux-agent-overview", "feat/layouts", prompt = "Compare the two layout directions and list what each trades off", lastSaid = "Direction B trades width for a clearer first column.", ago = 1 * DAY),
-        Case("seed-markdown", "Owner test follow-up", "lunamux", "main", prompt = "**Plan:** read the owner's notes and `fix` the data first", lastSaid = "**4. Tell me how it went,** then decide whether the panel stays", ago = 4 * HOUR),
-        Case("seed-bare-fence", "Show the migration", "billing", "feat/add-column", prompt = "Show me the migration that adds the column", lastSaid = "```", ago = 6 * HOUR),
-        Case("seed-open-done", "Trace the slow login", "gateway", "fix/slow-login", prompt = "Why is the login call slow on Mondays?", lastSaid = "A missing index on sessions.user_id; I added it.", ago = 2 * DAY, state = "done"),
-        Case("seed-open-working", "Rebuild the search index", "billing", "chore/search-index", prompt = "Rebuild the search index with the new analyser", lastSaid = null, ago = 5 * HOUR, state = "working"),
-    )
-
-    /**
-     * Write the seed into [dbFile] and [tasksDir].
-     *
-     * Called by [main] and the seeder's test. The database is opened through
-     * [SettingsRepository], which creates or migrates its schema, so a path that does not exist
-     * yet becomes a valid database. The caller must make sure no server is running on it: a
-     * server reads its sessions and tasks once when it starts.
-     *
-     * @param dbFile the scratch database; refused when it is a real installation's.
-     * @param tasksDir the scratch task folder; refused when it is the folder Lunamux reads by default.
-     * @param now the time the ages are counted back from, epoch millis.
-     * @return how much was written.
-     * @throws IllegalArgumentException when a path is one a real installation uses.
-     */
+    /** Write the seed into [dbFile] and [tasksDir]. */
     fun seed(dbFile: File, tasksDir: File, now: Long = System.currentTimeMillis()): Summary {
         refuseRealPaths(dbFile, tasksDir)
         tasksDir.mkdirs()
@@ -203,313 +56,76 @@ object AgentsOverviewSeed {
         )
         val workdir = dbFile.absoluteFile.parentFile.absolutePath
         repo.setMcpEnabled(true)
+        // A server with this poll on launches the real `claude`; a scratch server must never do that.
+        repo.setClaudeUsagePollEnabled(false)
         DeviceAuth.addTrustedToken(repo, MCP_TOKEN, DeviceAuth.MCP_LABEL, DeviceAuth.MCP_SCOPE_READ_WRITE)
-        for (t in tasks) {
-            repo.insertTask(t.id, t.title, now - t.createdAgo)
-        }
-        for (s in sessions) {
-            val ended = now - s.endedAgo
+        for ((id, t) in tasks) repo.insertTask(id, t.first, now - t.second)
+
+        var sessions = 0
+        /** Save one session that last did something [ago] ms before [now]; open states have no end. */
+        fun put(
+            id: String, title: String?, prompt: String?, repoName: String?, branch: String?, ago: Long,
+            task: String? = null, state: String = "ended", said: String? = "Merged; the checks pass.",
+            cwd: String = workdir,
+        ) {
+            val at = now - ago
             repo.saveAgentSession(
                 AgentSessionRecord(
-                    id = "seed-%02d".format(s.n),
-                    agent = "claude",
-                    agentSessionId = "5eed0000-0000-4000-8000-%012d".format(s.n),
-                    source = "hooks",
-                    cwd = workdir,
-                    repo = s.repo,
-                    branch = s.branch,
-                    title = s.title,
-                    firstPrompt = s.prompt,
-                    state = "ended",
-                    stateSince = ended,
-                    createdAt = ended - 40 * MINUTE,
-                    endedAt = ended,
-                    repoRoot = workdir,
-                    lastSaid = "Merged; the checks pass.",
-                    taskId = s.task,
+                    id = id, agent = "claude", agentSessionId = "5eed0000-0000-4000-8000-%012d".format(++sessions),
+                    source = "hooks", cwd = cwd, repo = repoName, branch = branch, title = title, firstPrompt = prompt,
+                    state = state, stateSince = at, createdAt = at - 40 * MINUTE, endedAt = if (state == "ended") at else null,
+                    repoRoot = workdir, lastSaid = said, taskId = task,
+                    question = if (state == "needs_you") said else null, nowLine = if (state == "working") said else null,
                 ),
             )
         }
-        seedReleaseNotes(repo, workdir, now)
-        val home = System.getProperty("user.home")
-        for (c in cases) {
-            val at = now - c.ago
-            val open = c.state != "ended"
-            repo.saveAgentSession(
-                AgentSessionRecord(
-                    id = c.id,
-                    agent = "claude",
-                    agentSessionId = "5eed0001-0000-4000-8000-%012d".format(c.id.hashCode().toLong() and 0xffffffffL),
-                    source = "hooks",
-                    cwd = if (c.inHome) home else workdir,
-                    repo = c.repo,
-                    branch = c.branch,
-                    title = c.title,
-                    firstPrompt = c.prompt,
-                    state = c.state,
-                    stateSince = at,
-                    createdAt = at - 40 * MINUTE,
-                    endedAt = if (open) null else at,
-                    repoRoot = workdir,
-                    lastSaid = c.lastSaid,
-                ),
-            )
+
+        put("seed-a", "Bump kotlinx-serialization", "Bump kotlinx-serialization and fix what breaks", "lunamux", "chore/bump", 25 * MINUTE)
+        put("seed-b", "Sidebar flicker on resize", "Why does the sidebar flicker while resizing?", "lunamux", "fix/flicker", 3 * HOUR)
+        put("seed-c", "Tidy the release notes script", "Make the release notes script skip merge commits", "release-tools", "main", 2 * DAY)
+        put("seed-d", "Spike: websocket backpressure", "Try a bounded queue in front of the window socket", "lunamux", "spike/queue", 6 * DAY)
+        put("seed-e", "Rename the config keys", "Rename the config keys with a fallback for the old ones", "work-app", "chore/keys", 12 * DAY)
+        put("seed-f", "Dark mode contrast", "The grey on the badge is hard to read in dark mode", "lunamux", "fix/contrast", 30 * DAY)
+        put("seed-limiter-1", "Token bucket", "Write a token bucket for the API gateway", "gateway", "feat/bucket", 1 * DAY, "seed-task-limiter")
+        put("seed-limiter-2", "Limiter tests", "Cover the limiter with tests for bursts", "gateway", "feat/bucket", 2 * DAY, "seed-task-limiter")
+        put("seed-checkout-1", "Find the flaky one", "Run the checkout suite twenty times", "shop", "test/flaky", 5 * DAY, "seed-task-checkout")
+        put("seed-checkout-2", "Fix the race", "Fix the race in the cart total test", "shop", "test/flaky", 6 * DAY, "seed-task-checkout")
+        put("seed-invoice-1", "Duplicate header row", "Why is the header row of the csv written twice?", "billing", "fix/csv", 30 * DAY, "seed-task-invoice")
+        put("seed-invoice-2", "Backfill script", "Write the script that backfills last year", "billing", "feat/backfill", 32 * DAY, "seed-task-invoice")
+
+        // Sessions that name their work badly, or carry markdown in a preview.
+        put("seed-home", null, "Why did the nightly backup email never arrive?", null, null, 3 * HOUR, cwd = System.getProperty("user.home"))
+        put("seed-branch-only", null, "Add the task rows to the overview", "lunamux", "aov-21-impl", 5 * HOUR)
+        put("seed-markdown", "Owner test follow-up", "**Plan:** read the notes and `fix` the data first", "lunamux", "main", 4 * HOUR, said = "**4. Tell me how it went,** then decide")
+        put("seed-bare-fence", "Show the migration", "Show me the migration that adds the column", "billing", "feat/column", 6 * HOUR, said = "```")
+        // Left open on purpose: a server start ends them, aged from when they last did anything.
+        put("seed-open-done", "Trace the slow login", "Why is the login call slow on Mondays?", "gateway", "fix/login", 2 * DAY, state = "done")
+        put("seed-open-working", "Rebuild the search index", "Rebuild the index with the new analyser", "billing", "chore/index", 5 * HOUR, state = "working", said = null)
+
+        fileTask(tasksDir, workdir, "seed-access-control", "Access control", "work-app")
+        put("seed-access-1", "Role model", "Role model", "work-app", null, 12 * MINUTE, "seed-access-control", "needs_you", "Should admins inherit viewer rights?")
+        put("seed-access-2", "Login audit trail", "Login audit trail", "work-app", null, 3 * MINUTE, "seed-access-control", "working", "Writing the audit log migration")
+        put("seed-access-3", "Permissions page", "Permissions page", "work-app", null, 40 * MINUTE, "seed-access-control", "done", null)
+        fileTask(tasksDir, workdir, "seed-release-42", "Release 4.2", "lunamux")
+        put("seed-release-1", "Cut the branch", "Cut the branch", "lunamux", null, 2 * DAY + HOUR, "seed-release-42")
+        put("seed-release-2", "Write the notes", "Write the notes", "lunamux", null, 2 * DAY, "seed-release-42")
+        return Summary(sessions, tasks.size, 2)
+    }
+
+    /** Write the task file for [id]: its title, repo and the command that opens it. */
+    private fun fileTask(tasksDir: File, workdir: String, id: String, title: String, repoName: String) {
+        val json = buildJsonObject {
+            put("id", id)
+            put("title", title)
+            put("repo", repoName)
+            put("open", buildJsonObject { put("command", "echo opened $title"); put("folder", workdir) })
         }
-        val files = writeTaskFiles(repo, tasksDir, workdir, now)
-        return Summary(sessions.size + cases.size + NOTES_SESSIONS + FILE_SESSIONS, tasks.size, files)
+        val tmp = File(tasksDir, ".$id.json.tmp")
+        tmp.writeText(json.toString())
+        tmp.renameTo(File(tasksDir, "$id.json"))
     }
 
-    /** How many session records [writeTaskFiles] writes: the sessions of the six seeded task files. */
-    private const val FILE_SESSIONS = 13
-
-    /** How many session records [seedReleaseNotes] writes: the task's own session and two background ones. */
-    private const val NOTES_SESSIONS = 3
-
-    /**
-     * Write the "Release 4.2 notes" task: an own session, a status line and two background members.
-     *
-     * Called by [seed]. The own session is an ordinary ended record; the two members ran in
-     * background tabs, so they are marked as background and search never finds them. The task's
-     * own pane and status are stored the way the MCP tools store them.
-     *
-     * @param repo the scratch database.
-     * @param workdir an absolute folder for the records' working folder.
-     * @param now the time the ages are counted back from.
-     */
-    private fun seedReleaseNotes(repo: SettingsRepository, workdir: String, now: Long) {
-        fun record(n: Int, title: String, prompt: String, agoEnded: Long, pane: String?, background: Boolean) {
-            val ended = now - agoEnded
-            repo.saveAgentSession(
-                AgentSessionRecord(
-                    id = "seed-notes-$n",
-                    agent = "claude",
-                    agentSessionId = "5eed0002-0000-4000-8000-%012d".format(n),
-                    source = "hooks",
-                    leafId = pane?.let { NOTES_OWN_LEAF },
-                    terminalSessionId = pane,
-                    cwd = workdir,
-                    repo = "lunamux",
-                    branch = "docs/release-notes",
-                    title = title,
-                    firstPrompt = prompt,
-                    state = "ended",
-                    stateSince = ended,
-                    createdAt = ended - 90 * MINUTE,
-                    endedAt = ended,
-                    repoRoot = workdir,
-                    lastSaid = "Done.",
-                    taskId = "seed-task-notes",
-                    background = background,
-                ),
-            )
-        }
-        record(1, "Release 4.2 notes", "Write the release notes for 4.2 and split the checks between two agents", 2 * HOUR, NOTES_OWN_PANE, background = false)
-        record(2, "Changelog check", "Check every changelog entry against the merged pull requests", 2 * HOUR + 10 * MINUTE, null, background = true)
-        record(3, "Screenshot refresh", "Retake the screenshots the notes link to", 2 * HOUR + 20 * MINUTE, null, background = true)
-        repo.stampTaskStart("seed-task-notes", now - 3 * HOUR)
-        repo.setTaskMainConversation("seed-task-notes", "5eed0002-0000-4000-8000-000000000001")
-        repo.setTaskStatus("seed-task-notes", NOTES_STATUS, now - 2 * HOUR)
-        seedReleaseNotesPanel(repo, now)
-    }
-
-    /** Who the seeded panel blocks say wrote them. */
-    private const val NOTES_WRITER = "release notes agent"
-
-    /**
-     * Give the "Release 4.2 notes" task the blocks its panel draws: a progress block (the work in
-     * hand and how far it is), links of every kind (a Slack thread, pull requests, a Claude
-     * artifact, documents, a brief and the person's decisions, each carrying its own kind word and
-     * time) and an activity list.
-     *
-     * The links and the activity are longer than the five lines the panel shows, so the seeded
-     * panel shows "+ N more". The activity list holds the awkward cases on purpose: one entry long
-     * enough to wrap to three lines at the panel's narrowest width, directly followed by a
-     * one-line entry (the gap between the two must stay a full line). It carries no test payload:
-     * the seed is what the design screenshots are taken from.
-     *
-     * Called by [seedReleaseNotes]. The blocks are stored the way the panel store stores them, so
-     * a server that starts on the seeded database shows them as soon as the task's main
-     * conversation is in a tab. (The static seed has no such conversation;
-     * `scripts/seed-agents-overview-live.sh` writes the same kinds of block over MCP for the live
-     * one.)
-     *
-     * @param repo the scratch database.
-     * @param now the time the ages are counted back from.
-     */
-    private fun seedReleaseNotesPanel(repo: SettingsRepository, now: Long) {
-        val blocks = listOf(
-            Triple("progress", "Progress", TaskBlockContent.Progress(done = 3, total = 5, label = "Matching the changelog entries to merged pull requests")),
-            Triple(
-                "links", "Links",
-                TaskBlockContent.Links(
-                    listOf(
-                        TaskLink("doc", "Release 4.2 notes, first draft", "https://example.com/notes/4.2", now - 40 * MINUTE),
-                        TaskLink("slack", "Release thread", "https://example.slack.com/archives/C0RELEASE/p1730800000", now - 12 * MINUTE),
-                        TaskLink("PR", "Changelog check", "https://github.com/example/lunamux/pull/412", now - 3 * MINUTE),
-                        TaskLink("PR", "Screenshot refresh", "https://github.com/example/lunamux/pull/415", now - 20 * MINUTE),
-                        TaskLink("art", "Notes preview", "https://claude.ai/artifact/seed-release-notes", now - 5 * MINUTE),
-                        TaskLink("doc", "Upgrade guide", "https://example.com/upgrade", now - 70 * MINUTE),
-                        TaskLink("doc", "Screenshot list", "file:///tmp/release-4.2/screenshots.md", now - 25 * MINUTE),
-                        TaskLink("issue", "Known issues", "https://github.com/example/lunamux/issues/398", now - 3 * HOUR),
-                    ),
-                ),
-            ),
-            Triple(
-                "brief", "Brief",
-                TaskBlockContent.Links(listOf(TaskLink("brief", "Brief: release notes for 4.2", "https://example.com/briefs/release-4.2", now - 5 * HOUR))),
-            ),
-            Triple(
-                "decisions", "Decisions",
-                TaskBlockContent.Links(
-                    listOf(
-                        TaskLink("doc", "You decided: notes stay one page", "https://example.com/decisions/one-page", now - 4 * HOUR),
-                        TaskLink("doc", "You decided: screenshots are retaken", "https://example.com/decisions/screenshots", now - 90 * MINUTE),
-                    ),
-                ),
-            ),
-            Triple(
-                "activity", "Recent activity",
-                TaskBlockContent.Timeline(
-                    listOf(
-                        TaskTimelineItem(now - 2 * MINUTE, "Changelog check found two gaps: the entry for the sidebar fix has no merged pull request, and the one for the search change points at a pull request that was closed without merging"),
-                        TaskTimelineItem(now - 5 * MINUTE, "Draft sent for review"),
-                        TaskTimelineItem(now - 12 * MINUTE, "Release thread opened for sign-off"),
-                        TaskTimelineItem(now - 20 * MINUTE, "Screenshot refresh started"),
-                        TaskTimelineItem(now - 40 * MINUTE, "Draft written"),
-                        TaskTimelineItem(now - 70 * MINUTE, "Upgrade guide linked"),
-                        TaskTimelineItem(now - 100 * MINUTE, "Notes outline agreed"),
-                        TaskTimelineItem(now - 2 * HOUR, "Branch cut"),
-                    ),
-                ),
-            ),
-        )
-        repo.replaceTaskPanel(
-            "seed-task-notes",
-            blocks.mapIndexed { i, (id, title, content) ->
-                SettingsRepository.TaskPanelRow(
-                    taskId = "seed-task-notes", blockId = id, position = i, kind = content.kindName, title = title,
-                    body = windowJson.encodeToString(TaskBlockContent.serializer(), content),
-                    writtenBy = NOTES_WRITER, writtenAt = now - (6 - i) * MINUTE,
-                )
-            },
-        )
-    }
-
-    /**
-     * Write the task files and the sessions that belong to them: tasks whose sessions need the
-     * person or work, tasks whose sessions are all done but have not ended, and tasks whose sessions
-     * have all ended.
-     *
-     * Called by [seed]. A task file only declares the task (id, title, repository and an `open`
-     * action); the sessions that make it up are records carrying the task's id. Each file is
-     * written under a dot-name and renamed into place, as a real writer would.
-     *
-     * @param repo the database the session records are saved to.
-     * @param tasksDir the folder to write the files into.
-     * @param workdir an absolute folder for the files' `open` actions and the records' folder.
-     * @param now the time the ages are counted back from.
-     * @return how many files were written.
-     */
-    private fun writeTaskFiles(repo: SettingsRepository, tasksDir: File, workdir: String, now: Long): Int {
-        class Member(val title: String, val state: String, val ago: Long, val line: String? = null)
-
-        fun task(id: String, title: String, repoName: String, members: List<Member>) {
-            val json = buildJsonObject {
-                put("id", id)
-                put("title", title)
-                put("repo", repoName)
-                put("open", buildJsonObject {
-                    put("command", "echo opened $title")
-                    put("folder", workdir)
-                })
-            }
-            val tmp = File(tasksDir, ".$id.json.tmp")
-            tmp.writeText(json.toString())
-            tmp.renameTo(File(tasksDir, "$id.json"))
-            members.forEachIndexed { i, m ->
-                val at = now - m.ago
-                repo.saveAgentSession(
-                    AgentSessionRecord(
-                        id = "$id-${i + 1}",
-                        agent = "claude",
-                        agentSessionId = "5eed0002-0000-4000-8000-%012d".format((id.hashCode().toLong() and 0xffffffL) * 100 + i),
-                        source = "hooks",
-                        cwd = workdir,
-                        repo = repoName,
-                        title = m.title,
-                        firstPrompt = m.title,
-                        state = m.state,
-                        stateSince = at,
-                        createdAt = at - 40 * MINUTE,
-                        endedAt = if (m.state == "ended") at else null,
-                        repoRoot = workdir,
-                        question = if (m.state == "needs_you") m.line else null,
-                        nowLine = if (m.state == "working") m.line else null,
-                        taskId = id,
-                    ),
-                )
-            }
-        }
-
-        task(
-            "seed-access-control", "Access control", "work-app",
-            listOf(
-                Member("Role model", "needs_you", 12 * MINUTE, line = "Should admins inherit viewer rights?"),
-                Member("Login audit trail", "working", 3 * MINUTE, line = "Writing the audit log migration"),
-                Member("Permissions page", "done", 40 * MINUTE),
-            ),
-        )
-        // Every session is done but none has ended, the way a task keeps finished pull
-        // requests until they are merged. Nothing in it moves or waits, so it belongs with the
-        // finished work in EARLIER, not in NOW.
-        task(
-            "seed-release-train", "Release train", "lunamux",
-            listOf(
-                Member("Tasks panel", "done", HOUR),
-                Member("Search by task", "done", 3 * HOUR),
-                Member("Seed script", "done", 5 * HOUR),
-            ),
-        )
-        // Open work that is neither waiting on the person nor running: its sessions are done but not
-        // ended, and none has a pane, so it is in EARLIER.
-        task(
-            "seed-billing-cleanup", "Billing cleanup", "billing",
-            listOf(
-                Member("Refund flow", "done", 2 * HOUR),
-                Member("Receipt emails", "done", 6 * HOUR),
-            ),
-        )
-        task(
-            "seed-nightly-sync", "Nightly sync", "ops",
-            listOf(Member("Sync worker", "working", 2 * HOUR, line = "Copying the ledger")),
-        )
-        task(
-            "seed-release-42", "Release 4.2", "lunamux",
-            listOf(
-                Member("Cut the branch", "ended", 2 * DAY + HOUR),
-                Member("Write the notes", "ended", 2 * DAY),
-            ),
-        )
-        task(
-            "seed-docs-sweep", "Docs sweep", "lunamux",
-            listOf(
-                Member("Fix the broken links", "ended", 9 * DAY),
-                Member("Update screenshots", "ended", 9 * DAY + 4 * HOUR),
-            ),
-        )
-        return 6
-    }
-
-    /**
-     * Refuse a path a real installation uses.
-     *
-     * Called by [seed] before it touches anything: the production and dev databases live in
-     * `~/Library/Application Support/Termtastic`, and the real tasks are in `~/.lunamux/tasks`.
-     *
-     * @param dbFile the database path to check.
-     * @param tasksDir the task folder to check.
-     * @throws IllegalArgumentException when either is a real installation's.
-     */
+    /** Refuse a path a real installation uses. */
     private fun refuseRealPaths(dbFile: File, tasksDir: File) {
         val home = File(System.getProperty("user.home")).canonicalFile
         val db = dbFile.absoluteFile.canonicalFile
@@ -523,14 +139,7 @@ object AgentsOverviewSeed {
         }
     }
 
-    /**
-     * Command-line entry: `AgentsOverviewSeed <db file> <tasks folder>`.
-     *
-     * Run by the `seedAgentsOverview` Gradle task. Prints what it wrote, or the reason it
-     * refused, and exits non-zero on a refusal or wrong arguments.
-     *
-     * @param args the database file and the task folder.
-     */
+    /** Command-line entry: `AgentsOverviewSeed <db file> <tasks folder>`. */
     @JvmStatic
     fun main(args: Array<String>) {
         if (args.size != 2) {

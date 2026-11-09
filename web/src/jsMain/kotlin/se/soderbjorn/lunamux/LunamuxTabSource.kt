@@ -24,7 +24,6 @@ import se.soderbjorn.lunula.web.shell.TabListSnapshot
 import se.soderbjorn.lunula.web.shell.TabSnapshotEntry
 import se.soderbjorn.lunula.web.shell.TabSource
 import se.soderbjorn.lunamux.client.WindowSocket
-import se.soderbjorn.lunamux.client.closeTabAsking
 import se.soderbjorn.lunamux.client.WindowStateRepository
 import se.soderbjorn.lunamux.WindowCommand
 import se.soderbjorn.lunamux.isListed
@@ -185,7 +184,7 @@ fun lunamuxTabSource(
     onSelect = { id -> activeTabRequests.trySend(id) },
     onAdd = { scope.launch { socket.send(WindowCommand.AddTab) } },
     // A tab with an agent working in it asks before it closes (see TabCloseDialog.kt).
-    onClose = { id -> scope.launch { closeTabAsking(windowState, id, { socket.send(it) }) { showTabCloseDialog(it) } } },
+    onClose = { id -> scope.launch { closeTabFromPerson(id) } },
     onRename = { id, label -> scope.launch { socket.send(WindowCommand.RenameTab(id, label)) } },
     onReorder = { sourceId, targetId, before ->
         scope.launch {

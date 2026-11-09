@@ -1,15 +1,11 @@
 /**
- * The two questions the agents overview asks about sessions beyond the pushed
- * list: "which sessions mention this?" and "what is going on in this one?".
+ * The two questions the agents overview asks about sessions beyond the pushed list: "which sessions
+ * mention this?" and "what is going on in this one?".
  *
- * This file contains [AgentSessionSearch], which ranks and snips search hits
- * from the database, and builds the screen / unsaved-work / resume details used
- * by peek, the close confirmation and the resume note. `WindowRoutes` calls it
- * for [WindowCommand.SearchAgentSessions] and [WindowCommand.InspectAgentSession]
- * and sends the answers to the asking connection only.
- *
- * @see resumeNoteOf
- * @see se.soderbjorn.lunamux.persistence.SettingsRepository.searchAgentSessions
+ * This file contains [AgentSessionSearch], which ranks and snips search hits from the database, and
+ * builds the screen / unsaved-work / resume details used by peek, the close confirmation and the
+ * resume note. `WindowRoutes` calls it for [WindowCommand.SearchAgentSessions] and
+ * [WindowCommand.InspectAgentSession] and sends the answers to the asking connection only.
  */
 package se.soderbjorn.lunamux
 
@@ -19,12 +15,7 @@ import se.soderbjorn.lunamux.persistence.SettingsRepository.AgentSessionHit
 import java.io.File
 import java.nio.file.Path
 
-/**
- * Search ranking, snippets and per-session details for the agents overview.
- *
- * Stateless; every function may block on SQLite or git, so callers run them off the
- * socket's coroutine.
- */
+/** Search ranking, snippets and per-session details for the agents overview. */
 object AgentSessionSearch {
     /** The most matches returned for one query. */
     const val MAX_MATCHES = 50
@@ -43,30 +34,7 @@ object AgentSessionSearch {
         "title" to 0, "task" to 1, "prompt" to 2, "branch" to 3, "links" to 3, "transcript" to 4, "screen" to 4,
     )
 
-    /**
-     * Find and rank the sessions that contain [query].
-     *
-     * Case-insensitive substring match over the session's title, the title of its task, first
-     * prompt, branch, ticket links, the conversation text and the last screen. Each session
-     * appears once, labelled with its best field. Order: title, then task title, then first
-     * prompt, then branch or links, then transcript or screen; within a tier open sessions come
-     * first, then the newest.
-     *
-     * A stored title that only says where the session ran (`~`, `HEAD`, a folder, the branch or
-     * a run id) is not searched, because the row shows a title made from the prompt instead and
-     * a hit on a word the row never shows would look like a mistake.
-     *
-     * A task's title is not a column of the session, so the sessions of every task whose title
-     * matches are read by task id as well, however old they are, and merged with the rows the
-     * ordinary query found.
-     *
-     * @param repo the store to search.
-     * @param tracker supplies the live record for sessions that are open, so their state is current.
-     * @param query what the user typed; surrounding spaces are ignored.
-     * @param tasks says which task each session is in and what that task is called; null searches
-     *   the sessions' own fields only.
-     * @return at most [MAX_MATCHES] matches, best first; empty for a query shorter than [MIN_QUERY].
-     */
+    /** Find and rank the sessions that contain [query]. */
     fun search(
         repo: SettingsRepository,
         tracker: AgentSessionTracker?,
@@ -109,18 +77,7 @@ object AgentSessionSearch {
             }
     }
 
-    /**
-     * Gather what peek, the close confirmation and the resume note need for one session.
-     *
-     * The screen of an open session is read live; an ended one gives its saved last screen.
-     * Unsaved work is read from the session's folder when it still exists.
-     *
-     * @param recordId the record the user selected.
-     * @param tracker where the record is looked up.
-     * @param tasks says which `open` action a task's main conversation resumes with, so the note
-     *   names the folder Resume really opens; null when no task is known.
-     * @return the details, or null when the record no longer exists.
-     */
+    /** Gather what peek, the close confirmation and the resume note need for one session. */
     fun inspect(recordId: String, tracker: AgentSessionTracker?, tasks: TaskIndex? = null): WindowEnvelope.AgentSessionInspection? {
         val rec = tracker?.find(recordId) ?: return null
         val open = rec.state != "ended"
@@ -166,25 +123,21 @@ object AgentSessionSearch {
         return null
     }
 
-    /**
-     * About 40 characters either side of the first match of [q] in [text], on one line.
-     *
-     * Only the line holding the match is used. A cut end is shown with `…`.
-     *
-     * @return the snippet and where the match starts inside it, or null when [text] has no match.
-     */
+    /** About 40 characters either side of the first match of [q] in [text], on one line. */
     internal fun snip(text: String, q: String): Pair<String, Int>? {
-        val at = text.indexOf(q, ignoreCase = true)
-        if (at < 0) return null
-        val lineStart = text.lastIndexOf('\n', at - 1) + 1
-        val lineEnd = text.indexOf('\n', at).let { if (it < 0) text.length else it }
-        val from = maxOf(lineStart, at - SNIPPET_SIDE)
-        val to = minOf(lineEnd, at + q.length + SNIPPET_SIDE)
-        val head = if (from > lineStart) "…" else ""
-        val tail = if (to < lineEnd) "…" else ""
-        val lead = text.substring(from, at)
-        val trimmedLead = lead.trimStart()
-        val body = trimmedLead + text.substring(at, to).trimEnd()
-        return (head + body + tail) to (head.length + trimmedLead.length)
+        val first = text.indexOf(q, ignoreCase = true)
+        if (first < 0) return null
+        val from0 = text.lastIndexOf('\n', first - 1) + 1
+        val to0 = text.indexOf('\n', first).let { if (it < 0) text.length else it }
+        val raw = text.substring(from0, to0)
+        val plain = AgentSessionText.plain(raw)
+        val line = if (plain.contains(q, ignoreCase = true)) plain else raw
+        val at = line.indexOf(q, ignoreCase = true)
+        val from = maxOf(0, at - SNIPPET_SIDE)
+        val to = minOf(line.length, at + q.length + SNIPPET_SIDE)
+        val head = if (from > 0) "…" else ""
+        val tail = if (to < line.length) "…" else ""
+        val lead = line.substring(from, at).trimStart()
+        return (head + lead + line.substring(at, to).trimEnd() + tail) to (head.length + lead.length)
     }
 }

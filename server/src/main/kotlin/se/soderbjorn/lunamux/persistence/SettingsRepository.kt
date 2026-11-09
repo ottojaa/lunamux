@@ -37,8 +37,6 @@
  */
 package se.soderbjorn.lunamux.persistence
 
-import app.cash.sqldelight.db.QueryResult
-import app.cash.sqldelight.db.SqlCursor
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -115,130 +113,22 @@ class SettingsRepository(
         dbFile.parentFile?.mkdirs()
         driver = JdbcSqliteDriver("jdbc:sqlite:${dbFile.absolutePath}")
 
-        val schema = LunamuxDatabase.Schema
-        val current = currentUserVersion()
-        if (current == 0L) {
-            schema.create(driver).value
-            setUserVersion(schema.version)
-        } else if (current < schema.version) {
-            schema.migrate(driver, current, schema.version).value
-            setUserVersion(schema.version)
-        }
-
+        // Every statement in the schema is IF NOT EXISTS, so running it on each start both creates a
+        // fresh file and adds the tables and views a file from an older build lacks.
+        LunamuxDatabase.Schema.create(driver).value
         database = LunamuxDatabase(driver)
 
-        // Belt-and-suspenders: the SQLDelight-generated schema version doesn't
-        // bump automatically when we add tables to Settings.sq (no .sqm
-        // migrations yet), so pre-existing DBs at user_version=1 would never
-        // pick up the new pane_scrollback table otherwise.
-        driver.execute(
-            identifier = null,
-            sql = """
-                CREATE TABLE IF NOT EXISTS pane_scrollback (
-                    leaf_id    TEXT NOT NULL PRIMARY KEY,
-                    bytes      BLOB NOT NULL,
-                    updated_at INTEGER NOT NULL,
-                    cols       INTEGER,
-                    rows       INTEGER
-                )
-            """.trimIndent(),
-            parameters = 0,
-        )
-        // Same story for the agent-session history table.
-        driver.execute(
-            identifier = null,
-            sql = """
-                CREATE TABLE IF NOT EXISTS agent_sessions (
-                    id                  TEXT NOT NULL PRIMARY KEY,
-                    agent               TEXT NOT NULL,
-                    agent_session_id    TEXT,
-                    source              TEXT NOT NULL,
-                    leaf_id             TEXT,
-                    terminal_session_id TEXT,
-                    cwd                 TEXT,
-                    repo                TEXT,
-                    branch              TEXT,
-                    worktree_path       TEXT,
-                    title               TEXT,
-                    first_prompt        TEXT,
-                    transcript_path     TEXT,
-                    links               TEXT NOT NULL DEFAULT '',
-                    state               TEXT NOT NULL,
-                    state_since         INTEGER NOT NULL,
-                    now_line            TEXT,
-                    question            TEXT,
-                    last_screen         TEXT,
-                    created_at          INTEGER NOT NULL,
-                    ended_at            INTEGER,
-                    repo_root           TEXT,
-                    search_text         TEXT,
-                    last_said           TEXT,
-                    task_id             TEXT
-                )
-            """.trimIndent(),
-            parameters = 0,
-        )
-        // Every task the server keeps something about; see Settings.sq for what each column holds.
-        driver.execute(
-            identifier = null,
-            sql = """
-                CREATE TABLE IF NOT EXISTS tasks (
-                    id                TEXT NOT NULL PRIMARY KEY,
-                    title             TEXT,
-                    main_conversation TEXT,
-                    status            TEXT,
-                    status_at         INTEGER,
-                    question_waits    INTEGER,
-                    started_at        INTEGER,
-                    created_at        INTEGER,
-                    updated_at        INTEGER
-                )
-            """.trimIndent(),
-            parameters = 0,
-        )
-        // The blocks agents write into a task's panel.
-        driver.execute(
-            identifier = null,
-            sql = """
-                CREATE TABLE IF NOT EXISTS task_panel_blocks (
-                    task_id    TEXT NOT NULL,
-                    block_id   TEXT NOT NULL,
-                    position   INTEGER NOT NULL,
-                    kind       TEXT NOT NULL,
-                    title      TEXT,
-                    body       TEXT NOT NULL,
-                    written_by TEXT,
-                    written_at INTEGER NOT NULL,
-                    PRIMARY KEY (task_id, block_id)
-                )
-            """.trimIndent(),
-            parameters = 0,
-        )
-        // Same no-.sqm story for columns added to an existing table: bring
-        // pre-existing DBs up to the current shape. SQLite has no
-        // ADD COLUMN IF NOT EXISTS, so the "duplicate column name" error on
-        // an already-migrated DB is expected and swallowed.
-        runCatching {
-            driver.execute(null, "ALTER TABLE pane_scrollback ADD COLUMN cols INTEGER", 0)
-        }
-        runCatching {
-            driver.execute(null, "ALTER TABLE pane_scrollback ADD COLUMN rows INTEGER", 0)
-        }
-        runCatching {
-            driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN repo_root TEXT", 0)
-        }
-        runCatching {
-            driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN search_text TEXT", 0)
-        }
-        runCatching {
-            driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN last_said TEXT", 0)
-        }
-        runCatching {
-            driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN task_id TEXT", 0)
-        }
-        runCatching {
-            driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN background INTEGER NOT NULL DEFAULT 0", 0)
-        }
+        // Columns an older file lacks. SQLite has no ADD COLUMN IF NOT EXISTS: the "duplicate column"
+        // error on an up-to-date file is expected and swallowed.
+        listOf(
+            "pane_scrollback ADD COLUMN cols INTEGER",
+            "pane_scrollback ADD COLUMN rows INTEGER",
+            "agent_sessions ADD COLUMN repo_root TEXT",
+            "agent_sessions ADD COLUMN search_text TEXT",
+            "agent_sessions ADD COLUMN last_said TEXT",
+            "agent_sessions ADD COLUMN task_id TEXT",
+            "agent_sessions ADD COLUMN background INTEGER NOT NULL DEFAULT 0",
+        ).forEach { change -> runCatching { driver.execute(null, "ALTER TABLE $change", 0) } }
         // A finished turn used to be stored as `idle`; it is `done` now. Nothing else wrote `idle`.
         runCatching {
             driver.execute(null, "UPDATE agent_sessions SET state = 'done' WHERE state = 'idle'", 0)
@@ -517,14 +407,7 @@ class SettingsRepository(
     fun allScrollbackLeafIds(): Set<String> =
         database.settingsQueries.selectAllScrollbackLeafIds().executeAsList().toSet()
 
-    /**
-     * Insert or replace one agent-session record.
-     *
-     * Called by [se.soderbjorn.lunamux.AgentSessionTracker] whenever a record
-     * opens, changes state or ends.
-     *
-     * @param r the record to store, keyed by [AgentSessionRecord.id].
-     */
+    /** Insert or replace one agent-session record. */
     fun saveAgentSession(r: AgentSessionRecord) {
         database.settingsQueries.upsertAgentSession(
             r.id, r.agent, r.agentSessionId, r.source, r.leafId, r.terminalSessionId, r.cwd,
@@ -535,86 +418,33 @@ class SettingsRepository(
         )
     }
 
-    /**
-     * Delete one agent-session record.
-     *
-     * Called by the tracker when a record seen on screen turns out to be a conversation that
-     * already has a record: the older record carries on and this one is dropped, so search does
-     * not list the conversation twice.
-     *
-     * @param id Lunamux's record id.
-     */
+    /** Delete one agent-session record. */
     fun deleteAgentSession(id: String) {
         database.settingsQueries.deleteAgentSession(id)
     }
 
-    /**
-     * The most recently ended records that ended at or after [since], newest first.
-     *
-     * Called by the tracker when it builds the list pushed to clients, and by
-     * tests that read back what was saved. Imported history is never returned:
-     * it is only found by search.
-     *
-     * @param since earliest end time to include, in epoch milliseconds (inclusive).
-     * @param limit how many to return at most.
-     * @return ended records ordered by end time, newest first.
-     */
+    /** The most recently ended records that ended at or after [since], newest first. */
     fun loadRecentEndedAgentSessions(since: Long, limit: Long): List<AgentSessionRecord> =
         database.settingsQueries.selectRecentEndedAgentSessions(since, limit, ::toAgentSessionRecord).executeAsList()
 
-    /**
-     * Look up a record by the agent's own session id.
-     *
-     * Called by the tracker when a hook reports a session id it has not seen
-     * since startup, so a resumed conversation reattaches to its old record.
-     *
-     * @param agent `claude`, `codex` or `gemini`.
-     * @param agentSessionId the agent's session id.
-     * @return the newest matching record, or null.
-     */
+    /** Look up a record by the agent's own session id. */
     fun findAgentSession(agent: String, agentSessionId: String): AgentSessionRecord? =
         database.settingsQueries.selectAgentSessionByAgentId(agent, agentSessionId, ::toAgentSessionRecord)
             .executeAsOneOrNull()
 
-    /**
-     * Look up a record by Lunamux's record id.
-     *
-     * Called by the resume command, which receives the id of the row the user picked.
-     *
-     * @param id the record id.
-     * @return the record, or null if it no longer exists.
-     */
+    /** Look up a record by Lunamux's record id. */
     fun findAgentSessionById(id: String): AgentSessionRecord? =
         database.settingsQueries.selectAgentSessionById(id, ::toAgentSessionRecord).executeAsOneOrNull()
 
     /**
-     * Look up the newest record of a conversation by the agent's own session id, whichever agent
-     * it belongs to.
-     *
-     * Called by the tracker's lookup for a resume that names a conversation instead of a record,
-     * which is how a task stores its main conversation: the record may be long gone from memory
-     * but its row is still here.
-     *
-     * @param conversationId the agent's own session id.
-     * @return the newest record of that conversation, or null when none was ever kept.
+     * Look up the newest record of a conversation by the agent's own session id, whichever agent it
+     * belongs to.
      */
     fun findAgentSessionByConversation(conversationId: String): AgentSessionRecord? =
         database.settingsQueries.selectAgentSessionByConversation(conversationId, ::toAgentSessionRecord)
             .executeAsOneOrNull()
 
-    /**
-     * Mark every still-open record as ended, each at the last time it was known to be alive.
-     *
-     * Called by the tracker at startup: terminal sessions do not survive a restart, so a record
-     * still open then belongs to a process that is gone. A record is ended at [lastSeen] when that
-     * is later than the time it entered its state, else at that time, and never later than [now];
-     * stamping them all with the time of the restart would make a session last used days ago read
-     * as if it had just ended, and place it in the wrong band of the agents overview.
-     *
-     * @param now the time of the restart: the latest a record can have ended.
-     * @param lastSeen the newest sign of life known for a record outside the database (for
-     *   example its transcript file's modification time), or null when there is none.
-     */
+    /** Mark every still-open record as ended, each at the last time it was known to be alive. */
     fun endOpenAgentSessions(now: Long, lastSeen: (AgentSessionRecord) -> Long? = { null }) {
         database.settingsQueries.selectOpenAgentSessions(::toAgentSessionRecord).executeAsList().forEach { rec ->
             val at = minOf(now, maxOf(rec.stateSince, lastSeen(rec) ?: 0L))
@@ -639,23 +469,6 @@ class SettingsRepository(
     /**
      * One row of the `tasks` table: what the server keeps about a task, an agent-made one or a task
      * file's.
-     *
-     * @property id the task's id.
-     * @property title the name of a task an agent made, or null for a task a file declares (the file
-     *   owns its title).
-     * @property mainConversation the conversation that speaks for the task (the agent's own session
-     *   id, or the record id of a run that reported none), or null when none was named. It names a
-     *   conversation, never a pane: pane ids are handed out again on every start.
-     * @property status the task's one-line status, or null.
-     * @property statusAt epoch millis the status was set, or null with no status.
-     * @property questionWaits whether the status says a question waits for the person; false
-     *   whenever there is no status.
-     * @property startedAt epoch millis the task was first recorded (its first session's start, else
-     *   its file's time, else when a status or main conversation was first set), or null before
-     *   that; never changes once set.
-     * @property createdAt epoch millis an agent made the task, or null for a task file's task.
-     * @property updatedAt epoch millis an agent last renamed the task, or null for a task file's
-     *   task.
      */
     data class TaskRow(
         val id: String,
@@ -669,54 +482,25 @@ class SettingsRepository(
         val updatedAt: Long? = null,
     )
 
-    /**
-     * Every stored task, oldest first.
-     *
-     * Called by [se.soderbjorn.lunamux.TaskIndex] when it starts; it keeps the rows in memory after
-     * that and writes through the methods below, so it is the only owner of this table.
-     *
-     * @return one row per task the server has stored something about.
-     */
+    /** Every stored task, oldest first. */
     fun loadTasks(): List<TaskRow> =
         database.settingsQueries.selectTasks { id, title, conversation, status, statusAt, waits, startedAt, createdAt, updatedAt ->
             TaskRow(id, title, conversation, status, statusAt, waits == 1L, startedAt, createdAt, updatedAt)
         }.executeAsList()
 
-    /**
-     * Store a new agent-made task.
-     *
-     * Called by the MCP `create_task` tool through the task index, with an id nothing else has. A
-     * task that already has a row is left as it is.
-     *
-     * @param id the new task's id.
-     * @param title the task's name.
-     * @param at epoch millis stored as both the creation and the last-rename time.
-     * @see renameTask
-     */
+    /** Store a new agent-made task. */
     fun insertTask(id: String, title: String, at: Long) {
         database.settingsQueries.insertTask(id, title, at, at)
     }
 
-    /**
-     * Change the name of an agent-made task; nothing else about it changes.
-     *
-     * Called by the MCP `rename_task` tool through the task index.
-     *
-     * @param id the task's id.
-     * @param title the new name.
-     * @param at epoch millis stored as the last-rename time.
-     */
+    /** Change the name of an agent-made task; nothing else about it changes. */
     fun renameTask(id: String, title: String, at: Long) {
         database.settingsQueries.renameTask(title, at, id)
     }
 
     /**
-     * Record when a task started (see [TaskRow.startedAt] for what that time is), unless it already has a start.
-     *
-     * Makes a row for the task when it has none, so a task file's task gets one on first sight.
-     *
-     * @param taskId the task's id.
-     * @param startedAt epoch millis to store when the task has no start yet.
+     * Record when a task started (see [TaskRow.startedAt] for what that time is), unless it already
+     * has a start.
      */
     fun stampTaskStart(taskId: String, startedAt: Long) {
         database.settingsQueries.transaction {
@@ -725,28 +509,12 @@ class SettingsRepository(
         }
     }
 
-    /**
-     * Name the conversation that speaks for a task; the task needs a row (see [stampTaskStart]).
-     *
-     * Called by [se.soderbjorn.lunamux.TaskIndex] when a task is made or its main conversation
-     * changes.
-     *
-     * @param taskId the task's id.
-     * @param conversationId the conversation's id, or null to clear it.
-     */
+    /** Name the conversation that speaks for a task; the task needs a row (see [stampTaskStart]). */
     fun setTaskMainConversation(taskId: String, conversationId: String?) {
         database.settingsQueries.setTaskMainConversation(conversationId, taskId)
     }
 
-    /**
-     * Store a task's status line; the task needs a row (see [stampTaskStart]).
-     *
-     * @param taskId the task's id.
-     * @param status the cleaned text, or null to clear the status.
-     * @param at epoch millis it was set; ignored when [status] is null.
-     * @param questionWaits whether the status says a question waits for the person; stored as
-     *   false when [status] is null.
-     */
+    /** Store a task's status line; the task needs a row (see [stampTaskStart]). */
     fun setTaskStatus(taskId: String, status: String?, at: Long, questionWaits: Boolean = false) {
         database.settingsQueries.setTaskStatus(
             status,
@@ -756,18 +524,7 @@ class SettingsRepository(
         )
     }
 
-    /**
-     * One stored block of a task's panel, as the table holds it.
-     *
-     * @property taskId the task the block belongs to.
-     * @property blockId the writer's id for the block, unique within the task.
-     * @property position the block's place in the task's drawing order, counted from 0.
-     * @property kind the content's type name (`links`, `timeline` or `progress`).
-     * @property title the block's heading, or null.
-     * @property body the block's content as JSON.
-     * @property writtenBy who wrote it, or null.
-     * @property writtenAt epoch millis the server stored it.
-     */
+    /** One stored block of a task's panel, as the table holds it. */
     data class TaskPanelRow(
         val taskId: String,
         val blockId: String,
@@ -779,39 +536,20 @@ class SettingsRepository(
         val writtenAt: Long,
     )
 
-    /**
-     * Every stored panel block of every task, in drawing order within each task.
-     *
-     * Called by [se.soderbjorn.lunamux.TaskPanelStore] when it starts; it keeps the blocks in
-     * memory after that and writes through the methods below, so it is the only owner of this table.
-     *
-     * @return one row per block.
-     */
+    /** Every stored panel block of every task, in drawing order within each task. */
     fun loadTaskPanelRows(): List<TaskPanelRow> =
         database.settingsQueries.selectTaskPanelBlocks { taskId, blockId, position, kind, title, body, by, at ->
             TaskPanelRow(taskId, blockId, position.toInt(), kind, title, body, by, at)
         }.executeAsList()
 
-    /**
-     * Store one panel block, replacing the block with the same task and id.
-     *
-     * @param row the block to store.
-     */
+    /** Store one panel block, replacing the block with the same task and id. */
     fun saveTaskPanelRow(row: TaskPanelRow) {
         database.settingsQueries.upsertTaskPanelBlock(
             row.taskId, row.blockId, row.position.toLong(), row.kind, row.title, row.body, row.writtenBy, row.writtenAt,
         )
     }
 
-    /**
-     * Replace a task's whole panel in one step: its stored blocks are removed and [rows] stored.
-     *
-     * Called by the panel store for `set_task_panel`, so a crash cannot leave half of the old
-     * panel and half of the new one.
-     *
-     * @param taskId the task whose panel is replaced.
-     * @param rows the blocks to store, already numbered by position.
-     */
+    /** Replace a task's whole panel in one step: its stored blocks are removed and [rows] stored. */
     fun replaceTaskPanel(taskId: String, rows: List<TaskPanelRow>) {
         database.transaction {
             database.settingsQueries.deleteTaskPanel(taskId)
@@ -819,86 +557,41 @@ class SettingsRepository(
         }
     }
 
-    /**
-     * Remove one panel block; an unknown block is ignored.
-     *
-     * @param taskId the task the block belongs to.
-     * @param blockId the block's id.
-     */
+    /** Remove one panel block; an unknown block is ignored. */
     fun deleteTaskPanelRow(taskId: String, blockId: String) {
         database.settingsQueries.deleteTaskPanelBlock(taskId, blockId)
     }
 
-    /**
-     * Remove every panel block of a task.
-     *
-     * @param taskId the task whose panel is emptied.
-     */
+    /** Remove every panel block of a task. */
     fun deleteTaskPanel(taskId: String) {
         database.settingsQueries.deleteTaskPanel(taskId)
     }
 
-    /**
-     * Store the searchable conversation text of one record.
-     *
-     * Called from the tracker's background worker after a record ends and by
-     * the Claude Code history import. It is a separate write because the long
-     * text is never part of an in-memory [AgentSessionRecord]; the regular
-     * [saveAgentSession] keeps whatever is stored.
-     *
-     * @param id the record id.
-     * @param text the extracted text; an empty string marks "looked, found
-     *   nothing" so the record is not retried.
-     * @see loadAgentSessionsMissingSearchText
-     */
+    /** Store the searchable conversation text of one record. */
     fun setAgentSessionSearchText(id: String, text: String) {
         database.settingsQueries.setAgentSessionSearchText(text, id)
     }
 
-    /**
-     * Ended records that have a transcript file but no stored search text yet.
-     *
-     * Called once at startup by the tracker's background worker to backfill
-     * records created before search existed.
-     *
-     * @return pairs of record id and transcript path.
-     */
+    /** Ended records that have a transcript file but no stored search text yet. */
     fun loadAgentSessionsMissingSearchText(): List<Pair<String, String>> =
         database.settingsQueries.selectAgentSessionsMissingSearchText { id, path -> id to path!! }
             .executeAsList()
 
-    /**
-     * One search hit: the record plus short windows of the long columns.
-     *
-     * @property record the matching record; its `lastScreen` is always null.
-     * @property transcriptWindow about 240 characters of the transcript text
-     *   around the first match, or null when the transcript did not match.
-     * @property screenWindow the same for the last screen.
-     */
+    /** One search hit: the record plus short windows of the long columns. */
     data class AgentSessionHit(
         val record: AgentSessionRecord,
         val transcriptWindow: String?,
         val screenWindow: String?,
     )
 
-    /**
-     * Find records containing [query] in any searchable column.
-     *
-     * Called by the window route for `SearchAgentSessions`. The match is a
-     * case-insensitive substring match; `%`, `_` and `\` in [query] are
-     * matched literally. Ranking is the caller's job: this returns the
-     * newest 200 candidates.
-     *
-     * @param query the text typed by the user (not escaped).
-     * @return up to 200 hits, newest first.
-     * @see AgentSessionHit
-     */
+    /** Find records containing [query] in any searchable column. */
     fun searchAgentSessions(query: String): List<AgentSessionHit> {
         val pattern = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         return database.settingsQueries.searchAgentSessions(pattern, query) {
                 id, agent, agentSessionId, source, leafId, terminalSessionId, cwd, repo, branch,
                 worktreePath, title, firstPrompt, transcriptPath, links, state, stateSince, nowLine,
-                question, createdAt, endedAt, repoRoot, lastSaid, taskId, background, transcriptWindow, screenWindow,
+                question, lastScreen, createdAt, endedAt, repoRoot, lastSaid, taskId, background,
+                transcriptWindow, screenWindow,
             ->
             AgentSessionHit(
                 toAgentSessionRecord(
@@ -912,15 +605,7 @@ class SettingsRepository(
         }.executeAsList()
     }
 
-    /**
-     * The records stored with one of [taskIds], newest first, at most 200.
-     *
-     * Called by [se.soderbjorn.lunamux.AgentSessionSearch] so a query that matches a task's
-     * title finds that task's sessions however old they are. Imported history is included.
-     *
-     * @param taskIds the tasks to read; empty gives an empty list without querying.
-     * @return the records, with no transcript or screen windows.
-     */
+    /** The records stored with one of [taskIds], newest first, at most 200. */
     fun loadAgentSessionsOfTasks(taskIds: Collection<String>): List<AgentSessionRecord> =
         if (taskIds.isEmpty()) emptyList()
         else database.settingsQueries.selectAgentSessionsByTaskIds(taskIds, ::toAgentSessionRecord).executeAsList()
@@ -950,22 +635,6 @@ class SettingsRepository(
      */
     fun close() {
         driver.close()
-    }
-
-    private fun currentUserVersion(): Long {
-        return driver.executeQuery(
-            identifier = null,
-            sql = "PRAGMA user_version",
-            mapper = { cursor: SqlCursor ->
-                val v = if (cursor.next().value) cursor.getLong(0) ?: 0L else 0L
-                QueryResult.Value(v)
-            },
-            parameters = 0
-        ).value
-    }
-
-    private fun setUserVersion(version: Long) {
-        driver.execute(null, "PRAGMA user_version = $version", 0)
     }
 
     /**

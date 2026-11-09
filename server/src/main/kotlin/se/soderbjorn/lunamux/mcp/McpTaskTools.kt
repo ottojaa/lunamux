@@ -2,24 +2,20 @@
  * MCP tools that let an agent group its own sessions into tasks.
  *
  * Every agent session belongs to one task, and the agents overview shows tasks. An agent that
- * splits its work over several sessions calls these tools, unprompted, so the person sees one
- * task with its sessions rather than a flat list: `create_task`, `add_to_task`, `remove_from_task`,
+ * splits its work over several sessions calls these tools, unprompted, so the person sees one task
+ * with its sessions rather than a flat list: `create_task`, `add_to_task`, `remove_from_task`,
  * `rename_task`, `set_task_lead` and `set_task_status` change tasks, and `list_tasks` reads them.
  * Every task has one session that speaks for it (the one that made it, unless another is named) and
- * a one-line status. `create_window` in
- * [registerMcpWriteTools] also takes a `taskId`.
+ * a one-line status. `create_window` in [registerMcpWriteTools] also takes a `taskId`.
  *
  * The rules (what counts as a known task, what happens to a pane with no agent yet) live in
  * [TaskIndex]; this file only maps its answers to tool results and its [TaskException]s to
  * [McpArgumentException]s.
- *
- * @see registerMcpTaskTools
- * @see TaskIndex
  */
 package se.soderbjorn.lunamux.mcp
 
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -32,14 +28,8 @@ import se.soderbjorn.lunamux.TaskIndex
 import se.soderbjorn.lunamux.TaskListing
 
 /**
- * Run [block] and turn a [TaskException] into the [McpArgumentException] the MCP layer reports
- * as a tool error.
- *
- * Called by every tool here and by `create_window` when it is given a task.
- *
- * @param block the [TaskIndex] call to make.
- * @return what [block] returned.
- * @throws McpArgumentException carrying the exception's message, which names the offender.
+ * Run [block] and turn a [TaskException] into the [McpArgumentException] the MCP layer reports as a
+ * tool error.
  */
 internal fun <T> taskCall(block: () -> T): T =
     try {
@@ -48,13 +38,7 @@ internal fun <T> taskCall(block: () -> T): T =
         throw McpArgumentException(e.message ?: "Task request refused")
     }
 
-/**
- * Read an optional array of strings argument.
- *
- * @param name the argument's name.
- * @return the strings, or an empty list when the argument is absent.
- * @throws McpArgumentException when the argument is not an array of strings.
- */
+/** Read an optional array of strings argument. */
 private fun JsonObject.stringList(name: String): List<String> {
     val el = this[name] ?: return emptyList()
     if (el is JsonNull) return emptyList()
@@ -65,12 +49,6 @@ private fun JsonObject.stringList(name: String): List<String> {
 /**
  * Register `create_task`, `add_to_task`, `remove_from_task`, `rename_task`, `set_task_lead`,
  * `set_task_status` and `list_tasks`.
- *
- * Called once at boot from [mcpRoutes], when the server has a [TaskIndex]. The tools that
- * change tasks need a `read+write` token; `list_tasks` needs only `read`.
- *
- * @param taskIndex the index every tool reads and writes.
- * @see registerMcpWriteTools
  */
 fun registerMcpTaskTools(taskIndex: TaskIndex) {
     val sessionIdsSchema = schemaArray(
@@ -99,9 +77,7 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
         McpToolResult.json(buildJsonObject {
             put("taskId", id)
             put("sessions", sessionIds.size)
-            val listed = taskIndex.listing().firstOrNull { it.id == id }
-            put("ownSession", listed?.ownSessionId?.let(::JsonPrimitive) ?: JsonNull)
-            put("mainConversation", mainConversationJson(listed))
+            putSpokesperson(taskIndex.listing().firstOrNull { it.id == id })
         })
     }
 
@@ -139,7 +115,7 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
         val now = taskCall { taskIndex.removeFromTask(sessionIds) }
         McpToolResult.json(buildJsonObject {
             put("sessions", buildJsonObject {
-                for ((sid, taskId) in now) put(sid, taskId?.let(::JsonPrimitive) ?: JsonNull)
+                for ((sid, taskId) in now) put(sid, taskId)
             })
         })
     }
@@ -187,11 +163,9 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
             if (conversationId != null) taskIndex.setMainConversation(taskId, conversationId)
             else taskIndex.setOwnSession(taskId, sessionId!!)
         }
-        val listed = taskIndex.listing().firstOrNull { it.id == taskId }
         McpToolResult.json(buildJsonObject {
             put("taskId", taskId)
-            put("ownSession", listed?.ownSessionId?.let(::JsonPrimitive) ?: JsonNull)
-            put("mainConversation", mainConversationJson(listed))
+            putSpokesperson(taskIndex.listing().firstOrNull { it.id == taskId })
         })
     }
 
@@ -218,7 +192,7 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
         val stored = taskCall { taskIndex.setStatus(taskId, text, questionWaits) }
         McpToolResult.json(buildJsonObject {
             put("taskId", taskId)
-            put("status", stored?.let(::JsonPrimitive) ?: JsonNull)
+            put("status", stored)
             put("questionWaits", stored != null && questionWaits)
         })
     }
@@ -239,13 +213,12 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
                     put("taskId", t.id)
                     put("title", t.title)
                     put("source", t.source)
-                    put("ownSession", t.ownSessionId?.let(::JsonPrimitive) ?: JsonNull)
-                    put("mainConversation", mainConversationJson(t))
-                    put("status", t.status?.let(::JsonPrimitive) ?: JsonNull)
+                    putSpokesperson(t)
+                    put("status", t.status)
                     put("questionWaits", t.questionWaits)
                     put("sessions", buildJsonArray {
                         for (m in t.sessions) add(buildJsonObject {
-                            put("sessionId", m.sessionId?.let(::JsonPrimitive) ?: JsonNull)
+                            put("sessionId", m.sessionId)
                             put("title", m.title)
                             put("state", m.state)
                         })
@@ -257,17 +230,10 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
 }
 
 /**
- * The `mainConversation` value of a task as the tools return it: `{conversationId, sessionId}`, with
- * a null sessionId while the conversation is closed, or null when no conversation was named.
- *
- * Called by `create_task`, `set_task_lead` and `list_tasks`.
- *
- * @param listed the task's listing, or null when it is not listed.
+ * Adds `ownSession` and `mainConversation` for [listed]: the conversation that speaks for the task
+ * as `{conversationId, sessionId}` (a null sessionId while it is closed), or null when none was named.
  */
-private fun mainConversationJson(listed: TaskListing?): JsonElement {
-    val conversation = listed?.mainConversation ?: return JsonNull
-    return buildJsonObject {
-        put("conversationId", conversation)
-        put("sessionId", listed.ownSessionId?.let(::JsonPrimitive) ?: JsonNull)
-    }
+private fun JsonObjectBuilder.putSpokesperson(listed: TaskListing?) {
+    put("ownSession", listed?.ownSessionId)
+    put("mainConversation", listed?.mainConversation?.let { buildJsonObject { put("conversationId", it); put("sessionId", listed.ownSessionId) } } ?: JsonNull)
 }

@@ -120,6 +120,18 @@ class ResumeCommandTest {
         return tracker.openRecordOf(pane)!!
     }
 
+    /** The pane's agent ends, as when its tab is closed. */
+    private fun endSession(pane: String, cwd: String) = tracker.onHook(
+        PaneSnapshot(pane, leafId = "leaf-$pane", cwd = cwd, programTitle = null, agent = null, screenText = { "" }),
+        buildJsonObject { put("hook_event_name", "SessionEnd"); put("session_id", "a-$pane") },
+    )
+
+    /** What was typed, as folder to command; fails when an error was sent or not exactly one tab was opened. */
+    private fun typed(): Pair<String?, String?> {
+        assertTrue(sent.isEmpty(), "no error expected: $sent")
+        return opened.single().let { it.first to it.third }
+    }
+
     private fun taskFile(id: String, open: TaskOpen?) = TaskFile(id, "Task $id", repo = null, open = open, modified = 99)
 
     private fun resume(rec: AgentSessionRecord) = resume(rec.id)
@@ -147,10 +159,7 @@ class ResumeCommandTest {
         index.recompute()
         index.setOwnSession("t1", "s1")
         resume(main)
-        assertTrue(sent.isEmpty(), "no error expected: $sent")
-        val (folder, _, command) = opened.single()
-        assertEquals(declaredFolder, folder)
-        assertEquals("claude --resume a-s1 --model opus", command)
+        assertEquals(declaredFolder to "claude --resume a-s1 --model opus", typed())
     }
 
     /** A session of the same task that is not its main conversation is resumed the plain way, in its own folder. */
@@ -163,10 +172,7 @@ class ResumeCommandTest {
         index.setOwnSession("t1", "s1")
         index.addToTask("t1", listOf("s2"))
         resume(other)
-        assertTrue(sent.isEmpty(), "no error expected: $sent")
-        val (folder, _, command) = opened.single()
-        assertEquals(other.cwd, folder)
-        assertEquals("claude --resume a-s2", command)
+        assertEquals(other.cwd to "claude --resume a-s2", typed())
     }
 
     /** A declared folder that is gone does not block the resume: the declared line is typed in the nearest folder above it. */
@@ -177,10 +183,7 @@ class ResumeCommandTest {
         index.recompute()
         index.setOwnSession("t1", "s1")
         resume(main)
-        assertTrue(sent.isEmpty(), "no error expected: $sent")
-        val (folder, _, command) = opened.single()
-        assertEquals(base.path, folder)
-        assertEquals("claude --resume a-s1 --model opus", command)
+        assertEquals(base.path to "claude --resume a-s1 --model opus", typed())
     }
 
     /**
@@ -194,19 +197,10 @@ class ResumeCommandTest {
         session("s1")
         index.recompute()
         index.setOwnSession("t1", "s1")
-        tracker.onHook(
-            PaneSnapshot("s1", leafId = "leaf-s1", cwd = declaredFolder, programTitle = null, agent = null, screenText = { "" }),
-            buildJsonObject {
-                put("hook_event_name", "SessionEnd")
-                put("session_id", "a-s1")
-            },
-        )
+        endSession("s1", declaredFolder)
         assertEquals("ended", tracker.find("a-s1")!!.state)
         resume("a-s1")
-        assertTrue(sent.isEmpty(), "no error expected: $sent")
-        val (folder, _, command) = opened.single()
-        assertEquals(declaredFolder, folder)
-        assertEquals(declared, command)
+        assertEquals(declaredFolder to declared, typed())
     }
 
     /**
@@ -221,10 +215,7 @@ class ResumeCommandTest {
         index.recompute()
         index.setOwnSession("t1", "s1")
         resume(main)
-        assertTrue(sent.isEmpty(), "no error expected: $sent")
-        val (folder, _, command) = opened.single()
-        assertEquals(main.cwd, folder)
-        assertEquals("claude --resume a-s1", command)
+        assertEquals(main.cwd to "claude --resume a-s1", typed())
     }
 
     /** A main that ran in the declared folder takes the declared line even when the folder is written untidily. */
@@ -234,18 +225,9 @@ class ResumeCommandTest {
         sessionIn("s1", declaredFolder)
         index.recompute()
         index.setOwnSession("t1", "s1")
-        tracker.onHook(
-            PaneSnapshot("s1", leafId = "leaf-s1", cwd = declaredFolder, programTitle = null, agent = null, screenText = { "" }),
-            buildJsonObject {
-                put("hook_event_name", "SessionEnd")
-                put("session_id", "a-s1")
-            },
-        )
+        endSession("s1", declaredFolder)
         resume("a-s1")
-        assertTrue(sent.isEmpty(), "no error expected: $sent")
-        val (folder, _, command) = opened.single()
-        assertEquals("$declaredFolder/./", folder)
-        assertEquals("claude --resume a-s1 --model opus", command)
+        assertEquals("$declaredFolder/./" to "claude --resume a-s1 --model opus", typed())
     }
 
     /** A Codex main of a task that declares `open` is resumed by Codex with Codex's own line, though it ran in the declared folder. */
@@ -260,10 +242,7 @@ class ResumeCommandTest {
         index.setMainConversation("t1", "c-1")
         assertEquals("t1", index.listing().single { it.mainConversation == "c-1" }.id)
         resume("c-1")
-        assertTrue(sent.isEmpty(), "no error expected: $sent")
-        val (folder, _, command) = opened.single()
-        assertEquals(cwd, folder)
-        assertEquals("codex resume c-1", command)
+        assertEquals(cwd to "codex resume c-1", typed())
     }
 
     /** The route refuses an id with shell characters, when the task's main conversation is the one asked for. */

@@ -105,6 +105,6 @@ class SidebarUnaffectedByTasksTest {
         scope.cancel()
         assertEquals(states, windowState.states.value, "the live dots are the pane states, which no task touches")
         assertEquals(layout, windowState.config.value, "the tab and pane names are the layout, which no task touches")
-        assertTrue(sent.isEmpty(), "the overview sends nothing until a person acts")
+        assertTrue(sent.all { it is WindowCommand.InspectAgentSession }, "the overview only reads (it looks at the selected row) until a person acts")
     }
 }

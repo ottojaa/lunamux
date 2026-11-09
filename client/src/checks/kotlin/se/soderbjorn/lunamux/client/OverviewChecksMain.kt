@@ -1,29 +1,21 @@
 /**
  * Command line entry point that connects to a running Lunamux server as an ordinary client and
- * prints whether the overview, the footer count and the task panel keep their rules.
- *
- * Run through Gradle:
+ * prints whether the overview, the footer count and the task panel keep their rules (see
+ * [OverviewChecks]). It only reads: it never sends a command, so it can run against a copy of real
+ * data. Run it with
  * `./gradlew :client:overviewChecks -Purl=<server> -Ptoken=<token> [-Pwatch=<seconds>] [-Pmain=<task id>=<conversation id start>]`.
  *
- * It only reads: it never sends a command, so it can run against a copy of real data and leaves
- * the layout as it found it.
-
-The token must be a device token the server already trusts (the one a browser or app stored when
-it was approved), not the token for the tool endpoint: the server never opens the layout socket
-for that one, and the checker stops after 20 seconds saying so.
- *
- * Contains [main] and its helpers.
- *
- * @see se.soderbjorn.lunamux.client.viewmodel.OverviewChecks
+ * The token must be one the server already trusts as a device, not the tool-endpoint token: the
+ * server never opens the layout socket for that one, and the checker stops after 20 seconds.
  */
 package se.soderbjorn.lunamux.client
 
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
-import se.soderbjorn.lunamux.client.viewmodel.AgentCounts
+import se.soderbjorn.lunamux.client.viewmodel.AgentFacts
 import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel
-import se.soderbjorn.lunamux.client.viewmodel.OverviewChecks
+import se.soderbjorn.lunamux.client.viewmodel.Layout
 import se.soderbjorn.lunamux.client.viewmodel.TaskPanelViewModel
 import java.net.URI
 import kotlin.system.exitProcess
@@ -39,11 +31,6 @@ private const val INITIAL_STATE_TIMEOUT_MS = 20_000L
 /**
  * Connect, wait for the first full state, run the checks once, keep watching the tabs for
  * [watchSeconds], and print one PASS or FAIL line per check.
- *
- * Called by the `overviewChecks` Gradle task, which passes the options as arguments.
- *
- * @param args `url=<server>`, `token=<token>`, optionally `watch=<seconds>` and any number of
- *   `main=<task id>=<conversation id start>`.
  */
 fun main(args: Array<String>) {
     val opts = args.mapNotNull { a -> a.substringBefore('=', "").takeIf { it.isNotEmpty() }?.let { it to a.substringAfter('=') } }
@@ -78,8 +65,12 @@ fun main(args: Array<String>) {
                 val sessions = client.windowState.agentSessions.value
                 val now = System.currentTimeMillis()
                 tabs.observe(config, sessions, now)
+                val total = AgentFacts.tally(sessions, Layout(config)).total
                 return OverviewChecks.evaluate(
-                    OverviewChecks.Snapshot(sessions, AgentCounts.of(sessions, config), client.windowState.agentTasks.value, config, overview.state, panel.state, now, expectedMain),
+                    OverviewChecks.Snapshot(
+                        sessions, client.windowState.agentTasks.value, config, overview.state, panel.state,
+                        total.waiting, total.working, expectedMain,
+                    ),
                 )
             }
             val first = runOnce()
@@ -89,10 +80,8 @@ fun main(args: Array<String>) {
                 last = runOnce()
             }
             // A rule that held at the start and broke later is a failure of the run: report the worst of both.
-            val finalChecks = first.zip(last).map { (a, b) -> if (!a.ok) a else b }
-            val checks = finalChecks.filter { it.id.startsWith("C") } + tabs.result() + finalChecks.filter { !it.id.startsWith("C") }
+            val checks = first.zip(last).map { (a, b) -> if (!a.ok) a else b } + tabs.result()
             print(OverviewChecks.render(checks.sortedBy { it.id }))
-            println("INFO C8 a spinner never restarts when its row redraws: run :web:jsBrowserTest (WorkingGlyphRedrawTest) and the page probe (docs/tasks.md)")
             if (checks.all { it.ok }) 0 else 1
         } finally {
             socket.close()

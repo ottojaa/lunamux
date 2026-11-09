@@ -1,18 +1,16 @@
 /**
- * Tests for the MCP task tools: `create_task`, `add_to_task`, `remove_from_task`, `rename_task`,
- * `list_tasks` and `create_window` with a `taskId`. Each tool is driven through
- * [McpServer.handleMessage] against a real [TaskIndex] and tracker, and checked for what it
- * changes, what it answers and, for bad arguments, that it names the offender and changes nothing.
- *
- * @see registerMcpTaskTools
- * @see se.soderbjorn.lunamux.TaskIndex
+ * Tests for the MCP tools that make and describe tasks (`create_task`, `add_to_task`,
+ * `remove_from_task`, `rename_task`, `set_task_lead`, `set_task_status`, `list_tasks`) and for how
+ * `create_window`, `run_command` and `create_tab` place a task's windows and background windows.
+ * Each tool is driven through [McpServer.handleMessage] against a real [TaskIndex], tracker and
+ * database.
  */
 package se.soderbjorn.lunamux.mcp
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -25,11 +23,13 @@ import se.soderbjorn.lunamux.PaneSnapshot
 import se.soderbjorn.lunamux.TaskFile
 import se.soderbjorn.lunamux.TaskIndex
 import se.soderbjorn.lunamux.WindowState
+import se.soderbjorn.lunamux.listedTabs
 import se.soderbjorn.lunamux.persistence.SettingsRepository
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -39,10 +39,11 @@ class McpTaskToolsTest {
     private val files = MutableStateFlow<List<TaskFile>>(emptyList())
     private val panes = mutableSetOf<String>()
     private var nextId = 0
-    private val tracker = AgentSessionTracker(
-        repo, gitInfo = { GitInfo() }, clock = { 1_000L + nextId }, newId = { "r${++nextId}" },
-    ).also { it.start() }
-    private val index = TaskIndex(repo, tracker, files, leafOfSession = { if (it in panes) "leaf-$it" else WindowState.leafIdOfSession(it) })
+    private var now = 5_000L
+    private val tracker = AgentSessionTracker(repo, gitInfo = { GitInfo() }, clock = { now }, newId = { "r${++nextId}" }).also { it.start() }
+    private val index = TaskIndex(
+        repo, tracker, files, leafOfSession = { if (it in panes) "leaf-$it" else WindowState.leafIdOfSession(it) }, clock = { now },
+    )
 
     init {
         registerMcpReadTools(repo, ClaudeUsageMonitor())
@@ -50,197 +51,182 @@ class McpTaskToolsTest {
         registerMcpTaskTools(index)
     }
 
-    private fun call(tool: String, argsJson: String = "{}", scope: McpScope = McpScope.READ_WRITE): JsonObject = runBlocking {
-        val handled = McpServer.handleMessage(
-            """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"$tool","arguments":$argsJson}}""",
-            scope, null,
-        )
-        mcpJson.parseToJsonElement(handled.body!!).jsonObject["result"]!!.jsonObject
+    private fun rpc(body: String, scope: McpScope = McpScope.READ_WRITE, caller: String? = null) = runBlocking {
+        mcpJson.parseToJsonElement(McpServer.handleMessage(body, scope, null, caller).body!!).jsonObject["result"]!!.jsonObject
     }
 
-    private fun textOf(result: JsonObject) = result["content"]!!.jsonArray[0].jsonObject["text"]!!.jsonPrimitive.content
-    private fun payloadOf(result: JsonObject) = mcpJson.parseToJsonElement(textOf(result))
-    private fun isError(result: JsonObject) = result["isError"]?.jsonPrimitive?.content == "true"
+    private fun call(tool: String, args: String = "{}", caller: String? = null, scope: McpScope = McpScope.READ_WRITE) =
+        rpc("""{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"$tool","arguments":$args}}""", scope, caller)
 
+    private fun textOf(r: JsonObject) = r["content"]!!.jsonArray[0].jsonObject["text"]!!.jsonPrimitive.content
+    private fun payload(r: JsonObject): JsonElement = mcpJson.parseToJsonElement(textOf(r))
+    private fun isError(r: JsonObject) = r["isError"]?.jsonPrimitive?.content == "true"
+    private fun str(o: JsonElement, k: String) = o.jsonObject[k]!!.jsonPrimitive.content
+    private fun refusal(r: JsonObject): String { assertTrue(isError(r), "expected a refusal, got ${textOf(r)}"); return textOf(r) }
+
+    /** A pane running a Claude conversation `a-<id>`. */
     private fun session(id: String) {
         panes += id
-        val pane = PaneSnapshot(id, "leaf-$id", "/work/$id", null, screenText = { "x" })
-        tracker.onHook(pane, buildJsonObject { put("hook_event_name", "SessionStart"); put("session_id", "a-$id") })
+        now += 10
+        tracker.onHook(
+            PaneSnapshot(id, "leaf-$id", "/work/$id", null, screenText = { "x" }),
+            buildJsonObject { put("hook_event_name", "SessionStart"); put("session_id", "a-$id") },
+        )
     }
 
+    private fun create(title: String, sessions: String = "[]", caller: String? = null) = str(payload(call("create_task", """{"title":"$title","sessionIds":$sessions}""", caller)), "taskId")
+    private fun task(id: String) = index.state.value.single { it.id == id }
+    private fun listed(id: String) = payload(call("list_tasks")).jsonArray.single { str(it, "taskId") == id }.jsonObject
     private fun taskOf(sessionId: String) = tracker.openRecordOf(sessionId)!!.taskId
+    private fun allTabs() = WindowState.config.value.worlds.flatMap { it.tabs }
+    private fun tabOf(created: JsonElement) = WindowState.tabIdOfPane(str(created, "windowId"))
 
-    @Test
-    fun `the initialize instructions say when to group, and to join an existing task when continuing work`() {
-        val handled = runBlocking {
-            McpServer.handleMessage(
-                """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}""",
-                McpScope.READ_WRITE, null,
-            )
+    /** Runs [block] and closes the tabs it opened, which live in the process-wide window state. */
+    private fun withTabs(block: (open: (String, Boolean) -> String) -> Unit) {
+        val opened = mutableListOf<String>()
+        try {
+            block { title, background ->
+                str(payload(call("create_tab", """{"title":"$title","background":$background}""")), "tabId").also { opened += it }
+            }
+        } finally {
+            opened.forEach { call("close_tab", """{"tabId":"$it"}""") }
+            allTabs().filter { it.title == "Reviewer" || it.title == "Helper" }.forEach { call("close_tab", """{"tabId":"${it.id}"}""") }
         }
-        val text = mcpJson.parseToJsonElement(handled.body!!).jsonObject["result"]!!.jsonObject["instructions"]!!.jsonPrimitive.content
-        assertTrue("create_task" in text && "create_window with a taskId" in text, text)
-        assertTrue("continue earlier work" in text && "list_tasks first" in text && "instead of creating another" in text, text)
     }
 
     @Test
-    fun `create_task returns an id and puts the named sessions in the task`() {
+    fun `the instructions tell agents to group and to join an existing task when continuing work`() {
+        val text = rpc(
+            """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}""",
+        )["instructions"]!!.jsonPrimitive.content
+        assertTrue("create_window with a taskId" in text && "list_tasks first" in text, text)
+    }
+
+    @Test
+    fun `only the tools that change tasks need a write token`() {
+        for (tool in listOf("create_task", "add_to_task", "remove_from_task", "rename_task", "set_task_lead", "set_task_status")) {
+            assertTrue("read+write" in refusal(call(tool, "{}", scope = McpScope.READ)), tool)
+        }
+        assertFalse(isError(call("list_tasks", scope = McpScope.READ)))
+    }
+
+    @Test
+    fun `sessions join and leave a task, a task file's id counts, and bad names change nothing`() {
         session("s1"); session("s2")
-        val result = call("create_task", """{"title":"Split the importer","sessionIds":["s1","s2"]}""")
-        assertTrue(!isError(result), textOf(result))
-        val id = payloadOf(result).jsonObject["taskId"]!!.jsonPrimitive.content
+        val id = create("Split the importer", """["s1"]""")
         assertTrue(id.startsWith("split-the-importer-"))
         assertEquals(id, taskOf("s1"))
-        assertEquals(id, taskOf("s2"))
-    }
-
-    @Test
-    fun `add_to_task joins sessions to a task, including a task file's id`() {
-        session("s1"); session("s2")
-        val id = payloadOf(call("create_task", """{"title":"A"}""")).jsonObject["taskId"]!!.jsonPrimitive.content
-        assertTrue(!isError(call("add_to_task", """{"taskId":"$id","sessionIds":["s1"]}""")))
-        assertEquals(id, taskOf("s1"))
+        call("rename_task", """{"taskId":"$id","title":"Renamed"}""")
+        assertEquals("Renamed", task(id).title)
 
         files.value = listOf(TaskFile("prog", "Programme", null, null, 1))
-        assertTrue(!isError(call("add_to_task", """{"taskId":"prog","sessionIds":["s2"]}""")))
+        call("add_to_task", """{"taskId":"prog","sessionIds":["s2"]}""")
         assertEquals("prog", taskOf("s2"))
-    }
-
-    @Test
-    fun `remove_from_task takes sessions out and answers where each one is now`() {
-        session("s1")
-        val id = payloadOf(call("create_task", """{"title":"A","sessionIds":["s1"]}""")).jsonObject["taskId"]!!.jsonPrimitive.content
-        assertEquals(id, taskOf("s1"))
-        val result = call("remove_from_task", """{"sessionIds":["s1"]}""")
-        assertTrue(!isError(result), textOf(result))
+        call("remove_from_task", """{"sessionIds":["s1"]}""")
         assertNull(taskOf("s1"))
-        assertEquals(JsonPrimitive(null as String?), payloadOf(result).jsonObject["sessions"]!!.jsonObject["s1"]!!.let { if (it is kotlinx.serialization.json.JsonNull) JsonPrimitive(null as String?) else it })
-        val bad = call("remove_from_task", """{"sessionIds":["ghost"]}""")
-        assertTrue(isError(bad)); assertTrue(textOf(bad).contains("ghost"))
-        assertTrue(isError(call("remove_from_task", "{}")))
+        assertTrue("ghost" in refusal(call("remove_from_task", """{"sessionIds":["ghost"]}""")))
+        assertTrue("missing" in refusal(call("add_to_task", """{"taskId":"missing","sessionIds":["s1"]}""")))
+        assertNull(taskOf("s1"))
     }
 
     @Test
-    fun `the tools that change tasks need a write token and list_tasks does not`() {
-        for (tool in listOf("create_task", "add_to_task", "remove_from_task", "rename_task")) {
-            val r = call(tool, "{}", scope = McpScope.READ)
-            assertTrue(isError(r), tool)
-            assertTrue(textOf(r).contains("read+write"), tool)
-        }
-        assertTrue(!isError(call("list_tasks", scope = McpScope.READ)))
+    fun `the caller's pane speaks for the task it creates, and set_task_lead hands that to another conversation`() {
+        session("boss"); session("a"); session("b")
+        val id = create("Plan", """["a","b"]""", caller = "boss")
+        assertEquals("boss", str(listed(id), "ownSession"))
+        assertTrue(task(id).startedAtMillis!! > 0, "the task's start is stamped when it is made")
+
+        val set = payload(call("set_task_lead", """{"taskId":"$id","sessionId":"b"}""")).jsonObject["mainConversation"]!!
+        assertEquals(listOf("a-b", "b"), listOf(str(set, "conversationId"), str(set, "sessionId")))
+
+        // The pane starts another run: the task keeps speaking through the conversation it named.
+        val pane = PaneSnapshot("b", "leaf-b", "/work/b", null, screenText = { "x" })
+        tracker.onHook(pane, buildJsonObject { put("hook_event_name", "SessionEnd"); put("session_id", "a-b") })
+        now += 50
+        tracker.onHook(pane, buildJsonObject { put("hook_event_name", "SessionStart"); put("session_id", "a-b2") })
+        index.recompute()
+        assertEquals("a-b", task(id).mainConversation)
+        assertEquals("null", listed(id)["mainConversation"]!!.jsonObject["sessionId"].toString(), "closed: no pane")
+
+        call("set_task_lead", """{"taskId":"$id","conversationId":"a-a"}""")
+        assertTrue(isError(call("set_task_lead", """{"taskId":"$id"}""")))
+        assertTrue(isError(call("set_task_lead", """{"taskId":"$id","sessionId":"a","conversationId":"a-b"}""")))
+        assertTrue(isError(call("set_task_lead", """{"taskId":"$id","conversationId":"nobody"}""")))
+        assertEquals("a-a", task(id).mainConversation)
+        assertEquals("done", str(listed(id)["sessions"]!!.jsonArray.first(), "state"))
     }
 
     @Test
-    fun `create_window with a taskId promises the task to the new pane and rejects an unknown task before opening one`() {
-        val id = payloadOf(call("create_task", """{"title":"Two sessions"}""")).jsonObject["taskId"]!!.jsonPrimitive.content
-        val before = WindowState.config.value.tabs.sumOf { it.panes.size }
-        val bad = call("create_window", """{"taskId":"missing"}""")
-        assertTrue(isError(bad)); assertTrue(textOf(bad).contains("missing"))
-        assertEquals(before, WindowState.config.value.tabs.sumOf { it.panes.size }, "no pane was opened")
+    fun `a status is one trimmed line of 120 characters at most, an empty one clears it, and questionWaits is set afresh by each call`() {
+        session("a")
+        val id = create("Work", """["a"]""")
+        val set = call("set_task_status", """{"taskId":"$id","text":"  first line\n\n  second\r\nthird  "}""", caller = "a")
+        assertEquals("first line second third", str(payload(set), "status"))
+        assertEquals("first line second third", listed(id)["status"]!!.jsonPrimitive.content)
 
-        val tabId = payloadOf(call("create_tab", """{"title":"Task tab"}""")).jsonObject["tabId"]!!.jsonPrimitive.content
-        try {
-            val created = payloadOf(call("create_window", """{"tabId":"$tabId","taskId":"$id"}""")).jsonObject
-            val sessionId = created["sessionId"]!!.jsonPrimitive.content
-            assertNotNull(WindowState.leafIdOfSession(sessionId))
-            val leaf = WindowState.leafIdOfSession(sessionId)!!
-            tracker.onHook(
-                PaneSnapshot(sessionId, leaf, "/work/new", null, screenText = { "x" }),
-                buildJsonObject { put("hook_event_name", "SessionStart"); put("session_id", "a-new") },
-            )
-            assertEquals(id, tracker.openRecordOf(sessionId)!!.taskId)
-        } finally {
-            call("close_tab", """{"tabId":"$tabId"}""")
-        }
-    }
+        call("set_task_status", """{"taskId":"$id","text":"${"y".repeat(119)} zzz"}""")
+        assertEquals("y".repeat(119), task(id).status, "a cut never leaves a trailing space")
 
-    /** Open a tab and return its id; the new tab becomes the active one. */
-    private fun newTab(title: String) =
-        payloadOf(call("create_tab", """{"title":"$title"}""")).jsonObject["tabId"]!!.jsonPrimitive.content
+        call("set_task_status", """{"taskId":"$id","text":"which database?","questionWaits":true}""")
+        assertEquals("true", str(listed(id), "questionWaits"))
+        call("set_task_status", """{"taskId":"$id","text":"migrating"}""")
+        assertFalse(task(id).questionWaits, "a later status says the question is answered")
 
-    /** A window in [tabId] whose agent has started and joined [taskId]; returns the pane the agent runs in. */
-    private fun agentWindowIn(tabId: String, taskId: String, agentId: String): PaneSnapshot {
-        val created = payloadOf(call("create_window", """{"tabId":"$tabId","taskId":"$taskId"}""")).jsonObject
-        val sessionId = created["sessionId"]!!.jsonPrimitive.content
-        val pane = PaneSnapshot(sessionId, WindowState.leafIdOfSession(sessionId)!!, "/work/$agentId", null, screenText = { "x" })
-        tracker.onHook(pane, buildJsonObject { put("hook_event_name", "SessionStart"); put("session_id", agentId) })
-        return pane
-    }
-
-    private fun tabOfWindow(created: JsonObject) = WindowState.tabIdOfPane(created["windowId"]!!.jsonPrimitive.content)
-
-    @Test
-    fun `a task's next window opens in the tab its sessions are in, not the active tab`() {
-        val taskTab = newTab("Task tab")
-        val activeTab = newTab("Active tab")
-        try {
-            val id = payloadOf(call("create_task", """{"title":"Split the importer"}""")).jsonObject["taskId"]!!.jsonPrimitive.content
-            agentWindowIn(taskTab, id, "a-first")
-            call("activate_tab", """{"tabId":"$activeTab"}""")
-            val plain = payloadOf(call("create_window", "{}")).jsonObject
-            assertEquals(activeTab, tabOfWindow(plain), "the other tab is the one in front")
-
-            val second = payloadOf(call("create_window", """{"taskId":"$id"}""")).jsonObject
-            assertEquals(taskTab, second["tabId"]!!.jsonPrimitive.content)
-            assertEquals(taskTab, tabOfWindow(second))
-        } finally {
-            call("close_tab", """{"tabId":"$activeTab"}""")
-            call("close_tab", """{"tabId":"$taskTab"}""")
-        }
+        call("set_task_status", """{"taskId":"$id","text":"","questionWaits":true}""")
+        assertEquals(listOf(null, null, false), task(id).let { listOf(it.status, it.statusAtMillis, it.questionWaits) }, "an empty text clears all")
     }
 
     @Test
-    fun `with no tab for the task the window opens in the active tab, and an explicit tabId wins`() {
-        val taskTab = newTab("Task tab")
-        val activeTab = newTab("Active tab")
-        try {
-            call("activate_tab", """{"tabId":"$activeTab"}""")
-            val empty = payloadOf(call("create_task", """{"title":"Nothing open yet"}""")).jsonObject["taskId"]!!.jsonPrimitive.content
-            val first = payloadOf(call("create_window", """{"taskId":"$empty"}""")).jsonObject
-            assertEquals(activeTab, tabOfWindow(first), "a task with no pane has no tab, so the active tab as before")
+    fun `a task's windows open in the tab its agents are in, an explicit tab wins, and an unknown task opens nothing`() = withTabs { open ->
+        val taskTab = open("Task tab", false)
+        val activeTab = open("Active tab", false)
+        val id = create("Two windows")
+        val before = allTabs().sumOf { it.panes.size }
+        assertTrue("missing" in refusal(call("create_window", """{"taskId":"missing"}""")))
+        assertTrue("missing" in refusal(call("run_command", """{"command":"true","taskId":"missing","waitForExit":false}""")))
+        assertEquals(before, allTabs().sumOf { it.panes.size }, "no pane was opened")
 
-            val id = payloadOf(call("create_task", """{"title":"Has a tab"}""")).jsonObject["taskId"]!!.jsonPrimitive.content
-            agentWindowIn(taskTab, id, "a-has-tab")
-            val explicit = payloadOf(call("create_window", """{"taskId":"$id","tabId":"$activeTab"}""")).jsonObject
-            assertEquals(activeTab, tabOfWindow(explicit), "an explicit tabId beats the task's tab")
+        val first = payload(call("create_window", """{"tabId":"$taskTab","taskId":"$id"}"""))
+        val pane = PaneSnapshot(str(first, "sessionId"), WindowState.leafIdOfSession(str(first, "sessionId"))!!, "/work/new", null, screenText = { "x" })
+        tracker.onHook(pane, buildJsonObject { put("hook_event_name", "SessionStart"); put("session_id", "a-new") })
+        assertEquals(id, tracker.openRecordOf(str(first, "sessionId"))!!.taskId, "the new pane was promised the task")
 
-            val plain = payloadOf(call("create_window", "{}")).jsonObject
-            assertEquals(activeTab, tabOfWindow(plain), "without a taskId nothing changes")
-        } finally {
-            call("close_tab", """{"tabId":"$activeTab"}""")
-            call("close_tab", """{"tabId":"$taskTab"}""")
-        }
+        call("activate_tab", """{"tabId":"$activeTab"}""")
+        assertEquals(activeTab, tabOf(payload(call("create_window", "{}"))), "without a task the active tab")
+        assertEquals(taskTab, tabOf(payload(call("create_window", """{"taskId":"$id"}"""))))
+        assertEquals(taskTab, tabOf(payload(call("run_command", """{"command":"true","taskId":"$id","waitForExit":false}"""))))
+        assertEquals(activeTab, tabOf(payload(call("create_window", """{"taskId":"$id","tabId":"$activeTab"}"""))))
+        assertEquals(activeTab, tabOf(payload(call("create_window", """{"taskId":"${create("Nothing open yet")}"}"""))), "a task with no pane has no tab")
     }
 
     @Test
-    fun `run_command that creates a window follows the task's tab and joins the task`() {
-        val taskTab = newTab("Task tab")
-        val activeTab = newTab("Active tab")
-        try {
-            val id = payloadOf(call("create_task", """{"title":"Runs in its tab"}""")).jsonObject["taskId"]!!.jsonPrimitive.content
-            agentWindowIn(taskTab, id, "a-run")
-            call("activate_tab", """{"tabId":"$activeTab"}""")
-            val ran = payloadOf(call("run_command", """{"command":"true","taskId":"$id","waitForExit":false}""")).jsonObject
-            assertEquals(taskTab, WindowState.tabIdOfPane(ran["windowId"]!!.jsonPrimitive.content))
-            assertTrue(WindowState.leafIdOfSession(ran["sessionId"]!!.jsonPrimitive.content) in tracker.pendingLeavesOf(id), "the new pane is promised the task")
-            val explicit = payloadOf(call("run_command", """{"command":"true","taskId":"$id","tabId":"$activeTab","waitForExit":false}""")).jsonObject
-            assertEquals(activeTab, WindowState.tabIdOfPane(explicit["windowId"]!!.jsonPrimitive.content))
-            val bad = call("run_command", """{"command":"true","taskId":"missing","waitForExit":false}""")
-            assertTrue(isError(bad)); assertTrue(textOf(bad).contains("missing"))
-        } finally {
-            call("close_tab", """{"tabId":"$activeTab"}""")
-            call("close_tab", """{"tabId":"$taskTab"}""")
-        }
-    }
+    fun `a background tab is never listed or activated, background windows keep to background tabs and close_tab never waits`() = withTabs { open ->
+        val visible = open("Visible", false)
+        val id = create("Split work")
+        val activeBefore = WindowState.config.value.activeTabId
+        val made = payload(call("create_tab", """{"title":"Out of sight","background":true}"""))
+        val bg = str(made, "tabId")
+        assertEquals(activeBefore, WindowState.config.value.activeTabId, "a background tab never takes the focus")
+        assertTrue(WindowState.config.value.listedTabs.none { it.id == bg })
+        assertEquals("true", str(payload(call("list_layout")).jsonObject["tabs"]!!.jsonArray.single { str(it, "tabId") == bg }, "background"))
+        assertTrue("background" in refusal(call("activate_tab", """{"tabId":"$bg"}""")))
+        assertTrue("background" in refusal(call("activate_window", """{"windowId":"${str(made, "windowId")}"}""")))
 
-    @Test
-    fun `list_tasks lists the sessions of each task with their state`() {
-        session("s1")
-        val id = payloadOf(call("create_task", """{"title":"A","sessionIds":["s1"]}""")).jsonObject["taskId"]!!.jsonPrimitive.content
-        val task = payloadOf(call("list_tasks", scope = McpScope.READ)).jsonArray.map { it.jsonObject }
-            .single { it["taskId"]!!.jsonPrimitive.content == id }
-        val s = task["sessions"]!!.jsonArray.single().jsonObject
-        assertEquals("s1", s["sessionId"]!!.jsonPrimitive.content)
-        assertEquals("done", s["state"]!!.jsonPrimitive.content)
+        assertEquals(bg, str(payload(call("create_window", """{"background":true,"tabId":"$bg"}""")), "tabId"))
+        assertTrue("background windows go in a background tab" in refusal(call("create_window", """{"background":true,"tabId":"$visible"}""")))
+        assertTrue(isError(call("create_window", """{"tabId":"$bg"}""")))
+        val ran = payload(call("run_command", """{"command":"true","background":true,"waitForExit":false}"""))
+        assertTrue(allTabs().single { it.id == tabOf(ran) }.isBackground)
+
+        call("create_window", """{"tabId":"$visible","taskId":"$id"}""")
+        val helper = payload(call("create_window", """{"background":true,"taskId":"$id","title":"Helper"}"""))
+        assertNotEquals(visible, str(helper, "tabId"))
+        assertEquals(visible, str(payload(call("create_window", """{"taskId":"$id"}""")), "tabId"), "a task's visible windows never go to a background tab")
+        tracker.onHook(
+            PaneSnapshot("pty-bg", str(made, "windowId"), "/work/busy", null),
+            buildJsonObject { put("hook_event_name", "UserPromptSubmit"); put("session_id", "a-busy"); put("prompt", "go") },
+        )
+        assertFalse(isError(call("close_tab", """{"tabId":"$bg"}""")), "a busy agent's tab closes at once for an agent")
+        assertTrue(allTabs().none { it.id == bg })
     }
 }

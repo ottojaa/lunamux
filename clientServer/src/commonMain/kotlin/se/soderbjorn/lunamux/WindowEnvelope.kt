@@ -231,17 +231,8 @@ sealed class WindowEnvelope {
     ) : WindowEnvelope()
 
     /**
-     * Every agentic-CLI session the server tracks: the open ones plus the
-     * most recent ended ones, without their saved screen text. Sent on
-     * connect and again whenever any record changes, so the agents overview
-     * (toolbar chip and overlay) follows a session within a moment of a hook
-     * event or a poll result. Older clients fail to decode this frame and
-     * drop it, which is harmless.
-     *
-     * @param sessions the sessions, in no particular order
-     * @param claudeConnected whether Lunamux's hooks are present in the user's
-     *   Claude Code settings file (drives the App Settings Connect/Disconnect row)
-     * @see AgentSessionSummary
+     * Every agentic-CLI session the server tracks: the open ones plus the most recent ended ones,
+     * without their saved screen text.
      */
     @Serializable
     @SerialName("agentSessions")
@@ -251,63 +242,28 @@ sealed class WindowEnvelope {
     ) : WindowEnvelope()
 
     /**
-     * The tasks that have something to say beyond their sessions: every task a task file
-     * declares and every task agents made that holds at least one session. A session joins a
-     * task through [AgentSessionSummary.taskId]; this frame names the tasks, their titles, their
-     * start times and whether the task has an `open` action. The `open` command is
-     * deliberately not part of it: the server keeps it and [WindowCommand.OpenTask] names the
-     * task instead. Sent on connect, right after [AgentSessions], and again whenever a task file,
-     * a task or a session record changes. Older clients fail to decode this frame and drop it,
-     * which is harmless.
-     *
-     * @param tasks the tasks, in no particular order
-     * @see AgentTask
+     * The tasks that have something to say beyond their sessions: every task a task file declares
+     * and every task agents made that holds at least one session.
      */
     @Serializable
     @SerialName("agentTasks")
     data class AgentTasks(val tasks: List<AgentTask>) : WindowEnvelope()
 
-    /**
-     * The blocks agents wrote into one task's panel. Sent for every task that has blocks when a
-     * window connects, and again for a task whenever its blocks change; after the last block of a
-     * task is removed the list is sent empty once so windows drop it. Older clients fail to decode
-     * this frame and drop it, which is harmless.
-     *
-     * @param taskId the [AgentTask.id] the blocks belong to
-     * @param blocks all the blocks of that task, in the order they are drawn
-     * @see TaskPanelBlock
-     */
+    /** The blocks agents wrote into one task's panel. */
     @Serializable
     @SerialName("taskPanel")
     data class TaskPanel(val taskId: String, val blocks: List<TaskPanelBlock>) : WindowEnvelope()
 
     /**
-     * A failed agents-overview request, sent only to the connection that made
-     * it: resuming a session whose folder is gone, or connecting Claude Code
-     * when its settings file cannot be edited.
-     *
-     * @param recordId the [AgentSessionSummary.id] the request was about, or
-     *   null for the Claude Code connection
-     * @param message text for the user, such as "folder no longer exists"
-     * @see WindowCommand.ResumeAgentSession
-     * @see WindowCommand.SetClaudeHooks
+     * A failed agents-overview request, sent only to the connection that made it: resuming a
+     * session whose folder is gone, or connecting Claude Code when its settings file cannot be
+     * edited.
      */
     @Serializable
     @SerialName("agentSessionError")
     data class AgentSessionError(val recordId: String?, val message: String) : WindowEnvelope()
 
-    /**
-     * The answer to [WindowCommand.SearchAgentSessions], sent only to the
-     * connection that asked.
-     *
-     * @param query the query this answers, so the client can drop a reply that
-     *   arrives after the user typed something else
-     * @param matches at most 50, best first: title, first prompt, branch or
-     *   links, then transcript or last screen; open sessions before ended ones,
-     *   newest first within each. A session whose task's title holds the query
-     *   comes after the title matches and before the first-prompt ones.
-     * @see AgentSessionMatch
-     */
+    /** The answer to [WindowCommand.SearchAgentSessions], sent only to the connection that asked. */
     @Serializable
     @SerialName("agentSessionMatches")
     data class AgentSessionMatches(
@@ -315,22 +271,7 @@ sealed class WindowEnvelope {
         val matches: List<AgentSessionMatch>,
     ) : WindowEnvelope()
 
-    /**
-     * The answer to [WindowCommand.InspectAgentSession], sent only to the
-     * connection that asked.
-     *
-     * @param recordId the session this describes
-     * @param live true while the session's pane is open, so [screen] is its
-     *   current screen rather than the saved last screen
-     * @param screen the last 12 non-blank screen lines; empty when nothing is saved
-     * @param uncommitted how many files have uncommitted changes in the session's
-     *   folder; null when the folder is gone or not a git folder
-     * @param unpushed how many commits are on the branch but on no remote; null when unknown
-     * @param branch the branch checked out in the folder now, else the one recorded
-     * @param resumeNote what Resume would do when it is not simply "run the agent's resume
-     *   command in the folder" (for example "Its folder is gone. It resumes in /work/repo.");
-     *   null when nothing needs saying
-     */
+    /** The answer to [WindowCommand.InspectAgentSession], sent only to the connection that asked. */
     @Serializable
     @SerialName("agentSessionInspection")
     data class AgentSessionInspection(
@@ -345,53 +286,8 @@ sealed class WindowEnvelope {
 }
 
 /**
- * One row of the agents overview: a run of Claude Code, Codex or Gemini in a
- * pane, as the server's `agent_sessions` table records it.
- *
- * Built by the server's session tracker, pushed in
- * [WindowEnvelope.AgentSessions] and ordered and titled by the client's
- * agents overview view model.
- *
- * @param id Lunamux's record id; also what [WindowCommand.ResumeAgentSession] names. One summary is
- *   sent per conversation: when a conversation has run in several panes, this is the id of the open
- *   record, else of the newest.
- * @param conversationId the conversation this row stands for: the agent's own session id when it
- *   reported one (what `claude --resume` takes), else the same as [id]. Two rows never share it.
- * @param agent `claude`, `codex` or `gemini`.
- * @param state `needs_you`, `working`, `done` or `ended`.
- * @param stateSince epoch millis when [state] last changed.
- * @param title the agent's own title for the session, frozen once seen; null if none.
- * @param links ticket keys such as `ABC-12` found in the branch or title.
- * @param repo name of the git repository folder, or null outside one.
- * @param branch branch the agent was started on, or null.
- * @param cwd folder the agent ran in.
- * @param cwdHome true when [cwd] is the home folder of the user running the server; the overview
- *   shows such a row's folder as "~" (a client cannot tell, because it does not know the home path).
- * @param cwdShown [cwd] as a person reads it, with the home folder written `~` ("~/code/lunamux"),
- *   or null when the folder is unknown or the server predates the field. The overview's folder chip
- *   draws it as it is and draws nothing when it is null, because a client cannot shorten a path itself.
- * @param nowLine what the last tool call does in words ("Running the server tests"), or null.
- * @param question what the agent is asking while [state] is `needs_you`.
- * @param leafId the pane the agent runs in (meaningful while the record is open).
- * @param endedAt epoch millis when the record ended, or null while open.
- * @param lastSaid first line of the last paragraph of the agent's latest reply, at most 160
- *   characters, or null before it has said anything; a row shows it when the session has no
- *   tool line.
- * @param lastActivityAt epoch millis of the last hook event the server folded into this record
- *   (a prompt, a tool starting or finishing, a stop), or null when none has arrived since the
- *   server started. [stateSince] cannot stand in for it, because it does not move while an
- *   agent keeps working; the overview uses this to tell a busy session from a hung one.
- * @param firstPrompt first line of what the user first asked the session, at most 160 characters,
- *   or null before a prompt was seen; the overview shows it after "❯" when a row has no tool line
- *   or last reply of its own.
- * @param taskId the id of the [AgentTask] this session belongs to, or null when it is a task of
- *   its own. Decided by the server's task index (an agent's explicit choice, then a task file's
- *   match); a client never works it out itself.
- * @param startedAt epoch millis the record opened. Never changes, so the overview keeps sessions in
- *   the order they started; null from servers that do not send it.
- * @param background whether the session runs in a background tab an agent opened, out of sight.
- *   It is still a member of its task and still counted; the overview shows it as a member row
- *   that opens a read-only peek instead of jumping to a tab, and search never finds it.
+ * One row of the agents overview: a run of Claude Code, Codex or Gemini in a pane, as the server's
+ * `agent_sessions` table records it.
  */
 @Serializable
 data class AgentSessionSummary(
@@ -417,24 +313,13 @@ data class AgentSessionSummary(
     val background: Boolean = false,
     val startedAt: Long? = null,
     val conversationId: String = id,
+    /** A closed conversation whose own pane is still at an idle shell in the same folder, so Resume can reuse it. */
+    val inTab: Boolean = false,
 )
 
 /**
- * One search result in [WindowEnvelope.AgentSessionMatches]: a session and
- * where the query was found in it.
- *
- * @param summary the session, with its live state when it is open
- * @param field where the best match is: `title`, `task`, `prompt`, `branch`,
- *   `links`, `transcript` or `screen`
- * @param snippet about 40 characters either side of the match on one line, or
- *   null for a `title` or `task` match (the title itself is highlighted)
- * @param start where the match begins inside [snippet], or inside the title
- *   for a `title` match, or inside [taskTitle] for a `task` match
- * @param length how many characters the match covers
- * @param resumeNote what Resume would do for an ended session whose folder is gone
- *   (see [WindowEnvelope.AgentSessionInspection.resumeNote]); null otherwise
- * @param taskTitle the title of the task the session belongs to, set on every match
- *   of a session that is in a task, so the result can say "in task X"; null otherwise
+ * One search result in [WindowEnvelope.AgentSessionMatches]: a session and where the query was
+ * found in it.
  */
 @Serializable
 data class AgentSessionMatch(
@@ -598,37 +483,7 @@ enum class DiffLineType {
 
 /**
  * One task as the agents overview draws it: a name and the sessions that belong to it, which are
- * the ones that carry its id in [AgentSessionSummary.taskId]. A task has no member list of its
- * own; the sessions are the only source of who is in it.
- *
- * Built by the server's task index from task files, the tasks agents made and the session
- * records, pushed in [WindowEnvelope.AgentTasks] and ordered by the client's agents overview
- * view model. A task with several sessions, or with an `open` action, is drawn as one task row;
- * a task with one session and no `open` is drawn as that session's plain row.
- *
- * @param id the task's id: a file's `id`, or the id the `create_task` tool returned; what
- *   [WindowCommand.OpenTask] names.
- * @param title the task's name. A file's title wins over the title of an agent-made task with the
- *   same id.
- * @param repo repository name shown beside the title, or null.
- * @param source `file` when a task file declares the task (also when agents added sessions to it),
- *   `agents` when only the MCP tools made it.
- * @param hasOpen whether the task file gives an `open` action the header can run.
- * @param mainConversation the conversation that speaks for the task: the one that made it, or the one
- *   an agent named with `set_task_lead`. It is a conversation id ([AgentSessionSummary.conversationId]),
- *   never a pane, so it still names the same conversation after a restart renumbers the panes. The
- *   client finds its row and its live pane through the summary with that conversation id; when no
- *   summary has it, the conversation is closed and gone from memory, and ↵ resumes it by this id.
- *   Null when none was named. The overview opens it on ↵.
- * @param status the one-line status a session set through `set_task_status`, shown on the task's
- *   row; null when none was set or it was cleared.
- * @param statusAtMillis epoch millis the status was set, or null with no status.
- * @param questionWaits whether the status says a question waits for the person. While the main
- *   conversation is closed the row then stays among the live tasks: the conversation asks the
- *   question as soon as ↵ resumes it. It is not a waiting conversation, so it adds to no count.
- *   False whenever there is no status.
- * @param startedAtMillis epoch millis the server first saw the task, stamped once and never
- *   changed; the overview keeps rows in this order. Null only for a task not yet stamped.
+ * the ones that carry its id in [AgentSessionSummary.taskId].
  */
 @Serializable
 data class AgentTask(

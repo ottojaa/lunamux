@@ -716,17 +716,9 @@ private fun buildGeneralSection(): HTMLElement {
 }
 
 /**
- * The **Claude Code** connection row in the General section: a single button,
- * "Connect Claude Code" or "Disconnect", that asks the server to add or remove
- * Lunamux's hook entries in the user's Claude settings file. Nothing is edited
- * until the button is pressed. The label follows
- * [WindowStateRepository.claudeConnected]; a failure the server reports (for
- * example a settings file that is not valid JSON) is shown under the button.
- *
- * Built by [buildGeneralSection] each time the App Settings sidebar is built.
- *
- * @return the freshly-built row element.
- * @see WindowCommand.SetClaudeHooks
+ * The **Claude Code** connection row in the General section: a single button, "Connect Claude Code"
+ * or "Disconnect", that asks the server to add or remove Lunamux's hook entries in the user's
+ * Claude settings file.
  */
 @OptIn(DelicateCoroutinesApi::class)
 private fun buildClaudeCodeRow(): HTMLElement {

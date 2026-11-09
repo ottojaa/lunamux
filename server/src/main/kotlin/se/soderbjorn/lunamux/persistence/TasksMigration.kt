@@ -4,12 +4,10 @@
  * A database written by an earlier version keeps a task's name in `agent_tasks` and everything else
  * about it (start, status, the conversation that speaks for it) in a second table. Opening such a
  * database copies both into `tasks` and drops them. A database that has neither table, which is a
- * new one or one that has been moved already, is left alone, so running this on every start
- * changes nothing after the first.
+ * new one or one that has been moved already, is left alone, so running this on every start changes
+ * nothing after the first.
  *
  * Contains [TasksMigration].
- *
- * @see SettingsRepository
  */
 package se.soderbjorn.lunamux.persistence
 
@@ -17,34 +15,12 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlCursor
 import app.cash.sqldelight.db.SqlDriver
 
-/**
- * Copies the old task tables into `tasks` and removes them.
- *
- * Called by [SettingsRepository] while it opens the database, after every table it needs exists.
- * The copy and the drops happen in one transaction, so a failure leaves the old tables as they were
- * and the next start tries again. It is the only code that still names the old tables and columns.
- *
- * @see SettingsRepository
- */
+/** Copies the old task tables into `tasks` and removes them. */
 internal object TasksMigration {
     private const val OLD_TASKS = "agent_tasks"
     private const val OLD_META = "task_meta"
 
-    /**
-     * Move every task from the old tables into `tasks`, then drop the old tables.
-     *
-     * A task's id comes from either old table. Its name, creation and rename times come from
-     * `agent_tasks`; its start, status, question flag and main conversation come from `task_meta`.
-     * Nothing is invented: a task with no row in one table has empty columns for what that table
-     * held. A task whose main is named only by a pane (an older row has no conversation) takes the
-     * conversation of the newest session record that ran in that pane, preferring a record that
-     * carries the task's id: the pane may have been the person's own session, which never carried
-     * it. A record that carries another task's id is never taken. A pane with no record gives no main.
-     *
-     * @param driver the open database; `tasks` and `agent_sessions` must exist.
-     * @param inTransaction runs the given block as one transaction against [driver], rolling it back
-     *   if the block throws.
-     */
+    /** Move every task from the old tables into `tasks`, then drop the old tables. */
     fun run(driver: SqlDriver, inTransaction: (() -> Unit) -> Unit) {
         val tables = tableNames(driver)
         val hasTasks = OLD_TASKS in tables

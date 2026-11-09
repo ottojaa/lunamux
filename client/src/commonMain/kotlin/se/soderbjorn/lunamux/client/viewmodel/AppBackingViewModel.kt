@@ -113,43 +113,25 @@ class AppBackingViewModel(
         /** How selection is painted, or `null` for [SelectionStyle.Tint]. */
         val selectionStyle: SelectionStyle? = null,
         /**
-         * Whether surfaces carry depth (shadows, sheen, glow, ambient wash) or
-         * stay flat, or `null` for the toolkit default ([SurfaceStyle.Depth]).
-         *
-         * A user appearance preference beside [selectionStyle], persisted with
-         * the fonts and read back by the Settings sidebar's Surfaces row
-         * through `LunamuxThemeManagerHost.surfaceStyle`.
+         * Whether surfaces carry depth (shadows, sheen, glow, ambient wash) or stay flat, or `null`
+         * for the toolkit default ([SurfaceStyle.Depth]).
          */
         val surfaceStyle: SurfaceStyle? = null,
         /**
-         * The legacy look shorthand (Classic / Calm), or
-         * `null` for the toolkit default ([ShellStyle.Classic]).
-         *
-         * A user appearance preference beside [selectionStyle], persisted with
-         * the fonts and read back by the Settings sidebar's Style row through
-         * `LunamuxThemeManagerHost.shellStyle`.
+         * The legacy look shorthand (Classic / Calm), or `null` for the toolkit default
+         * ([ShellStyle.Classic]).
          */
         val shellStyle: ShellStyle? = null,
         /**
-         * How tabs are reached (sidebar, tab strip or both), or `null` for the
-         * toolkit default ([NavigationMode.Both]).
-         *
-         * A user appearance preference beside [shellStyle], persisted with the
-         * fonts and read back by the Settings sidebar's Navigation row through
-         * `LunamuxThemeManagerHost.navigationMode`.
+         * How tabs are reached (sidebar, tab strip or both), or `null` for the toolkit default
+         * ([NavigationMode.Both]).
          */
         val navigationMode: NavigationMode? = null,
         /**
-         * The style settings remembered separately for dark and light mode
-         * (look, chrome, windows, active window, labels, selection, surfaces,
-         * corners, spacing), or `null` when never edited — the single-mode
-         * fields above ([cornerRadiusPx], [uiDensity], [selectionStyle],
+         * The style settings remembered separately for dark and light mode (look, chrome, windows,
+         * active window, labels, selection, surfaces, corners, spacing), or `null` when never
+         * edited — the single-mode fields above ([cornerRadiusPx], [uiDensity], [selectionStyle],
          * [surfaceStyle], [shellStyle]) then stand for both modes.
-         *
-         * Written by the Appearance settings through
-         * `LunamuxThemeManagerHost.setModeStyles` and read back by the
-         * toolkit's apply pass through `LunamuxThemeManagerHost.modeStyles`,
-         * which picks the entry for the active appearance.
          */
         val modeStyles: ModeStyles? = null,
         val sidebarWidth: Int? = null,
@@ -303,64 +285,28 @@ class AppBackingViewModel(
         persistFonts()
     }
 
-    /**
-     * Update the surface style (Depth / Flat) and persist it.
-     *
-     * Called by `LunamuxThemeManagerHost.setSurfaceStyle` when the user picks
-     * a Surfaces option in the Appearance settings. Emits before the persist
-     * call suspends, like [setShellStyle].
-     *
-     * @param style the style; `null` restores [SurfaceStyle.Default] (Depth).
-     */
+    /** Update the surface style (Depth / Flat) and persist it. */
     @Throws(CancellationException::class, Exception::class)
     suspend fun setSurfaceStyle(style: SurfaceStyle?) {
         emit(_stateFlow.value.copy(surfaceStyle = style))
         persistFonts()
     }
 
-    /**
-     * Update the legacy look shorthand (Classic / Calm) and persist it.
-     *
-     * Called by `LunamuxThemeManagerHost.setShellStyle` when the user picks a
-     * Style in the Appearance settings. The state is emitted before the
-     * persist call suspends, so a caller that starts this coroutine
-     * undispatched can read the new value back at once.
-     *
-     * @param style the style; `null` restores [ShellStyle.Default] (Classic).
-     * @see setNavigationMode
-     */
+    /** Update the legacy look shorthand (Classic / Calm) and persist it. */
     @Throws(CancellationException::class, Exception::class)
     suspend fun setShellStyle(style: ShellStyle?) {
         emit(_stateFlow.value.copy(shellStyle = style))
         persistFonts()
     }
 
-    /**
-     * Update the navigation mode (sidebar / tab strip / both) and persist it.
-     *
-     * Called by `LunamuxThemeManagerHost.setNavigationMode` when the user picks
-     * a Navigation option in the Appearance settings. Emits before the persist
-     * call suspends, like [setShellStyle].
-     *
-     * @param mode the mode; `null` restores [NavigationMode.Default] (Both).
-     * @see setShellStyle
-     */
+    /** Update the navigation mode (sidebar / tab strip / both) and persist it. */
     @Throws(CancellationException::class, Exception::class)
     suspend fun setNavigationMode(mode: NavigationMode?) {
         emit(_stateFlow.value.copy(navigationMode = mode))
         persistFonts()
     }
 
-    /**
-     * Update the per-mode style settings and persist them.
-     *
-     * Called by `LunamuxThemeManagerHost.setModeStyles` after every pick in the
-     * Appearance settings' "Style for this mode" group. Emits before the
-     * persist call suspends, like [setShellStyle], so the toolkit's re-apply
-     * right after the call reads the new values.
-     *
-     * @param styles both modes' settings; `null` forgets them.
-     */
+    /** Update the per-mode style settings and persist them. */
     @Throws(CancellationException::class, Exception::class)
     suspend fun setModeStyles(styles: ModeStyles?) {
         emit(_stateFlow.value.copy(modeStyles = styles))

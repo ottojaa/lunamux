@@ -36,20 +36,31 @@ dependencyResolutionManagement {
     }
 }
 
-// Auto-detect a sibling lunula checkout. When present, switch to a
-// Gradle composite build so toolkit edits flow into Lunamux with no extra
-// steps. Pass -Plunula.toolkit.useArtifacts=true to force resolution from
-// Maven Central even when sources are present (verifies published
-// artifacts). Pass -Plunula.toolkit.path=… to point at an explicit checkout.
+// Lunula toolkit source. Pass -Plunula.toolkit.useArtifacts=true to resolve the published artifacts
+// from Maven Central. Otherwise a sibling checkout (../../lunula/develop, then ../../lunula/main) is
+// used as a composite build. With no checkout the build stops: the published Lunula (0.2.79) has dead
+// tab hotkeys and no sidebar right-click, and building against it silently is how that went unnoticed.
+// -Plunula.toolkit.path=<dir> names a checkout explicitly; a path that holds no checkout fails the
+// build here, because quietly falling back to the published artifacts would build against a
+// different toolkit than the one asked for.
 val toolkitOverride: String? = settings.providers.gradleProperty("lunula.toolkit.path").orNull
 val useArtifacts: Boolean = settings.providers.gradleProperty("lunula.toolkit.useArtifacts").orNull == "true"
-val toolkitCandidates: List<String> = listOfNotNull(
-    toolkitOverride,
-    "../../lunula/develop",
-    "../../lunula/main",
-)
-val toolkitPath: String? = if (useArtifacts) null else toolkitCandidates
-    .firstOrNull { File(rootDir, it).resolve("settings.gradle.kts").exists() }
+fun isToolkit(path: String) = File(rootDir, path).resolve("settings.gradle.kts").exists()
+if (toolkitOverride != null && !useArtifacts && !isToolkit(toolkitOverride)) {
+    throw GradleException(
+        "lunula.toolkit.path=$toolkitOverride (relative to $rootDir) holds no Lunula checkout. " +
+            "Fix the path, drop the property, or pass -Plunula.toolkit.useArtifacts=true."
+    )
+}
+val toolkitPath: String? = if (useArtifacts) null else
+    listOfNotNull(toolkitOverride, "../../lunula/develop", "../../lunula/main").firstOrNull(::isToolkit)
+if (toolkitPath == null && !useArtifacts) {
+    throw GradleException(
+        "No Lunula checkout found at ../../lunula/develop or ../../lunula/main. The published Lunula " +
+            "(0.2.79) has no working tab hotkeys or sidebar right-click. Check out Lunula there, set " +
+            "-Plunula.toolkit.path=<dir>, or pass -Plunula.toolkit.useArtifacts=true to build against it anyway."
+    )
+}
 if (toolkitPath != null) {
     includeBuild(toolkitPath) {
         dependencySubstitution {

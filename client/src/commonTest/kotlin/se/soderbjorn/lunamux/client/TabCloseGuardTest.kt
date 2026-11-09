@@ -4,9 +4,6 @@
  */
 package se.soderbjorn.lunamux.client
 
-import kotlin.coroutines.Continuation
-import kotlin.coroutines.EmptyCoroutineContext
-import kotlin.coroutines.startCoroutine
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -24,10 +21,10 @@ class TabCloseGuardTest {
 
     private fun session(
         id: String, state: String, leaf: String? = "leaf-$id", agent: String = "claude", title: String? = "session $id",
-        background: Boolean = false, taskId: String? = null, since: Long = 1_000,
+        background: Boolean = false, taskId: String? = null, since: Long = 1_000, nowLine: String? = null,
     ) = AgentSessionSummary(
         id = id, agent = agent, state = state, stateSince = since, title = title, leafId = leaf,
-        background = background, taskId = taskId,
+        background = background, taskId = taskId, nowLine = nowLine,
     )
 
     private fun tab(id: String, title: String, vararg leaves: String, background: Boolean = false) = TabConfig(
@@ -63,6 +60,13 @@ class TabCloseGuardTest {
     }
 
     @Test
+    fun theWarningSaysWhatTheAgentIsDoingWhenItHasALine() {
+        val cfg = config(tab("t1", "one", "leaf-a"))
+        val check = TabCloseGuard.check("t1", cfg, listOf(session("a", "working", nowLine = "Running the tests.")), emptyList())!!
+        assertEquals("Claude is still working in this tab: Running the tests. Closing it stops this conversation.", check.warning)
+    }
+
+    @Test
     fun theAgentsItStartedInTheBackgroundAreListedAndTheTaskIsNamedToPickUpFrom() {
         val cfg = config(tab("t1", "one", "leaf-main"), tab("t2", "two", "leaf-x"), tab("bg", "agents", "leaf-b1", "leaf-b2", "leaf-b3", background = true))
         val sessions = listOf(
@@ -73,7 +77,7 @@ class TabCloseGuardTest {
             session("x", "working", taskId = "g1"),
         )
         val check = TabCloseGuard.check("t1", cfg, sessions, listOf(task("main")))!!
-        assertEquals(listOf("Check the schema", "Claude"), check.keepsRunning.map { it.title })
+        assertEquals(listOf("Check the schema", "Claude session"), check.keepsRunning.map { it.title })
         assertEquals(listOf("working", "needs_you"), check.keepsRunning.map { it.state })
         assertEquals(5_000L, check.keepsRunning.first().sinceMillis)
         assertEquals("The 2 agents it started keep running in the background:", check.keepsRunningIntro)
@@ -102,12 +106,6 @@ class TabCloseGuardTest {
     }
 
     // ---- closeTabAsking ----
-
-    private fun runNow(block: suspend () -> Unit) {
-        var outcome: Result<Unit>? = null
-        block.startCoroutine(Continuation(EmptyCoroutineContext) { outcome = it })
-        outcome!!.getOrThrow()
-    }
 
     private fun state(vararg sessions: AgentSessionSummary): WindowStateRepository {
         val repo = WindowStateRepository()

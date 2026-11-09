@@ -32,7 +32,8 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.w3c.dom.HTMLElement
-import se.soderbjorn.lunamux.client.viewmodel.AgentCounts
+import se.soderbjorn.lunamux.client.viewmodel.AgentFacts
+import se.soderbjorn.lunamux.client.viewmodel.Layout
 import se.soderbjorn.lunula.core.argbToCss
 import se.soderbjorn.lunula.web.confirmClosePane
 import se.soderbjorn.lunula.web.hotkey.Hotkey
@@ -966,85 +967,43 @@ private fun buildSidebarFooter(): HTMLElement {
 }
 
 /**
- * One line of the footer's agent block: the label, its colour dot (null for the total line) and the
- * two counts.
- *
- * @property name    the line's label: "All worlds" for the total of a layout with several worlds,
- *                    "Agents" for the total of a layout with one, else the world's display name.
- * @property accent  the world's resolved theme accent as a CSS colour string (the line's dot), or
- *   null for the total line.
- * @property working how many conversations are working.
- * @property waiting how many conversations wait for the person.
- * @see computeAgentStatusRows
+ * One line of the footer's agent block: its label ("All worlds" or "Agents" for the total, else the
+ * world's name), the world's accent colour for the dot (null for the total), and the two counts.
  */
-private class WorldStatusRow(
-    val name: String,
-    val accent: String?,
-    val working: Int,
-    val waiting: Int,
-)
+private data class StatusLine(val name: String, val accent: String?, val working: Int, val waiting: Int)
 
 /**
  * The footer's lines: the total of every conversation waiting for the person and every one
- * working, then, when the layout has more than one world, one line for each world that has any.
- *
- * The numbers come from the same function the agents overview counts with ([AgentCounts]), so the
- * footer's "waiting" always equals the number of rows that show "needs you" (a background agent
- * that waits counts here and opens as a tab from its row). It no longer reads terminal state.
- *
- * @return the lines to draw; empty when nothing waits and nothing works.
- * @see updateWorldStatusFooter
- * @see AgentCounts.of
+ * working, then, when there is more than one world, one line for each world that has any. The
+ * numbers come from [AgentFacts.tally], the function the overview's counts use.
  */
-private fun computeAgentStatusRows(): List<WorldStatusRow> {
-    val sessions = lunamuxClient.windowState.agentSessions.value
+private fun computeAgentStatusRows(): List<StatusLine> {
     val cfg = latestWindowConfig
-    val tally = AgentCounts.of(sessions, cfg)
+    val tally = AgentFacts.tally(lunamuxClient.windowState.agentSessions.value, Layout(cfg))
     val total = tally.total
     if (total.waiting == 0 && total.working == 0) return emptyList()
     val several = cfg != null && cfg.worlds.size >= 2
-    val out = mutableListOf(WorldStatusRow(if (several) "All worlds" else "Agents", null, total.working, total.waiting))
+    val out = mutableListOf(StatusLine(if (several) "All worlds" else "Agents", null, total.working, total.waiting))
     if (cfg == null || !several) return out
     for (world in cfg.worlds) {
         val c = tally.byWorld[world.id] ?: continue
-        val accent = runCatching { argbToCss(resolvedThemeForWorld(world.themeSelection).accent) }
-            .getOrNull() ?: "#4f8cf7"
-        out.add(WorldStatusRow(world.name, accent, c.working, c.waiting))
+        val accent = runCatching { argbToCss(resolvedThemeForWorld(world.themeSelection).accent) }.getOrNull() ?: "#4f8cf7"
+        out.add(StatusLine(world.name, accent, c.working, c.waiting))
     }
     return out
 }
 
-/**
- * Fills a line's count element: "▲ M waiting" in attention amber, then the working glyph and
- * "N working" in the working colour, omitting a half that is zero. The waiting half pulses on the
- * shared global pulse loop ([startPulse]) and the working half carries the app's working glyph,
- * built by [workingGlyph] under [glyphKey] so the footer's rebuild on every state push puts the
- * same working glyph back and its motion never starts over.
- *
- * @param host      the line's count container to populate (assumed empty).
- * @param working   the working count.
- * @param waiting   the waiting count.
- * @param glyphKey  the key the working glyph is kept under.
- * @see startPulse
- */
-private fun appendWorldStatusCounts(host: HTMLElement, working: Int, waiting: Int, glyphKey: String) {
+/** Fills a line's count element: "▲ M waiting" in the attention colour, then the spinner and "N working". */
+private fun appendWorldStatusCounts(host: HTMLElement, working: Int, waiting: Int) {
     if (waiting > 0) {
-        val a = document.createElement("span") as HTMLElement
-        a.className = "world-status-waiting"
-        a.textContent = "\u25B2 $waiting waiting"
+        val a = span("world-status-waiting", "\u25B2 $waiting waiting")
         host.appendChild(a)
         startPulse(a, WORLD_WAITING_PULSE_PERIOD_MS, WORLD_WAITING_PULSE_FLOOR)
     }
     if (working > 0) {
-        if (waiting > 0) {
-            val sep = document.createElement("span") as HTMLElement
-            sep.className = "world-status-sep"
-            sep.textContent = " \u2022 "
-            host.appendChild(sep)
-        }
-        val w = document.createElement("span") as HTMLElement
-        w.className = "world-status-working"
-        w.appendChild(workingGlyph(glyphKey))
+        if (waiting > 0) host.appendChild(span("world-status-sep", " \u2022 "))
+        val w = span("world-status-working")
+        w.appendChild(spinner())
         w.appendChild(document.createTextNode(" $working working"))
         host.appendChild(w)
     }
@@ -1052,56 +1011,30 @@ private fun appendWorldStatusCounts(host: HTMLElement, working: Int, waiting: In
 
 /**
  * Repaints the sidebar's agent block from the conversations the server pushed. Called from
- * [updateStateIndicators] (every config and state push routes through it), from the agents
- * overview when sessions or tasks change.
- *
- * When nothing waits and nothing works the block collapses to nothing (via `world-status-empty`,
- * which zeroes its padding) so an idle footer shows only the usage bar. The whole block is
- * rebuilt each call (a handful of lines) rather than diffed.
- *
- * @see computeAgentStatusRows
+ * [updateStateIndicators] on every config and state push and from the overview when sessions
+ * change. A line whose numbers did not change is left alone, so its spinner keeps turning. With
+ * nothing waiting and nothing working the block collapses (`world-status-empty`).
  */
 internal fun updateWorldStatusFooter() {
     val host = worldStatusEl ?: return
     val rows = computeAgentStatusRows()
-    host.innerHTML = ""
-    if (rows.isEmpty()) {
-        host.classList.add("world-status-empty")
-        keepWorkingGlyphs("footer:", emptySet())
-        return
+    host.classList.toggle("world-status-empty", rows.isEmpty())
+    val items = if (rows.isEmpty()) emptyList() else listOf<Any>("Agents") + rows
+    syncChildren(host, items, { if (it is StatusLine) "line:${it.name}" else "title" }) { item ->
+        if (item is StatusLine) buildStatusLine(item) else div("world-status-title").also { it.textContent = "Agents" }
     }
-    host.classList.remove("world-status-empty")
+}
 
-    val title = document.createElement("div") as HTMLElement
-    title.className = "world-status-title"
-    title.textContent = "Agents"
-    host.appendChild(title)
-
-    val keys = HashSet<String>()
-    for (row in rows) {
-        val rowEl = document.createElement("div") as HTMLElement
-        rowEl.className = "world-status-row"
-
-        val dot = document.createElement("span") as HTMLElement
-        dot.className = "world-status-dot"
-        if (row.accent != null) dot.style.background = row.accent else dot.style.visibility = "hidden"
-
-        val name = document.createElement("span") as HTMLElement
-        name.className = "world-status-name"
-        name.textContent = row.name
-
-        val count = document.createElement("span") as HTMLElement
-        count.className = "world-status-count"
-        val key = "footer:${row.name}"
-        if (row.working > 0) keys += key
-        appendWorldStatusCounts(count, row.working, row.waiting, key)
-
-        rowEl.appendChild(dot)
-        rowEl.appendChild(name)
-        rowEl.appendChild(count)
-        host.appendChild(rowEl)
+private fun buildStatusLine(line: StatusLine): HTMLElement {
+    val dot = span("world-status-dot")
+    if (line.accent != null) dot.style.background = line.accent else dot.style.visibility = "hidden"
+    val count = span("world-status-count" + if (line.working > 0 && line.waiting > 0) " world-status-both" else "")
+    appendWorldStatusCounts(count, line.working, line.waiting)
+    return div("world-status-row").also {
+        it.appendChild(dot)
+        it.appendChild(span("world-status-name", line.name))
+        it.appendChild(count)
     }
-    keepWorkingGlyphs("footer:", keys)
 }
 
 /* -------------------------------------------------------------------- */
@@ -1488,6 +1421,7 @@ fun bootViaToolkitShell(root: HTMLElement) {
     registerOverview3dHotkey()
     registerAgentsOverviewHotkey() // ⌘⇧A opens the agents overview
     registerTaskPanelHotkey() // ⌘I shows or hides the task panel
+    installTabCloseTakeover() // a working tab asks once, in Lunamux's words
     startTaskPanel() // the panel itself: follows the window state from here on
     startAgentsOverview() // the overview overlay: follows its view model from here on
     registerWorld3dSpikeHotkey() // ⌥⌘← opens the world spike (mirror of ⌥⌘→)

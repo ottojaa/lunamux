@@ -3,14 +3,11 @@
  *
  * An agent that works on a task can show the person what it is doing in blocks next to the task's
  * own session. The panel draws four things: the task's agents (it makes that block itself), a
- * progress block, links and a timeline. `set_task_panel` replaces
- * all of them, `upsert_task_block` and `remove_task_block` change one, and `get_task_panel` reads
- * them back. This file turns an agent's JSON into [TaskPanelBlock]s and the stored blocks back
- * into JSON; the rules about sizes and shapes live in [se.soderbjorn.lunamux.TaskPanelLimits] and
- * are applied by [TaskPanelStore], and its refusals reach the agent as tool errors.
- *
- * @see registerMcpPanelTools
- * @see TaskPanelStore
+ * progress block, links and a timeline. `set_task_panel` replaces all of them, `upsert_task_block`
+ * and `remove_task_block` change one, and `get_task_panel` reads them back. This file turns an
+ * agent's JSON into [TaskPanelBlock]s and the stored blocks back into JSON; the rules about sizes
+ * and shapes live in [se.soderbjorn.lunamux.TaskPanelLimits] and are applied by [TaskPanelStore],
+ * and its refusals reach the agent as tool errors.
  */
 package se.soderbjorn.lunamux.mcp
 
@@ -37,41 +34,18 @@ import java.time.OffsetDateTime
 /** The block types an agent may write, in the order the tool descriptions list them. */
 private val BLOCK_TYPES = listOf("links", "timeline", "progress")
 
-/**
- * Read a JSON value as the array of objects a block field expects.
- *
- * @receiver the block's JSON.
- * @param field the field's name, used in the refusal.
- * @param blockId the block's id, used in the refusal.
- * @return the objects in the field's array.
- * @throws McpArgumentException when the field is missing, not an array, or holds a non-object.
- */
+/** Read a JSON value as the array of objects a block field expects. */
 private fun JsonObject.objects(field: String, blockId: String): List<JsonObject> {
     val array = this[field] as? JsonArray ?: throw McpArgumentException("Block '$blockId': '$field' must be an array.")
     return array.map { it as? JsonObject ?: throw McpArgumentException("Block '$blockId': every entry of '$field' must be an object.") }
 }
 
-/**
- * Read a string field that must be present, keeping empty text.
- *
- * @receiver the JSON object to read from.
- * @param field the field's name.
- * @param where words naming the item for the refusal.
- * @return the string.
- * @throws McpArgumentException when the field is absent or not a string.
- */
+/** Read a string field that must be present, keeping empty text. */
 private fun JsonObject.str(field: String, where: String): String =
     (this[field] as? JsonPrimitive)?.takeIf { it.isString }?.content
         ?: throw McpArgumentException("$where needs a text '$field'.")
 
-/**
- * Turn the `at` time of a timeline entry or a link into epoch milliseconds.
- *
- * @param el an ISO-8601 instant or offset date-time string, or epoch milliseconds as a number.
- * @param where words naming the entry for the refusal.
- * @return epoch milliseconds.
- * @throws McpArgumentException when it is neither.
- */
+/** Turn the `at` time of a timeline entry or a link into epoch milliseconds. */
 private fun parseAt(el: JsonElement?, where: String): Long {
     val p = el as? JsonPrimitive ?: throw McpArgumentException("$where needs an 'at' time (ISO-8601 text or epoch milliseconds).")
     p.contentOrNull?.toLongOrNull()?.let { return it }
@@ -81,14 +55,7 @@ private fun parseAt(el: JsonElement?, where: String): Long {
         ?: throw McpArgumentException("$where has an 'at' of '${text.take(40)}' that is not ISO-8601 (like 2026-05-01T12:00:00Z) or epoch milliseconds.")
 }
 
-/**
- * Read the optional `kind` of a link: the short word shown before its label.
- *
- * @receiver the link's JSON.
- * @param where words naming the link for the refusal.
- * @return the trimmed kind, or [TaskLink.DEFAULT_KIND] when it is absent, null or blank.
- * @throws McpArgumentException when it is present but not text.
- */
+/** Read the optional `kind` of a link: the short word shown before its label. */
 private fun JsonObject.linkKind(where: String): String {
     val el = this["kind"]?.takeUnless { it is JsonNull } ?: return TaskLink.DEFAULT_KIND
     val p = el as? JsonPrimitive
@@ -96,14 +63,7 @@ private fun JsonObject.linkKind(where: String): String {
     return p.content.trim().ifEmpty { TaskLink.DEFAULT_KIND }
 }
 
-/**
- * Read one block the way an agent writes it.
- *
- * @param json the block: `id`, optional `title`, `type` and the fields of that type.
- * @return the block, with no writer and time yet (the store stamps them).
- * @throws McpArgumentException when a field is missing or has the wrong shape; size and content
- *   rules are checked later by [TaskPanelStore].
- */
+/** Read one block the way an agent writes it. */
 internal fun parsePanelBlock(json: JsonObject): TaskPanelBlock {
     val id = (json["id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
         ?: throw McpArgumentException("Every block needs an 'id'.")
@@ -137,15 +97,7 @@ internal fun parsePanelBlock(json: JsonObject): TaskPanelBlock {
     return TaskPanelBlock(id = id, title = title, content = content, writtenAtMillis = 0L)
 }
 
-/**
- * Read an optional whole-number field of a progress block.
- *
- * @receiver the block's JSON.
- * @param field `done` or `total`.
- * @param blockId the block's id, used in the refusal.
- * @return the number, or null when the field is absent.
- * @throws McpArgumentException when it is present but not a whole number.
- */
+/** Read an optional whole-number field of a progress block. */
 private fun JsonObject.numberField(field: String, blockId: String): Int? {
     val el = this[field] ?: return null
     if (el is JsonNull) return null
@@ -153,12 +105,7 @@ private fun JsonObject.numberField(field: String, blockId: String): Int? {
         ?: throw McpArgumentException("Block '$blockId': '$field' must be a whole number.")
 }
 
-/**
- * Write a stored block the way an agent writes it, plus who wrote it and when.
- *
- * @param b the stored block.
- * @return JSON in the shape [parsePanelBlock] reads, with `writtenBy` and `writtenAt` added.
- */
+/** Write a stored block the way an agent writes it, plus who wrote it and when. */
 internal fun panelBlockJson(b: TaskPanelBlock): JsonObject = buildJsonObject {
     put("id", b.id)
     put("type", b.content.kindName)
@@ -186,21 +133,11 @@ internal fun panelBlockJson(b: TaskPanelBlock): JsonObject = buildJsonObject {
             c.label?.let { put("label", it) }
         }
     }
-    put("writtenBy", b.writtenBy?.let(::JsonPrimitive) ?: JsonNull)
+    put("writtenBy", b.writtenBy)
     put("writtenAt", Instant.ofEpochMilli(b.writtenAtMillis).toString())
 }
 
-/**
- * Register `set_task_panel`, `upsert_task_block`, `remove_task_block` and `get_task_panel`.
- *
- * Called once at boot from [mcpRoutes] next to [registerMcpTaskTools], when the server has a task
- * index and a panel store. The three tools that change the panel need a `read+write` token;
- * `get_task_panel` needs only `read`.
- *
- * @param store holds and checks the blocks.
- * @param tracker names the agent running in the caller's session, for the "written by" name.
- * @see TaskPanelStore
- */
+/** Register `set_task_panel`, `upsert_task_block`, `remove_task_block` and `get_task_panel`. */
 fun registerMcpPanelTools(store: TaskPanelStore, tracker: AgentSessionTracker) {
     val blockSchema = schemaObject(
         "id" to schemaString(
