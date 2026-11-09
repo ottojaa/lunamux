@@ -1141,12 +1141,17 @@ internal suspend fun resumeAgentSession(
 
 /**
  * The id of the pane session [rec] ran in, when resuming there is safe: the pane still exists, its
- * shell is in the folder the conversation is picked up from ([startFolderOf]), and nothing runs under
- * that shell. The pane is found by its layout leaf, which survives a restart; the terminal session
- * id the record stored does not (every pane gets a new one then).
+ * shell is in the folder the conversation is picked up from ([startFolderOf]), nothing runs under
+ * that shell, and its tab is one the person can see (not an unlisted background tab). The pane is
+ * found by its layout leaf, which survives a restart; the terminal session id the record stored
+ * does not (every pane gets a new one then).
  */
 internal fun paneToResumeIn(rec: AgentSessionRecord, open: TaskOpen? = null): String? {
     val id = rec.leafId?.let(WindowState::sessionIdOfLeaf) ?: rec.terminalSessionId ?: return null
+    // A pane in a background tab nobody lists cannot be shown, so typing there would run the agent out of sight.
+    val tab = WindowState.config.value.worlds.asSequence().flatMap { it.tabs }
+        .firstOrNull { t -> t.panes.any { it.leaf.sessionId == id } }
+    if (tab != null && !tab.isListed) return null
     val session = TerminalSessions.get(id) ?: return null
     return id.takeIf { sameFolder(session.cwd.value, startFolderOf(rec, open)) && session.isIdleShell() }
 }
@@ -1155,7 +1160,7 @@ internal fun paneToResumeIn(rec: AgentSessionRecord, open: TaskOpen? = null): St
  * Show the tab that holds pane session [sessionId] (switching to its world when that is another
  * one) and type [command] into it; false when no tab holds it.
  */
-private fun typeInPane(sessionId: String, command: String): Boolean {
+internal fun typeInPane(sessionId: String, command: String): Boolean {
     val (world, tab, pane) = WindowState.config.value.worlds.asSequence()
         .flatMap { w -> w.tabs.map { w to it } }
         .firstNotNullOfOrNull { (w, t) -> t.panes.firstOrNull { it.leaf.sessionId == sessionId }?.let { Triple(w, t, it) } } ?: return false
