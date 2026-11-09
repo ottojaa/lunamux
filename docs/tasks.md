@@ -155,14 +155,16 @@ this. No other tab ever appears by itself.
 
 ## Closing a tab that is working
 
-Closing a tab with a working agent asks once, whichever way the person closes it (the tab's ×, the
-tab list, the 3D world's cards). The question names the tab, says what the agent is doing and that
+Closing a tab with a working agent asks once, whichever way the person closes it (the Close row of the
+tab's ⋮ menu, the 3D world's cards). The question names the tab, says what the agent is doing and that
 closing stops it, and, when the tab holds a task's own session, lists the task's agents in background
 tabs, which keep running, and how to pick the conversation up: open the agents overview and choose
 the task. Cancel has the focus, esc cancels and ↵ presses the focused button. A tab with nothing
-working closes at once, closing a single pane is not asked about, and an agent's `close_tab` never
-asks. (The toolkit's own tab-close confirmation cannot be switched off in the version we use, so a
-capture-phase click handler on the × asks ours instead of it: `installTabCloseTakeover`.)
+working gets the toolkit's plain "Are you sure you want to close …?", closing a single pane is not
+asked about here, and an agent's `close_tab` never asks. (The toolkit's tab-close confirmation
+cannot be switched off in the version we use and shows for every tab, so a capture-phase click
+handler on the ⋮ menu's Close row asks ours instead of it for a working tab:
+`installTabCloseTakeover`.)
 
 ## How state is known
 

@@ -32,22 +32,39 @@ internal suspend fun closeTabFromPerson(tabId: String): Boolean =
     closeTabAsking(lunamuxClient.windowState, tabId, { windowSocket.send(it) }) { showTabCloseDialog(it) }
 
 /**
- * Makes a tab's × ask once. The toolkit's own "Are you sure you want to close …?" has no switch in
- * the version we use, and it appears for every tab, so a tab with a working agent would ask it and
- * then ours.
+ * Makes closing a tab with an agent working in it ask once. The toolkit's own "Are you sure you
+ * want to close …?" has no switch in the version we use and it asks for every tab, so a working tab
+ * would ask it and then ours. A click on the Close row of a tab's ⋮ menu (the only way the strip
+ * closes a tab) is caught before the toolkit sees it, and ours is asked instead. A tab with no
+ * agent working in it closes as before.
+ *
+ * Called once at start-up by the toolkit bootstrap.
  */
 @OptIn(DelicateCoroutinesApi::class)
 internal fun installTabCloseTakeover() {
     document.addEventListener("click", { e: Event ->
-        val button = (e.target as? Element)?.closest("[title='Close tab']") ?: return@addEventListener
-        val tabId = button.closest("[data-tab-id]")?.getAttribute("data-tab-id") ?: return@addEventListener
+        val target = e.target as? Element ?: return@addEventListener
+        val tabId = tabIdOfCloseClick(target) ?: return@addEventListener
         val windowState = lunamuxClient.windowState
-        val working = TabCloseGuard.check(tabId, windowState.config.value, windowState.agentSessions.value, windowState.agentTasks.value)
-        if (working == null) return@addEventListener
+        if (TabCloseGuard.check(tabId, windowState.config.value, windowState.agentSessions.value, windowState.agentTasks.value) == null) {
+            return@addEventListener
+        }
         e.stopImmediatePropagation()
         e.preventDefault()
+        // The menu stays open when its row is swallowed; its backdrop closes it on mousedown.
+        document.querySelector(".dt-menu-backdrop")?.dispatchEvent(Event("mousedown"))
         GlobalScope.launch { closeTabFromPerson(tabId) }
     }, true)
+}
+
+/**
+ * The id of the tab that a click on [target] asks to close, or null when the click is not the Close
+ * row of a tab's ⋮ menu. The menu is a panel on `body`; its tab is the one whose menu button is open.
+ */
+private fun tabIdOfCloseClick(target: Element): String? {
+    val row = target.closest(".dt-tab-menu-panel .dt-hover-menu-item") ?: return null
+    if (row.querySelector(".dt-hover-menu-label")?.textContent != "Close") return null
+    return document.querySelector(".dt-tab-menu.dt-open")?.closest("[data-tab-id]")?.getAttribute("data-tab-id")
 }
 
 /** Show the dialog for [check] and wait for the person's answer. */
