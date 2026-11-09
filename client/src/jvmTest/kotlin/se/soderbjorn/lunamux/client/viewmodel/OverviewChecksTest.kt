@@ -161,12 +161,12 @@ class OverviewChecksTest {
 
     @Test
     fun aTabThatBecomesListedOnItsOwnFailsAndAMarkedTabMustHideAgain() {
-        fun config(listed: Boolean, marked: Boolean) = WindowConfig(
+        fun config(listed: Boolean, marked: Boolean, on: String = "tab-1") = WindowConfig(
             tabs = listOf(
                 TabConfig(id = "tab-1", title = "one", panes = panes(listOf("leaf-main"))),
                 TabConfig(id = "tab-bg", title = "agents", panes = panes(listOf("leaf-b1")), isBackground = !listed, shownWhileWaiting = marked),
             ),
-            activeTabId = "tab-1",
+            activeTabId = on,
         )
         val waiting = listOf(conversation("b1", "needs_you", background = true))
         val working = listOf(conversation("b1", "working", background = true))
@@ -178,9 +178,15 @@ class OverviewChecksTest {
         assertTrue(good.result().ok, "shown while it waits, hidden after")
 
         val stuck = OverviewChecks.TabWatch()
-        stuck.observe(config(listed = false, marked = true), working, 0)
-        stuck.observe(config(listed = false, marked = true), working, OverviewChecks.HIDE_AGAIN_GRACE_MS + 1)
-        assertFalse(stuck.result().ok, "listed with nothing waiting past the grace")
+        stuck.observe(config(listed = false, marked = true, on = "tab-bg"), working, 0)
+        stuck.observe(config(listed = false, marked = true, on = "tab-bg"), working, OverviewChecks.HIDE_AGAIN_GRACE_MS + 1)
+        assertTrue(stuck.result().ok, "a tab shown to look at a working agent is fine while the person is on it")
+        stuck.observe(config(listed = false, marked = true), waiting, OverviewChecks.HIDE_AGAIN_GRACE_MS + 2)
+        stuck.observe(config(listed = false, marked = true), waiting, 3 * OverviewChecks.HIDE_AGAIN_GRACE_MS)
+        assertTrue(stuck.result().ok, "a waiting agent's tab stays when the person moved on")
+        stuck.observe(config(listed = false, marked = true), working, 3 * OverviewChecks.HIDE_AGAIN_GRACE_MS + 1)
+        stuck.observe(config(listed = false, marked = true), working, 5 * OverviewChecks.HIDE_AGAIN_GRACE_MS)
+        assertFalse(stuck.result().ok, "still listed, not looked at, after its agent worked on, past the grace")
 
         val own = OverviewChecks.TabWatch()
         own.observe(config(listed = false, marked = false), working, 0)

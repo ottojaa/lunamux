@@ -99,7 +99,7 @@ internal fun installWindowConfigPersister(scope: CoroutineScope, repo: SettingsR
             .drop(1)
             .debounce(2_000.milliseconds)
             .collectLatest { cfg ->
-                runCatching { repo.saveWindowConfig(cfg.withBlankSessionIds()) }
+                runCatching { repo.saveWindowConfig(WindowState.forSaving(cfg)) }
                     .onFailure { LoggerFactory.getLogger("WindowPersistence").warn("Failed to persist window config", it) }
             }
     }
@@ -132,7 +132,7 @@ internal fun installWorldThemePersister(scope: CoroutineScope, repo: SettingsRep
             .drop(1)
             .debounce(250.milliseconds)
             .collectLatest {
-                runCatching { repo.saveWindowConfig(WindowState.config.value.withBlankSessionIds()) }
+                runCatching { repo.saveWindowConfig(WindowState.forSaving(WindowState.config.value)) }
                     .onFailure { LoggerFactory.getLogger("WindowPersistence").warn("Failed to persist world theme", it) }
             }
     }

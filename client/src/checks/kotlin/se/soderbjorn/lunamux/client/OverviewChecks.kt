@@ -59,6 +59,11 @@ object OverviewChecks {
     private fun tabOf(config: WindowConfig, leafId: String?): TabConfig? =
         leafId?.let { id -> tabsOf(config).firstOrNull { t -> t.panes.any { it.leaf.id == id } } }
 
+    private fun isActive(config: WindowConfig, tab: TabConfig): Boolean {
+        val world = config.worlds.firstOrNull { it.id == config.activeWorldId } ?: config.worlds.firstOrNull()
+        return (world?.activeTabId ?: config.activeTabId) == tab.id
+    }
+
     private fun name(c: AgentSessionSummary) = c.title ?: c.id
 
     private fun rows(s: Snapshot) = s.overview.now + s.overview.earlier
@@ -193,7 +198,7 @@ object OverviewChecks {
 
     /**
      * C6 over time: no background tab becomes listed without being marked, and a marked tab hides
-     * again once its conversation no longer waits. Fed every layout the server pushes.
+     * again once its conversation has ended. Fed every layout the server pushes.
      */
     class TabWatch {
         private val wasListed = HashMap<String, Boolean>()
@@ -205,13 +210,16 @@ object OverviewChecks {
             observed++
             for (tab in tabsOf(config)) {
                 val waiting = sessions.any { it.state == NEEDS_YOU && tabOf(config, it.leafId)?.id == tab.id }
+                val live = sessions.any { it.state != ENDED && tabOf(config, it.leafId)?.id == tab.id }
                 if (wasListed[tab.id] == false && tab.isListed) {
                     if (!tab.shownWhileWaiting) problems += "tab \"${tab.title}\" became listed without being marked as a background agent's"
-                    else if (!waiting) problems += "tab \"${tab.title}\" was shown while no conversation in it waits"
+                    else if (!live) problems += "tab \"${tab.title}\" was shown while no conversation in it is live"
                 }
-                if (tab.isBackground && tab.shownWhileWaiting && !waiting) {
+                // A shown tab has a reason to stay: its agent waits, or it is the tab the person is looking at.
+                val stuck = tab.isBackground && tab.shownWhileWaiting && (!live || (!waiting && !isActive(config, tab)))
+                if (stuck) {
                     val since = markedSince.getOrPut(tab.id) { nowMillis }
-                    if (nowMillis - since > HIDE_AGAIN_GRACE_MS) problems += "tab \"${tab.title}\" stays listed though nothing in it waits"
+                    if (nowMillis - since > HIDE_AGAIN_GRACE_MS) problems += "tab \"${tab.title}\" stays listed though nothing in it waits and it is not being looked at"
                 } else markedSince.remove(tab.id)
                 wasListed[tab.id] = tab.isListed
             }

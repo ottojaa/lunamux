@@ -18,7 +18,6 @@ import se.soderbjorn.lunamux.TaskPanelBlock
 import se.soderbjorn.lunamux.TaskTimelineItem
 import se.soderbjorn.lunamux.WindowCommand
 import se.soderbjorn.lunamux.WindowConfig
-import se.soderbjorn.lunamux.WindowEnvelope
 import se.soderbjorn.lunamux.client.WindowStateRepository
 import se.soderbjorn.lunamux.client.runNow
 import se.soderbjorn.lunamux.client.viewmodel.TaskPanelViewModel.MemberAction
@@ -152,7 +151,7 @@ class TaskPanelTest {
     }
 
     @Test
-    fun clickingAnAgentJumpsToItsTabOrShowsItWhileItWaitsInABackgroundTab() = runNow {
+    fun clickingAnAgentJumpsToItsTabOrShowsItsHiddenTabWhateverItIsDoing() = runNow {
         layout(listed = listOf("main"), other = listOf("w1"), background = listOf("w2", "w3"))
         fill(
             session("w1", since = now - 3 * minute).copy(background = false),
@@ -161,34 +160,14 @@ class TaskPanelTest {
         )
         val byId = vm.state.agents.shown.associateBy { it.recordId }
         assertEquals(MemberAction.JUMP, byId.getValue("w1").action)
-        assertEquals(MemberAction.SHOW_WAITING, byId.getValue("w2").action)
-        assertEquals(MemberAction.PEEK, byId.getValue("w3").action, "a working agent in a hidden tab offers its screen")
-        assertEquals("↵ peek", byId.getValue("w3").hint)
+        assertEquals(listOf("↵ show", "↵ show"), listOf("w2", "w3").map { byId.getValue(it).hint }, "waiting or working, a hidden tab is shown")
+        assertEquals(MemberAction.SHOW, byId.getValue("w3").action)
 
         vm.activateMember(byId.getValue("w1"))
         assertEquals(listOf<WindowCommand>(WindowCommand.SetActiveTab("tab-2"), WindowCommand.SetFocusedPane("tab-2", "leaf-w1")), sent)
         sent.clear()
-        vm.activateMember(byId.getValue("w2"))
-        assertEquals(listOf<WindowCommand>(WindowCommand.ShowWaitingAgent("w2")), sent)
-    }
-
-    @Test
-    fun peekingAtAHiddenAgentReadsItsScreenAndLeavesItsTabHidden() = runNow {
-        layout(listed = listOf("main"), background = listOf("w1"))
-        fill(session("w1"))
-        val line = vm.state.agents.shown.single()
-        vm.activateMember(line)
-        assertEquals(listOf<WindowCommand>(WindowCommand.InspectAgentSession("w1")), sent, "it only asks for the screen: no tab is shown or switched to")
-        assertTrue(vm.state.peek!!.loading)
-
-        windowState.updateAgentInspection(WindowEnvelope.AgentSessionInspection("w1", live = true, screen = listOf("$ make test", "ok")))
-        assertEquals(listOf("$ make test", "ok"), vm.state.peek!!.lines)
-        assertEquals("session w1", vm.state.peek!!.title)
-        assertTrue(windowState.config.value!!.tabs.single { it.id == "tab-bg" }.isBackground)
-
-        vm.closePeek()
-        assertNull(vm.state.peek)
-        assertEquals(listOf("w1"), vm.state.agents.shown.map { it.recordId }, "the panel is as it was")
+        vm.activateMember(byId.getValue("w3"))
+        assertEquals(listOf<WindowCommand>(WindowCommand.ShowWaitingAgent("w3")), sent, "nothing is sent to the agent")
     }
 
     @Test
@@ -204,7 +183,7 @@ class TaskPanelTest {
         fill(first.copy(state = "done", nowLine = null), second)
         assertEquals(listOf("w1", "w2"), vm.state.agents.shown.map { it.recordId }, "the row holds its place")
         assertEquals("idle", lineOf("w1").doing)
-        assertEquals(MemberAction.PEEK, lineOf("w1").action, "an idle row in a hidden tab offers the same peek")
+        assertEquals("↵ show", lineOf("w1").hint, "an idle row in a hidden tab offers the same")
 
         fill(first, second)
         assertEquals(listOf("w1", "w2"), vm.state.agents.shown.map { it.recordId })

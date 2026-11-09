@@ -159,7 +159,7 @@ fun main() {
         // changes that landed inside the debounce window.
         runCatching {
             runBlocking {
-                repo.saveWindowConfig(WindowState.config.value.withBlankSessionIds())
+                repo.saveWindowConfig(WindowState.forSaving(WindowState.config.value))
                 scrollbackSaver.saveAll(force = true)
             }
         }

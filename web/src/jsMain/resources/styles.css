@@ -3872,10 +3872,6 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-side { flex: none; display: flex; flex-direction: column; align-items: flex-end; }
 .tp-hint { padding-right: 6px; white-space: nowrap; color: var(--ao-dim); font-size: 11px; line-height: 14px; }
 .tp-close { border: 0; border-radius: 4px; background: transparent; color: var(--ao-dim); font: inherit; font-size: 16px; line-height: 1; cursor: pointer; padding: 4px 6px; }
-/* The screen of an agent in a hidden tab, read-only, over the blocks (its top is set from the blocks' own). */
-.tp-peek { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; overflow: auto; background: var(--ao-surface); }
-.tp-peek .ao-peek { margin: 0; padding: 12px var(--tp-pad); border-left: 0; }
-.tp-peek-hint { padding: 0 var(--tp-pad) 12px; color: var(--ao-dim); font-size: 11px; }
 .tp-close:hover, .tp-close:focus-visible { color: var(--ao-text); background: var(--ao-hover); outline: none; }
 .tp-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 0 16px; }
 .tp-block { padding: 14px var(--tp-pad) 12px; border-bottom: 1px solid var(--ao-line); overflow-wrap: anywhere; }

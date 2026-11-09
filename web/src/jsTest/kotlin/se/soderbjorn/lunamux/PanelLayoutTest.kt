@@ -47,7 +47,7 @@ class PanelLayoutTest {
     }
 
     private fun row(title: String, doing: String, state: String, hint: String?) = AgentLine(
-        title = title, doing = doing, state = state, sinceMillis = 0, action = if (hint == null) MemberAction.NONE else MemberAction.PEEK,
+        title = title, doing = doing, state = state, sinceMillis = 0, action = if (hint == null) MemberAction.NONE else MemberAction.SHOW,
         recordId = "r", hint = hint,
     )
 
@@ -55,10 +55,10 @@ class PanelLayoutTest {
     fun anAgentRowIsAsTallWhateverTheAgentDoesAndWhetherOrNotItsHintShows() {
         val title = "Fix the owner's first test"
         val variants = listOf(
-            row(title, "Reading DeviceAuth.kt", AgentFacts.WORKING, "↵ peek"),
-            row(title, "Compare every flag in the docs against the ones the server reads and list the stale ones, one per line", AgentFacts.WORKING, "↵ peek"),
-            row(title, "working", AgentFacts.WORKING, "↵ peek"),
-            row(title, "idle", AgentFacts.DONE, "↵ peek"),
+            row(title, "Reading DeviceAuth.kt", AgentFacts.WORKING, "↵ show"),
+            row(title, "Compare every flag in the docs against the ones the server reads and list the stale ones, one per line", AgentFacts.WORKING, "↵ show"),
+            row(title, "working", AgentFacts.WORKING, "↵ show"),
+            row(title, "idle", AgentFacts.DONE, "↵ show"),
             row(title, "Drop the `users` table and every migration that touches it, or keep the table and only drop its index?", AgentFacts.NEEDS_YOU, "↵ open"),
         )
         val rows = variants.map { buildAgent(it) }

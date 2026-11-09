@@ -240,9 +240,10 @@ data class TabConfig(
      */
     val isBackground: Boolean = false,
     /**
-     * Whether this background tab is shown for now because its agent waits for the person. It is
-     * listed, can be active and wears the header tag "background agent · hides again once it works
-     * on".
+     * Whether this background tab is shown for now, to look at its agent or because the agent waits
+     * for the person. It is listed, can be active and wears the header tag "background agent · hides
+     * again by itself". The server hides it again when the person leaves it (a look), or once the
+     * agent works on (a waiting agent).
      */
     val shownWhileWaiting: Boolean = false,
 )

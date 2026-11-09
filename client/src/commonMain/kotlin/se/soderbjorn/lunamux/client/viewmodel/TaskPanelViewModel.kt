@@ -24,7 +24,6 @@ import se.soderbjorn.lunamux.TaskLink
 import se.soderbjorn.lunamux.TaskPanelBlock
 import se.soderbjorn.lunamux.WindowCommand
 import se.soderbjorn.lunamux.WindowConfig
-import se.soderbjorn.lunamux.WindowEnvelope
 import se.soderbjorn.lunamux.client.WindowStateRepository
 import se.soderbjorn.lunamux.effectiveActiveTabId
 import se.soderbjorn.lunamux.effectiveTabs
@@ -63,11 +62,8 @@ class TaskPanelViewModel(
         /** Go to the tab of a session running in a tab the person can see. */
         JUMP,
 
-        /** Show a background session that waits on the person as a marked tab until it works on. */
-        SHOW_WAITING,
-
-        /** Read the screen of a session in a hidden tab, without showing, switching to or typing into it. */
-        PEEK,
+        /** Show the hidden tab a session runs in, as a marked background tab, and switch to it. */
+        SHOW,
     }
 
     /** The lists of the panel that can open in full. */
@@ -115,7 +111,6 @@ class TaskPanelViewModel(
         val progress: ProgressView? = null,
         val links: Block<LinkRow> = EMPTY_BLOCK,
         val activity: Block<ActivityRow> = EMPTY_BLOCK,
-        val peek: AgentsOverviewBackingViewModel.Peek? = null,
     )
 
     /** The person's choices: shown beside a main conversation, tabs asked for elsewhere, lists opened in full per task. */
@@ -123,25 +118,20 @@ class TaskPanelViewModel(
         val open: Boolean = true,
         val askedTabs: Set<String> = emptySet(),
         val expanded: Set<Pair<String, Section>> = emptySet(),
-        val peekId: String? = null,
     )
 
     private val ui = MutableStateFlow(Ui())
 
     val stateFlow: Flow<State> = combine(
-        combine(
-            windowState.agentTasks, windowState.agentSessions, windowState.config, windowState.taskPanels, ui,
-        ) { tasks, sessions, config, panels, ui -> build(tasks, sessions, config, panels, ui) },
-        windowState.agentInspection,
-        ui,
-    ) { built, inspection, ui -> built.copy(peek = peekAt(ui.peekId, built.taskId, windowState.agentSessions.value, inspection)) }
+        windowState.agentTasks, windowState.agentSessions, windowState.config, windowState.taskPanels, ui,
+    ) { tasks, sessions, config, panels, ui -> build(tasks, sessions, config, panels, ui) }
 
     /** The state right now, for key handlers that must act on what is on screen. */
     val state: State
         get() = build(
             windowState.agentTasks.value, windowState.agentSessions.value, windowState.config.value,
             windowState.taskPanels.value, ui.value,
-        ).let { it.copy(peek = peekAt(ui.value.peekId, it.taskId, windowState.agentSessions.value, windowState.agentInspection.value)) }
+        )
 
     /** Shows or hides the panel beside a main conversation; called with the stored setting. */
     fun setOpen(open: Boolean) = ui.update { it.copy(open = open) }
@@ -166,33 +156,9 @@ class TaskPanelViewModel(
                 val session = windowState.agentSessions.value.firstOrNull { it.id == line.recordId } ?: return
                 Layout(windowState.config.value).jumpCommands(session).forEach { send(it) }
             }
-            MemberAction.SHOW_WAITING -> send(WindowCommand.ShowWaitingAgent(line.recordId))
-            MemberAction.PEEK -> {
-                ui.update { it.copy(peekId = line.recordId) }
-                send(WindowCommand.InspectAgentSession(line.recordId))
-            }
+            MemberAction.SHOW -> send(WindowCommand.ShowWaitingAgent(line.recordId))
             MemberAction.NONE -> Unit
         }
-    }
-
-    /**
-     * Re-reads the screen of the agent being peeked at; called every couple of seconds while it is
-     * live, and once more when it ends, to fetch the screen that was saved.
-     */
-    suspend fun refreshPeek() {
-        val peek = state.peek ?: return
-        if (!peek.live && !peek.loading) return
-        ui.value.peekId?.let { send(WindowCommand.InspectAgentSession(it)) }
-    }
-
-    /** esc: closes the peek and leaves the panel as it was. */
-    fun closePeek() = ui.update { it.copy(peekId = null) }
-
-    /** The peek of agent [id], only while the panel shows the task [taskId] that agent belongs to. */
-    private fun peekAt(id: String?, taskId: String?, sessions: List<AgentSessionSummary>, inspection: WindowEnvelope.AgentSessionInspection?): AgentsOverviewBackingViewModel.Peek? {
-        val s = sessions.firstOrNull { it.id == id && it.taskId == taskId } ?: return null
-        val live = AgentFacts.isLive(s)
-        return peekOf(live, AgentFacts.titleOf(s), if (live) null else AgentFacts.activityOf(s), inspection?.takeIf { it.recordId == s.id && it.live == live })
     }
 
     /** [url] when a click may open it, else null. */
@@ -261,7 +227,7 @@ class TaskPanelViewModel(
      * The task's live sessions, the waiting ones first, then by start, so a row keeps its place
      * as its session works, idles and works again. The main conversation is left out (the panel
      * sits beside it). A session whose pane the layout cannot place still shows, with nothing to
-     * click; one in a hidden tab offers a peek.
+     * click; one in a hidden tab offers to show that tab.
      */
     private fun agentLines(task: AgentTask, sessions: List<AgentSessionSummary>, layout: Layout, mainId: String?): List<AgentLine> {
         val lines = sessions.filter { it.taskId == task.id && it.conversationId != mainId && AgentFacts.isLive(it) }
@@ -271,8 +237,7 @@ class TaskPanelViewModel(
                 val action = when {
                     spot == null -> MemberAction.NONE
                     spot.listed -> MemberAction.JUMP
-                    AgentFacts.isWaiting(s) -> MemberAction.SHOW_WAITING
-                    else -> MemberAction.PEEK
+                    else -> MemberAction.SHOW
                 }
                 val said = inWords(AgentFacts.lineOf(s))
                 AgentLine(
@@ -287,9 +252,8 @@ class TaskPanelViewModel(
                     action = action,
                     recordId = s.id,
                     hint = when (action) {
-                        MemberAction.SHOW_WAITING -> "↵ ${AgentsOverviewBackingViewModel.SHOW_WAITING_HINT}"
+                        MemberAction.SHOW -> "↵ show"
                         MemberAction.JUMP -> "↵ open"
-                        MemberAction.PEEK -> "↵ peek"
                         MemberAction.NONE -> null
                     },
                 )

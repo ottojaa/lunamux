@@ -320,18 +320,34 @@ class TaskIndex(
 
         /**
          * The conversation that speaks for task [taskId], given the [stored] name. That is the stored
-         * conversation, except when it has ended and a live conversation of the same task in the same
-         * pane started before it: the stored one then ran inside that conversation (a helper started
-         * in its pane) and was named by mistake, so the older live one speaks. A main that really
-         * closed while a helper works is not mended: the helper started after it.
+         * conversation, unless it is a helper (see [isHelper]): then the task's real conversation in
+         * the same pane speaks, the latest one, live or closed, as long as it was still open when the
+         * stored one began (a real conversation that closed before it, say before a /clear, is not
+         * what the person named). A main that really closed keeps its name, and with no real
+         * conversation to take over the stored name stays.
          */
         internal fun speakerOf(taskId: String, stored: String, records: List<AgentSessionRecord>): String {
             val named = records.firstOrNull { it.conversationId == stored || it.id == stored } ?: return stored
-            if (named.state != ENDED || named.leafId == null) return named.conversationId
+            if (named.leafId == null || !isHelper(named, taskId, records)) return named.conversationId
             return records
-                .filter { it.taskId == taskId && it.state != ENDED && it.leafId == named.leafId && it.createdAt < named.createdAt }
-                .minByOrNull { it.createdAt }?.conversationId ?: named.conversationId
+                .filter {
+                    it.taskId == taskId && it.leafId == named.leafId && !isHelper(it, taskId, records) &&
+                        (it.endedAt ?: Long.MAX_VALUE) > named.createdAt
+                }
+                .maxByOrNull { it.createdAt }?.conversationId ?: named.conversationId
         }
+
+        /**
+         * Whether [r] is a helper conversation of task [taskId]: one that is not tagged with the task
+         * (the tracker used to leave helpers untagged, and so did the stored records of that time),
+         * or that was started while another conversation in its pane was still open (which is how the
+         * tracker makes a helper). Record age alone proves nothing: reopening a conversation makes a
+         * newer record than its helper's.
+         */
+        private fun isHelper(r: AgentSessionRecord, taskId: String, records: List<AgentSessionRecord>): Boolean =
+            r.taskId != taskId || records.any {
+                it.leafId == r.leafId && it.createdAt < r.createdAt && (it.state != ENDED || (it.endedAt ?: 0L) > r.createdAt)
+            }
 
         private fun isOpen(r: AgentSessionRecord) = r.state != ENDED && r.leafId != null
 

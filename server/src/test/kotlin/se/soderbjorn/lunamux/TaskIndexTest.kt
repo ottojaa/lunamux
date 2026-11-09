@@ -254,14 +254,27 @@ class TaskIndexTest {
     }
 
     @Test
-    fun `a main conversation naming an ended helper is mended to the live conversation it ran inside, and a really closed one is not`() {
-        val live = rec("m", agentSessionId = "a-m", taskId = "t", leafId = "leaf", createdAt = 10)
-        val helper = rec("h", agentSessionId = "a-h", state = "ended", leafId = "leaf", createdAt = 20)
+    fun `a task naming a helper is answered by its real conversation, live, closed or reopened, and a really closed main keeps its name`() {
         val row = SettingsRepository.TaskRow("t", title = "T", mainConversation = "a-h", startedAt = 1)
-        assertEquals("a-m", resolve(listOf(live, helper), tasks = listOf(row)).single().mainConversation)
+        // The helper ran inside the real conversation and carries no task, as records written before the helper fix.
+        val helper = rec("h", agentSessionId = "a-h", state = "ended", leafId = "leaf", createdAt = 20)
+        fun speaker(vararg others: AgentSessionRecord) = resolve(listOf(helper) + others, tasks = listOf(row)).single().mainConversation
 
-        val closed = rec("m", agentSessionId = "a-m", state = "ended", taskId = "t", leafId = "leaf", createdAt = 10)
-        val working = rec("h", agentSessionId = "a-h", taskId = "t", leafId = "leaf", createdAt = 20)
-        assertEquals("a-m", resolve(listOf(closed, working), tasks = listOf(row.copy(mainConversation = "a-m"))).single().mainConversation)
+        val original = rec("m", agentSessionId = "a-m", state = "ended", taskId = "t", leafId = "leaf", createdAt = 10)
+        assertEquals("a-m", speaker(original.copy(endedAt = 30)), "closed, and it was open when the helper ran")
+        assertEquals("a-m", speaker(original.copy(state = "working")), "live")
+        val reopened = rec("m2", agentSessionId = "a-m", taskId = "t", leafId = "leaf", createdAt = 500)
+        assertEquals("a-m", speaker(original.copy(endedAt = 30), reopened), "reopened: a newer record than the helper's")
+
+        val closed = rec("m", agentSessionId = "a-m", state = "ended", taskId = "t", leafId = "leaf", createdAt = 10).copy(endedAt = 15)
+        val later = rec("h2", agentSessionId = "a-h2", taskId = "t", leafId = "leaf", createdAt = 20)
+        assertEquals("a-m", resolve(listOf(closed, later), tasks = listOf(row.copy(mainConversation = "a-m"))).single().mainConversation,
+            "a main that really closed keeps its name")
+        assertEquals("a-h", speaker(rec("x", agentSessionId = "a-x", state = "ended", taskId = "t", leafId = "elsewhere")), "nothing real in its pane to take over")
+
+        // After a /clear the stored conversation is a new, live, untagged one; the tagged one that closed before it is not what the person named.
+        val cleared = rec("c", agentSessionId = "a-c", state = "working", leafId = "leaf", createdAt = 50)
+        val before = rec("m", agentSessionId = "a-m", state = "ended", taskId = "t", leafId = "leaf", createdAt = 10).copy(endedAt = 40)
+        assertEquals("a-c", resolve(listOf(cleared, before), tasks = listOf(row.copy(mainConversation = "a-c"))).single().mainConversation)
     }
 }

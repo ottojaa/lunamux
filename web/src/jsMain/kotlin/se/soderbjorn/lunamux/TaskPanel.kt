@@ -7,9 +7,8 @@
  *
  * ⌘I shows and hides the column in any tab (as does its ×). Beside a main conversation the choice
  * is kept with the other UI settings; elsewhere it holds for that tab only. An agent's line can be
- * focused: ↵ or a click jumps to the session, shows a waiting background session as a marked tab,
- * or, for one working or idle in a hidden tab, opens a read-only peek at its screen over the panel
- * (esc closes it); the tab stays hidden.
+ * focused: ↵ or a click jumps to the session, or shows the hidden tab of a background session as a
+ * marked tab.
  *
  * All state and behaviour live in [TaskPanelViewModel]; this file draws its state with DOM nodes
  * and text only (an agent's words are never parsed as HTML). Each block keeps its element and
@@ -32,7 +31,6 @@ import org.w3c.dom.HTMLElement
 import org.w3c.dom.events.Event
 import org.w3c.dom.events.KeyboardEvent
 import se.soderbjorn.lunamux.client.viewmodel.AgentFacts
-import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel
 import se.soderbjorn.lunamux.client.viewmodel.TaskPanelViewModel
 import se.soderbjorn.lunamux.client.viewmodel.TaskPanelViewModel.AgentLine
 import se.soderbjorn.lunamux.client.viewmodel.TaskPanelViewModel.LinkRow
@@ -62,7 +60,6 @@ internal class PanelParts {
     val status = div("tp-status")
     val scroll = div("tp-scroll")
     val blocks = HashMap<String, HTMLElement>()
-    val peek = div("tp-peek")
 
     init {
         val close = document.createElement("button") as HTMLElement
@@ -115,15 +112,6 @@ internal fun startTaskPanel() {
     taskPanelStarted = true
     startAgeClock()
     taskPanel.setOpen(taskPanelOpenIn(toolkitSettingsSnapshot[KEY_TASK_PANEL_OPEN]))
-    // Esc closes an open peek before anything else sees it, so the panel stays as it was.
-    document.addEventListener("keydown", { e: Event ->
-        val key = e as KeyboardEvent
-        if (key.key == "Escape" && taskPanel.state.peek != null) {
-            key.preventDefault()
-            key.stopPropagation()
-            taskPanel.closePeek()
-        }
-    }, true)
     GlobalScope.launch { taskPanel.stateFlow.collect { renderTaskPanel(it) } }
 }
 
@@ -170,8 +158,6 @@ private fun renderTaskPanel(state: TaskPanelViewModel.State) {
     val p = parts
     if (!state.visible) {
         p.root.remove()
-        if (state.peek != null) taskPanel.closePeek()
-        renderPeek(p, null)
         return
     }
     if (!p.root.isConnected) (document.querySelector(".${AppFrameClassNames.BODY}") as? HTMLElement)?.appendChild(p.root) ?: return
@@ -179,7 +165,6 @@ private fun renderTaskPanel(state: TaskPanelViewModel.State) {
     p.title.title = state.title
     p.status.textContent = state.status ?: ""
     p.status.style.display = if (state.status == null) "none" else ""
-    renderPeek(p, state.peek)
     val setup = state.setup
     if (setup != null) {
         syncChildren(p.scroll, listOf(setup), { "setup" }) { buildSetup(it) }
@@ -271,44 +256,25 @@ internal fun buildAgent(line: AgentLine): HTMLElement {
         row.setAttribute("tabindex", "0")
         row.setAttribute("role", "button")
         row.addEventListener("click", { _: Event -> GlobalScope.launch { taskPanel.activateMember(line) } })
+        // Acts on the release: showing a tab moves keyboard focus into its terminal, and a key still
+        // held down would then repeat into the agent.
+        var pressed = false
         row.addEventListener("keydown", { e: Event ->
             val key = e as KeyboardEvent
             if (key.key == "Enter") {
                 key.preventDefault()
                 key.stopPropagation()
+                pressed = true
+            }
+        })
+        row.addEventListener("keyup", { e: Event ->
+            if ((e as KeyboardEvent).key == "Enter" && pressed) {
+                pressed = false
                 GlobalScope.launch { taskPanel.activateMember(line) }
             }
         })
     }
     return row
-}
-
-private var panelPeekTimer: Int? = null
-
-/**
- * Puts the peek over the scrolling blocks while [peek] is open, re-reading a live screen every
- * couple of seconds, and takes it away (and stops the timer) when it closes.
- */
-@OptIn(DelicateCoroutinesApi::class)
-private fun renderPeek(p: PanelParts, peek: AgentsOverviewBackingViewModel.Peek?) {
-    if (peek == null) {
-        p.peek.remove()
-        panelPeekTimer?.let { kotlinx.browser.window.clearInterval(it) }
-        panelPeekTimer = null
-        return
-    }
-    p.peek.textContent = ""
-    p.peek.appendChild(buildPeek(peek))
-    p.peek.appendChild(div("tp-peek-hint").also { it.textContent = "esc closes" })
-    if (!p.peek.isConnected) p.root.appendChild(p.peek)
-    p.peek.style.top = "${p.scroll.offsetTop}px"
-    if (peek.live && panelPeekTimer == null) {
-        panelPeekTimer = kotlinx.browser.window.setInterval({ GlobalScope.launch { taskPanel.refreshPeek() } }, PEEK_REFRESH_MS)
-    } else if (!peek.live) {
-        panelPeekTimer?.let { kotlinx.browser.window.clearInterval(it) }
-        panelPeekTimer = null
-        if (peek.loading) GlobalScope.launch { taskPanel.refreshPeek() }
-    }
 }
 
 /** The hint at the end of an agent's activity line: each part of "↵ open · …" is a key, set in bold, and the words it does. */
@@ -360,15 +326,14 @@ private fun buildLink(link: LinkRow): HTMLElement {
     return row
 }
 
-/** The words on the tag over a background agent's tab that is shown while it waits. */
-internal const val WAITING_TAB_TAG_TEXT = "background agent · hides again once it works on"
+/** The words on the tag over a background agent's tab that is shown for now. */
+internal const val WAITING_TAB_TAG_TEXT = "background agent · hides again by itself"
 
 private var waitingTabTag: HTMLElement? = null
 
 /**
- * Show or remove the tag that marks the active tab as a background agent's tab shown while it
- * waits. The tag floats over the top edge of the window body, centred, and says the tab hides again
- * once the agent works on.
+ * Show or remove the tag that marks the active tab as a background agent's tab shown for now. The
+ * tag floats over the top edge of the window body, centred, and says the tab hides again by itself.
  */
 internal fun updateWaitingTabTag(shown: Boolean) {
     val body = document.querySelector(".${AppFrameClassNames.BODY}") as? HTMLElement

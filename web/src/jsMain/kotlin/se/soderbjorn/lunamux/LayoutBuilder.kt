@@ -27,6 +27,7 @@ import org.w3c.dom.events.FocusEvent
 import org.w3c.dom.events.MouseEvent
 import kotlin.js.json
 import se.soderbjorn.lunamux.client.PtyPresentation
+import se.soderbjorn.lunamux.client.viewmodel.AgentFacts
 import se.soderbjorn.lunula.web.themeeditor.resolveFontFamilyCss
 
 /**
@@ -484,6 +485,21 @@ fun connectPane(entry: TerminalEntry) {
 }
 
 /**
+ * True when [paneId] is in a tab shown only to look at a background agent that is not waiting.
+ * A waiting agent's tab is shown so the person can answer, so it is not a look. Called by the
+ * terminal's input handler before it forwards a focus report.
+ *
+ * @param paneId the pane (leaf) the terminal belongs to.
+ */
+private fun isLookPane(paneId: String): Boolean {
+    val config = latestWindowConfig ?: return false
+    val tabs = if (config.worlds.isEmpty()) config.tabs else config.worlds.flatMap { it.tabs }
+    val tab = tabs.firstOrNull { t -> t.panes.any { it.leaf.id == paneId } } ?: return false
+    return tab.shownWhileWaiting &&
+        lunamuxClient.windowState.agentSessions.value.none { AgentFacts.isWaiting(it) && it.leafId == paneId }
+}
+
+/**
  * Returns the existing [TerminalEntry] for a pane, or creates a new xterm.js terminal
  * instance with a fit addon, connects it to the PTY WebSocket, and registers it
  * in the [terminals] registry.
@@ -724,6 +740,9 @@ fun ensureTerminal(paneId: String, sessionId: String): TerminalEntry {
     //    the running program happened to probe the terminal.
     //  - ambient mouse/focus reports the mirror's own view generates are dropped:
     //    neither input nor a take-over, or scrolling a mirror would steal the grid.
+    //    A tab shown only to look at an agent drops the focus in/out report: the toolkit
+    //    focuses its terminal, and that report would be input the agent never asked for.
+    //    Its wheel and clicks still reach the agent, since the person is looking at it.
     //  - anything else is real input, so take over first (fit the shared PTY to this
     //    window) and then send, so the keystroke lands at this pane's width.
     term.onData { data ->
@@ -732,6 +751,7 @@ fun ensureTerminal(paneId: String, sessionId: String): TerminalEntry {
             when {
                 PtyPresentation.isDeviceReply(bytes) -> entry.sendInput?.invoke(data)
                 entry.passive && PtyPresentation.isAmbientReport(bytes) -> Unit
+                (data == "\u001b[I" || data == "\u001b[O") && isLookPane(paneId) -> Unit
                 else -> {
                     if (entry.passive) forceReassert(entry)
                     entry.sendInput?.invoke(data)
