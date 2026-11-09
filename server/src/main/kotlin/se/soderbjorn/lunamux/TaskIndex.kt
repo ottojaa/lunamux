@@ -28,12 +28,6 @@ import java.util.UUID
  */
 class TaskException(message: String) : IllegalArgumentException(message)
 
-/** What [TaskIndex] last decided. */
-data class TaskSnapshot(
-    val tasks: List<AgentTask> = emptyList(),
-    val assignment: Map<String, String> = emptyMap(),
-)
-
 /** One line of a task listing: a session that carries the task's id. */
 data class TaskListSession(val sessionId: String?, val title: String, val state: String)
 
@@ -75,10 +69,10 @@ class TaskIndex(
 
     /** The tasks an agent made: the stored rows that carry a title. Call with [lock] held. */
     private fun agentMade(): List<TaskRow> = tasks.values.filter { it.title != null }
-    private val _state = MutableStateFlow(TaskSnapshot())
+    private val _state = MutableStateFlow<List<AgentTask>>(emptyList())
 
-    /** The current tasks and assignment; collected per window socket by `WindowRoutes`. */
-    val state: StateFlow<TaskSnapshot> = _state.asStateFlow()
+    /** The tasks to show: files, and agent-made tasks that hold a session. Collected per window socket by `WindowRoutes`. */
+    val state: StateFlow<List<AgentTask>> = _state.asStateFlow()
 
     init {
         recompute()
@@ -109,14 +103,8 @@ class TaskIndex(
             .toSet()
     }
 
-    /**
-     * The task a record belongs to, as the overview shows it.
-     *
-     * A session in memory takes the assignment [state] made; one that is only in the database falls
-     * back to the task id it was stored with, if that task still exists.
-     */
-    fun taskIdOf(record: AgentSessionRecord): String? =
-        _state.value.assignment[record.id] ?: record.taskId?.takeIf { titleOf(it) != null }
+    /** The task a record belongs to: the one it names, if that task still exists. */
+    fun taskIdOf(record: AgentSessionRecord): String? = record.taskId?.takeIf { titleOf(it) != null }
 
     /**
      * Rebuild [state] from the files, the task rows and the records. Cheap enough to run on every
@@ -125,11 +113,11 @@ class TaskIndex(
     fun recompute() {
         synchronized(lock) {
             val records = tracker.snapshot()
-            val snapshot = resolve(records, files.value, tasks)
+            val listed = resolve(records, files.value, tasks)
             // A task's start is fixed the first time it is seen, so its place in the overview
             // never moves when its sessions come and go afterwards.
-            for (t in snapshot.tasks) if (tasks[t.id]?.startedAt == null) t.startedAtMillis?.let { stampStart(t.id, it) }
-            _state.value = snapshot
+            for (t in listed) if (tasks[t.id]?.startedAt == null) t.startedAtMillis?.let { stampStart(t.id, it) }
+            _state.value = listed
         }
     }
 
@@ -228,7 +216,7 @@ class TaskIndex(
     /** Make sure the task has a stored row with a start to write to; call with [lock] held. */
     private fun ensureStarted(taskId: String) {
         if (tasks[taskId]?.startedAt != null) return
-        stampStart(taskId, _state.value.tasks.firstOrNull { it.id == taskId }?.startedAtMillis ?: clock())
+        stampStart(taskId, _state.value.firstOrNull { it.id == taskId }?.startedAtMillis ?: clock())
     }
 
     /** Store the task's start, making its row if it has none, and remember it; call with [lock] held. */
@@ -258,8 +246,7 @@ class TaskIndex(
         val targets = sessionIds.map(::targetOf)
         targets.forEach { apply(it, null) }
         recompute()
-        val snapshot = _state.value
-        return sessionIds.associateWith { sid -> tracker.openRecordOf(sid)?.let { snapshot.assignment[it.id] } }
+        return sessionIds.associateWith { sid -> tracker.openRecordOf(sid)?.let(::taskIdOf) }
     }
 
     /** Rename an agent-made task. */
@@ -284,8 +271,7 @@ class TaskIndex(
      */
     fun listing(): List<TaskListing> {
         val records = tracker.snapshot()
-        val snapshot = _state.value
-        val byTask = records.filter { it.id in snapshot.assignment }.groupBy { snapshot.assignment.getValue(it.id) }
+        val byTask = records.groupBy { taskIdOf(it) }
         fun sessionsOf(taskId: String): List<TaskListSession> =
             byTask[taskId].orEmpty().map { r ->
                 TaskListSession(
@@ -334,7 +320,7 @@ class TaskIndex(
      * wins.
      */
     fun openOfMain(record: AgentSessionRecord): TaskOpen? = synchronized(lock) {
-        _state.value.tasks.filter { it.mainConversation == record.conversationId }.sortedBy { it.id }
+        _state.value.filter { it.mainConversation == record.conversationId }.sortedBy { it.id }
             .firstNotNullOfOrNull { t -> files.value.firstOrNull { it.id == t.id }?.open }
     }
 
@@ -396,28 +382,24 @@ class TaskIndex(
         private fun isOpen(r: AgentSessionRecord) = r.state != ENDED && r.leafId != null
 
         /**
-         * Work out the tasks and every record's task from the three inputs. A record belongs to the
-         * task it names if that task exists, and to none otherwise. Pure, so tests and [recompute]
-         * share it.
+         * Work out the tasks to show from the three inputs. A record belongs to the task it names if
+         * that task exists. Pure, so tests and [recompute] share it.
          */
         fun resolve(
             records: List<AgentSessionRecord>,
             files: List<TaskFile>,
             tasks: Map<String, TaskRow> = emptyMap(),
-        ): TaskSnapshot {
+        ): List<AgentTask> {
             val fileIds = files.map { it.id }.toSet()
             val rows = tasks.values.filter { it.title != null }
             val known = fileIds + rows.map { it.id }
-            val assignment = LinkedHashMap<String, String>()
-            for (r in records) r.taskId?.takeIf { it in known }?.let { assignment[r.id] = it }
+            val recordsByTask = records.filter { it.taskId in known }.groupBy { it.taskId }
 
             val fileTasks = files.sortedBy { it.id }.map { f ->
                 AgentTask(id = f.id, title = f.title, repo = f.repo, source = "file", hasOpen = f.open != null)
             }
-            val used = assignment.values.toSet()
-            val agentTasks = rows.filter { it.id !in fileIds && it.id in used }
+            val agentTasks = rows.filter { it.id !in fileIds && it.id in recordsByTask }
                 .map { AgentTask(id = it.id, title = it.title.orEmpty(), source = "agents") }
-            val recordsByTask = records.filter { it.id in assignment }.groupBy { assignment.getValue(it.id) }
             val listed = (fileTasks + agentTasks).map { t ->
                 val m = tasks[t.id]
                 val firstSeen = recordsByTask[t.id].orEmpty().map { it.createdAt }.filter { it > 0 }.minOrNull()
@@ -433,7 +415,7 @@ class TaskIndex(
                     startedAtMillis = m?.startedAt ?: firstSeen,
                 )
             }
-            return TaskSnapshot(listed.sortedBy { it.id }, assignment)
+            return listed.sortedBy { it.id }
         }
     }
 }

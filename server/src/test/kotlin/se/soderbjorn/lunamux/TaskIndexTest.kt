@@ -99,9 +99,7 @@ class TaskIndexTest {
             listOf(rec("in", taskId = "f"), rec("out"), rec("also-in", taskId = "f", state = "ended")),
             listOf(file("f")),
         )
-        assertEquals("f", snap.assignment["in"])
-        assertEquals("f", snap.assignment["also-in"])
-        assertNull(snap.assignment["out"])
+        assertEquals(listOf("f"), snap.map { it.id })
     }
 
     @Test
@@ -111,16 +109,16 @@ class TaskIndexTest {
             listOf(rec("owners", wt, agentSessionId = "abc")),
             listOf(file("f", open = TaskOpen("claude go", wt))),
         )
-        assertNull(snap.assignment["owners"], "only the id a session carries places it in a task")
+        assertEquals(99, snap.single().startedAtMillis, "the session did not join the task, so the task did not start with it")
     }
 
     @Test
     fun `a task starts when its first session was created, else when its file was written`() {
         val withSessions = resolve(listOf(rec("a", taskId = "f", createdAt = 40), rec("b", taskId = "f", createdAt = 25)), listOf(file("f")))
-        assertEquals(25, withSessions.tasks.single().startedAtMillis)
-        assertEquals(99, resolve(emptyList(), listOf(file("f"))).tasks.single().startedAtMillis)
+        assertEquals(25, withSessions.single().startedAtMillis)
+        assertEquals(99, resolve(emptyList(), listOf(file("f"))).single().startedAtMillis)
         val stored = resolve(listOf(rec("a", taskId = "f", createdAt = 40)), listOf(file("f")), tasks = listOf(SettingsRepository.TaskRow("f", startedAt = 7)))
-        assertEquals(7, stored.tasks.single().startedAtMillis)
+        assertEquals(7, stored.single().startedAtMillis)
     }
 
     @Test
@@ -137,13 +135,11 @@ class TaskIndexTest {
             listOf(file("shared", title = "File title")),
             rows,
         )
-        assertEquals(listOf("shared", "used"), snap.tasks.map { it.id })
-        assertEquals("File title", snap.tasks.first { it.id == "shared" }.title)
-        assertEquals("agents", snap.tasks.first { it.id == "used" }.source)
-        assertEquals("file", snap.tasks.first { it.id == "shared" }.source)
-        assertEquals("shared", snap.assignment["b"])
-        assertNull(snap.assignment["c"], "a title-less row whose file is gone is not a task")
-        assertNull(snap.assignment["d"], "an id no file and no row knows places nothing")
+        assertEquals(listOf("shared", "used"), snap.map { it.id })
+        assertEquals("File title", snap.first { it.id == "shared" }.title)
+        assertEquals("agents", snap.first { it.id == "used" }.source)
+        assertEquals("file", snap.first { it.id == "shared" }.source)
+        // "file-gone" is a title-less row whose file is gone, and "nobody-knows" is no row: neither is a task.
     }
 
     // ── The task's main conversation: stored as a conversation, found again in whatever pane it runs ──
@@ -223,7 +219,7 @@ class TaskIndexTest {
         val open = reopened.listing().single { it.id == task }
         assertEquals("a-mine", open.mainConversation)
         assertEquals("s9", open.ownSessionId)
-        assertEquals("a-mine", reopened.state.value.tasks.single { it.id == task }.mainConversation)
+        assertEquals("a-mine", reopened.state.value.single { it.id == task }.mainConversation)
     }
 
     @Test
@@ -281,7 +277,7 @@ class TaskIndexTest {
         assertEquals(first.id, reopened.id)
         assertEquals(task, reopened.taskId)
         index.recompute()
-        assertEquals(task, index.state.value.assignment[reopened.id])
+        assertEquals(task, index.taskIdOf(reopened))
     }
 
     @Test
@@ -320,9 +316,9 @@ class TaskIndexTest {
         session("s2")
         val id = index.createTask("  Fix   the flaky login test  ", listOf("s1", "s2"))
         assertEquals("fix-the-flaky-login-test-s1", id)
-        val task = index.state.value.tasks.single()
+        val task = index.state.value.single()
         assertEquals("Fix the flaky login test", task.title)
-        assertEquals(2, index.state.value.assignment.values.count { it == id })
+        assertEquals(listOf(id, id), listOf("s1", "s2").map { index.taskIdOf(tracker.openRecordOf(it)!!) })
         assertEquals(id, tracker.summaries.value.first { it.id == tracker.openRecordOf("s1")!!.id }.taskId)
     }
 
@@ -333,7 +329,7 @@ class TaskIndexTest {
         val b = index.createTask("B", emptyList())
         index.addToTask(b, listOf("s1"))
         assertEquals(b, tracker.openRecordOf("s1")!!.taskId)
-        assertEquals(listOf(b), index.state.value.tasks.map { it.id }, "A holds nothing now")
+        assertEquals(listOf(b), index.state.value.map { it.id }, "A holds nothing now")
         assertTrue(a != b)
     }
 
@@ -344,7 +340,7 @@ class TaskIndexTest {
         val after = index.removeFromTask(listOf("s1"))
         assertEquals(mapOf<String, String?>("s1" to null), after)
         assertNull(tracker.openRecordOf("s1")!!.taskId)
-        assertTrue(index.state.value.tasks.isEmpty())
+        assertTrue(index.state.value.isEmpty())
     }
 
     @Test
@@ -352,7 +348,7 @@ class TaskIndexTest {
         session("s1")
         val id = index.createTask("Before", listOf("s1"))
         index.renameTask(id, "After")
-        assertEquals("After", index.state.value.tasks.single().title)
+        assertEquals("After", index.state.value.single().title)
         assertEquals("After", repo.loadTasks().single().title)
         assertFailsWith<TaskException> { index.renameTask(id, "  ") }
 
@@ -367,8 +363,8 @@ class TaskIndexTest {
         session("s1")
         val id = index.createTask("Persisted", listOf("s1"))
         val again = TaskIndex(repo, tracker, files, leafOfSession = { null })
-        assertEquals(id, again.state.value.tasks.single().id)
-        assertEquals("Persisted", again.state.value.tasks.single().title)
+        assertEquals(id, again.state.value.single().id)
+        assertEquals("Persisted", again.state.value.single().title)
     }
 
     @Test
@@ -392,12 +388,12 @@ class TaskIndexTest {
         val scope = CoroutineScope(Dispatchers.Unconfined)
         index.start(scope)
         session("s1")
-        assertTrue(index.state.value.tasks.isEmpty())
+        assertTrue(index.state.value.isEmpty())
         val id = index.createTask("Live", emptyList())
         index.addToTask(id, listOf("s1"))
-        assertEquals(id, index.state.value.tasks.single().id)
+        assertEquals(id, index.state.value.single().id)
         tracker.onSessionDestroyed("s1", null)
-        assertEquals(id, index.state.value.assignment[tracker.snapshot().single().id], "an ended record keeps its task")
+        assertEquals(id, index.taskIdOf(tracker.snapshot().single()), "an ended record keeps its task")
     }
 
 }

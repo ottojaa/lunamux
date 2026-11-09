@@ -75,7 +75,7 @@ class McpTaskToolsTest {
     }
 
     private fun create(title: String, sessions: String = "[]", caller: String? = null) = str(payload(call("create_task", """{"title":"$title","sessionIds":$sessions}""", caller)), "taskId")
-    private fun task(id: String) = index.state.value.tasks.single { it.id == id }
+    private fun task(id: String) = index.state.value.single { it.id == id }
     private fun listed(id: String) = payload(call("list_tasks")).jsonArray.single { str(it, "taskId") == id }.jsonObject
     private fun taskOf(sessionId: String) = tracker.openRecordOf(sessionId)!!.taskId
     private fun allTabs() = WindowState.config.value.worlds.flatMap { it.tabs }
@@ -207,7 +207,7 @@ class McpTaskToolsTest {
         var next = 100
         val restarted = AgentSessionTracker(repo, gitInfo = { GitInfo() }, clock = { now }, newId = { "n${++next}" }).also { it.start() }
         val reopened = TaskIndex(repo, restarted, files, leafOfSession = { null }, clock = { now })
-        assertEquals("a-boss", reopened.state.value.tasks.single { it.id == id }.mainConversation)
+        assertEquals("a-boss", reopened.state.value.single { it.id == id }.mainConversation)
         assertEquals("ended", restarted.snapshot().single { it.agentSessionId == "a-boss" }.state)
         assertNull(reopened.listing().single { it.id == id }.ownSessionId)
     }

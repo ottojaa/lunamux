@@ -457,12 +457,12 @@ internal fun Route.windowRoutes(
             combine(
                 agentTracker.summaries,
                 claudeHooks.connected,
-                taskIndex?.state ?: MutableStateFlow(TaskSnapshot()),
-            ) { sessions, connected, snapshot ->
+                taskIndex?.state ?: MutableStateFlow(emptyList<AgentTask>()),
+            ) { sessions, connected, tasks ->
                 val withTasks = sessions.map {
-                    it.copy(taskId = snapshot.assignment[it.id], inTab = it.endedAt != null && agentTracker.find(it.id)?.let(::paneToResumeIn) != null)
+                    it.copy(taskId = it.taskId?.takeIf { id -> taskIndex?.titleOf(id) != null }, inTab = it.endedAt != null && agentTracker.find(it.id)?.let(::paneToResumeIn) != null)
                 }
-                Triple(withTasks, connected, snapshot.tasks)
+                Triple(withTasks, connected, tasks)
             }.collect { (sessions, connected, tasks) ->
                 if (sentSessions != sessions to connected) {
                     sentSessions = sessions to connected
