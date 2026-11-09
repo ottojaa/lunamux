@@ -1063,44 +1063,14 @@ internal fun declaredResumeLine(command: String?, id: String): String? {
     return line.substring(0, firstWordEnd) + " --resume " + id + line.substring(firstWordEnd)
 }
 
-/**
- * Whether [line] is one `claude` command that does not yet resume or continue a conversation.
- *
- * The line is read the way a shell would split it, with quotes honoured: its first word must be the
- * program `claude` (a path to it will do), written without quotes, and nothing outside single
- * quotes may chain or expand (`&`, `;`, `|`, `<`, `>`, `$`, backquote, parentheses, a backslash, a
- * line break). None of its words may be a resume or continue flag.
- */
-internal fun isPlainClaudeLine(line: String): Boolean {
-    val words = mutableListOf<String>()
-    val word = StringBuilder()
-    var inWord = false
-    var quote: Char? = null
-    for (c in line) {
-        when {
-            quote == '\'' -> if (c == '\'') quote = null else word.append(c)
-            quote == '"' -> when (c) {
-                '"' -> quote = null
-                '$', '`', '\\' -> return false
-                else -> word.append(c)
-            }
-            c == '\'' || c == '"' -> { quote = c; inWord = true }
-            c.isWhitespace() -> {
-                if (c == '\n' || c == '\r') return false
-                if (inWord) { words += word.toString(); word.clear(); inWord = false }
-            }
-            c in "&;|<>$`()\\" -> return false
-            else -> { word.append(c); inWord = true }
-        }
-    }
-    if (quote != null) return false
-    if (inWord) words += word.toString()
-    val firstWordEnd = line.indexOfFirst { it.isWhitespace() }.takeIf { it >= 0 } ?: line.length
-    val program = words.firstOrNull() ?: return false
-    if (line.substring(0, firstWordEnd) != program || program.substringAfterLast('/') != "claude") return false
-    return words.drop(1).none { it == "-r" || it == "-c" || it == "--continue" || it == "--resume" || it.startsWith("--resume=") ||
-            it == "--session-id" || it.startsWith("--session-id=") }
-}
+/** One `claude` command whose words are plain or quoted text, with nothing that chains or expands. */
+private val PLAIN_CLAUDE = Regex("""^(\S*/)?claude(\s+([\w./:@=+-]+|'[^']*'|"[^"$`\\]*"))*$""")
+
+/** A flag that already picks a conversation. */
+private val PICKS_CONVERSATION = Regex("""\s(-r|-c|--continue|--resume|--session-id)(\s|=|$)""")
+
+/** Whether [line] is a plain `claude` command that does not yet resume or continue a conversation. */
+internal fun isPlainClaudeLine(line: String): Boolean = PLAIN_CLAUDE.matches(line) && !PICKS_CONVERSATION.containsMatchIn(line)
 
 /**
  * The line to type, in the task's declared folder, to resume [rec] as the task's main conversation,
