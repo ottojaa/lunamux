@@ -3545,7 +3545,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
    for "done"; the accent also marks the selected row, red a failed open. Every other text is a shade
    of the theme's text colour. Lifted above the pane modals so it opens over whatever is on screen.
    The colours below follow the active theme and fall back to the dark teal defaults. */
-.ao-panel {
+.ao-panel, .task-panel {
     --ao-surface: var(--dt-window-bg, var(--t-surface, #0c1a1e));
     --ao-text: var(--t-text, #cfe3e2);
     --ao-muted: color-mix(in srgb, var(--ao-text) 72%, var(--ao-surface));
@@ -3669,8 +3669,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     color: var(--ao-muted);
     padding: 3px 0 6px;
 }
-.ao-full { line-height: 1.5; }
-.ao-xtra { line-height: 1.5; }
+.ao-full, .ao-xtra { line-height: 1.5; }
 .ao-chips { display: flex; flex-wrap: wrap; gap: 8px; line-height: 1; min-width: 0; }
 .ao-pill {
     display: inline-block;
@@ -3784,11 +3783,12 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     .ao-focus { grid-column: 2 / -1; }
 }
 
-/* Under the selected row, across the columns after the marker: the peek. */
-.ao-peek { grid-column: 2 / -1; min-width: 0; }
 /* A search match is underlined in the accent colour, never filled: amber is reserved for needs-you. */
 .ao-mark { background: none; color: var(--ao-text); text-decoration: underline; text-decoration-color: var(--ao-accent); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+/* Under the selected row, across the columns after the marker: the peek. */
 .ao-peek {
+    grid-column: 2 / -1;
+    min-width: 0;
     margin: 2px 0 8px;
     padding: 8px 2ch 10px;
     border-left: 1px solid var(--ao-faint);
@@ -3843,15 +3843,6 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
    row a person can press (an agent, a link, "+ N more") reaches out by --tp-inset past the block's
    text edge, so its hover tint has room round the words while the words still line up. */
 .task-panel {
-    --tp-surface: var(--dt-window-bg, var(--t-surface, #0c1a1e));
-    --tp-text: var(--t-text, #cfe3e2);
-    --tp-muted: color-mix(in srgb, var(--tp-text) 72%, var(--tp-surface));
-    --tp-dim: var(--t-text-dim, #6f8f92);
-    --tp-line: var(--t-border, #1b3136);
-    --tp-accent: var(--t-accent, #5fd4d0);
-    --tp-warn: var(--t-warn, #f2c14e);
-    --tp-hover: color-mix(in srgb, var(--tp-accent) 7%, transparent);
-    --tp-mono: var(--dt-font-mono, 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace);
     --tp-pad: 14px;
     --tp-inset: 6px;
     flex: 0 0 320px;
@@ -3860,27 +3851,27 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     flex-direction: column;
     min-height: 0;
     box-sizing: border-box;
-    border-left: 1px solid var(--tp-line);
-    background: var(--tp-surface);
-    color: var(--tp-text);
-    font: 12px/1.45 var(--tp-mono);
+    border-left: 1px solid var(--ao-line);
+    background: var(--ao-surface);
+    color: var(--ao-text);
+    font: 12px/1.45 var(--ao-mono);
 }
 /* The header stays put above the scrolling blocks: it sits outside .tp-scroll. */
-.tp-head { flex: none; display: flex; align-items: center; gap: 8px; min-height: 44px; box-sizing: border-box; padding: 0 8px 0 var(--tp-pad); border-bottom: 1px solid var(--tp-line); }
+.tp-head { flex: none; display: flex; align-items: center; gap: 8px; min-height: 44px; box-sizing: border-box; padding: 0 8px 0 var(--tp-pad); border-bottom: 1px solid var(--ao-line); }
 .tp-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 13px; }
-.tp-hint { flex: none; white-space: nowrap; color: var(--tp-dim); font-size: 11px; }
-.tp-close { margin-left: auto; border: 0; border-radius: 4px; background: transparent; color: var(--tp-dim); font: inherit; font-size: 16px; line-height: 1; cursor: pointer; padding: 4px 6px; }
-.tp-close:hover, .tp-close:focus-visible { color: var(--tp-text); background: var(--tp-hover); outline: none; }
+.tp-hint { flex: none; white-space: nowrap; color: var(--ao-dim); font-size: 11px; }
+.tp-close { margin-left: auto; border: 0; border-radius: 4px; background: transparent; color: var(--ao-dim); font: inherit; font-size: 16px; line-height: 1; cursor: pointer; padding: 4px 6px; }
+.tp-close:hover, .tp-close:focus-visible { color: var(--ao-text); background: var(--ao-hover); outline: none; }
 .tp-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 0 16px; }
-.tp-block { padding: 14px var(--tp-pad) 12px; border-bottom: 1px solid var(--tp-line); overflow-wrap: anywhere; }
+.tp-block { padding: 14px var(--tp-pad) 12px; border-bottom: 1px solid var(--ao-line); overflow-wrap: anywhere; }
 .tp-block:last-child { border-bottom: 0; }
 /* A block's heading is its name alone, set like the sidebar's group labels. */
-.tp-block-title { margin-bottom: 8px; color: var(--tp-dim); font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
-.tp-muted { color: var(--tp-dim); }
+.tp-block-title { margin-bottom: 8px; color: var(--ao-dim); font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
+.tp-muted { color: var(--ao-dim); }
 /* The task's own status line, under the header. */
-.tp-status { flex: none; padding: 8px var(--tp-pad); border-bottom: 1px solid var(--tp-line); color: var(--tp-muted); overflow-wrap: anywhere; }
+.tp-status { flex: none; padding: 8px var(--tp-pad); border-bottom: 1px solid var(--ao-line); color: var(--ao-muted); overflow-wrap: anywhere; }
 .tp-setup { display: flex; flex-direction: column; gap: 12px; padding: 14px var(--tp-pad); overflow-wrap: anywhere; }
-.tp-setup-prompt { padding: 10px 12px; border: 1px solid var(--tp-line); border-radius: 6px; user-select: text; -webkit-user-select: text; }
+.tp-setup-prompt { padding: 10px 12px; border: 1px solid var(--ao-line); border-radius: 6px; user-select: text; -webkit-user-select: text; }
 
 /* The rows a person can press share one shape: they reach past the text edge by --tp-inset on
    both sides, take the faint accent tint under the pointer, and the accent bar on the left when
@@ -3894,8 +3885,8 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     cursor: pointer;
 }
 .tp-agent-active:hover, .tp-link-row:hover, .tp-more:hover,
-.tp-agent-active:focus-visible, .tp-link-row:focus-visible, .tp-more:focus-visible { background: var(--tp-hover); outline: none; }
-.tp-agent-active:focus-visible, .tp-link-row:focus-visible, .tp-more:focus-visible { box-shadow: inset 2px 0 0 var(--tp-accent); }
+.tp-agent-active:focus-visible, .tp-link-row:focus-visible, .tp-more:focus-visible { background: var(--ao-hover); outline: none; }
+.tp-agent-active:focus-visible, .tp-link-row:focus-visible, .tp-more:focus-visible { box-shadow: inset 2px 0 0 var(--ao-accent); }
 
 /* An agent: the state mark in a cell one title line high, then the name with its age on the
    right, and under it what it is doing, muted. The mark's cell is 20px, the height of the
@@ -3903,44 +3894,44 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
    with -3px margins, so it fits the cell exactly and sits level with the name; ◆ is centred the
    same way. */
 .tp-agent { display: flex; align-items: flex-start; gap: 8px; padding-top: 5px; padding-bottom: 5px; }
-.tp-glyph { flex: none; width: 2ch; height: 20px; display: flex; align-items: center; justify-content: center; overflow: visible; color: var(--tp-dim); }
-.tp-state-working .tp-glyph { color: var(--tp-accent); }
-.tp-state-needs_you .tp-glyph { color: var(--tp-warn); }
+.tp-glyph { flex: none; width: 2ch; height: 20px; display: flex; align-items: center; justify-content: center; overflow: visible; color: var(--ao-dim); }
+.tp-state-working .tp-glyph { color: var(--ao-accent); }
+.tp-state-needs_you .tp-glyph { color: var(--ao-warn); }
 .tp-agent-text { flex: 1; min-width: 0; }
 .tp-agent-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; line-height: 20px; }
-.tp-agent-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tp-text); }
-.tp-agent-age { flex: none; color: var(--tp-dim); font-size: 11px; font-variant-numeric: tabular-nums; }
-.tp-agent-now { color: var(--tp-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tp-agent-hint { display: none; color: var(--tp-dim); font-size: 11px; margin-top: 3px; }
-.tp-agent-hint b { color: var(--tp-text); font-weight: 600; }
+.tp-agent-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ao-text); }
+.tp-agent-age { flex: none; color: var(--ao-dim); font-size: 11px; font-variant-numeric: tabular-nums; }
+.tp-agent-now { color: var(--ao-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-agent-hint { display: none; color: var(--ao-dim); font-size: 11px; margin-top: 3px; }
+.tp-agent-hint b { color: var(--ao-text); font-weight: 600; }
 .tp-agent-active:hover .tp-agent-hint, .tp-agent-active:focus-visible .tp-agent-hint { display: block; }
 /* An agent that waits on the person: amber mark and amber words, on a faint amber tint. Its words
    are the question it asks, so they wrap instead of being cut. */
-.tp-state-needs_you { background: color-mix(in srgb, var(--tp-warn) 8%, transparent); }
-.tp-state-needs_you.tp-agent-active:hover, .tp-state-needs_you.tp-agent-active:focus-visible { background: color-mix(in srgb, var(--tp-warn) 14%, transparent); }
-.tp-state-needs_you .tp-agent-title { color: var(--tp-warn); white-space: normal; overflow-wrap: anywhere; }
+.tp-state-needs_you { background: color-mix(in srgb, var(--ao-warn) 8%, transparent); }
+.tp-state-needs_you.tp-agent-active:hover, .tp-state-needs_you.tp-agent-active:focus-visible { background: color-mix(in srgb, var(--ao-warn) 14%, transparent); }
+.tp-state-needs_you .tp-agent-title { color: var(--ao-warn); white-space: normal; overflow-wrap: anywhere; }
 
 /* Progress: the task in hand, a thin rounded bar, then "x of y" dim. */
 .tp-progress-current { margin-bottom: 8px; overflow-wrap: anywhere; }
-.tp-bar { height: 4px; border-radius: 2px; overflow: hidden; background: color-mix(in srgb, var(--tp-text) 12%, transparent); }
-.tp-bar-fill { height: 100%; border-radius: 2px; background: var(--tp-accent); }
-.tp-progress-text { margin-top: 6px; color: var(--tp-dim); font-size: 11px; }
+.tp-bar { height: 4px; border-radius: 2px; overflow: hidden; background: color-mix(in srgb, var(--ao-text) 12%, transparent); }
+.tp-bar-fill { height: 100%; border-radius: 2px; background: var(--ao-accent); }
+.tp-progress-text { margin-top: 6px; color: var(--ao-dim); font-size: 11px; }
 
 /* A link: kind, label, time, the same three columns in every row. The kind column fits the
    longest kind ("decision", 8 characters at 11px) and never wraps; the label is cut with an
    ellipsis; the time is right-aligned. */
 .tp-link-row { display: grid; grid-template-columns: 7.5ch minmax(0, 1fr) auto; gap: 0 10px; align-items: baseline; padding-top: 4px; padding-bottom: 4px; }
-.tp-kind { color: var(--tp-dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tp-link-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tp-accent); }
+.tp-kind { color: var(--ao-dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tp-link-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ao-accent); }
 .tp-link-row:hover .tp-link-title, .tp-link-row:focus-visible .tp-link-title { text-decoration: underline; }
-.tp-link-time { color: var(--tp-dim); font-size: 11px; text-align: right; font-variant-numeric: tabular-nums; }
+.tp-link-time { color: var(--ao-dim); font-size: 11px; text-align: right; font-variant-numeric: tabular-nums; }
 
 /* Recent activity: the time in a fixed column and the item beside it, wrapping under itself.
    Entries stand one full line apart (1.45em is the panel's line height), so a long entry's last
    line never runs into the next entry's first at any width. */
 .tp-tl { display: flex; gap: 10px; }
 .tp-tl + .tp-tl { margin-top: 1.45em; }
-.tp-tl-age { flex: none; width: 5ch; color: var(--tp-dim); font-variant-numeric: tabular-nums; }
+.tp-tl-age { flex: none; width: 5ch; color: var(--ao-dim); font-variant-numeric: tabular-nums; }
 .tp-tl-text { min-width: 0; overflow-wrap: anywhere; }
 
 /* "+ N more" under a cut list: a row of its own in the muted shade, the accent when pointed at or
@@ -3954,12 +3945,12 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     padding-bottom: 3px;
     border: 0;
     background: transparent;
-    color: var(--tp-muted);
+    color: var(--ao-muted);
     font: inherit;
     font-size: 11px;
     text-align: left;
 }
-.tp-more:hover, .tp-more:focus-visible { color: var(--tp-accent); }
+.tp-more:hover, .tp-more:focus-visible { color: var(--ao-accent); }
 
 
 /* The tag over a background agent's tab that is shown while its agent waits for the person. */

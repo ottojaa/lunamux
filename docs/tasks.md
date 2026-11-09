@@ -329,13 +329,14 @@ of a type that no longer exists is skipped when the server starts; the rest of t
 ## Trying it out and checking it
 
 `scripts/seed-agents-overview.sh <db file> <tasks folder>` fills a scratch database and folder with
-about twenty ended conversations (last active today and 1, 2, 6, 12 and 30 days ago), six agent-made
-tasks, six task files and some awkward cases to name and read. Seed while the scratch server is
-stopped, then start it on its own port with a throwaway `-Duser.home` and `-Dlunamux.dbPath`,
-`-Dlunamux.tasksDir` and `-Dlunamux.claudeProjects` pointing at scratch paths; the script's header
-lists what to look at. `scripts/seed-agents-overview-live.sh <server> <token> <moment>` then makes the
-five moments that need a running agent happen on that server. The seeder's code is
-`server/src/seed/`, its own Gradle source set, run by `./gradlew :server:seedAgentsOverview`.
+ended conversations (last active within the hour and 2, 6, 12 and 30 days ago), three agent-made
+tasks, two task files and some awkward rows to name and read, and turns the usage poll off so a
+scratch server never launches the real `claude`. Seed while the scratch server is stopped, then
+start it on its own port with a throwaway `-Duser.home` and `-Dlunamux.dbPath`, `-Dlunamux.tasksDir`
+and `-Dlunamux.claudeProjects` pointing at scratch paths. `scripts/seed-agents-overview-live.sh
+<server> <moment>` then puts live conversations in tabs and makes the moments that need a running
+agent happen on that server. The seeder's code is `server/src/seed/`, its own Gradle source set, run
+by `./gradlew :server:seedAgentsOverview`.
 
 `./gradlew :client:overviewChecks -Purl=<server> -Ptoken=<device token> [-Pwatch=<seconds>]
 [-Pmain=<task id>=<conversation id start>]` connects as an ordinary client, sends no command and

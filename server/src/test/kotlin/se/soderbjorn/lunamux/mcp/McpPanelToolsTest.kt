@@ -183,6 +183,10 @@ class McpPanelToolsTest {
         val kept = (store.blocksOf(taskId).single().content as TaskBlockContent.Timeline).items.map { it.text }
         val newest = (0 until 60).sortedByDescending(at).take(50).toSet()
         assertEquals((0 until 60).filter { it in newest }.map { "e$it" }, kept, "the newest 50 by time, in the order they came")
+
+        val markup = "Pasted from a log: <img src=x onerror=alert(1)>"
+        set("""[{"id":"t","type":"timeline","items":[{"at":1,"text":"$markup"}]}]""")
+        assertEquals(markup, (store.blocksOf(taskId).single().content as TaskBlockContent.Timeline).items.single().text, "markup is kept as text")
     }
 
     @Test
