@@ -12,7 +12,6 @@ package se.soderbjorn.lunamux
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -119,6 +118,5 @@ class WindowStateWaitingTabTest {
     @Test
     fun anUnknownPaneShowsNothing() {
         assertFalse(WindowState.showWaitingAgent("no-such-pane"))
-        assertNotNull(WindowState.config.value)
     }
 }

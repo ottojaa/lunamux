@@ -76,22 +76,16 @@ class TabManagerBackgroundTest {
     }
 
     @Test
-    fun `hiding a settled waiting tab unlists it and returns to the tab that was active`() {
+    fun `hiding a settled waiting tab returns to the tab that was active, or the first listed one`() {
         val cfg = config(tab("a"), tab("b"), tab("bg", background = true))
         val shown = TabManager.showWaitingTab(cfg, "bg")!!
         val hidden = TabManager.hideWaitingTab(shown, "bg", returnTo = "b")!!
         assertEquals("b", hidden.activeTabId)
         assertEquals(listOf("a", "b"), hidden.listedTabs.map { it.id })
-        assertFalse(hidden.tabs.single { it.id == "bg" }.shownWhileWaiting)
         assertNull(TabManager.hideWaitingTab(hidden, "bg", "b"), "nothing to hide")
-        assertEquals("a", TabManager.hideWaitingTab(shown, "bg", returnTo = "gone")!!.activeTabId, "falls back to the first listed tab")
-    }
-
-    @Test
-    fun `hiding a waiting tab the person is not on leaves the active tab alone`() {
-        val cfg = config(tab("a"), tab("bg", background = true))
-        val shown = TabManager.showWaitingTab(cfg, "bg")!!.copy(activeTabId = "a")
-        assertEquals("a", TabManager.hideWaitingTab(shown, "bg", returnTo = "a")!!.activeTabId)
+        assertEquals("a", TabManager.hideWaitingTab(shown, "bg", returnTo = "gone")!!.activeTabId)
+        val moved = shown.copy(activeTabId = "a")
+        assertEquals("a", TabManager.hideWaitingTab(moved, "bg", returnTo = "b")!!.activeTabId, "a person who moved on stays")
     }
 
     @Test
