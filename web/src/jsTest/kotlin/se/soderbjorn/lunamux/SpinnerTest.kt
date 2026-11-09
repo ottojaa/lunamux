@@ -45,17 +45,21 @@ class SpinnerTest {
     private fun opacities(spin: HTMLElement): List<Double> =
         (0 until spin.children.length).map { window.getComputedStyle(spin.children.item(it)!!).opacity.toDouble() }
 
-    /** What the opacities should be at wall-clock [now]: frame i is lit for the quarter of the cycle that starts at i * step. */
+    /** The curve of one frame over its 1,200 ms cycle as (percent of the cycle, opacity) points, joined by straight lines; the drop at 50% is a step. */
+    private val curve = listOf(
+        0.0 to 0.08, 5.21 to 0.11, 9.38 to 0.22, 21.88 to 0.8, 25.0 to 0.91, 27.08 to 0.92, 34.38 to 0.78, 45.83 to 0.24,
+        50.0 to 0.1, 50.01 to 0.0, 100.0 to 0.0,
+    )
+
+    /** What the opacities should be at wall-clock [now]: frame i follows [curve] from the moment i * step of the cycle. */
     private fun expected(now: Long): List<Double> {
         val at = (now % cycleMs).toInt()
         return (0 until 4).map { i ->
             val p = (((at - i * stepMs) % cycleMs + cycleMs) % cycleMs).toDouble() / cycleMs * 100
-            when {
-                p < 8 -> p / 8
-                p < 25 -> 1.0
-                p < 33 -> 1 - (p - 25) / 8
-                else -> 0.0
-            }
+            val k = curve.indexOfLast { it.first <= p }.coerceAtMost(curve.size - 2)
+            val (p0, v0) = curve[k]
+            val (p1, v1) = curve[k + 1]
+            v0 + (v1 - v0) * (p - p0) / (p1 - p0)
         }
     }
 
