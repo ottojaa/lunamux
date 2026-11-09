@@ -124,6 +124,102 @@
             ],
             "additionalProperties": false
         },
+        "console_ask": {
+            "type": "object",
+            "properties": {
+                "sessionId": {
+                    "type": "string"
+                },
+                "prompt": {
+                    "type": "string"
+                },
+                "timeoutMs": {
+                    "type": "integer"
+                }
+            },
+            "required": [
+                "sessionId",
+                "prompt"
+            ],
+            "additionalProperties": false
+        },
+        "console_poll_input": {
+            "type": "object",
+            "properties": {
+                "sessionId": {
+                    "type": "string"
+                },
+                "max": {
+                    "type": "integer"
+                }
+            },
+            "required": [
+                "sessionId"
+            ],
+            "additionalProperties": false
+        },
+        "console_read": {
+            "type": "object",
+            "properties": {
+                "sessionId": {
+                    "type": "string"
+                },
+                "timeoutMs": {
+                    "type": "integer"
+                }
+            },
+            "required": [
+                "sessionId"
+            ],
+            "additionalProperties": false
+        },
+        "console_read_key": {
+            "type": "object",
+            "properties": {
+                "sessionId": {
+                    "type": "string"
+                },
+                "timeoutMs": {
+                    "type": "integer"
+                }
+            },
+            "required": [
+                "sessionId"
+            ],
+            "additionalProperties": false
+        },
+        "console_write": {
+            "type": "object",
+            "properties": {
+                "sessionId": {
+                    "type": "string"
+                },
+                "text": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "sessionId",
+                "text"
+            ],
+            "additionalProperties": false
+        },
+        "console_write_raw": {
+            "type": "object",
+            "properties": {
+                "sessionId": {
+                    "type": "string"
+                },
+                "data": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "sessionId",
+                "data"
+            ],
+            "additionalProperties": false
+        },
         "create_tab": {
             "type": "object",
             "properties": {
@@ -320,6 +416,31 @@
             ],
             "additionalProperties": false
         },
+        "open_console": {
+            "type": "object",
+            "properties": {
+                "renderMode": {
+                    "type": "string",
+                    "enum": [
+                        "transcript",
+                        "screen"
+                    ]
+                },
+                "title": {
+                    "type": "string"
+                },
+                "cols": {
+                    "type": "integer"
+                },
+                "rows": {
+                    "type": "integer"
+                },
+                "tabId": {
+                    "type": "string"
+                }
+            },
+            "additionalProperties": false
+        },
         "read_scrollback": {
             "type": "object",
             "properties": {
@@ -482,6 +603,58 @@
             },
             "required": [
                 "name"
+            ],
+            "additionalProperties": false
+        },
+        "screen_config": {
+            "type": "object",
+            "properties": {
+                "sessionId": {
+                    "type": "string"
+                },
+                "cols": {
+                    "type": "integer"
+                },
+                "rows": {
+                    "type": "integer"
+                },
+                "cursorVisible": {
+                    "type": "boolean"
+                }
+            },
+            "required": [
+                "sessionId"
+            ],
+            "additionalProperties": false
+        },
+        "screen_draw": {
+            "type": "object",
+            "properties": {
+                "sessionId": {
+                    "type": "string"
+                },
+                "ops": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                }
+            },
+            "required": [
+                "sessionId",
+                "ops"
+            ],
+            "additionalProperties": false
+        },
+        "screen_present": {
+            "type": "object",
+            "properties": {
+                "sessionId": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "sessionId"
             ],
             "additionalProperties": false
         },

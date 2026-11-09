@@ -51,6 +51,7 @@ class McpContractTest {
         registerMcpWriteTools(repo, index)
         registerMcpTaskTools(index)
         registerMcpPanelTools(store, tracker)
+        registerMcpConsoleTools()
     }
 
     private fun rpc(method: String, params: String, caller: String? = null): JsonObject = runBlocking {
@@ -81,7 +82,7 @@ class McpContractTest {
             is JsonArray -> JsonArray(e.map { bare(it) })
             else -> e
         }
-        val tools = rpc("tools/list", "{}")["tools"]!!.jsonArray.sortedBy { it.jsonObject["name"]!!.jsonPrimitive.content }
+        val tools = rpc("tools/list", "{}")["tools"]!!.jsonArray.filter { !it.jsonObject["name"]!!.jsonPrimitive.content.startsWith("test_") && !it.jsonObject["name"]!!.jsonPrimitive.content.startsWith("__") }.sortedBy { it.jsonObject["name"]!!.jsonPrimitive.content }
         return JsonObject(tools.associate { it.jsonObject["name"]!!.jsonPrimitive.content to bare(it.jsonObject["inputSchema"]!!) })
     }
 
