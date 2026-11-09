@@ -460,7 +460,7 @@ internal fun Route.windowRoutes(
                 taskIndex?.state ?: MutableStateFlow(emptyList<AgentTask>()),
             ) { sessions, connected, tasks ->
                 val withTasks = sessions.map {
-                    it.copy(taskId = it.taskId?.takeIf { id -> taskIndex?.titleOf(id) != null }, inTab = it.endedAt != null && agentTracker.find(it.id)?.let(::paneToResumeIn) != null)
+                    it.copy(taskId = it.taskId?.takeIf { id -> taskIndex?.titleOf(id) != null }, inTab = it.endedAt != null && agentTracker.find(it.id)?.let { rec -> paneToResumeIn(rec, taskIndex?.openOfMain(rec)) } != null)
                 }
                 Triple(withTasks, connected, tasks)
             }.collect { (sessions, connected, tasks) ->
@@ -1135,24 +1135,31 @@ internal suspend fun resumeAgentSession(
         ctx.send(WindowEnvelope.AgentSessionError(recordId, "This conversation has no session id Lunamux can resume."))
         return
     }
-    val pane = if (inTab && command != null) paneToResumeIn(rec) else null
+    val pane = if (inTab && command != null) paneToResumeIn(rec, declared) else null
     if (pane == null || !typeInPane(pane, command!!)) open(folder, rec.title ?: rec.branch ?: java.io.File(recorded).name, command)
 }
 
 /**
  * The id of the pane session [rec] ran in, when resuming there is safe: the pane still exists, its
- * shell is in the folder the agent ran in, and nothing runs under that shell.
+ * shell is in the folder the conversation is picked up from ([startFolderOf]), and nothing runs under
+ * that shell. The pane is found by its layout leaf, which survives a restart; the terminal session
+ * id the record stored does not (every pane gets a new one then).
  */
-internal fun paneToResumeIn(rec: AgentSessionRecord): String? {
-    val id = rec.terminalSessionId ?: return null
+internal fun paneToResumeIn(rec: AgentSessionRecord, open: TaskOpen? = null): String? {
+    val id = rec.leafId?.let(WindowState::sessionIdOfLeaf) ?: rec.terminalSessionId ?: return null
     val session = TerminalSessions.get(id) ?: return null
-    return id.takeIf { sameFolder(session.cwd.value, rec.cwd) && session.isIdleShell() }
+    return id.takeIf { sameFolder(session.cwd.value, startFolderOf(rec, open)) && session.isIdleShell() }
 }
 
-/** Show the tab that holds pane session [sessionId] and type [command] into it; false when no tab holds it. */
+/**
+ * Show the tab that holds pane session [sessionId] (switching to its world when that is another
+ * one) and type [command] into it; false when no tab holds it.
+ */
 private fun typeInPane(sessionId: String, command: String): Boolean {
-    val (tab, pane) = WindowState.config.value.worlds.asSequence().flatMap { it.tabs }
-        .firstNotNullOfOrNull { t -> t.panes.firstOrNull { it.leaf.sessionId == sessionId }?.let { t to it } } ?: return false
+    val (world, tab, pane) = WindowState.config.value.worlds.asSequence()
+        .flatMap { w -> w.tabs.map { w to it } }
+        .firstNotNullOfOrNull { (w, t) -> t.panes.firstOrNull { it.leaf.sessionId == sessionId }?.let { Triple(w, t, it) } } ?: return false
+    WindowState.setActiveWorld(world.id)
     WindowState.setActiveTab(tab.id)
     WindowState.setFocusedPane(tab.id, pane.leaf.id)
     TerminalSessions.get(sessionId)?.write((command + "\r").toByteArray(Charsets.UTF_8))

@@ -88,9 +88,24 @@ private const val RECENT_MS = 3L * 24 * 60 * 60_000L
 private const val WINDOW_MS = 14L * 24 * 60 * 60_000L
 private const val MIN_QUERY = 2
 
+/**
+ * The state behind the agents overview: which rows show, which is selected, and what ↵ does on it.
+ *
+ * The web and Android screens create one, call the mutators below for each key or click, collect
+ * [stateFlow] and draw it. Rows are rebuilt by [buildOverview] from what the server pushed through
+ * [windowState] plus the person's choices (query, selection, an open question or peek); nothing is
+ * stored twice. Commands that need the server (jump, resume, close, search) go out through [send].
+ *
+ * @param windowState where the server's pushes (sessions, tasks, layout, search answers) arrive.
+ * @param scope runs the rebuild on every push and the inspection request when the selection moves.
+ * @param clock the time rows are aged against; tests pass a fixed one.
+ * @param send sends a command to the server.
+ * @see TaskPanelViewModel
+ * @see AgentFacts
+ */
 class AgentsOverviewBackingViewModel(
     private val windowState: WindowStateRepository,
-    scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
     private val clock: () -> Long = { Clock.System.now().toEpochMilliseconds() },
     private val send: suspend (WindowCommand) -> Unit,
 ) {
@@ -203,12 +218,14 @@ class AgentsOverviewBackingViewModel(
                 ),
             ) { }.collect {
                 rebuild()
-                if (ui.open) launch { inspectSelected() }
             }
         }
     }
 
-    /** Builds the rows from the latest inputs and publishes them. Every mutator ends here. */
+    /**
+     * Builds the rows from the latest inputs and publishes them. Every mutator and every push ends
+     * here, so the selected row is asked about (once per row) whenever the overview is open.
+     */
     private fun rebuild() {
         val mode = ui.mode
         if (mode is OverviewMode.Resuming && windowState.config.value?.effectiveActiveTabId != mode.fromTab) ui = OverviewUi()
@@ -225,6 +242,7 @@ class AgentsOverviewBackingViewModel(
             built = buildOverview(inputs(), ui, clock())
         }
         current.value = built
+        if (ui.open) scope.launch { inspectSelected() }
     }
 
     private fun inputs() = OverviewInputs(
@@ -240,6 +258,7 @@ class AgentsOverviewBackingViewModel(
     /** Moving the selection or typing ends any question, confirmation or peek, but not a resume in flight. */
     private fun OverviewUi.browsing(): OverviewUi = if (mode is OverviewMode.Resuming) this else copy(mode = OverviewMode.Browsing)
 
+    /** Opens the overview on a clean slate with the row that needs the person selected. */
     fun open() {
         windowState.clearAgentSessionError()
         inspected = null
@@ -248,6 +267,7 @@ class AgentsOverviewBackingViewModel(
         change { it.copy(selectedId = first.selectedId, selectedHint = maxOf(first.selected, 0)) }
     }
 
+    /** Closes the overview and forgets the query, selection and any open question. */
     fun close() {
         windowState.clearAgentSessionError()
         inspected = null
@@ -255,8 +275,10 @@ class AgentsOverviewBackingViewModel(
         rebuild()
     }
 
+    /** ⌘K: opens the overview, or closes it when it is open. */
     fun toggle() = if (state.open) close() else open()
 
+    /** Typing in the search box: [query] replaces the old one and the selection starts over. */
     fun setQuery(query: String) {
         windowState.clearAgentSessionError()
         change { it.browsing().copy(query = query, selectedId = null, selectedHint = 0) }
@@ -268,6 +290,7 @@ class AgentsOverviewBackingViewModel(
         if (query.length >= MIN_QUERY) send(WindowCommand.SearchAgentSessions(query))
     }
 
+    /** ↑/↓: moves the selection by [delta] rows, revealing the hidden earlier rows when stepping past the last one. */
     fun moveSelection(delta: Int) {
         if (state.rows.isEmpty()) return
         val at = maxOf(state.selected, 0)
@@ -278,12 +301,14 @@ class AgentsOverviewBackingViewModel(
         change { it.browsing().copy(selectedId = rows[next].id, selectedHint = next) }
     }
 
+    /** A click or hover on row [rowId]: selects it (a no-op when it already is). */
     fun select(rowId: String) {
         if (state.ask?.rowId == rowId && state.selectedId == rowId) return
         val index = state.rows.indexOfFirst { it.id == rowId }
         if (index >= 0) change { it.browsing().copy(selectedId = rowId, selectedHint = index) }
     }
 
+    /** "+ N more": shows every earlier row, not only the first few. */
     fun showMoreEarlier() = change { it.copy(showAllEarlier = true) }
 
     /** ↵: answers an open confirmation, else does what the selected row offers. */
@@ -292,6 +317,7 @@ class AgentsOverviewBackingViewModel(
         state.selectedRow?.let { activate(it) }
     }
 
+    /** Does what [row] offers on ↵ or a click: go to it, show it, start it, or ask before resuming it. */
     suspend fun activate(row: Row) {
         when (row.enter) {
             Enter.JUMP -> windowState.agentSessions.value.firstOrNull { it.id == row.recordId }?.let { jump(it) }
@@ -319,7 +345,12 @@ class AgentsOverviewBackingViewModel(
         val from = windowState.config.value?.effectiveActiveTabId
         change { it.copy(mode = OverviewMode.Resuming(row.id, from)) }
         when (row.enter) {
-            Enter.RESUME -> row.recordId?.let { send(WindowCommand.ResumeAgentSession(it, inTab = row.ask?.inTab == true)) }
+            Enter.RESUME -> row.recordId?.let {
+                val inTab = row.ask?.inTab == true
+                send(WindowCommand.ResumeAgentSession(it, inTab = inTab))
+                // Typed into a pane that is already there: the tab may be the one on screen, so there is no new tab to wait for.
+                if (inTab) close()
+            }
             Enter.OPEN -> row.taskId?.let { send(WindowCommand.OpenTask(it)) }
             else -> Unit
         }
@@ -335,6 +366,7 @@ class AgentsOverviewBackingViewModel(
         send(WindowCommand.InspectAgentSession(recordId))
     }
 
+    /** →: shows what the selected row's conversation last said, and asks the server for its saved screen. */
     suspend fun peek() {
         if (state.selectedRow?.recordId == null) return
         change { it.copy(mode = OverviewMode.Peeking) }
@@ -346,6 +378,7 @@ class AgentsOverviewBackingViewModel(
         if (state.peek?.live == true) inspectSelected(force = true)
     }
 
+    /** Ends a peek (→ again or esc), going back to browsing. */
     fun closePeek() = change { if (it.mode is OverviewMode.Peeking) it.copy(mode = OverviewMode.Browsing) else it }
 
     /** esc: steps out of a question, confirmation or peek first, then closes the overview. */
@@ -361,9 +394,11 @@ class AgentsOverviewBackingViewModel(
         inspectSelected(force = true)
     }
 
+    /** Tab or arrow in the close question: moves the focus between its two buttons. */
     fun moveConfirmFocus() =
         change { (it.mode as? OverviewMode.Confirming)?.let { c -> it.copy(mode = c.copy(onClose = !c.onClose)) } ?: it }
 
+    /** Dismisses the close question without closing anything. */
     fun cancelClose() = change { if (it.mode is OverviewMode.Confirming) it.copy(mode = OverviewMode.Browsing) else it }
 
     suspend fun confirmClose() {

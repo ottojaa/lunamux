@@ -3756,6 +3756,8 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-work-f { position: absolute; inset: 0; opacity: 0; animation: ao-frame 1200ms linear infinite; }
 @keyframes ao-frame { 0% { opacity: 0; } 8% { opacity: 1; } 25% { opacity: 1; } 33% { opacity: 0; } 100% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .ao-work-f { animation: none; } .ao-work-f:first-child { opacity: 1; } }
+/* In the sidebar footer the glyph is one text line tall and takes the footer's own size, not the overview row's. */
+.world-status-bar .ao-work { height: 1.3em; margin: 0; font-size: inherit; line-height: 1.3em; vertical-align: text-bottom; text-shadow: none; }
 .ao-more .ao-t { color: var(--ao-dim); }
 
 /* Footer: the keys the view model names for the selection or the question; keys in the accent, words dim. */

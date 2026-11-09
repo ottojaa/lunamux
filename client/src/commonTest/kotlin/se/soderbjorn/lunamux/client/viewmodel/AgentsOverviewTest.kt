@@ -22,6 +22,8 @@ import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Ent
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -204,6 +206,7 @@ class AgentsOverviewTest {
         assertTrue(sent.none { it is WindowCommand.ResumeAgentSession }, "nothing is sent before the person agrees")
         vm.activateSelected()
         assertEquals(listOf<WindowCommand>(WindowCommand.ResumeAgentSession("shell", inTab = true)), sent)
+        assertFalse(vm.state.open, "typed into a pane that is already there: nothing to wait for, so the overview closes")
 
         sent.clear()
         vm.open()
@@ -287,6 +290,18 @@ class AgentsOverviewTest {
         vm.select("bg")
         vm.requestClose()
         assertNull(vm.state.confirm)
+    }
+
+    @Test
+    fun movingTheSelectionAsksAboutTheNewRowWithoutWaitingForAPush() {
+        layout(listed = listOf("a", "b"))
+        sessions(session("a"), session("b", state = "done"))
+        vm.open()
+        val first = inspected.last()
+        vm.moveSelection(1)
+        assertNotEquals(first, inspected.last(), "the row now selected is asked about")
+        vm.select(first)
+        assertEquals(first, inspected.last())
     }
 
     @Test

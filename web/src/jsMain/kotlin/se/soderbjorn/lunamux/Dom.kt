@@ -16,21 +16,27 @@ internal fun div(className: String): HTMLElement =
 internal fun span(className: String, text: String = ""): HTMLElement =
     (document.createElement("span") as HTMLElement).also { it.className = className; it.textContent = text }
 
-private const val KEY_ATTRIBUTE = "data-key"
+private const val KEY_ATTRIBUTE = "data-row-key"
 private const val ITEM_PROPERTY = "__item"
 
-/** Makes the children of [parent] match [items], one child per item in the same order. */
+/**
+ * Makes the children of [parent] match [items], one child per item in the same order. A child whose
+ * item is equal to the one it was built from stays untouched, and rows that went away are removed
+ * first so the kept ones are never moved (moving an element restarts its CSS animation).
+ */
 internal fun <T : Any> syncChildren(parent: HTMLElement, items: List<T>, key: (T) -> String, build: (T) -> HTMLElement) {
+    val wanted = items.mapTo(HashSet(), key)
     val old = HashMap<String, HTMLElement>()
-    for (i in 0 until parent.children.length) {
+    for (i in parent.children.length - 1 downTo 0) {
         val child = parent.children.item(i) as HTMLElement
-        child.getAttribute(KEY_ATTRIBUTE)?.let { old[it] = child }
+        val k = child.getAttribute(KEY_ATTRIBUTE) ?: continue
+        if (k in wanted) old[k] = child else child.remove()
     }
     var next: HTMLElement? = parent.firstElementChild as HTMLElement?
     for (item in items) {
         val k = key(item)
         val before = old.remove(k)
-        val kept = before != null && before.asDynamic()[ITEM_PROPERTY] == item
+        val kept = before != null && item == before.asDynamic()[ITEM_PROPERTY]
         val child = if (kept) before!! else build(item).also {
             it.setAttribute(KEY_ATTRIBUTE, k)
             it.asDynamic()[ITEM_PROPERTY] = item
@@ -43,7 +49,6 @@ internal fun <T : Any> syncChildren(parent: HTMLElement, items: List<T>, key: (T
             if (hadFocus) child.focus()
         }
     }
-    old.values.forEach { it.remove() }
 }
 
 private val SPIN_FRAMES = listOf("⠆", "⠒", "⠰", "⠤")

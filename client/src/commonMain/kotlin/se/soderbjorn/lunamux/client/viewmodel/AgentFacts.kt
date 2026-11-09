@@ -17,6 +17,14 @@ import se.soderbjorn.lunamux.WindowCommand
 import se.soderbjorn.lunamux.WindowConfig
 import se.soderbjorn.lunamux.isListed
 
+/**
+ * The facts about an agent session that every screen must word the same way. Called by the agents
+ * overview, the task panel, the sidebar footer, the 3D view and the tab-close question, so a state
+ * or a title cannot read differently in two places. Holds no state: every function reads the
+ * [AgentSessionSummary] (and, for placing a pane, the [Layout]) it is given.
+ *
+ * @see Layout
+ */
 object AgentFacts {
     const val NEEDS_YOU = "needs_you"
     const val WORKING = "working"

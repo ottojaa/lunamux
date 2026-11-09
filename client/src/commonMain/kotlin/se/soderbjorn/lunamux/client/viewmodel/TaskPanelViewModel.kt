@@ -33,6 +33,21 @@ private val SAFE_URL = Regex("^(?:https?|file)://\\S+$", RegexOption.IGNORE_CASE
 /** Whether [url] is an address a link may open: `http`, `https` or `file`, with no spaces. */
 internal fun isSafeUrl(url: String): Boolean = SAFE_URL.matches(url)
 
+/**
+ * The state behind the task panel that sits beside a main conversation: the task's sessions,
+ * links and recent activity, and whether the panel is open.
+ *
+ * The web and Android screens create one, collect [stateFlow] and draw it. [setOpen], [toggle] and
+ * [toggleInActiveTab] show or hide the panel; [showMore] opens a list in full; a click on an agent
+ * line goes out through [send].
+ *
+ * @param windowState where the server's pushes (sessions, tasks, layout) arrive.
+ * @param clock the time activity is aged against; tests pass a fixed one.
+ * @param zone the time zone day headings are cut in.
+ * @param send sends a command to the server.
+ * @see AgentsOverviewBackingViewModel
+ * @see AgentFacts
+ */
 class TaskPanelViewModel(
     private val windowState: WindowStateRepository,
     private val clock: () -> Long = { Clock.System.now().toEpochMilliseconds() },

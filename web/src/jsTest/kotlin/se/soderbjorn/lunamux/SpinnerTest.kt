@@ -17,8 +17,11 @@ import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.await
 import kotlinx.coroutines.promise
 import org.w3c.dom.HTMLElement
+import org.w3c.dom.MutationObserver
 import kotlin.js.Promise
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class SpinnerTest {
@@ -119,5 +122,27 @@ class SpinnerTest {
     fun aCutOffFadeIsCaught(): Promise<Unit> = GlobalScope.promise {
         val problems = watch(2500) { cutShortSpinner() }
         assertTrue(problems.isNotEmpty(), "the check passed a spinner whose fade is cut off")
+    }
+
+    /** A row whose item is equal to the one it was built from stays the same element, and a row dropped before it does not move it (moving restarts its animation). */
+    @Test
+    fun unchangedRowsAreReusedAndNeverMoved() {
+        data class Item(val id: Int, val rev: Int)
+        val host = div("ao-test-host")
+        document.body!!.appendChild(host)
+        fun draw(items: List<Item>) = syncChildren(host, items, { "r${it.id}" }) { div("ao-row").also { row -> row.setAttribute("data-key", "mine") } }
+        draw(listOf(Item(1, 0), Item(2, 0), Item(3, 0)))
+        val first = host.children.item(0)
+        val last = host.children.item(2)
+        val moves = MutationObserver { _, _ -> }
+        moves.observe(host, js("({ childList: true })"))
+        draw(listOf(Item(1, 0), Item(3, 0)))
+        val records = moves.takeRecords()
+        moves.disconnect()
+        assertSame(first, host.children.item(0))
+        assertSame(last, host.children.item(1))
+        assertEquals("mine", first!!.getAttribute("data-key"), "the row keeps the attributes its builder gave it")
+        assertTrue(records.none { it.addedNodes.length > 0 }, "a kept row was moved")
+        host.remove()
     }
 }
