@@ -37,8 +37,6 @@
  */
 package se.soderbjorn.lunamux.persistence
 
-import app.cash.sqldelight.db.QueryResult
-import app.cash.sqldelight.db.SqlCursor
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -115,130 +113,22 @@ class SettingsRepository(
         dbFile.parentFile?.mkdirs()
         driver = JdbcSqliteDriver("jdbc:sqlite:${dbFile.absolutePath}")
 
-        val schema = LunamuxDatabase.Schema
-        val current = currentUserVersion()
-        if (current == 0L) {
-            schema.create(driver).value
-            setUserVersion(schema.version)
-        } else if (current < schema.version) {
-            schema.migrate(driver, current, schema.version).value
-            setUserVersion(schema.version)
-        }
-
+        // Every statement in the schema is IF NOT EXISTS, so running it on each start both creates a
+        // fresh file and adds the tables and views a file from an older build lacks.
+        LunamuxDatabase.Schema.create(driver).value
         database = LunamuxDatabase(driver)
 
-        // Belt-and-suspenders: the SQLDelight-generated schema version doesn't
-        // bump automatically when we add tables to Settings.sq (no .sqm
-        // migrations yet), so pre-existing DBs at user_version=1 would never
-        // pick up the new pane_scrollback table otherwise.
-        driver.execute(
-            identifier = null,
-            sql = """
-                CREATE TABLE IF NOT EXISTS pane_scrollback (
-                    leaf_id    TEXT NOT NULL PRIMARY KEY,
-                    bytes      BLOB NOT NULL,
-                    updated_at INTEGER NOT NULL,
-                    cols       INTEGER,
-                    rows       INTEGER
-                )
-            """.trimIndent(),
-            parameters = 0,
-        )
-        // Same story for the agent-session history table.
-        driver.execute(
-            identifier = null,
-            sql = """
-                CREATE TABLE IF NOT EXISTS agent_sessions (
-                    id                  TEXT NOT NULL PRIMARY KEY,
-                    agent               TEXT NOT NULL,
-                    agent_session_id    TEXT,
-                    source              TEXT NOT NULL,
-                    leaf_id             TEXT,
-                    terminal_session_id TEXT,
-                    cwd                 TEXT,
-                    repo                TEXT,
-                    branch              TEXT,
-                    worktree_path       TEXT,
-                    title               TEXT,
-                    first_prompt        TEXT,
-                    transcript_path     TEXT,
-                    links               TEXT NOT NULL DEFAULT '',
-                    state               TEXT NOT NULL,
-                    state_since         INTEGER NOT NULL,
-                    now_line            TEXT,
-                    question            TEXT,
-                    last_screen         TEXT,
-                    created_at          INTEGER NOT NULL,
-                    ended_at            INTEGER,
-                    repo_root           TEXT,
-                    search_text         TEXT,
-                    last_said           TEXT,
-                    task_id             TEXT
-                )
-            """.trimIndent(),
-            parameters = 0,
-        )
-        // Every task the server keeps something about; see Settings.sq for what each column holds.
-        driver.execute(
-            identifier = null,
-            sql = """
-                CREATE TABLE IF NOT EXISTS tasks (
-                    id                TEXT NOT NULL PRIMARY KEY,
-                    title             TEXT,
-                    main_conversation TEXT,
-                    status            TEXT,
-                    status_at         INTEGER,
-                    question_waits    INTEGER,
-                    started_at        INTEGER,
-                    created_at        INTEGER,
-                    updated_at        INTEGER
-                )
-            """.trimIndent(),
-            parameters = 0,
-        )
-        // The blocks agents write into a task's panel.
-        driver.execute(
-            identifier = null,
-            sql = """
-                CREATE TABLE IF NOT EXISTS task_panel_blocks (
-                    task_id    TEXT NOT NULL,
-                    block_id   TEXT NOT NULL,
-                    position   INTEGER NOT NULL,
-                    kind       TEXT NOT NULL,
-                    title      TEXT,
-                    body       TEXT NOT NULL,
-                    written_by TEXT,
-                    written_at INTEGER NOT NULL,
-                    PRIMARY KEY (task_id, block_id)
-                )
-            """.trimIndent(),
-            parameters = 0,
-        )
-        // Same no-.sqm story for columns added to an existing table: bring
-        // pre-existing DBs up to the current shape. SQLite has no
-        // ADD COLUMN IF NOT EXISTS, so the "duplicate column name" error on
-        // an already-migrated DB is expected and swallowed.
-        runCatching {
-            driver.execute(null, "ALTER TABLE pane_scrollback ADD COLUMN cols INTEGER", 0)
-        }
-        runCatching {
-            driver.execute(null, "ALTER TABLE pane_scrollback ADD COLUMN rows INTEGER", 0)
-        }
-        runCatching {
-            driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN repo_root TEXT", 0)
-        }
-        runCatching {
-            driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN search_text TEXT", 0)
-        }
-        runCatching {
-            driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN last_said TEXT", 0)
-        }
-        runCatching {
-            driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN task_id TEXT", 0)
-        }
-        runCatching {
-            driver.execute(null, "ALTER TABLE agent_sessions ADD COLUMN background INTEGER NOT NULL DEFAULT 0", 0)
-        }
+        // Columns an older file lacks. SQLite has no ADD COLUMN IF NOT EXISTS: the "duplicate column"
+        // error on an up-to-date file is expected and swallowed.
+        listOf(
+            "pane_scrollback ADD COLUMN cols INTEGER",
+            "pane_scrollback ADD COLUMN rows INTEGER",
+            "agent_sessions ADD COLUMN repo_root TEXT",
+            "agent_sessions ADD COLUMN search_text TEXT",
+            "agent_sessions ADD COLUMN last_said TEXT",
+            "agent_sessions ADD COLUMN task_id TEXT",
+            "agent_sessions ADD COLUMN background INTEGER NOT NULL DEFAULT 0",
+        ).forEach { change -> runCatching { driver.execute(null, "ALTER TABLE $change", 0) } }
         // A finished turn used to be stored as `idle`; it is `done` now. Nothing else wrote `idle`.
         runCatching {
             driver.execute(null, "UPDATE agent_sessions SET state = 'done' WHERE state = 'idle'", 0)
@@ -898,7 +788,8 @@ class SettingsRepository(
         return database.settingsQueries.searchAgentSessions(pattern, query) {
                 id, agent, agentSessionId, source, leafId, terminalSessionId, cwd, repo, branch,
                 worktreePath, title, firstPrompt, transcriptPath, links, state, stateSince, nowLine,
-                question, createdAt, endedAt, repoRoot, lastSaid, taskId, background, transcriptWindow, screenWindow,
+                question, lastScreen, createdAt, endedAt, repoRoot, lastSaid, taskId, background,
+                transcriptWindow, screenWindow,
             ->
             AgentSessionHit(
                 toAgentSessionRecord(
@@ -950,22 +841,6 @@ class SettingsRepository(
      */
     fun close() {
         driver.close()
-    }
-
-    private fun currentUserVersion(): Long {
-        return driver.executeQuery(
-            identifier = null,
-            sql = "PRAGMA user_version",
-            mapper = { cursor: SqlCursor ->
-                val v = if (cursor.next().value) cursor.getLong(0) ?: 0L else 0L
-                QueryResult.Value(v)
-            },
-            parameters = 0
-        ).value
-    }
-
-    private fun setUserVersion(version: Long) {
-        driver.execute(null, "PRAGMA user_version = $version", 0)
     }
 
     /**

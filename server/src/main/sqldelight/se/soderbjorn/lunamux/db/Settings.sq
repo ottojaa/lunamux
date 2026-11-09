@@ -40,6 +40,13 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
     background          INTEGER NOT NULL DEFAULT 0
 );
 
+-- Every agent_sessions column but the long transcript text, so the hot reads below never carry it.
+CREATE VIEW IF NOT EXISTS agent_session_row AS
+SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
+    worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
+    question, last_screen, created_at, ended_at, repo_root, last_said, task_id, background
+FROM agent_sessions;
+
 -- Every task the server keeps something about, any task id (an agent-made task or a task file's).
 -- A task file declares its own repo, open command and (when it has one) title, so none of those is
 -- stored for it: `title` is set only for a task an agent made, and is what tells the two apart.
@@ -113,35 +120,20 @@ INSERT OR REPLACE INTO agent_sessions(
 -- The hot reads below name their columns so the long search_text never rides
 -- along; imported history (source = 'import') is only ever found by search.
 selectRecentEndedAgentSessions:
-SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
-    worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at, repo_root, last_said, task_id, background
-FROM agent_sessions WHERE state = 'ended' AND source != 'import' AND ended_at >= ?
+SELECT * FROM agent_session_row WHERE state = 'ended' AND source != 'import' AND ended_at >= ?
 ORDER BY ended_at DESC LIMIT ?;
 
 selectAgentSessionByAgentId:
-SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
-    worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at, repo_root, last_said, task_id, background
-FROM agent_sessions WHERE agent = ? AND agent_session_id = ? ORDER BY created_at DESC LIMIT 1;
+SELECT * FROM agent_session_row WHERE agent = ? AND agent_session_id = ? ORDER BY created_at DESC LIMIT 1;
 
 selectAgentSessionByConversation:
-SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
-    worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at, repo_root, last_said, task_id, background
-FROM agent_sessions WHERE agent_session_id = ? ORDER BY created_at DESC LIMIT 1;
+SELECT * FROM agent_session_row WHERE agent_session_id = ? ORDER BY created_at DESC LIMIT 1;
 
 selectAgentSessionById:
-SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
-    worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at, repo_root, last_said, task_id, background
-FROM agent_sessions WHERE id = ?;
+SELECT * FROM agent_session_row WHERE id = ?;
 
 selectOpenAgentSessions:
-SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
-    worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at, repo_root, last_said, task_id, background
-FROM agent_sessions WHERE state != 'ended';
+SELECT * FROM agent_session_row WHERE state != 'ended';
 
 -- Close one record at the time it was last known to be alive, not at the time it was found closed.
 endAgentSessionAt:
@@ -159,36 +151,29 @@ selectAgentSessionsMissingSearchText:
 SELECT id, transcript_path FROM agent_sessions
 WHERE state = 'ended' AND transcript_path IS NOT NULL AND search_text IS NULL;
 
--- Every record whose title, first prompt, branch, links, transcript text or last
--- screen contains :raw (LIKE, with :pattern already escaped by the caller).
--- The two big columns come back only as a short window around the first match.
--- A background session (one an agent runs out of sight) is never found, live or closed.
+-- Records matching :raw (:pattern is its LIKE form); the two long columns come back as a short window
+-- around the first match. Background sessions are never found.
 searchAgentSessions:
-SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
-    worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, created_at, ended_at, repo_root, last_said, task_id, background,
-    CASE WHEN search_text LIKE :pattern ESCAPE '\'
-        THEN substr(search_text, max(1, instr(lower(search_text), lower(:raw)) - 80), 240) END AS transcript_window,
-    CASE WHEN last_screen LIKE :pattern ESCAPE '\'
-        THEN substr(last_screen, max(1, instr(lower(last_screen), lower(:raw)) - 80), 240) END AS screen_window
-FROM agent_sessions
-WHERE background = 0 AND (
-    title LIKE :pattern ESCAPE '\'
-    OR first_prompt LIKE :pattern ESCAPE '\'
-    OR branch LIKE :pattern ESCAPE '\'
-    OR links LIKE :pattern ESCAPE '\'
-    OR search_text LIKE :pattern ESCAPE '\'
-    OR last_screen LIKE :pattern ESCAPE '\')
-ORDER BY COALESCE(ended_at, state_since) DESC
+SELECT r.*,
+    CASE WHEN s.search_text LIKE :pattern ESCAPE '\'
+        THEN substr(s.search_text, max(1, instr(lower(s.search_text), lower(:raw)) - 80), 240) END AS transcript_window,
+    CASE WHEN r.last_screen LIKE :pattern ESCAPE '\'
+        THEN substr(r.last_screen, max(1, instr(lower(r.last_screen), lower(:raw)) - 80), 240) END AS screen_window
+FROM agent_session_row r JOIN agent_sessions s ON s.id = r.id
+WHERE r.background = 0 AND (
+    r.title LIKE :pattern ESCAPE '\'
+    OR r.first_prompt LIKE :pattern ESCAPE '\'
+    OR r.branch LIKE :pattern ESCAPE '\'
+    OR r.links LIKE :pattern ESCAPE '\'
+    OR s.search_text LIKE :pattern ESCAPE '\'
+    OR r.last_screen LIKE :pattern ESCAPE '\')
+ORDER BY COALESCE(r.ended_at, r.state_since) DESC
 LIMIT 200;
 
 -- Every record stored with one of :taskIds, however old, for search by task title.
 -- The caller keeps :taskIds short (the tasks whose title matched the query).
 selectAgentSessionsByTaskIds:
-SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
-    worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at, repo_root, last_said, task_id, background
-FROM agent_sessions WHERE background = 0 AND task_id IN :taskIds
+SELECT * FROM agent_session_row WHERE background = 0 AND task_id IN :taskIds
 ORDER BY COALESCE(ended_at, state_since) DESC
 LIMIT 200;
 
