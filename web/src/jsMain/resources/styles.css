@@ -3863,6 +3863,8 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 /* A block's heading is its name alone, set like the sidebar's group labels. */
 .tp-block-title { margin-bottom: 8px; color: var(--tp-dim); font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
 .tp-muted { color: var(--tp-dim); }
+.tp-setup { display: flex; flex-direction: column; gap: 12px; padding: 14px var(--tp-pad); overflow-wrap: anywhere; }
+.tp-setup-prompt { padding: 10px 12px; border: 1px solid var(--tp-line); border-radius: 6px; user-select: text; -webkit-user-select: text; }
 
 /* The rows a person can press share one shape: they reach past the text edge by --tp-inset on
    both sides, take the faint accent tint under the pointer, and the accent bar on the left when

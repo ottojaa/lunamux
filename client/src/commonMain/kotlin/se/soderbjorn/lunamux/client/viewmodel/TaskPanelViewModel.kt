@@ -4,14 +4,15 @@
  * Links and Recent activity, and no list in it is ever drawn in full: each shows its five newest
  * entries, then "+ N more", which opens the rest in place.
  *
- * This file decides whether the panel shows at all (only in the tab where the main conversation
- * is live, and only while the person has it open), builds the four blocks from the task's
- * sessions that carry its id and the blocks agents wrote, and carries out what a click or key on
- * an agent line does (jump to a listed one, show a waiting background one as a tab).
+ * This file decides whether the panel shows (by itself beside a task's main conversation while
+ * the person has it open, and in any other tab only when they ask for it there), builds the four
+ * blocks from the task's sessions that carry its id and the blocks agents wrote, says how to set
+ * the panel up when it has nothing to show, and carries out what a click or key on an agent line
+ * does (jump to a listed one, show a waiting background one as a tab).
  *
  * Contains [TaskPanelViewModel] with its state types ([TaskPanelViewModel.State],
  * [TaskPanelViewModel.AgentLine], [TaskPanelViewModel.LinkRow], [TaskPanelViewModel.ActivityRow],
- * [TaskPanelViewModel.ProgressView]). Web draws it today; another client can draw the same state.
+ * [TaskPanelViewModel.ProgressView], [TaskPanelViewModel.Setup]). Web draws it today; another client can draw the same state.
  *
  * @see AgentsOverviewBackingViewModel
  * @see se.soderbjorn.lunamux.TaskPanelBlock
@@ -35,6 +36,7 @@ import se.soderbjorn.lunamux.WindowCommand
 import se.soderbjorn.lunamux.WindowConfig
 import se.soderbjorn.lunamux.client.WindowStateRepository
 import se.soderbjorn.lunamux.effectiveActiveTabId
+import se.soderbjorn.lunamux.effectiveTabs
 import se.soderbjorn.lunamux.isListed
 
 private val SAFE_URL = Regex("^(?:https?|file)://\\S+$", RegexOption.IGNORE_CASE)
@@ -151,13 +153,24 @@ class TaskPanelViewModel(
     data class Block<out T>(val shown: List<T>, val more: Int, val total: Int)
 
     /**
+     * How to set the panel up, shown in place of the four blocks when it has nothing to show.
+     *
+     * @property lead the sentence before [prompt].
+     * @property prompt what to tell the agent.
+     */
+    data class Setup(val lead: String, val prompt: String)
+
+    /**
      * Everything a view needs to draw the panel.
      *
-     * @property open the person's choice: true unless they hid the panel.
-     * @property visible whether to draw the column: [open] and a task whose main conversation is
-     *   live in the active tab.
-     * @property taskId the task being shown, or null when [visible] is false for lack of one.
-     * @property title the task's name.
+     * @property open the person's choice for panels beside a main conversation: true unless they
+     *   hid it.
+     * @property visible whether to draw the column: [open] when [beside], else whether the person
+     *   asked for the panel in the active tab.
+     * @property beside whether the task's main conversation is live in the active tab.
+     * @property taskId the task being shown, or null when the active tab has none.
+     * @property title the task's name, else the session's, else [NO_SESSION_TITLE].
+     * @property setup how to set the panel up, or null when it has something to show.
      * @property agents the agents block: members working or waiting on the person, without the main
      *   conversation the panel sits beside.
      * @property progress the progress block, or null when no agent wrote one.
@@ -167,8 +180,10 @@ class TaskPanelViewModel(
     data class State(
         val open: Boolean = true,
         val visible: Boolean = false,
+        val beside: Boolean = false,
         val taskId: String? = null,
         val title: String = "",
+        val setup: Setup? = null,
         val agents: Block<AgentLine> = EMPTY_BLOCK,
         val progress: ProgressView? = null,
         val links: Block<LinkRow> = EMPTY_BLOCK,
@@ -176,10 +191,15 @@ class TaskPanelViewModel(
     )
 
     /**
-     * What the person has chosen: whether the panel is shown, and which lists are open in full,
-     * each as the task id and the list, so opening Links on one task leaves every other task's cut.
+     * What the person has chosen: whether the panel is shown beside a main conversation, the tabs
+     * they asked for it in elsewhere, and which lists are open in full, each as the task id and the
+     * list, so opening Links on one task leaves every other task's cut.
      */
-    private data class Ui(val open: Boolean = true, val expanded: Set<Pair<String, Section>> = emptySet())
+    private data class Ui(
+        val open: Boolean = true,
+        val askedTabs: Set<String> = emptySet(),
+        val expanded: Set<Pair<String, Section>> = emptySet(),
+    )
 
     private val ui = MutableStateFlow(Ui())
     private val clockTick = MutableStateFlow(0)
@@ -220,8 +240,17 @@ class TaskPanelViewModel(
      */
     fun setOpen(open: Boolean) = ui.update { it.copy(open = open) }
 
-    /** Flip [State.open]. Called for ⌘I and the panel's ×. */
+    /** Flip [State.open]. */
     fun toggle() = ui.update { it.copy(open = !it.open) }
+
+    /**
+     * Show or hide the panel in the active tab only. Called for ⌘I and × when [State.beside] is
+     * false, so a tab with no main conversation never gets a column it was not asked for.
+     */
+    fun toggleInActiveTab() {
+        val tab = windowState.config.value?.effectiveActiveTabId ?: return
+        ui.update { it.copy(askedTabs = if (tab in it.askedTabs) it.askedTabs - tab else it.askedTabs + tab) }
+    }
 
     /**
      * Open a list of the task the panel shows in full, in place. Called when the person presses a
@@ -277,25 +306,47 @@ class TaskPanelViewModel(
         val hidden = State(open = ui.open)
         if (config == null) return hidden
         val activeTab = config.effectiveActiveTabId ?: return hidden
-        val byId = sessions.associateBy { it.id }
-        val byKey = byId + sessions.associateBy { it.conversationId }
-        val task = tasks.filter { t ->
-            val own = t.mainConversation?.let(byKey::get)?.takeIf { it.state != ENDED } ?: return@filter false
-            val leaf = own.leafId ?: return@filter false
-            locate(config, leaf)?.tab?.id == activeTab
-        }.minByOrNull { it.startedAtMillis ?: Long.MAX_VALUE } ?: return hidden
-        val own = byKey.getValue(task.mainConversation!!)
+        val byKey = sessions.associateBy { it.id } + sessions.associateBy { it.conversationId }
+        val tasksById = tasks.associateBy { it.id }
+        val here = sessions.filter { s ->
+            s.state != ENDED && s.leafId?.let { locate(config, it) }?.tab?.id == activeTab
+        }
+        fun mainIn(t: AgentTask) = t.mainConversation?.let(byKey::get)?.takeIf { it in here }
+        val focusedPane = config.effectiveTabs.firstOrNull { it.id == activeTab }?.focusedPaneId
+        val focused = here.firstOrNull { it.leafId == focusedPane }
+        val task = focused?.taskId?.let(tasksById::get)
+            ?: tasks.filter { mainIn(it) != null }.minByOrNull { it.startedAtMillis ?: Long.MAX_VALUE }
+            ?: here.firstNotNullOfOrNull { it.taskId?.let(tasksById::get) }
+        val beside = task != null && mainIn(task) != null
+        val visible = if (beside) ui.open else activeTab in ui.askedTabs
+        if (task == null) {
+            val session = focused ?: here.firstOrNull()
+            return State(
+                open = ui.open,
+                visible = visible,
+                title = session?.let(TaskMembers::titleOf) ?: NO_SESSION_TITLE,
+                setup = Setup(if (session != null) SETUP_SESSION else SETUP_NO_SESSION, SETUP_NEW_TASK_PROMPT),
+            )
+        }
         val now = clock()
         val blocks = panels[task.id] ?: emptyList()
+        val mainId = task.mainConversation?.let(byKey::get)?.conversationId
+        val agents = agentLines(task, sessions, config, mainId, now)
+        val progress = progressOf(blocks)
+        val links = linkRows(blocks, now)
+        val activity = activityRows(blocks, now)
+        val empty = agents.isEmpty() && progress == null && links.isEmpty() && activity.isEmpty()
         return State(
             open = ui.open,
-            visible = ui.open,
+            visible = visible,
+            beside = beside,
             taskId = task.id,
             title = task.title,
-            agents = cut(agentLines(task, sessions, config, own, now), task.id, Section.AGENTS, ui),
-            progress = progressOf(blocks),
-            links = cut(linkRows(blocks, now), task.id, Section.LINKS, ui),
-            activity = cut(activityRows(blocks, now), task.id, Section.ACTIVITY, ui),
+            setup = if (empty) Setup(SETUP_TASK, SETUP_TASK_PROMPT) else null,
+            agents = cut(agents, task.id, Section.AGENTS, ui),
+            progress = progress,
+            links = cut(links, task.id, Section.LINKS, ui),
+            activity = cut(activity, task.id, Section.ACTIVITY, ui),
         )
     }
 
@@ -314,10 +365,10 @@ class TaskPanelViewModel(
         task: AgentTask,
         sessions: List<AgentSessionSummary>,
         config: WindowConfig,
-        own: AgentSessionSummary,
+        mainId: String?,
         now: Long,
     ): List<AgentLine> {
-        val lines = sessions.filter { it.taskId == task.id && it.conversationId != own.conversationId }
+        val lines = sessions.filter { it.taskId == task.id && it.conversationId != mainId }
             .sortedWith(compareBy({ TaskMembers.startedOf(it) }, { it.id }))
             .filter { it.state == WORKING || it.state == NEEDS_YOU }
             .mapNotNull { s -> s.leafId?.let { locate(config, it) }?.let { s to it } }
@@ -394,6 +445,18 @@ class TaskPanelViewModel(
 
         /** What a line says about ↵ when it goes to the session's own tab. */
         const val OPEN_HINT = "↵ open"
+
+        /** The panel's title in a tab where no agent runs. */
+        const val NO_SESSION_TITLE = "Task panel"
+
+        /** What the set-up view says the panel is for and what it needs. */
+        const val SETUP_NOTE = "The panel shows a task's agents, progress and links. Agents fill it with the Lunamux tools create_task and upsert_task_block."
+
+        private const val SETUP_TASK = "Nothing here yet. To fill it, tell an agent in this task:"
+        private const val SETUP_SESSION = "This session has no panel yet. To set one up, tell its agent:"
+        private const val SETUP_NO_SESSION = "No agent is running in this tab. Start Claude or Codex here, then tell it:"
+        private const val SETUP_TASK_PROMPT = "Keep this task's Lunamux panel up to date with progress, links and recent activity."
+        private const val SETUP_NEW_TASK_PROMPT = "Make this work a Lunamux task and keep its panel up to date with progress, links and recent activity."
 
         private val EMPTY_BLOCK = Block<Nothing>(emptyList(), 0, 0)
 

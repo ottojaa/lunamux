@@ -421,10 +421,14 @@ the file on the server and is never taken from the browser.
 
 ## The task panel
 
-A task can have a panel: a 320px column on the right of the window that shows what its agents
-wrote about it. It appears only in the tab where the task's main conversation is live (a task with
-none has no panel), and in no other tab. Its header reads "<task title> · ⌘I hides" with the × at the far end. ⌘I shows and hides it, and so does its ×; the choice is
-kept with the other UI settings. The shortcut is listed in the Keyboard-shortcuts sidebar and can be
+The panel is a 320px column on the right of the window that shows what a task's agents wrote about
+it. It shows by itself in the tab where the task's main conversation is live. ⌘I opens it in any
+other tab too, including a lone session or a plain terminal; it then holds for that tab only and is
+not kept across a restart. It shows the task of the focused session, else of the main conversation
+in the tab. Its header reads "<title> · ⌘I hides" with the × at the far end. ⌘I shows and hides it,
+and so does its ×; beside a main conversation the choice is kept with the other UI settings. With
+nothing to show, it says how to set it up: what to tell the agent, which makes the session a task
+(`create_task`) and fills the panel. The shortcut is listed in the Keyboard-shortcuts sidebar and can be
 rebound there. (Off macOS the default chord is Ctrl+I, which a terminal reads as Tab; rebind it there
 if that gets in the way.)
 

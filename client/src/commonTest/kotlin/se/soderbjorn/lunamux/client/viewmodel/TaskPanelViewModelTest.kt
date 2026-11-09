@@ -1,6 +1,6 @@
 /**
- * Tests for [TaskPanelViewModel]: when the panel shows (the task whose main conversation is live in
- * the active tab, nothing elsewhere or while the person hid it), the agents block (only working and
+ * Tests for [TaskPanelViewModel]: when the panel shows (by itself beside a live main conversation,
+ * elsewhere only when asked for in that tab), what it says with nothing to show, the agents block (only working and
  * waiting sessions, in words, what a click does), the progress block, the links block (each row's
  * own kind and own time, newest first, undated last), the recent-activity block, and the five-then-"+ N more" rule
  * every list follows.
@@ -116,6 +116,46 @@ class TaskPanelViewModelTest {
         assertFalse(vm.state.open)
         vm.toggle()
         assertTrue(vm.state.visible)
+    }
+
+    @Test
+    fun `any tab can open the panel, for itself only, and it says how to set it up`() {
+        layout()
+        give(emptyList(), listOf(session("own", taskId = null)))
+        assertFalse(vm.state.visible, "never by itself")
+        vm.toggleInActiveTab()
+        assertTrue(vm.state.visible)
+        assertEquals("agent own", vm.state.title)
+        assertTrue(vm.state.setup!!.lead.startsWith("This session"))
+        layout(active = "tab-2")
+        assertFalse(vm.state.visible, "another tab")
+        vm.toggleInActiveTab()
+        assertEquals(TaskPanelViewModel.NO_SESSION_TITLE, vm.state.title)
+        assertTrue(vm.state.setup!!.lead.startsWith("No agent"))
+        vm.toggleInActiveTab()
+        assertFalse(vm.state.visible)
+    }
+
+    @Test
+    fun `a member's tab opens its task's panel on request, and the hidden main setting does not stop it`() {
+        layout(active = "tab-2")
+        give(listOf(task()), listOf(session("own"), session("w")))
+        vm.setOpen(false)
+        vm.toggleInActiveTab()
+        val s = vm.state
+        assertTrue(s.visible)
+        assertFalse(s.beside)
+        assertEquals("t1", s.taskId)
+        assertEquals(listOf("agent w"), s.agents.shown.map { it.title })
+    }
+
+    @Test
+    fun `the set-up text goes once a task has something to show`() {
+        layout()
+        give(listOf(task()), listOf(session("own")))
+        assertTrue(vm.state.setup!!.lead.startsWith("Nothing here"))
+        blocks(block("p", TaskBlockContent.Progress(label = "Building")))
+        assertNull(vm.state.setup)
     }
 
     // ---- the agents block ----

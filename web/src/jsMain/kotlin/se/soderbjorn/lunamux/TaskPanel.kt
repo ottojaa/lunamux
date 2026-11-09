@@ -3,10 +3,11 @@
  * task's main conversation. It has exactly four blocks and no others: Agents (the members working
  * or waiting on the person), Progress (the current task, a bar and "x of y"), Links (every kind of
  * link, newest first, each with its kind) and Recent activity (one line per item). A list shows its
- * first five entries and a "+ N more" line that opens the rest in place; the column scrolls.
+ * first five entries and a "+ N more" line that opens the rest in place; the column scrolls. With
+ * nothing to show, it says how to set the panel up instead.
  *
- * ⌘I shows and hides the column (as does its ×), and the choice is kept with the other UI
- * settings. An agent's line can be focused: ↵ or a click jumps to a session in a visible tab or shows
+ * ⌘I shows and hides the column in any tab (as does its ×). Beside a main conversation the choice
+ * is kept with the other UI settings; elsewhere it holds for that tab only. An agent's line can be focused: ↵ or a click jumps to a session in a visible tab or shows
  * a waiting session of a background tab as a marked tab.
  *
  * All state and behaviour live in the shared [TaskPanelViewModel]; this file draws its state with
@@ -76,9 +77,8 @@ private var lastPanelState: TaskPanelViewModel.State? = null
 
 /**
  * Register the configurable **task panel** hotkey (default ⌘I) with the toolkit's
- * [HotkeyBindings], so it shows in the Keyboard-shortcuts sidebar and can be rebound. It only
- * acts in a tab that has a panel; elsewhere it does nothing. Called once at boot from
- * [bootViaToolkitShell].
+ * [HotkeyBindings], so it shows in the Keyboard-shortcuts sidebar and can be rebound. Called once
+ * at boot from [bootViaToolkitShell].
  *
  * @see TASK_PANEL_HOTKEY_ACTION_ID
  */
@@ -89,10 +89,13 @@ internal fun registerTaskPanelHotkey() {
             label = "Task panel",
             defaults = listOf(Hotkey(key = "i", meta = true)),
         ),
-    ) {
-        val current = taskPanel.state
-        if (current.taskId != null) setTaskPanelOpen(!current.open)
-    }
+    ) { toggleTaskPanel() }
+}
+
+/** Show or hide the column in the active tab. Called for ⌘I and ×. */
+private fun toggleTaskPanel() {
+    val current = taskPanel.state
+    if (current.beside) setTaskPanelOpen(!current.open) else taskPanel.toggleInActiveTab()
 }
 
 /**
@@ -136,7 +139,8 @@ private fun taskPanelOpenIn(element: JsonElement?): Boolean {
 }
 
 /**
- * Show or hide the column and keep the choice with the other UI settings. Called for ⌘I and ×.
+ * Show or hide the column beside a main conversation and keep the choice with the other UI
+ * settings. Called by [toggleTaskPanel].
  *
  * @param open true to show.
  */
@@ -180,10 +184,15 @@ private fun renderTaskPanel(state: TaskPanelViewModel.State) {
     panel.appendChild(buildHeader(state))
     val content = div("tp-scroll")
     val glyphKeys = HashSet<String>()
-    content.appendChild(buildAgents(state.agents, glyphKeys))
-    content.appendChild(buildProgress(state.progress))
-    content.appendChild(buildLinks(state.links))
-    content.appendChild(buildActivity(state.activity))
+    val setup = state.setup
+    if (setup != null) {
+        content.appendChild(buildSetup(setup))
+    } else {
+        content.appendChild(buildAgents(state.agents, glyphKeys))
+        content.appendChild(buildProgress(state.progress))
+        content.appendChild(buildLinks(state.links))
+        content.appendChild(buildActivity(state.activity))
+    }
     panel.appendChild(content)
     content.scrollTop = scroll
     keepWorkingGlyphs("panel:", glyphKeys)
@@ -218,9 +227,18 @@ private fun buildHeader(state: TaskPanelViewModel.State): HTMLElement {
     close.className = "tp-close"
     close.textContent = "×"
     close.title = "Hide the task panel (⌘I)"
-    close.addEventListener("click", { _: Event -> setTaskPanelOpen(false) })
+    close.addEventListener("click", { _: Event -> toggleTaskPanel() })
     head.appendChild(close)
     return head
+}
+
+/** What the panel shows when it has nothing to show: how to set it up. */
+private fun buildSetup(setup: TaskPanelViewModel.Setup): HTMLElement {
+    val root = div("tp-setup")
+    root.appendChild(div("tp-setup-lead").also { it.textContent = setup.lead })
+    root.appendChild(div("tp-setup-prompt").also { it.textContent = setup.prompt })
+    root.appendChild(div("tp-muted").also { it.textContent = TaskPanelViewModel.SETUP_NOTE })
+    return root
 }
 
 /**
