@@ -133,7 +133,7 @@ internal fun panelBlockJson(b: TaskPanelBlock): JsonObject = buildJsonObject {
             c.label?.let { put("label", it) }
         }
     }
-    put("writtenBy", b.writtenBy?.let(::JsonPrimitive) ?: JsonNull)
+    put("writtenBy", b.writtenBy)
     put("writtenAt", Instant.ofEpochMilli(b.writtenAtMillis).toString())
 }
 
