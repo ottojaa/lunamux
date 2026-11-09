@@ -342,8 +342,9 @@ body.appearance-light .terminal-inner .xterm-viewport {
 }
 .world-status-bar .world-status-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 7px;
+    gap: 0 7px;
 }
 /* The world's theme accent, as a small status bead (background set inline). */
 .world-status-bar .world-status-dot {
@@ -353,13 +354,20 @@ body.appearance-light .terminal-inner .xterm-viewport {
     border-radius: 50%;
 }
 .world-status-bar .world-status-name {
-    flex: 1 1 auto;
+    flex: 1 1 0;
+    min-width: 8ch;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 .world-status-bar .world-status-count {
     flex: 0 0 auto;
     font-variant-numeric: tabular-nums;
+}
+/* Both halves are too wide to share the line with a name: the count drops to its own line under it. */
+.world-status-bar .world-status-both {
+    flex-basis: 100%;
+    padding-left: 14px;
+    box-sizing: border-box;
 }
 /* Muted separator between the working and waiting halves. */
 .world-status-bar .world-status-sep {
@@ -3720,8 +3728,8 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-row.ao-sel.ao-old .ao-t { color: var(--ao-accent); }
 .ao-more { cursor: pointer; }
 
-/* The working glyph (WorkingGlyph.kt): two layers stacked in one box and cross-faded by the script,
-   in the accent with a soft glow. The box is the one the glyph was first drawn in: 26px high, its
+/* The working glyph (spinner() in Dom.kt): four frames stacked in one box, each fading in as the one before
+   fades out, in the accent with a soft glow. The box is the one the glyph was first drawn in: 26px high, its
    line 26px, centred on the row. A row is 26px (a 20px line and 3px of padding each side), so the 3px
    margins above and below hand that padding back and the box does not grow its row. The cell it sits
    in lets the glow spill past its edge. Its weight is its own and always regular,
@@ -3743,7 +3751,11 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     color: var(--ao-accent);
     text-shadow: 0 0 8px color-mix(in srgb, var(--ao-accent) 55%, transparent);
 }
-.ao-work-layer { position: absolute; inset: 0; opacity: 0; }
+/* One 1,200 ms cycle, a quarter of it per frame. Each frame's negative animation-delay (set where the glyph is
+   built) puts the turn where the wall clock says, so a glyph built again in a redrawn row is in step. */
+.ao-work-f { position: absolute; inset: 0; opacity: 0; animation: ao-frame 1200ms linear infinite; }
+@keyframes ao-frame { 0% { opacity: 0; } 8% { opacity: 1; } 25% { opacity: 1; } 33% { opacity: 0; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .ao-work-f { animation: none; } .ao-work-f:first-child { opacity: 1; } }
 .ao-more .ao-t { color: var(--ao-dim); }
 
 /* Footer: the keys the view model names for the selection or the question; keys in the accent, words dim. */
@@ -3863,6 +3875,8 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 /* A block's heading is its name alone, set like the sidebar's group labels. */
 .tp-block-title { margin-bottom: 8px; color: var(--tp-dim); font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
 .tp-muted { color: var(--tp-dim); }
+/* The task's own status line, under the header. */
+.tp-status { flex: none; padding: 8px var(--tp-pad); border-bottom: 1px solid var(--tp-line); color: var(--tp-muted); overflow-wrap: anywhere; }
 .tp-setup { display: flex; flex-direction: column; gap: 12px; padding: 14px var(--tp-pad); overflow-wrap: anywhere; }
 .tp-setup-prompt { padding: 10px 12px; border: 1px solid var(--tp-line); border-radius: 6px; user-select: text; -webkit-user-select: text; }
 
@@ -3902,7 +3916,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
    are the question it asks, so they wrap instead of being cut. */
 .tp-state-needs_you { background: color-mix(in srgb, var(--tp-warn) 8%, transparent); }
 .tp-state-needs_you.tp-agent-active:hover, .tp-state-needs_you.tp-agent-active:focus-visible { background: color-mix(in srgb, var(--tp-warn) 14%, transparent); }
-.tp-state-needs_you .tp-agent-now { color: var(--tp-warn); white-space: normal; overflow-wrap: anywhere; }
+.tp-state-needs_you .tp-agent-title { color: var(--tp-warn); white-space: normal; overflow-wrap: anywhere; }
 
 /* Progress: the task in hand, a thin rounded bar, then "x of y" dim. */
 .tp-progress-current { margin-bottom: 8px; overflow-wrap: anywhere; }
@@ -3915,7 +3929,8 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
    ellipsis; the time is right-aligned. */
 .tp-link-row { display: grid; grid-template-columns: 7.5ch minmax(0, 1fr) auto; gap: 0 10px; align-items: baseline; padding-top: 4px; padding-bottom: 4px; }
 .tp-kind { color: var(--tp-dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tp-link-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tp-text); }
+.tp-link-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tp-accent); }
+.tp-link-row:hover .tp-link-title, .tp-link-row:focus-visible .tp-link-title { text-decoration: underline; }
 .tp-link-time { color: var(--tp-dim); font-size: 11px; text-align: right; font-variant-numeric: tabular-nums; }
 
 /* Recent activity: the time in a fixed column and the item beside it, wrapping under itself.

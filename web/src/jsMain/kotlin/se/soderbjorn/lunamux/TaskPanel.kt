@@ -1,27 +1,21 @@
 /**
  * The task panel in the web client: a 320px column on the right of the window that sits beside a
- * task's main conversation. It has exactly four blocks and no others: Agents (the members working
- * or waiting on the person), Progress (the current task, a bar and "x of y"), Links (every kind of
- * link, newest first, each with its kind) and Recent activity (one line per item). A list shows its
- * first five entries and a "+ N more" line that opens the rest in place; the column scrolls. With
- * nothing to show, it says how to set the panel up instead.
+ * task's main conversation. Under its header it shows the task's status line, then four blocks:
+ * Agents (the members working or waiting on the person), Progress, Links (newest first, each with
+ * its kind) and Recent activity. A list shows its first five entries and a "+ N more" line that
+ * opens the rest in place. With nothing to show it says how to set the panel up.
  *
  * ⌘I shows and hides the column in any tab (as does its ×). Beside a main conversation the choice
- * is kept with the other UI settings; elsewhere it holds for that tab only. An agent's line can be focused: ↵ or a click jumps to a session in a visible tab or shows
- * a waiting session of a background tab as a marked tab.
+ * is kept with the other UI settings; elsewhere it holds for that tab only. An agent's line can be
+ * focused: ↵ or a click jumps to the session, or shows a waiting background session as a marked tab.
  *
- * All state and behaviour live in the shared [TaskPanelViewModel]; this file draws its state with
- * DOM nodes and text only (an agent's words are never parsed as HTML) and turns clicks and keys
- * into calls on it. Links are re-checked with [TaskPanelViewModel.linkTarget] when they are clicked.
- *
- * @see TaskPanelViewModel
- * @see registerTaskPanelHotkey
- * @see startTaskPanel
+ * All state and behaviour live in [TaskPanelViewModel]; this file draws its state with DOM nodes
+ * and text only (an agent's words are never parsed as HTML). Each block keeps its element and
+ * updates its lines with [syncChildren], so scroll, focus and the spinners survive a redraw.
  */
 package se.soderbjorn.lunamux
 
 import kotlinx.browser.document
-import kotlinx.browser.window
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.flow.collect
@@ -33,10 +27,11 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.w3c.dom.HTMLElement
-import org.w3c.dom.ParentNode
 import org.w3c.dom.events.Event
 import org.w3c.dom.events.KeyboardEvent
 import se.soderbjorn.lunamux.client.viewmodel.TaskPanelViewModel
+import se.soderbjorn.lunamux.client.viewmodel.TaskPanelViewModel.AgentLine
+import se.soderbjorn.lunamux.client.viewmodel.TaskPanelViewModel.LinkRow
 import se.soderbjorn.lunamux.client.viewmodel.TaskPanelViewModel.MemberAction
 import se.soderbjorn.lunamux.client.viewmodel.TaskPanelViewModel.Section
 import se.soderbjorn.lunula.web.hotkey.Hotkey
@@ -44,44 +39,50 @@ import se.soderbjorn.lunula.web.hotkey.HotkeyActionSpec
 import se.soderbjorn.lunula.web.hotkey.HotkeyBindings
 import se.soderbjorn.lunula.web.shell.AppFrameClassNames
 
-/**
- * Stable action id for the **task panel** hotkey (default ⌘I). Persistence key for custom
- * chords, and the id the Keyboard-shortcuts sidebar row references.
- *
- * @see registerTaskPanelHotkey
- */
+/** Action id of the panel's hotkey (default ⌘I): the key custom chords are stored under. */
 internal const val TASK_PANEL_HOTKEY_ACTION_ID: String = "Lunamux.taskPanel.toggle"
-
-/**
- * Attribute that gives an element a stable identity across redraws. The panel rebuilds its rows on
- * every state push and puts this on the ones a person can focus, so focus goes back to the row
- * that is drawn again.
- */
-internal const val FOCUS_KEY_ATTRIBUTE = "data-focus-key"
 
 /** UI-settings key holding whether the person left the panel open (absent means open). */
 private const val KEY_TASK_PANEL_OPEN = "taskPanelOpen"
 
-/** How often the visible panel redraws on its own, so ages move on. */
-private const val PANEL_CLOCK_TICK_MS = 30_000
-
-/** The shared view model; created on first use, after the window socket exists. */
 private val taskPanel: TaskPanelViewModel by lazy {
     TaskPanelViewModel(lunamuxClient.windowState, send = { windowSocket.send(it) })
 }
 
 private var taskPanelStarted = false
-private var panelElement: HTMLElement? = null
-private var panelClockTimer: Int? = null
-private var lastPanelState: TaskPanelViewModel.State? = null
 
-/**
- * Register the configurable **task panel** hotkey (default ⌘I) with the toolkit's
- * [HotkeyBindings], so it shows in the Keyboard-shortcuts sidebar and can be rebound. Called once
- * at boot from [bootViaToolkitShell].
- *
- * @see TASK_PANEL_HOTKEY_ACTION_ID
- */
+/** The column and its parts, built once and put in or taken out of the page as the panel shows or hides. */
+private class PanelParts {
+    val root = (document.createElement("aside") as HTMLElement).also { it.className = "task-panel" }
+    val title = span("tp-title")
+    val status = div("tp-status")
+    val scroll = div("tp-scroll")
+    val blocks = HashMap<String, HTMLElement>()
+
+    init {
+        val close = document.createElement("button") as HTMLElement
+        close.asDynamic().type = "button"
+        close.className = "tp-close"
+        close.textContent = "×"
+        close.title = "Hide the task panel (⌘I)"
+        close.addEventListener("click", { _: Event -> toggleTaskPanel() })
+        val head = div("tp-head")
+        head.appendChild(title)
+        head.appendChild(span("tp-hint", "· ⌘I hides"))
+        head.appendChild(close)
+        root.appendChild(head)
+        root.appendChild(status)
+        root.appendChild(scroll)
+    }
+
+    fun block(name: String): HTMLElement = blocks.getOrPut(name) {
+        div("tp-block").also { it.setAttribute("data-block", name) }
+    }
+}
+
+private val parts: PanelParts by lazy { PanelParts() }
+
+/** Registers the panel's hotkey with the toolkit, so it shows in the shortcuts sidebar and can be rebound. */
 internal fun registerTaskPanelHotkey() {
     HotkeyBindings.registerAction(
         HotkeyActionSpec(
@@ -98,28 +99,17 @@ private fun toggleTaskPanel() {
     if (current.beside) setTaskPanelOpen(!current.open) else taskPanel.toggleInActiveTab()
 }
 
-/**
- * Start drawing the panel: apply the stored open setting, then follow the view model's state.
- * Called once by [bootViaToolkitShell] after the shell is mounted, so the column has a parent to
- * go into.
- *
- * @see renderTaskPanel
- */
+/** Applies the stored open setting, then draws the view model's state. Called once at boot after the shell is mounted. */
 @OptIn(DelicateCoroutinesApi::class)
 internal fun startTaskPanel() {
     if (taskPanelStarted) return
     taskPanelStarted = true
+    startAgeClock()
     taskPanel.setOpen(taskPanelOpenIn(toolkitSettingsSnapshot[KEY_TASK_PANEL_OPEN]))
     GlobalScope.launch { taskPanel.stateFlow.collect { renderTaskPanel(it) } }
 }
 
-/**
- * Apply the open setting the server sent with the UI settings, so a change made in another
- * window takes effect here. Called from `onServerUiSettingsApplied`; does nothing before
- * [startTaskPanel] has run (which reads the stored value itself).
- *
- * @param payload the UI settings the server pushed.
- */
+/** Applies the open setting the server sent with the UI settings, so a change made in another window takes effect here. */
 internal fun applyTaskPanelOpenSetting(payload: JsonObject) {
     if (!taskPanelStarted) return
     // A push that does not carry the key (an older copy, sent before our own write landed) must
@@ -128,22 +118,14 @@ internal fun applyTaskPanelOpenSetting(payload: JsonObject) {
     taskPanel.setOpen(taskPanelOpenIn(stored))
 }
 
-/**
- * Read the open setting. Accepts a JSON boolean or the strings "true" and "false"; a missing or
- * unreadable value means open.
- */
+/** Reads the open setting: a JSON boolean or the strings "true" and "false"; anything else means open. */
 private fun taskPanelOpenIn(element: JsonElement?): Boolean {
     val primitive = element as? JsonPrimitive ?: return true
     primitive.booleanOrNull?.let { return it }
     return primitive.content != "false"
 }
 
-/**
- * Show or hide the column beside a main conversation and keep the choice with the other UI
- * settings. Called by [toggleTaskPanel].
- *
- * @param open true to show.
- */
+/** Shows or hides the column beside a main conversation and keeps the choice with the other UI settings. */
 @OptIn(DelicateCoroutinesApi::class)
 private fun setTaskPanelOpen(open: Boolean) {
     taskPanel.setOpen(open)
@@ -155,81 +137,69 @@ private fun setTaskPanelOpen(open: Boolean) {
     }
 }
 
-/**
- * Redraw the column from [state]; take it down when the panel is not visible. A redraw rebuilds
- * every node, so the focused agent line is found again by its focus key and given focus back.
- *
- * @param state the view model's latest state.
- */
+/** What a block's element holds, top to bottom; each has a key for [syncChildren]. */
+private sealed interface TpLine { val key: String }
+private data class TpTitle(val name: String) : TpLine { override val key get() = "title" }
+private data class TpMuted(val text: String) : TpLine { override val key get() = "muted" }
+private data class TpAgent(val line: AgentLine) : TpLine { override val key get() = "a:${line.recordId}" }
+private data class TpMore(val section: Section, val more: Int) : TpLine { override val key get() = "more" }
+private data class TpProgress(val view: TaskPanelViewModel.ProgressView) : TpLine { override val key get() = "progress" }
+private data class TpLink(val index: Int, val link: LinkRow) : TpLine { override val key get() = "l:$index" }
+private data class TpActivity(val index: Int, val item: TaskPanelViewModel.ActivityRow) : TpLine { override val key get() = "t:$index" }
+
+/** Draws [state] into the column, or takes the column out of the page when the panel is not visible. */
 private fun renderTaskPanel(state: TaskPanelViewModel.State) {
-    if (state == lastPanelState && panelElement?.isConnected == true) return
-    lastPanelState = state
+    val p = parts
     if (!state.visible) {
-        panelElement?.remove()
-        panelElement = null
-        keepWorkingGlyphs("panel:", emptySet())
-        keepPanelClockTicking(false)
+        p.root.remove()
         return
     }
-    val body = document.querySelector(".${AppFrameClassNames.BODY}") as? HTMLElement ?: return
-    val panel = panelElement?.takeIf { it.isConnected } ?: (document.createElement("aside") as HTMLElement).also {
-        it.className = "task-panel"
-        body.appendChild(it)
-        panelElement = it
-    }
-    val scroll = panel.querySelector(".tp-scroll")?.scrollTop ?: 0.0
-    val focusedKey = (document.activeElement as? HTMLElement)
-        ?.takeIf { panel.contains(it) }?.getAttribute(FOCUS_KEY_ATTRIBUTE)
-    while (panel.firstChild != null) panel.removeChild(panel.firstChild!!)
-    panel.appendChild(buildHeader(state))
-    val content = div("tp-scroll")
-    val glyphKeys = HashSet<String>()
+    if (!p.root.isConnected) (document.querySelector(".${AppFrameClassNames.BODY}") as? HTMLElement)?.appendChild(p.root) ?: return
+    if (p.title.textContent != state.title) p.title.textContent = state.title
+    p.title.title = state.title
+    p.status.textContent = state.status ?: ""
+    p.status.style.display = if (state.status == null) "none" else ""
     val setup = state.setup
     if (setup != null) {
-        content.appendChild(buildSetup(setup))
-    } else {
-        content.appendChild(buildAgents(state.agents, glyphKeys))
-        content.appendChild(buildProgress(state.progress))
-        content.appendChild(buildLinks(state.links))
-        content.appendChild(buildActivity(state.activity))
+        syncChildren(p.scroll, listOf(setup), { "setup" }) { buildSetup(it) }
+        return
     }
-    panel.appendChild(content)
-    content.scrollTop = scroll
-    keepWorkingGlyphs("panel:", glyphKeys)
-    focusedKey?.let { key ->
-        findByFocusKey(panel, key)?.focus()
-    }
-    keepPanelClockTicking(true)
+    val wanted = listOf(
+        p.block("Agents") to agentLines(state.agents),
+        p.block("Progress") to progressLines(state.progress),
+        p.block("Links") to linkLines(state.links),
+        p.block("Recent activity") to activityLines(state.activity),
+    )
+    wanted.forEach { (el, lines) -> syncChildren(el, lines, TpLine::key) { buildLine(it) } }
+    syncChildren(p.scroll, wanted.map { it.first }, { it.getAttribute("data-block")!! }) { it }
 }
 
-/** Start or stop the timer that makes ages move on while the column is shown. */
-private fun keepPanelClockTicking(needed: Boolean) {
-    if (needed && panelClockTimer == null) {
-        panelClockTimer = window.setInterval({ taskPanel.tick() }, PANEL_CLOCK_TICK_MS)
-    } else if (!needed) {
-        panelClockTimer?.let { window.clearInterval(it) }
-        panelClockTimer = null
+private fun agentLines(block: TaskPanelViewModel.Block<AgentLine>): List<TpLine> = listOf<TpLine>(TpTitle("Agents")) +
+    (if (block.total == 0) listOf(TpMuted("No agents working.")) else block.shown.map { TpAgent(it) }) +
+    listOfNotNull(TpMore(Section.AGENTS, block.more).takeIf { block.more > 0 })
+
+private fun progressLines(progress: TaskPanelViewModel.ProgressView?): List<TpLine> =
+    listOf<TpLine>(TpTitle("Progress")) + (progress?.let { listOf(TpProgress(it)) } ?: listOf(TpMuted("No progress written yet.")))
+
+private fun linkLines(block: TaskPanelViewModel.Block<LinkRow>): List<TpLine> = listOf<TpLine>(TpTitle("Links")) +
+    (if (block.total == 0) listOf(TpMuted("No links yet.")) else block.shown.mapIndexed { i, l -> TpLink(i, l) }) +
+    listOfNotNull(TpMore(Section.LINKS, block.more).takeIf { block.more > 0 })
+
+private fun activityLines(block: TaskPanelViewModel.Block<TaskPanelViewModel.ActivityRow>): List<TpLine> = listOf<TpLine>(TpTitle("Recent activity")) +
+    (if (block.total == 0) listOf(TpMuted("Nothing yet.")) else block.shown.mapIndexed { i, a -> TpActivity(i, a) }) +
+    listOfNotNull(TpMore(Section.ACTIVITY, block.more).takeIf { block.more > 0 })
+
+private fun buildLine(line: TpLine): HTMLElement = when (line) {
+    is TpTitle -> div("tp-block-title").also { it.textContent = line.name }
+    is TpMuted -> div("tp-muted").also { it.textContent = line.text }
+    is TpAgent -> buildAgent(line.line)
+    is TpMore -> buildMore(line)
+    is TpProgress -> buildProgress(line.view)
+    is TpLink -> buildLink(line.link)
+    is TpActivity -> div("tp-tl").also {
+        it.appendChild(span("tp-tl-age", line.item.time))
+        it.appendChild(span("tp-tl-text", line.item.text))
     }
-}
-
-private fun div(cls: String): HTMLElement = (document.createElement("div") as HTMLElement).also { it.className = cls }
-
-private fun span(cls: String, text: String): HTMLElement =
-    (document.createElement("span") as HTMLElement).also { it.className = cls; it.textContent = text }
-
-/** The column's header: "<title> · ⌘I hides" with the close button at the far end. */
-private fun buildHeader(state: TaskPanelViewModel.State): HTMLElement {
-    val head = div("tp-head")
-    head.appendChild(span("tp-title", state.title).also { it.title = state.title })
-    head.appendChild(span("tp-hint", "· ⌘I hides"))
-    val close = document.createElement("button") as HTMLElement
-    close.asDynamic().type = "button"
-    close.className = "tp-close"
-    close.textContent = "×"
-    close.title = "Hide the task panel (⌘I)"
-    close.addEventListener("click", { _: Event -> toggleTaskPanel() })
-    head.appendChild(close)
-    return head
 }
 
 /** What the panel shows when it has nothing to show: how to set it up. */
@@ -241,101 +211,52 @@ private fun buildSetup(setup: TaskPanelViewModel.Setup): HTMLElement {
     return root
 }
 
-/**
- * A block's heading: its name and nothing else (no writer, no age). The block carries its name in
- * `data-block` so a check can count the blocks.
- *
- * @param name the block's name: "Agents", "Progress", "Links" or "Recent activity".
- * @return the block's root element with its heading drawn.
- */
-private fun block(name: String): HTMLElement {
-    val root = div("tp-block")
-    root.setAttribute("data-block", name)
-    root.appendChild(div("tp-block-title").also { it.textContent = name })
-    return root
-}
-
-/**
- * The "+ N more" line under a cut list. A press opens the rest of the list in place.
- *
- * @param section which list the line belongs to.
- * @param more how many entries are not drawn.
- * @return the button.
- */
-private fun moreButton(section: Section, more: Int): HTMLElement {
+private fun buildMore(line: TpMore): HTMLElement {
     val button = document.createElement("button") as HTMLElement
     button.asDynamic().type = "button"
     button.className = "tp-more"
-    button.textContent = "+ $more more"
-    button.setAttribute(FOCUS_KEY_ATTRIBUTE, "more:${section.name}")
-    button.addEventListener("click", { _: Event -> taskPanel.showMore(section) })
+    button.textContent = "+ ${line.more} more"
+    button.addEventListener("click", { _: Event -> taskPanel.showMore(line.section) })
     return button
 }
 
 /**
- * The "Agents" block: one line per member that is working or waiting on the person, the waiting
- * ones first. A line shows the state mark (a turning glyph while it works, ◆ while it waits), the
- * name and the age, then what it is doing in words. A line with an action can be focused: ↵ or a
- * click runs it, and a hint under the name says what that does.
- *
- * @param agents the block from the view model.
- * @param glyphKeys collects the keys of the working glyphs drawn, so unused ones can be dropped.
- * @return the block element.
+ * One agent: the state mark (the spinner while it works, ◆ while it waits), what it is doing (or
+ * asking) with its age, and the session's title as a quieter line under it. A line with an action
+ * can be focused; ↵ or a click runs it, and a hint says what that does.
  */
 @OptIn(DelicateCoroutinesApi::class)
-private fun buildAgents(agents: TaskPanelViewModel.Block<TaskPanelViewModel.AgentLine>, glyphKeys: MutableSet<String>): HTMLElement {
-    val root = block("Agents")
-    if (agents.total == 0) {
-        root.appendChild(div("tp-muted").also { it.textContent = "No agents working." })
-        return root
+private fun buildAgent(line: AgentLine): HTMLElement {
+    val row = div("tp-agent tp-state-${line.state}")
+    val mark = div("tp-glyph")
+    if (line.state == "needs_you") mark.textContent = "◆" else mark.appendChild(spinner())
+    row.appendChild(mark)
+    val text = div("tp-agent-text")
+    val top = div("tp-agent-top")
+    top.appendChild(span("tp-agent-title", line.name))
+    top.appendChild(ageSpan("tp-agent-age", line.sinceMillis))
+    text.appendChild(top)
+    text.appendChild(div("tp-agent-now").also { it.textContent = line.title ?: line.stateWord })
+    line.hint?.let { text.appendChild(buildHint(it)) }
+    row.appendChild(text)
+    if (line.action != MemberAction.NONE) {
+        row.classList.add("tp-agent-active")
+        row.setAttribute("tabindex", "0")
+        row.setAttribute("role", "button")
+        row.addEventListener("click", { _: Event -> GlobalScope.launch { taskPanel.activateMember(line) } })
+        row.addEventListener("keydown", { e: Event ->
+            val key = e as KeyboardEvent
+            if (key.key == "Enter") {
+                key.preventDefault()
+                key.stopPropagation()
+                GlobalScope.launch { taskPanel.activateMember(line) }
+            }
+        })
     }
-    for (line in agents.shown) {
-        val row = div("tp-agent tp-state-${line.state}")
-        val mark = div("tp-glyph")
-        if (line.state == "needs_you") {
-            mark.textContent = "◆"
-        } else {
-            val key = "panel:agent:${line.recordId}"
-            glyphKeys += key
-            mark.appendChild(workingGlyph(key))
-        }
-        row.appendChild(mark)
-        val text = div("tp-agent-text")
-        val top = div("tp-agent-top")
-        top.appendChild(span("tp-agent-title", line.title))
-        top.appendChild(span("tp-agent-age", line.age))
-        text.appendChild(top)
-        text.appendChild(div("tp-agent-now").also { it.textContent = line.nowLine ?: line.stateWord })
-        line.hint?.let { text.appendChild(buildHint(it)) }
-        row.appendChild(text)
-        if (line.action != MemberAction.NONE) {
-            row.classList.add("tp-agent-active")
-            row.setAttribute("tabindex", "0")
-            row.setAttribute("role", "button")
-            row.setAttribute(FOCUS_KEY_ATTRIBUTE, "agent:${line.recordId}")
-            row.addEventListener("click", { _: Event -> GlobalScope.launch { taskPanel.activateMember(line) } })
-            row.addEventListener("keydown", { e: Event ->
-                val key = e as KeyboardEvent
-                if (key.key == "Enter") {
-                    key.preventDefault()
-                    key.stopPropagation()
-                    GlobalScope.launch { taskPanel.activateMember(line) }
-                }
-            })
-        }
-        root.appendChild(row)
-    }
-    if (agents.more > 0) root.appendChild(moreButton(Section.AGENTS, agents.more))
-    return root
+    return row
 }
 
-/**
- * The hint under an agent's line. Each part of "↵ answer it · opens as a tab until it works on" is
- * a key and the words it does; the key is set in bold.
- *
- * @param hint the words from [TaskPanelViewModel.AgentLine.hint].
- * @return the hint element.
- */
+/** The hint under an agent's line: each part of "↵ open · …" is a key, set in bold, and the words it does. */
 private fun buildHint(hint: String): HTMLElement {
     val host = div("tp-agent-hint")
     hint.split(" · ").forEachIndexed { i, part ->
@@ -347,18 +268,9 @@ private fun buildHint(hint: String): HTMLElement {
     return host
 }
 
-/**
- * The "Progress" block: the task in hand above the bar, "x of y" below it.
- *
- * @param progress the view model's progress, or null when no agent wrote one.
- * @return the block element.
- */
-private fun buildProgress(progress: TaskPanelViewModel.ProgressView?): HTMLElement {
-    val root = block("Progress")
-    if (progress == null) {
-        root.appendChild(div("tp-muted").also { it.textContent = "No progress written yet." })
-        return root
-    }
+/** The task in hand above the bar, "x of y" below it. */
+private fun buildProgress(progress: TaskPanelViewModel.ProgressView): HTMLElement {
+    val root = div("tp-progress")
     progress.current?.let { root.appendChild(div("tp-progress-current").also { e -> e.textContent = it }) }
     progress.fraction?.let { f ->
         val bar = div("tp-bar")
@@ -370,82 +282,27 @@ private fun buildProgress(progress: TaskPanelViewModel.ProgressView?): HTMLEleme
 }
 
 /**
- * The "Links" block: one row per link, newest first, each with its kind (slack, PR, doc, …), its
- * words and its clock time. The whole row opens the address outside the app, after the address
- * passes [TaskPanelViewModel.linkTarget].
- *
- * @param links the block from the view model.
- * @return the block element.
+ * A link row: its kind, its words in the accent colour with ↗ (underlined on hover) and its clock
+ * time. The address passes [TaskPanelViewModel.linkTarget] when the row is pressed.
  */
-private fun buildLinks(links: TaskPanelViewModel.Block<TaskPanelViewModel.LinkRow>): HTMLElement {
-    val root = block("Links")
-    if (links.total == 0) {
-        root.appendChild(div("tp-muted").also { it.textContent = "No links yet." })
-        return root
-    }
-    links.shown.forEachIndexed { i, link ->
-        val row = div("tp-link-row")
-        row.appendChild(span("tp-kind", link.kind))
-        row.appendChild(span("tp-link-title", link.title))
-        row.appendChild(span("tp-link-time", link.time))
-        row.setAttribute("role", "link")
-        row.setAttribute("tabindex", "0")
-        row.setAttribute(FOCUS_KEY_ATTRIBUTE, "link:$i")
-        row.title = link.url
-        val open: (Event) -> Unit = { taskPanel.linkTarget(link.url)?.let { target -> openExternalUrl(target) } }
-        row.addEventListener("click", open)
-        row.addEventListener("keydown", { e: Event ->
-            val key = e as KeyboardEvent
-            if (key.key == "Enter") {
-                key.preventDefault()
-                open(e)
-            }
-        })
-        root.appendChild(row)
-    }
-    if (links.more > 0) root.appendChild(moreButton(Section.LINKS, links.more))
-    return root
-}
-
-/**
- * The "Recent activity" block: one spaced line per item, the time on the left and the item in plain
- * words next to it.
- *
- * @param activity the block from the view model.
- * @return the block element.
- */
-internal fun buildActivity(activity: TaskPanelViewModel.Block<TaskPanelViewModel.ActivityRow>): HTMLElement {
-    val root = block("Recent activity")
-    if (activity.total == 0) {
-        root.appendChild(div("tp-muted").also { it.textContent = "Nothing yet." })
-        return root
-    }
-    for (item in activity.shown) {
-        val row = div("tp-tl")
-        row.appendChild(span("tp-tl-age", item.time))
-        row.appendChild(span("tp-tl-text", item.text))
-        root.appendChild(row)
-    }
-    if (activity.more > 0) root.appendChild(moreButton(Section.ACTIVITY, activity.more))
-    return root
-}
-
-/**
- * The element under [root] that carries [key] in its [FOCUS_KEY_ATTRIBUTE], or null. Keys can hold
- * any character (an agent line's key holds a record id), so they are compared as
- * strings, never spliced into a selector, where a quote or backslash would make the query throw.
- *
- * @param root the part of the page to search.
- * @param key the focus key to find.
- * @return the first element carrying [key], or null when none does.
- */
-internal fun findByFocusKey(root: ParentNode, key: String): HTMLElement? {
-    val candidates = root.querySelectorAll("[$FOCUS_KEY_ATTRIBUTE]")
-    for (i in 0 until candidates.length) {
-        val candidate = candidates.item(i) as? HTMLElement ?: continue
-        if (candidate.getAttribute(FOCUS_KEY_ATTRIBUTE) == key) return candidate
-    }
-    return null
+private fun buildLink(link: LinkRow): HTMLElement {
+    val row = div("tp-link-row")
+    row.appendChild(span("tp-kind", link.kind))
+    row.appendChild(span("tp-link-title", link.title).also { it.appendChild(span("tp-link-arrow", " ↗")) })
+    row.appendChild(span("tp-link-time", link.time))
+    row.setAttribute("role", "link")
+    row.setAttribute("tabindex", "0")
+    row.title = link.url
+    val open: (Event) -> Unit = { taskPanel.linkTarget(link.url)?.let { target -> openExternalUrl(target) } }
+    row.addEventListener("click", open)
+    row.addEventListener("keydown", { e: Event ->
+        val key = e as KeyboardEvent
+        if (key.key == "Enter") {
+            key.preventDefault()
+            open(e)
+        }
+    })
+    return row
 }
 
 /** The words on the tag over a background agent's tab that is shown while it waits. */

@@ -58,7 +58,8 @@ import kotlinx.browser.document
 import kotlinx.browser.window
 import org.w3c.dom.HTMLCanvasElement
 import org.w3c.dom.HTMLElement
-import se.soderbjorn.lunamux.client.viewmodel.AgentCounts
+import se.soderbjorn.lunamux.client.viewmodel.AgentFacts
+import se.soderbjorn.lunamux.client.viewmodel.Layout
 import se.soderbjorn.lunula.core.argbToCss
 import se.soderbjorn.lunamux.three.PerspectiveCamera
 
@@ -438,7 +439,7 @@ private class WorldStatus(
 )
 
 /**
- * Tallies every world's waiting and working conversations with [AgentCounts.of], the same
+ * Tallies every world's waiting and working conversations with [AgentFacts.tally], the same
  * rule the footer and the agents overview count with, so the boxes agree with both. Returns one
  * [WorldStatus] per world that has any activity, in the config's world order; worlds with
  * nothing waiting or working are omitted (so they get no box).
@@ -450,7 +451,7 @@ private class WorldStatus(
  */
 private fun computeWorldStatuses(): List<WorldStatus> {
     val cfg = latestWindowConfig ?: return emptyList()
-    val counts = AgentCounts.of(lunamuxClient.windowState.agentSessions.value, cfg).byWorld
+    val counts = AgentFacts.tally(lunamuxClient.windowState.agentSessions.value, Layout(cfg)).byWorld
     return cfg.worlds.mapNotNull { world ->
         val c = counts[world.id] ?: return@mapNotNull null
         WorldStatus(world.id, world.name, world.themeSelection, c.working, c.waiting)

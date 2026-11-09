@@ -12,13 +12,19 @@
 package se.soderbjorn.lunamux
 
 import kotlinx.browser.document
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import org.w3c.dom.Element
 import org.w3c.dom.HTMLButtonElement
 import org.w3c.dom.HTMLElement
 import org.w3c.dom.events.Event
 import org.w3c.dom.events.KeyboardEvent
 import se.soderbjorn.lunamux.client.TabCloseCheck
+import se.soderbjorn.lunamux.client.TabCloseGuard
 import se.soderbjorn.lunamux.client.closeTabAsking
+import se.soderbjorn.lunamux.client.viewmodel.AgentFacts
 import kotlin.coroutines.resume
 
 /**
@@ -33,6 +39,27 @@ import kotlin.coroutines.resume
  */
 internal suspend fun closeTabFromPerson(tabId: String): Boolean =
     closeTabAsking(lunamuxClient.windowState, tabId, { windowSocket.send(it) }) { showTabCloseDialog(it) }
+
+/**
+ * Makes a tab's × ask once. The toolkit's own "Are you sure you want to close …?" has no switch in
+ * the version we use, and it appears for every tab, so a tab with a working agent would ask it and
+ * then ours. For such a tab this listener runs first (capture phase), keeps the toolkit from seeing
+ * the click, and shows our one dialog, which says what the agent is doing. Any other tab is left
+ * to the toolkit.
+ */
+@OptIn(DelicateCoroutinesApi::class)
+internal fun installTabCloseTakeover() {
+    document.addEventListener("click", { e: Event ->
+        val button = (e.target as? Element)?.closest("[title='Close tab']") ?: return@addEventListener
+        val tabId = button.closest("[data-tab-id]")?.getAttribute("data-tab-id") ?: return@addEventListener
+        val windowState = lunamuxClient.windowState
+        val working = TabCloseGuard.check(tabId, windowState.config.value, windowState.agentSessions.value, windowState.agentTasks.value)
+        if (working == null) return@addEventListener
+        e.stopImmediatePropagation()
+        e.preventDefault()
+        GlobalScope.launch { closeTabFromPerson(tabId) }
+    }, true)
+}
 
 /**
  * Show the dialog for [check] and wait for the person's answer.
@@ -55,7 +82,7 @@ internal suspend fun showTabCloseDialog(check: TabCloseCheck): Boolean {
             val list = element("ul", "tab-close-list")
             check.keepsRunning.forEach { running ->
                 list.appendChild(element("li", "").also {
-                    it.textContent = "${running.title} · ${stateWords(running.state)}, ${ageWords(running.sinceMillis)}"
+                    it.textContent = "${running.title} · ${stateWords(running.state)}, ${AgentFacts.ageText(running.sinceMillis, kotlin.js.Date.now().toLong())}"
                 })
             }
             card.appendChild(list)
@@ -117,22 +144,6 @@ private const val DIALOG_ID = "tab-close-dialog"
 private fun stateWords(state: String): String = when (state) {
     "needs_you" -> "needs you"
     else -> state
-}
-
-/**
- * How long a session has been in its state, as "now", "4 min", "3 h" or "2 d".
- *
- * @param sinceMillis epoch millis the session entered its state.
- * @return the age words.
- */
-private fun ageWords(sinceMillis: Long): String {
-    val seconds = ((kotlin.js.Date.now() - sinceMillis) / 1000).toLong().coerceAtLeast(0)
-    return when {
-        seconds < 60 -> "just now"
-        seconds < 3600 -> "${seconds / 60} min"
-        seconds < 86_400 -> "${seconds / 3600} h"
-        else -> "${seconds / 86_400} d"
-    }
 }
 
 private fun element(tag: String, className: String): HTMLElement =
