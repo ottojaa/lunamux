@@ -38,6 +38,8 @@ class TabManagerBackgroundTest {
         val normal = TabManager.addTab(cfg, "t2", "n2", "s2")
         assertEquals("t2", normal.activeTabId)
         assertFalse(normal.tabs.single { it.id == "t2" }.isBackground)
+        val withBackground = TabManager.addTab(config(tab("a"), tab("bg", background = true)), "t3", "n3", "s3")
+        assertEquals("Tab 2", withBackground.tabs.single { it.id == "t3" }.title, "a background tab does not take a number")
     }
 
     @Test

@@ -50,7 +50,9 @@ internal object TabManager {
         sessionId: String,
         background: Boolean = false,
     ): WindowConfig {
-        val nextNumber = cfg.tabs.size + 1
+        // Counts the tabs the person can see: a background tab is never in the strip, so it must
+        // not make the next tab "Tab 4" when the strip shows two.
+        val nextNumber = cfg.listedTabs.size + 1
         val leaf = LeafNode(
             id = newNodeId,
             sessionId = sessionId,
