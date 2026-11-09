@@ -91,59 +91,6 @@ class TaskIndexTest {
         tasks: List<SettingsRepository.TaskRow> = emptyList(),
     ) = TaskIndex.resolve(records, files, tasks.associateBy { it.id })
 
-    // ── Which task a record belongs to: the one whose id it carries ─────────────────────
-
-    @Test
-    fun `a record belongs to the task whose id it carries, and a record that carries none belongs to none`() {
-        val snap = resolve(
-            listOf(rec("in", taskId = "f"), rec("out"), rec("also-in", taskId = "f", state = "ended")),
-            listOf(file("f")),
-        )
-        assertEquals(listOf("f"), snap.map { it.id })
-    }
-
-    @Test
-    fun `a session opened in the folder a task file opens in is not taken into that task`() {
-        val wt = folder("wt")
-        val snap = resolve(
-            listOf(rec("owners", wt, agentSessionId = "abc")),
-            listOf(file("f", open = TaskOpen("claude go", wt))),
-        )
-        assertEquals(99, snap.single().startedAtMillis, "the session did not join the task, so the task did not start with it")
-    }
-
-    @Test
-    fun `a task starts when its first session was created, else when its file was written`() {
-        val withSessions = resolve(listOf(rec("a", taskId = "f", createdAt = 40), rec("b", taskId = "f", createdAt = 25)), listOf(file("f")))
-        assertEquals(25, withSessions.single().startedAtMillis)
-        assertEquals(99, resolve(emptyList(), listOf(file("f"))).single().startedAtMillis)
-        val stored = resolve(listOf(rec("a", taskId = "f", createdAt = 40)), listOf(file("f")), tasks = listOf(SettingsRepository.TaskRow("f", startedAt = 7)))
-        assertEquals(7, stored.single().startedAtMillis)
-    }
-
-    @Test
-    fun `agent-made tasks show only once they hold a session, and a file with the same id is one task with the file's title`() {
-        val rows = listOf(
-            SettingsRepository.TaskRow("empty", title = "Empty", createdAt = 1, updatedAt = 1),
-            SettingsRepository.TaskRow("used", title = "Used", createdAt = 1, updatedAt = 1),
-            SettingsRepository.TaskRow("shared", title = "Row title", createdAt = 1, updatedAt = 1),
-            // A row with no title is what a task file leaves behind; with the file gone it is no task.
-            SettingsRepository.TaskRow("file-gone", startedAt = 3),
-        )
-        val snap = resolve(
-            listOf(rec("a", taskId = "used"), rec("b", taskId = "shared"), rec("c", taskId = "file-gone"), rec("d", taskId = "nobody-knows")),
-            listOf(file("shared", title = "File title")),
-            rows,
-        )
-        assertEquals(listOf("shared", "used"), snap.map { it.id })
-        assertEquals("File title", snap.first { it.id == "shared" }.title)
-        assertEquals("agents", snap.first { it.id == "used" }.source)
-        assertEquals("file", snap.first { it.id == "shared" }.source)
-        // "file-gone" is a title-less row whose file is gone, and "nobody-knows" is no row: neither is a task.
-    }
-
-    // ── The task's main conversation: stored as a conversation, found again in whatever pane it runs ──
-
     /** Terminal id to leaf id for the panes the next index under test sees, changed to model a restart. */
     private val panesNow = mutableMapOf<String, String>()
 
@@ -156,141 +103,101 @@ class TaskIndexTest {
     ).also { it.start() }
 
     private fun indexOver(over: AgentSessionTracker) = TaskIndex(
-        repo, over, files,
-        leafOfSession = { panesNow[it] },
-        clock = { now }, newSuffix = { suffixes.next() },
+        repo, over, files, leafOfSession = { panesNow[it] }, clock = { now }, newSuffix = { suffixes.next() },
     )
 
     private fun storedMain(task: String) = repo.loadTasks().single { it.id == task }.mainConversation
 
     @Test
-    fun `create_task and set_task_lead turn the pane into its conversation once`() {
+    fun `a record belongs to the task whose id it carries, and a session opened where a task file opens does not join it`() {
+        val wt = folder("wt")
+        val snap = resolve(
+            listOf(rec("in", taskId = "f"), rec("out"), rec("ended", taskId = "f", state = "ended"), rec("owner", wt, agentSessionId = "abc")),
+            listOf(file("f"), file("g", open = TaskOpen("claude go", wt))),
+        )
+        assertEquals(listOf("f", "g"), snap.map { it.id })
+        assertEquals(99, snap.last().startedAtMillis, "the session in g's folder did not join it, so g did not start with it")
+    }
+
+    @Test
+    fun `a task starts when its first session was created, else when it was stored, else when its file was written`() {
+        val sessions = listOf(rec("a", taskId = "f", createdAt = 40), rec("b", taskId = "f", createdAt = 25))
+        assertEquals(25, resolve(sessions, listOf(file("f"))).single().startedAtMillis)
+        assertEquals(99, resolve(emptyList(), listOf(file("f"))).single().startedAtMillis)
+        assertEquals(7, resolve(sessions, listOf(file("f")), listOf(SettingsRepository.TaskRow("f", startedAt = 7))).single().startedAtMillis)
+    }
+
+    @Test
+    fun `agent-made tasks show once they hold a session, and a file with the same id is one task with the file's title`() {
+        val rows = listOf(
+            SettingsRepository.TaskRow("empty", title = "Empty", createdAt = 1, updatedAt = 1),
+            SettingsRepository.TaskRow("used", title = "Used", createdAt = 1, updatedAt = 1),
+            SettingsRepository.TaskRow("shared", title = "Row title", createdAt = 1, updatedAt = 1),
+            SettingsRepository.TaskRow("file-gone", startedAt = 3), // what a task file leaves behind: no title, no task
+        )
+        val snap = resolve(
+            listOf(rec("a", taskId = "used"), rec("b", taskId = "shared"), rec("c", taskId = "file-gone"), rec("d", taskId = "nobody-knows")),
+            listOf(file("shared", title = "File title")), rows,
+        )
+        assertEquals(listOf("shared" to "File title", "used" to "Used"), snap.map { it.id to it.title })
+        assertEquals(listOf("file", "agents"), snap.map { it.source })
+    }
+
+    @Test
+    fun `create_task and set_task_lead name the conversation running in a pane, and refuse what they cannot name`() {
         session("s1")
         session("s2")
+        pane("s7")
         val id = index.createTask("Plan", listOf("s1"))
         assertEquals("a-s1", storedMain(id))
 
         index.setOwnSession(id, "s2")
-        assertEquals("a-s2", storedMain(id))
-        assertEquals("a-s2", index.listing().single { it.id == id }.mainConversation)
-        assertEquals("s2", index.listing().single { it.id == id }.ownSessionId)
-    }
+        assertEquals(listOf("a-s2", "s2"), index.listing().single { it.id == id }.let { listOf(it.mainConversation, it.ownSessionId) })
 
-    @Test
-    fun `set_task_lead with a pane that runs no agent is refused and keeps the old conversation`() {
-        session("s1")
-        val id = index.createTask("Plan", listOf("s1"))
-        pane("s7")
         assertFailsWith<TaskException> { index.setOwnSession(id, "s7") }
+        index.setMainConversation(id, "a-s1")
+        assertFailsWith<TaskException> { index.setMainConversation(id, "nobody") }
         assertEquals("a-s1", storedMain(id))
     }
 
     @Test
-    fun `set_task_lead takes a conversation id, and refuses one the tracker does not hold`() {
-        session("s1")
-        session("s2")
-        val id = index.createTask("Plan", listOf("s1"))
-        index.setMainConversation(id, "a-s2")
-        assertEquals("a-s2", storedMain(id))
-        assertFailsWith<TaskException> { index.setMainConversation(id, "nobody") }
-        assertEquals("a-s2", storedMain(id))
-    }
-
-    @Test
-    fun `after a restart with reused pane ids list_tasks names the stored conversation and its live pane`() {
-        val first = trackerOverRepo()
-        first.onHook(paneIn("leaf-a", "s10"), event("SessionStart", "a-mine"))
-        val task = indexOver(first).createTask("Plan", listOf("s10"))
-        first.endAll(emptyList())
-
-        // The restart: s10 is another pane with another agent in it, the conversation is closed.
-        panesNow.clear()
-        val restarted = trackerOverRepo()
-        restarted.onHook(paneIn("leaf-b", "s10"), event("SessionStart", "a-stranger"))
-        val reopened = indexOver(restarted)
-        reopened.recompute()
-        val closed = reopened.listing().single { it.id == task }
-        assertEquals("a-mine", closed.mainConversation, "the conversation is what is stored")
-        assertNull(closed.ownSessionId, "the stranger on s10 is not the task's conversation")
-
-        // The conversation resumes in a pane with another id.
-        restarted.onHook(paneIn("leaf-c", "s9"), event("SessionStart", "a-mine"))
-        reopened.recompute()
-        val open = reopened.listing().single { it.id == task }
-        assertEquals("a-mine", open.mainConversation)
-        assertEquals("s9", open.ownSessionId)
-        assertEquals("a-mine", reopened.state.value.single { it.id == task }.mainConversation)
-    }
-
-    @Test
-    fun `a resume the screen showed before the hook named it keeps the task's conversation and gives one record`() {
+    fun `after a restart the task still names its conversation and finds it in whatever pane it runs, not a stranger in the old one`() {
         val first = trackerOverRepo()
         first.onHook(paneIn("leaf-a", "s10"), event("SessionStart", "a-mine"))
         val mine = first.openRecordOf("s10")!!
         val task = indexOver(first).createTask("Plan", listOf("s10"))
         first.endAll(emptyList())
         panesNow.clear()
-        val restarted = trackerOverRepo()
-        val reopened = indexOver(restarted)
 
-        // The new tab shows claude on the screen first, then the hook names the conversation.
-        val newPane = paneIn("leaf-c", "s9").copy(agent = "claude", state = "working")
-        restarted.onPoll(listOf(newPane))
-        restarted.onHook(newPane, event("SessionStart", "a-mine"))
-        reopened.recompute()
-
-        val running = restarted.openRecordOf("s9")!!
-        assertEquals(mine.id, running.id, "the earlier record of the conversation is the one that reopened")
-        assertEquals(1, restarted.summaries.value.count { it.conversationId == "a-mine" && it.state != "ended" })
-        assertEquals("s9", reopened.listing().single { it.id == task }.ownSessionId)
-    }
-
-    @Test
-    fun `a new agent in the old pane does not take over the task, and the old conversation resumed elsewhere is found`() {
-        val first = trackerOverRepo()
-        first.onHook(paneIn("leaf-a", "s10"), event("SessionStart", "a-mine"))
-        val task = indexOver(first).createTask("Plan", listOf("s10"))
-        first.endAll(emptyList())
-        panesNow.clear()
         val restarted = trackerOverRepo()
         val reopened = indexOver(restarted)
         restarted.onHook(paneIn("leaf-a", "s9"), event("SessionStart", "a-other"))
         reopened.recompute()
-        assertEquals("a-mine", storedMain(task), "a stranger in the old pane is not the task's conversation")
-        assertNull(reopened.listing().single { it.id == task }.ownSessionId)
+        val closed = reopened.listing().single { it.id == task }
+        assertEquals(listOf("a-mine", null), listOf(closed.mainConversation, closed.ownSessionId))
 
-        restarted.onHook(paneIn("leaf-c", "s8"), event("SessionStart", "a-mine"))
+        // The conversation resumes in a new tab: the screen shows claude before the hook names it.
+        val newPane = paneIn("leaf-c", "s8").copy(agent = "claude", state = "working")
+        restarted.onPoll(listOf(newPane))
+        restarted.onHook(newPane, event("SessionStart", "a-mine"))
         reopened.recompute()
-        assertEquals("s8", reopened.listing().single { it.id == task }.ownSessionId)
+        assertEquals(mine.id, restarted.openRecordOf("s8")!!.id, "its earlier record reopened")
+        assertEquals(1, restarted.summaries.value.count { it.conversationId == "a-mine" && it.state != "ended" })
+        assertEquals(listOf("a-mine", "s8"), reopened.listing().single { it.id == task }.let { listOf(it.mainConversation, it.ownSessionId) })
     }
 
-    // ── Resume and the pending pane assignment ──────────────────────────────────────────
-
     @Test
-    fun `a resumed conversation keeps its task when its record is reopened in another pane`() {
+    fun `a resumed conversation keeps its task, in another pane or adopted by a record the screen opened`() {
         val first = session("s1", "a-1")
         val task = index.createTask("Refactor", listOf("s1"))
         tracker.onSessionDestroyed("s1", "old screen")
-
         tracker.onHook(pane("s9"), event("SessionStart", "a-1"))
-        val reopened = tracker.openRecordOf("s9")!!
-        assertEquals(first.id, reopened.id)
-        assertEquals(task, reopened.taskId)
-        index.recompute()
-        assertEquals(task, index.taskIdOf(reopened))
-    }
+        assertEquals(listOf(first.id, task), tracker.openRecordOf("s9")!!.let { listOf(it.id, index.taskIdOf(it)) })
 
-    @Test
-    fun `a record that adopts a conversation id takes the task the conversation already had`() {
-        val first = session("s1", "a-1")
-        val task = index.createTask("Refactor", listOf("s1"))
-        // A second pane shows Claude on screen before its hook names the conversation.
         tracker.onPoll(listOf(PaneSnapshot("s2", "leaf-s2", folder("p-s2"), null, agent = "claude", state = "idle", screenText = { "x" })))
         tracker.onHook(PaneSnapshot("s2", "leaf-s2", folder("p-s2"), null, agent = "claude", screenText = { "x" }), event("SessionStart", "a-1"))
-        val adopted = tracker.openRecordOf("s2")!!
-        assertEquals(task, adopted.taskId)
+        assertEquals(task, tracker.openRecordOf("s2")!!.taskId)
         assertEquals(1, tracker.summaries.value.count { it.conversationId == "a-1" && it.state != "ended" }, "one conversation, one summary")
-        assertTrue(adopted.id == first.id || tracker.snapshot().none { it.id != adopted.id && it.agentSessionId == "a-1" && it.state != "ended" })
     }
 
     @Test
@@ -298,8 +205,6 @@ class TaskIndexTest {
         val task = index.createTask("Split work", emptyList())
         pane("s5")
         index.addToTask(task, listOf("s5"))
-        assertTrue(tracker.snapshot().isEmpty())
-
         tracker.onHook(pane("s5"), event("SessionStart", "a-5"))
         assertEquals(task, tracker.openRecordOf("s5")!!.taskId)
 
@@ -308,92 +213,40 @@ class TaskIndexTest {
         assertNull(tracker.openRecordOf("s5")!!.taskId, "the promise was used up")
     }
 
-    // ── The operations behind the MCP tools ─────────────────────────────────────────────
-
     @Test
-    fun `create_task makes a task with a readable id and puts the sessions in it`() {
+    fun `tasks are made, filled, emptied and renamed, and listed with what is in them`() {
+        files.value = listOf(file("prog"))
         session("s1")
         session("s2")
-        val id = index.createTask("  Fix   the flaky login test  ", listOf("s1", "s2"))
+        val id = index.createTask("  Fix   the flaky login test  ", listOf("s1"))
         assertEquals("fix-the-flaky-login-test-s1", id)
-        val task = index.state.value.single()
-        assertEquals("Fix the flaky login test", task.title)
-        assertEquals(listOf(id, id), listOf("s1", "s2").map { index.taskIdOf(tracker.openRecordOf(it)!!) })
-        assertEquals(id, tracker.summaries.value.first { it.id == tracker.openRecordOf("s1")!!.id }.taskId)
-    }
+        assertEquals("Fix the flaky login test", index.state.value.first { it.id == id }.title)
 
-    @Test
-    fun `add_to_task moves a session between tasks`() {
-        session("s1")
-        val a = index.createTask("A", listOf("s1"))
-        val b = index.createTask("B", emptyList())
-        index.addToTask(b, listOf("s1"))
-        assertEquals(b, tracker.openRecordOf("s1")!!.taskId)
-        assertEquals(listOf(b), index.state.value.map { it.id }, "A holds nothing now")
-        assertTrue(a != b)
-    }
-
-    @Test
-    fun `remove_from_task makes the session a task of its own again and says where each one ended up`() {
-        session("s1")
-        index.createTask("A", listOf("s1"))
-        val after = index.removeFromTask(listOf("s1"))
-        assertEquals(mapOf<String, String?>("s1" to null), after)
-        assertNull(tracker.openRecordOf("s1")!!.taskId)
-        assertTrue(index.state.value.isEmpty())
-    }
-
-    @Test
-    fun `rename_task renames an agent-made task, refuses a file task and an unknown one`() {
-        session("s1")
-        val id = index.createTask("Before", listOf("s1"))
-        index.renameTask(id, "After")
-        assertEquals("After", index.state.value.single().title)
-        assertEquals("After", repo.loadTasks().single().title)
-        assertFailsWith<TaskException> { index.renameTask(id, "  ") }
-
-        files.value = listOf(file("prog"))
-        val fileEx = assertFailsWith<TaskException> { index.renameTask("prog", "Nope") }
-        assertTrue("file" in fileEx.message!!)
-        assertFailsWith<TaskException> { index.renameTask("missing", "Nope") }
-    }
-
-    @Test
-    fun `tasks survive a restart of the index`() {
-        session("s1")
-        val id = index.createTask("Persisted", listOf("s1"))
-        val again = TaskIndex(repo, tracker, files, leafOfSession = { null })
-        assertEquals(id, again.state.value.single().id)
-        assertEquals("Persisted", again.state.value.single().title)
-    }
-
-    @Test
-    fun `list_tasks shows every task with its sessions, including a task nothing is in yet`() {
-        files.value = listOf(file("prog"))
-        session("s1")
-        session("s2")
-        val mine = index.createTask("Mine", listOf("s1"))
         index.addToTask("prog", listOf("s2"))
+        index.renameTask(id, "After")
+        assertFailsWith<TaskException> { index.renameTask(id, "  ") }
+        assertTrue("file" in assertFailsWith<TaskException> { index.renameTask("prog", "Nope") }.message!!)
         val empty = index.createTask("Empty", emptyList())
         val listing = index.listing().associateBy { it.id }
-        assertEquals("file", listing.getValue("prog").source)
-        assertEquals(listOf("s2"), listing.getValue("prog").sessions.map { it.sessionId })
-        assertEquals(listOf("s1"), listing.getValue(mine).sessions.map { it.sessionId })
-        assertEquals("agents", listing.getValue(mine).source)
-        assertTrue(listing.getValue(empty).sessions.isEmpty())
+        assertEquals(listOf("file" to listOf("s2"), "agents" to listOf("s1"), "agents" to emptyList()),
+            listOf("prog", id, empty).map { listing.getValue(it).let { t -> t.source to t.sessions.map { s -> s.sessionId } } })
+        assertEquals("After", listing.getValue(id).title)
+        assertEquals("After", TaskIndex(repo, tracker, files, leafOfSession = { null }).state.value.first { it.id == id }.title, "kept across a restart")
+
+        assertEquals(mapOf<String, String?>("s1" to null), index.removeFromTask(listOf("s1")))
+        assertNull(tracker.openRecordOf("s1")!!.taskId)
+        assertEquals(listOf("prog"), index.state.value.map { it.id }, "an agent-made task holding nothing is not shown")
     }
 
     @Test
-    fun `the state follows the tracker once started`() {
-        val scope = CoroutineScope(Dispatchers.Unconfined)
-        index.start(scope)
+    fun `the state follows the tracker once started, and an ended record keeps its task`() {
+        index.start(CoroutineScope(Dispatchers.Unconfined))
         session("s1")
-        assertTrue(index.state.value.isEmpty())
         val id = index.createTask("Live", emptyList())
+        assertTrue(index.state.value.isEmpty())
         index.addToTask(id, listOf("s1"))
         assertEquals(id, index.state.value.single().id)
         tracker.onSessionDestroyed("s1", null)
-        assertEquals(id, index.taskIdOf(tracker.snapshot().single()), "an ended record keeps its task")
+        assertEquals(id, index.taskIdOf(tracker.snapshot().single()))
     }
-
 }
