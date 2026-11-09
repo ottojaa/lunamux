@@ -326,11 +326,12 @@ body.appearance-light .terminal-inner .xterm-viewport {
        extra margin here (that would double the spacing). */
     border-top: 1px solid var(--t-chrome-border, color-mix(in srgb, currentColor 12%, transparent));
 }
-/* No active world → collapse to nothing (padding + divider) so an idle footer
-   shows only the usage bar with no stray hairline. */
-.world-status-bar.world-status-empty {
-    padding: 0;
-    border-top: none;
+/* Nothing working or waiting: the block keeps its place and says so quietly. */
+.world-status-bar .world-status-none {
+    opacity: 0.6;
+    /* Same height as a count row (its spinner is 1.3em tall), so the block never changes height at zero. */
+    min-height: 1.3em;
+    line-height: 1.3em;
 }
 .world-status-bar .world-status-title {
     text-transform: uppercase;
@@ -3532,9 +3533,6 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 :root[data-dt-chrome="blended"] .world-status-bar {
     border-top-color: var(--t-border, rgba(255, 255, 255, 0.1));
 }
-:root[data-dt-chrome="blended"] .world-status-bar.world-status-empty {
-    border-top: none;
-}
 
 /* ── Agents overview (AgentsOverview.kt) ──
    Topbar chip plus the ⌘⇧A overlay, drawn as a terminal table: one row per task, every row the same
@@ -3850,6 +3848,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
    row a person can press (an agent, a link, "+ N more") reaches out by --tp-inset past the block's
    text edge, so its hover tint has room round the words while the words still line up. */
 .task-panel {
+    position: relative;
     --tp-pad: 14px;
     --tp-inset: 6px;
     flex: 0 0 320px;
@@ -3864,10 +3863,15 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     font: 12px/1.45 var(--ao-mono);
 }
 /* The header stays put above the scrolling blocks: it sits outside .tp-scroll. */
-.tp-head { flex: none; display: flex; align-items: center; gap: 8px; min-height: 44px; box-sizing: border-box; padding: 0 8px 0 var(--tp-pad); border-bottom: 1px solid var(--ao-line); }
-.tp-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 13px; }
+.tp-head { flex: none; display: flex; align-items: baseline; gap: 8px; min-height: 44px; box-sizing: border-box; padding: 10px 8px 10px var(--tp-pad); border-bottom: 1px solid var(--ao-line); }
+/* A long title wraps onto as many lines as it needs; the hint and the × stay level with its first line. */
+.tp-title { flex: 0 1 auto; min-width: 0; white-space: normal; overflow-wrap: anywhere; font-weight: 600; font-size: 13px; line-height: 20px; }
 .tp-hint { flex: none; white-space: nowrap; color: var(--ao-dim); font-size: 11px; }
-.tp-close { margin-left: auto; border: 0; border-radius: 4px; background: transparent; color: var(--ao-dim); font: inherit; font-size: 16px; line-height: 1; cursor: pointer; padding: 4px 6px; }
+.tp-close { margin-left: auto; align-self: flex-start; border: 0; border-radius: 4px; background: transparent; color: var(--ao-dim); font: inherit; font-size: 16px; line-height: 1; cursor: pointer; padding: 4px 6px; }
+/* The screen of an agent in a hidden tab, read-only, over the blocks (its top is set from the blocks' own). */
+.tp-peek { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; overflow: auto; background: var(--ao-surface); }
+.tp-peek .ao-peek { margin: 0; padding: 12px var(--tp-pad); border-left: 0; }
+.tp-peek-hint { padding: 0 var(--tp-pad) 12px; color: var(--ao-dim); font-size: 11px; }
 .tp-close:hover, .tp-close:focus-visible { color: var(--ao-text); background: var(--ao-hover); outline: none; }
 .tp-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 0 16px; }
 .tp-block { padding: 14px var(--tp-pad) 12px; border-bottom: 1px solid var(--ao-line); overflow-wrap: anywhere; }
@@ -3906,17 +3910,32 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-state-needs_you .tp-glyph { color: var(--ao-warn); }
 .tp-agent-text { flex: 1; min-width: 0; }
 .tp-agent-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; line-height: 20px; }
-.tp-agent-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ao-text); }
+/* A row's height never depends on what the agent is doing: the title runs to two lines and then ends in
+   an ellipsis (the age stays level with the first line), and the activity line below it is one line, cut
+   with an ellipsis. The hover hint sits at the end of that line instead of adding one. */
+.tp-agent-title, .tp-link-title {
+    min-width: 0;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+}
+.tp-agent-top { align-items: flex-start; }
+.tp-agent-title { color: var(--ao-text); }
 .tp-agent-age { flex: none; color: var(--ao-dim); font-size: 11px; font-variant-numeric: tabular-nums; }
-.tp-agent-now { color: var(--ao-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tp-agent-hint { display: none; color: var(--ao-dim); font-size: 11px; margin-top: 3px; }
+.tp-agent-sub { display: flex; align-items: baseline; gap: 8px; line-height: 17px; font-size: 11px; }
+.tp-agent-now { flex: 1 1 0; min-width: 0; color: var(--ao-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* An idle agent is alive but doing nothing: no spinner, quieter words. */
+.tp-state-done .tp-agent-title { color: var(--ao-muted); }
+.tp-agent-hint { display: none; flex: none; color: var(--ao-dim); white-space: nowrap; }
 .tp-agent-hint b { color: var(--ao-text); font-weight: 600; }
 .tp-agent-active:hover .tp-agent-hint, .tp-agent-active:focus-visible .tp-agent-hint { display: block; }
-/* An agent that waits on the person: amber mark and amber words, on a faint amber tint. Its words
-   are the question it asks, so they wrap instead of being cut. */
+/* An agent that waits on the person: amber mark and amber title, on a faint amber tint. */
 .tp-state-needs_you { background: color-mix(in srgb, var(--ao-warn) 8%, transparent); }
 .tp-state-needs_you.tp-agent-active:hover, .tp-state-needs_you.tp-agent-active:focus-visible { background: color-mix(in srgb, var(--ao-warn) 14%, transparent); }
-.tp-state-needs_you .tp-agent-title { color: var(--ao-warn); white-space: normal; overflow-wrap: anywhere; }
+.tp-state-needs_you .tp-agent-title { color: var(--ao-warn); }
 
 /* Progress: the task in hand, a thin rounded bar, then "x of y" dim. */
 .tp-progress-current { margin-bottom: 8px; overflow-wrap: anywhere; }
@@ -3925,13 +3944,13 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-progress-text { margin-top: 6px; color: var(--ao-dim); font-size: 11px; }
 
 /* A link: kind, label, time, the same three columns in every row. The kind column fits the
-   longest kind ("decision", 8 characters at 11px) and never wraps; the label is cut with an
-   ellipsis; the time is right-aligned. */
-.tp-link-row { display: grid; grid-template-columns: 7.5ch minmax(0, 1fr) auto; gap: 0 10px; align-items: baseline; padding-top: 4px; padding-bottom: 4px; }
-.tp-kind { color: var(--ao-dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tp-link-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ao-accent); }
+   longest kind ("decision", 8 characters at 11px) and never wraps; the label runs to two lines
+   and then ends in an ellipsis; the kind and the time stay level with its first line. */
+.tp-link-row { display: grid; grid-template-columns: 7.5ch minmax(0, 1fr) auto; gap: 0 10px; align-items: start; padding-top: 4px; padding-bottom: 4px; }
+.tp-kind { color: var(--ao-dim); font-size: 11px; line-height: 17.4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tp-link-title { color: var(--ao-accent); }
 .tp-link-row:hover .tp-link-title, .tp-link-row:focus-visible .tp-link-title { text-decoration: underline; }
-.tp-link-time { color: var(--ao-dim); font-size: 11px; text-align: right; font-variant-numeric: tabular-nums; }
+.tp-link-time { color: var(--ao-dim); font-size: 11px; line-height: 17.4px; text-align: right; font-variant-numeric: tabular-nums; }
 
 /* Recent activity: the time in a fixed column and the item beside it, wrapping under itself.
    Entries stand one full line apart (1.45em is the panel's line height), so a long entry's last

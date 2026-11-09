@@ -957,7 +957,7 @@ private fun buildSidebarFooter(): HTMLElement {
     // from the 3D world's warp-core status boxes, but restyled to the pane's
     // idiom (a titled block of accent-dot rows) — see `.world-status-bar`.
     val worlds = document.createElement("div") as HTMLElement
-    worlds.className = "world-status-bar world-status-empty"
+    worlds.className = "world-status-bar"
     worldStatusEl = worlds
     footer.appendChild(worlds)
     updateWorldStatusFooter()
@@ -967,10 +967,11 @@ private fun buildSidebarFooter(): HTMLElement {
 }
 
 /**
- * One line of the footer's agent block: its label ("All worlds" or "Agents" for the total, else the
- * world's name), the world's accent colour for the dot (null for the total), and the two counts.
+ * One line of the footer's agent block: its label ("All worlds" for the total of several worlds,
+ * else the world's name; null for the total of a single world, which sits under the heading with
+ * no label), the world's accent colour for the dot (null for a total), and the two counts.
  */
-private data class StatusLine(val name: String, val accent: String?, val working: Int, val waiting: Int)
+internal data class StatusLine(val name: String?, val accent: String?, val working: Int, val waiting: Int)
 
 /**
  * The footer's lines: the total of every conversation waiting for the person and every one
@@ -983,7 +984,7 @@ private fun computeAgentStatusRows(): List<StatusLine> {
     val total = tally.total
     if (total.waiting == 0 && total.working == 0) return emptyList()
     val several = cfg != null && cfg.worlds.size >= 2
-    val out = mutableListOf(StatusLine(if (several) "All worlds" else "Agents", null, total.working, total.waiting))
+    val out = mutableListOf(StatusLine(if (several) "All worlds" else null, null, total.working, total.waiting))
     if (cfg == null || !several) return out
     for (world in cfg.worlds) {
         val c = tally.byWorld[world.id] ?: continue
@@ -1013,19 +1014,34 @@ private fun appendWorldStatusCounts(host: HTMLElement, working: Int, waiting: In
  * Repaints the sidebar's agent block from the conversations the server pushed. Called from
  * [updateStateIndicators] on every config and state push and from the overview when sessions
  * change. A line whose numbers did not change is left alone, so its spinner keeps turning. With
- * nothing waiting and nothing working the block collapses (`world-status-empty`).
+ * nothing waiting and nothing working the block stays, as the heading and "None working", so the
+ * sidebar below it does not move.
  */
 internal fun updateWorldStatusFooter() {
-    val host = worldStatusEl ?: return
-    val rows = computeAgentStatusRows()
-    host.classList.toggle("world-status-empty", rows.isEmpty())
-    val items = if (rows.isEmpty()) emptyList() else listOf<Any>("Agents") + rows
-    syncChildren(host, items, { if (it is StatusLine) "line:${it.name}" else "title" }) { item ->
-        if (item is StatusLine) buildStatusLine(item) else div("world-status-title").also { it.textContent = "Agents" }
+    renderAgentStatus(worldStatusEl ?: return, computeAgentStatusRows())
+}
+
+/** Draws the agent block into [host]: the heading, then [rows] or, with none, "None working". */
+internal fun renderAgentStatus(host: HTMLElement, rows: List<StatusLine>) {
+    val items = listOf<Any>("Agents") + rows.ifEmpty { listOf(NO_AGENTS_WORKING) }
+    syncChildren(host, items, { if (it is StatusLine) "line:${it.name}" else it.toString() }) { item ->
+        when (item) {
+            is StatusLine -> buildStatusLine(item)
+            NO_AGENTS_WORKING -> div("world-status-none").also { it.textContent = NO_AGENTS_WORKING }
+            else -> div("world-status-title").also { it.textContent = "Agents" }
+        }
     }
 }
 
+/** What the footer's agent block says when nothing is working or waiting. */
+private const val NO_AGENTS_WORKING = "None working"
+
 private fun buildStatusLine(line: StatusLine): HTMLElement {
+    if (line.name == null) {
+        return div("world-status-row").also { row ->
+            row.appendChild(span("world-status-count").also { appendWorldStatusCounts(it, line.working, line.waiting) })
+        }
+    }
     val dot = span("world-status-dot")
     if (line.accent != null) dot.style.background = line.accent else dot.style.visibility = "hidden"
     val count = span("world-status-count" + if (line.working > 0 && line.waiting > 0) " world-status-both" else "")

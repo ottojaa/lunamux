@@ -1,6 +1,6 @@
 /**
  * The task panel: the column beside a task's main conversation that shows what is happening now.
- * It has four blocks (Agents, Progress, Links, Recent activity) under the task's title and status
+ * It has four blocks (Background agents, Progress, Links, Recent activity) under the task's title and status
  * line, and no list is drawn in full: each shows its five newest entries, then "+ N more".
  *
  * The panel shows by itself beside a task's main conversation while the person has it open, and in
@@ -24,6 +24,7 @@ import se.soderbjorn.lunamux.TaskLink
 import se.soderbjorn.lunamux.TaskPanelBlock
 import se.soderbjorn.lunamux.WindowCommand
 import se.soderbjorn.lunamux.WindowConfig
+import se.soderbjorn.lunamux.WindowEnvelope
 import se.soderbjorn.lunamux.client.WindowStateRepository
 import se.soderbjorn.lunamux.effectiveActiveTabId
 import se.soderbjorn.lunamux.effectiveTabs
@@ -56,7 +57,7 @@ class TaskPanelViewModel(
 ) {
     /** What a click on an agent line does. */
     enum class MemberAction {
-        /** Nothing: the session works out of sight, or its pane cannot be found. */
+        /** Nothing: the session's pane cannot be found. */
         NONE,
 
         /** Go to the tab of a session running in a tab the person can see. */
@@ -64,21 +65,23 @@ class TaskPanelViewModel(
 
         /** Show a background session that waits on the person as a marked tab until it works on. */
         SHOW_WAITING,
+
+        /** Read the screen of a session in a hidden tab, without showing, switching to or typing into it. */
+        PEEK,
     }
 
     /** The lists of the panel that can open in full. */
     enum class Section { AGENTS, LINKS, ACTIVITY }
 
     /**
-     * One line of the agents block. [name] says what the agent is doing (or asking) in words, or
-     * the session's title when it says nothing; [title] is the session's title as the quieter
-     * second line, null when it is already the name.
+     * One row of the agents block: the session's [title], then one fixed [doing] line that is always
+     * there ("working", "needs you" or "idle" when the agent has nothing better to say), so a row's
+     * height never depends on what the agent is doing.
      */
     data class AgentLine(
-        val name: String,
-        val title: String?,
+        val title: String,
+        val doing: String,
         val state: String,
-        val stateWord: String,
         val sinceMillis: Long,
         val action: MemberAction,
         val recordId: String,
@@ -112,6 +115,7 @@ class TaskPanelViewModel(
         val progress: ProgressView? = null,
         val links: Block<LinkRow> = EMPTY_BLOCK,
         val activity: Block<ActivityRow> = EMPTY_BLOCK,
+        val peek: AgentsOverviewBackingViewModel.Peek? = null,
     )
 
     /** The person's choices: shown beside a main conversation, tabs asked for elsewhere, lists opened in full per task. */
@@ -119,20 +123,25 @@ class TaskPanelViewModel(
         val open: Boolean = true,
         val askedTabs: Set<String> = emptySet(),
         val expanded: Set<Pair<String, Section>> = emptySet(),
+        val peekId: String? = null,
     )
 
     private val ui = MutableStateFlow(Ui())
 
     val stateFlow: Flow<State> = combine(
-        windowState.agentTasks, windowState.agentSessions, windowState.config, windowState.taskPanels, ui,
-    ) { tasks, sessions, config, panels, ui -> build(tasks, sessions, config, panels, ui) }
+        combine(
+            windowState.agentTasks, windowState.agentSessions, windowState.config, windowState.taskPanels, ui,
+        ) { tasks, sessions, config, panels, ui -> build(tasks, sessions, config, panels, ui) },
+        windowState.agentInspection,
+        ui,
+    ) { built, inspection, ui -> built.copy(peek = peekAt(ui.peekId, built.taskId, windowState.agentSessions.value, inspection)) }
 
     /** The state right now, for key handlers that must act on what is on screen. */
     val state: State
         get() = build(
             windowState.agentTasks.value, windowState.agentSessions.value, windowState.config.value,
             windowState.taskPanels.value, ui.value,
-        )
+        ).let { it.copy(peek = peekAt(ui.value.peekId, it.taskId, windowState.agentSessions.value, windowState.agentInspection.value)) }
 
     /** Shows or hides the panel beside a main conversation; called with the stored setting. */
     fun setOpen(open: Boolean) = ui.update { it.copy(open = open) }
@@ -158,8 +167,32 @@ class TaskPanelViewModel(
                 Layout(windowState.config.value).jumpCommands(session).forEach { send(it) }
             }
             MemberAction.SHOW_WAITING -> send(WindowCommand.ShowWaitingAgent(line.recordId))
+            MemberAction.PEEK -> {
+                ui.update { it.copy(peekId = line.recordId) }
+                send(WindowCommand.InspectAgentSession(line.recordId))
+            }
             MemberAction.NONE -> Unit
         }
+    }
+
+    /**
+     * Re-reads the screen of the agent being peeked at; called every couple of seconds while it is
+     * live, and once more when it ends, to fetch the screen that was saved.
+     */
+    suspend fun refreshPeek() {
+        val peek = state.peek ?: return
+        if (!peek.live && !peek.loading) return
+        ui.value.peekId?.let { send(WindowCommand.InspectAgentSession(it)) }
+    }
+
+    /** esc: closes the peek and leaves the panel as it was. */
+    fun closePeek() = ui.update { it.copy(peekId = null) }
+
+    /** The peek of agent [id], only while the panel shows the task [taskId] that agent belongs to. */
+    private fun peekAt(id: String?, taskId: String?, sessions: List<AgentSessionSummary>, inspection: WindowEnvelope.AgentSessionInspection?): AgentsOverviewBackingViewModel.Peek? {
+        val s = sessions.firstOrNull { it.id == id && it.taskId == taskId } ?: return null
+        val live = AgentFacts.isLive(s)
+        return peekOf(live, AgentFacts.titleOf(s), if (live) null else AgentFacts.activityOf(s), inspection?.takeIf { it.recordId == s.id && it.live == live })
     }
 
     /** [url] when a click may open it, else null. */
@@ -225,12 +258,13 @@ class TaskPanelViewModel(
         else Block(all.take(SHOWN), all.size - SHOWN, all.size)
 
     /**
-     * The task's sessions that work or wait on the person, the waiting ones first. The main
-     * conversation is left out (the panel sits beside it). A session whose pane the layout cannot
-     * place still shows, with nothing to click.
+     * The task's live sessions, the waiting ones first, then by start, so a row keeps its place
+     * as its session works, idles and works again. The main conversation is left out (the panel
+     * sits beside it). A session whose pane the layout cannot place still shows, with nothing to
+     * click; one in a hidden tab offers a peek.
      */
     private fun agentLines(task: AgentTask, sessions: List<AgentSessionSummary>, layout: Layout, mainId: String?): List<AgentLine> {
-        val lines = sessions.filter { it.taskId == task.id && it.conversationId != mainId && (AgentFacts.isWorking(it) || AgentFacts.isWaiting(it)) }
+        val lines = sessions.filter { it.taskId == task.id && it.conversationId != mainId && AgentFacts.isLive(it) }
             .sortedWith(compareBy({ AgentFacts.startedOf(it) }, { it.id }))
             .map { s ->
                 val spot = layout.spotOf(s)
@@ -238,21 +272,24 @@ class TaskPanelViewModel(
                     spot == null -> MemberAction.NONE
                     spot.listed -> MemberAction.JUMP
                     AgentFacts.isWaiting(s) -> MemberAction.SHOW_WAITING
-                    else -> MemberAction.NONE
+                    else -> MemberAction.PEEK
                 }
-                val title = AgentFacts.titleOf(s)
-                val doing = inWords(AgentFacts.lineOf(s))
+                val said = inWords(AgentFacts.lineOf(s))
                 AgentLine(
-                    name = doing ?: title,
-                    title = title.takeIf { doing != null },
+                    title = AgentFacts.titleOf(s),
+                    doing = when {
+                        AgentFacts.isWaiting(s) -> said ?: "needs you"
+                        AgentFacts.isWorking(s) -> said ?: "working"
+                        else -> "idle"
+                    },
                     state = s.state,
-                    stateWord = if (AgentFacts.isWaiting(s)) "needs you" else "working",
                     sinceMillis = s.stateSince,
                     action = action,
                     recordId = s.id,
                     hint = when (action) {
                         MemberAction.SHOW_WAITING -> "↵ ${AgentsOverviewBackingViewModel.SHOW_WAITING_HINT}"
                         MemberAction.JUMP -> "↵ open"
+                        MemberAction.PEEK -> "↵ peek"
                         MemberAction.NONE -> null
                     },
                 )
@@ -311,8 +348,14 @@ class TaskPanelViewModel(
 
         private val EMPTY_BLOCK = Block<Nothing>(emptyList(), 0, 0)
 
-        /** A tool-call line that names a tool, not an act ("Running cd"): it says nothing the person can use. */
-        private val BARE_TOOL = Regex("^(Running|Using|Calling) [\\w./:-]+$")
+        /** A tool-call line that names a tool, not an act ("Running cd", "Running a command"): it says nothing the person can use. */
+        private val BARE_TOOL = Regex(
+            "^(Running|Calling|Using) (a command|an agent|a skill|[\\w./:-]+)$|" +
+                "^(Entering plan mode|Presenting a plan|Asking a question)$|" +
+                "^(Editing|Writing|Reading) (a file|a notebook)$|^Listing a folder$|^Searching the (code|web)$|" +
+                "^Finding files$|^Fetching a web page$|^(Stopping|Checking) a background task$|" +
+                "^Updating the task list$|^Looking up tools$",
+        )
 
         /** A line about what a member does if it is in words, else null. */
         fun inWords(line: String?): String? = line?.trim()?.takeIf { it.isNotEmpty() && !BARE_TOOL.matches(it) }

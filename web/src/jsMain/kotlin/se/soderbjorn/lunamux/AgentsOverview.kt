@@ -53,7 +53,7 @@ private var lastSelected: String? = null
 private const val SEARCH_DEBOUNCE_MS = 150
 
 /** How often an open live peek asks for a fresh screen. */
-private const val PEEK_REFRESH_MS = 2_000
+internal const val PEEK_REFRESH_MS = 2_000
 
 /** Registers the overview's hotkey with the toolkit, so it shows in the shortcuts sidebar and can be rebound. */
 internal fun registerAgentsOverviewHotkey() {
@@ -423,8 +423,8 @@ private fun buildMoreLine(hidden: Int): HTMLElement {
     return el
 }
 
-/** The popover under the selected row: a heading and the last lines of the session's screen. */
-private fun buildPeek(peek: Peek): HTMLElement {
+/** The popover under the selected row (and over the task panel): a heading and the last lines of the session's screen. */
+internal fun buildPeek(peek: Peek): HTMLElement {
     val box = div("ao-peek")
     box.addEventListener("click", { e: Event -> e.stopPropagation() })
     val closedAge = peek.closedSinceMillis?.let { AgentFacts.ageText(it, kotlin.js.Date.now().toLong()) } ?: "now"

@@ -509,16 +509,11 @@ internal fun buildOverview(inputs: OverviewInputs, ui: OverviewUi, now: Long): S
 
     val peek = if (mode is OverviewMode.Peeking && selectedRow?.recordId != null) {
         val session = byKey[selectedRow.recordId]
-        val said = inspectionOf(selectedRow.recordId)?.takeIf { it.live == selectedRow.isLive }
-        AgentsOverviewBackingViewModel.Peek(
+        peekOf(
             live = selectedRow.isLive,
             title = session?.let(AgentFacts::titleOf) ?: selectedRow.title,
             closedSinceMillis = if (selectedRow.isLive) null else session?.let(AgentFacts::activityOf) ?: selectedRow.sinceMillis,
-            lines = said?.screen.orEmpty(),
-            loading = said == null,
-            emptyText = if (said != null && said.screen.isEmpty()) {
-                if (selectedRow.isLive) "(the screen is empty)" else "(no saved screen)"
-            } else null,
+            said = inspectionOf(selectedRow.recordId)?.takeIf { it.live == selectedRow.isLive },
         )
     } else null
 
@@ -810,3 +805,17 @@ private fun closeWarnings(s: AgentSessionSummary, inspection: WindowEnvelope.Age
     }
     return out
 }
+
+/**
+ * The screen popover for one session, shared by the overview and the task panel: [said] is the
+ * server's answer for it (null while it loads), already checked to be live or saved to match [live].
+ */
+internal fun peekOf(live: Boolean, title: String, closedSinceMillis: Long?, said: WindowEnvelope.AgentSessionInspection?) =
+    AgentsOverviewBackingViewModel.Peek(
+        live = live,
+        title = title,
+        closedSinceMillis = closedSinceMillis,
+        lines = said?.screen.orEmpty(),
+        loading = said == null,
+        emptyText = if (said != null && said.screen.isEmpty()) (if (live) "(the screen is empty)" else "(no saved screen)") else null,
+    )

@@ -205,4 +205,63 @@ class TaskIndexTest {
         tracker.onSessionDestroyed("s1", null)
         assertEquals(id, index.taskIdOf(tracker.snapshot().single()))
     }
+    @Test
+    fun `a helper claude started in a task's pane joins the task, shows beside the conversation, and never speaks for the task`() {
+        val p = pane("s1", agent = "claude")
+        tracker.onHook(p, event("SessionStart", "a-main"))
+        val task = index.createTask("Plan", listOf("s1"))
+
+        // A plan reviewer starts in the same pane while the conversation is still running; the
+        // two conversations' hooks interleave.
+        tracker.onHook(p, event("SessionStart", "a-reviewer"))
+        tracker.onHook(p, event("UserPromptSubmit", "a-reviewer"))
+        tracker.onHook(p, event("PreToolUse", "a-main"))
+        index.setOwnSession(task, "s1")
+        index.createTask("Another", emptyList(), callerSessionId = "s1")
+
+        val byConversation = tracker.summaries.value.associateBy { it.conversationId }
+        assertEquals("a-main", index.listing().single { it.id == task }.mainConversation)
+        assertEquals(listOf("working", task), byConversation.getValue("a-reviewer").let { listOf(it.state, it.taskId) }, "the panel can list it")
+        assertEquals("working", byConversation.getValue("a-main").state, "the conversation is not closed while its helper runs")
+
+        tracker.onHook(p, event("SessionEnd", "a-reviewer"))
+        assertEquals(listOf("working", "ended"), tracker.summaries.value.sortedBy { it.conversationId }.map { it.state })
+        assertEquals("a-main", tracker.openRecordOf("s1")!!.agentSessionId)
+    }
+
+    @Test
+    fun `a helper that keeps working after its conversation stops stays listed, and one that went silent or lost its conversation leaves`() {
+        val p = pane("s1", agent = "claude")
+        val states = { tracker.summaries.value.sortedBy { it.conversationId }.map { it.state } }
+        tracker.onHook(p, event("SessionStart", "a-main"))
+        tracker.onHook(p, event("SessionStart", "a-reviewer"))
+        tracker.onHook(p, event("UserPromptSubmit", "a-reviewer"))
+        tracker.onHook(p, event("Stop", "a-main"))
+        now += 5 * 60_000
+        tracker.onHook(p, event("PreToolUse", "a-reviewer"))
+        now += 9 * 60_000
+        tracker.onPoll(listOf(p))
+        assertEquals(listOf("done", "working"), states(), "it still sends hooks after its conversation stopped")
+
+        now += 2 * 60_000
+        tracker.onPoll(listOf(p))
+        assertEquals(listOf("done", "ended"), states(), "killed without a SessionEnd: quiet for ten minutes")
+
+        tracker.onHook(p, event("SessionStart", "a-second"))
+        tracker.onHook(p, event("UserPromptSubmit", "a-second"))
+        tracker.onHook(p, event("SessionEnd", "a-main"))
+        assertEquals(listOf("ended", "ended", "ended"), states(), "a conversation that ends takes its helpers with it")
+    }
+
+    @Test
+    fun `a main conversation naming an ended helper is mended to the live conversation it ran inside, and a really closed one is not`() {
+        val live = rec("m", agentSessionId = "a-m", taskId = "t", leafId = "leaf", createdAt = 10)
+        val helper = rec("h", agentSessionId = "a-h", state = "ended", leafId = "leaf", createdAt = 20)
+        val row = SettingsRepository.TaskRow("t", title = "T", mainConversation = "a-h", startedAt = 1)
+        assertEquals("a-m", resolve(listOf(live, helper), tasks = listOf(row)).single().mainConversation)
+
+        val closed = rec("m", agentSessionId = "a-m", state = "ended", taskId = "t", leafId = "leaf", createdAt = 10)
+        val working = rec("h", agentSessionId = "a-h", taskId = "t", leafId = "leaf", createdAt = 20)
+        assertEquals("a-m", resolve(listOf(closed, working), tasks = listOf(row.copy(mainConversation = "a-m"))).single().mainConversation)
+    }
 }

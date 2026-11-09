@@ -174,18 +174,18 @@ object OverviewChecks {
         return Check("C5", "every needs-you leads to a visible question", problems)
     }
 
-    /** P1: the panel's agents only work or wait, and no list shows more than five before its "+ N more". */
+    /** P1: the panel's background agents are alive (working, waiting or idle), and no list shows more than five before its "+ N more". */
     private fun panel(s: Snapshot): Check {
         val p = s.panel
-        val name = "the panel lists only working or waiting agents and cuts every list at five"
+        val name = "the panel lists only live background agents and cuts every list at five"
         if (!p.visible) return Check("P1", name, emptyList(), "no panel in the active tab")
         val problems = mutableListOf<String>()
-        p.agents.shown.filter { it.state != WORKING && it.state != NEEDS_YOU }.forEach { problems += "the panel lists \"${it.name}\" in state ${it.state}" }
+        p.agents.shown.filter { it.state == ENDED }.forEach { problems += "the panel lists \"${it.title}\" in state ${it.state}" }
         fun block(label: String, shown: Int, more: Int, total: Int) {
             if (more > 0 && shown != TaskPanelViewModel.SHOWN) problems += "$label shows $shown entries before \"+ $more more\", not ${TaskPanelViewModel.SHOWN}"
             if (shown + more != total) problems += "$label: $shown shown and $more more do not add up to $total"
         }
-        block("Agents", p.agents.shown.size, p.agents.more, p.agents.total)
+        block("Background agents", p.agents.shown.size, p.agents.more, p.agents.total)
         block("Links", p.links.shown.size, p.links.more, p.links.total)
         block("Recent activity", p.activity.shown.size, p.activity.more, p.activity.total)
         return Check("P1", name, problems)

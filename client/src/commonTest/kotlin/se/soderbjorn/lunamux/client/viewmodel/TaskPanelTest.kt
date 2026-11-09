@@ -18,6 +18,7 @@ import se.soderbjorn.lunamux.TaskPanelBlock
 import se.soderbjorn.lunamux.TaskTimelineItem
 import se.soderbjorn.lunamux.WindowCommand
 import se.soderbjorn.lunamux.WindowConfig
+import se.soderbjorn.lunamux.WindowEnvelope
 import se.soderbjorn.lunamux.client.WindowStateRepository
 import se.soderbjorn.lunamux.client.runNow
 import se.soderbjorn.lunamux.client.viewmodel.TaskPanelViewModel.MemberAction
@@ -83,29 +84,59 @@ class TaskPanelTest {
     }
 
     @Test
-    fun anAgentIsNamedByWhatItIsDoingWithItsTitleAsAQuieterSecondLine() {
-        layout(listed = listOf("main"), background = listOf("w1", "w2", "w3"))
+    fun everyRowKeepsItsTitleAndOneActivityLineThatNeverFallsBackToABareToolPhrase() {
+        layout(listed = listOf("main"), background = listOf("w1", "w2", "w3", "w4", "w5"))
         fill(
             session("w1", title = "Check the schema", nowLine = "Reading db/schema.sql", since = now - 3 * minute),
             session("w2", state = "needs_you", question = "Drop the `users` table?", title = "Migration", since = now - minute),
             session("w3", title = "Idle one", nowLine = "Running cd", since = now - 5 * minute),
+            session("w4", title = "Quiet", state = "done", nowLine = "Reading old.kt", since = now - 4 * minute),
+            session("w5", title = "Described", nowLine = "findings", since = now - 2 * minute),
         )
-        val lines = vm.state.agents.shown
-        assertEquals(listOf("w2", "w3", "w1"), lines.map { it.recordId }, "the agent that asks comes first, then by start")
-        assertEquals("Drop the `users` table?", lines[0].name)
-        assertEquals("Migration", lines[0].title)
-        assertEquals("needs you", lines[0].stateWord)
-        assertEquals("Idle one", lines[1].name, "a bare tool name says nothing, so the title is the name")
-        assertNull(lines[1].title)
-        assertEquals("Reading db/schema.sql", lines[2].name)
-        assertEquals("Check the schema", lines[2].title)
+        val lines = vm.state.agents.shown.associateBy { it.recordId }
+        assertEquals(listOf("w2", "w3", "w1", "w4", "w5").sorted(), lines.keys.sorted())
+        assertEquals("w2", vm.state.agents.shown.first().recordId, "the agent that asks comes first, then by start")
+        assertEquals("Migration" to "Drop the `users` table?", lines.getValue("w2").let { it.title to it.doing })
+        assertEquals("Idle one" to "working", lines.getValue("w3").let { it.title to it.doing }, "a bare tool name shows as working")
+        assertEquals("Check the schema" to "Reading db/schema.sql", lines.getValue("w1").let { it.title to it.doing })
+        assertEquals("Quiet" to "idle", lines.getValue("w4").let { it.title to it.doing })
+        assertEquals("findings", lines.getValue("w5").doing)
+        // The fixed phrase for an undescribed command shows as "working", and a question with no text as "needs you".
+        fill(
+            session("w1", nowLine = "Running a command"),
+            session("w2", state = "needs_you", question = null, nowLine = null),
+        )
+        assertEquals("working", vm.state.agents.shown.single { it.recordId == "w1" }.doing)
+        assertEquals("needs you", vm.state.agents.shown.single { it.recordId == "w2" }.doing)
+        for (bare in listOf("Searching the code", "Editing a file", "Updating the task list", "Presenting a plan")) {
+            fill(session("w1", nowLine = bare), session("w2", nowLine = "Editing Panel.kt"))
+            assertEquals("working", vm.state.agents.shown.single { it.recordId == "w1" }.doing, bare)
+            assertEquals("Editing Panel.kt", vm.state.agents.shown.single { it.recordId == "w2" }.doing)
+        }
+        fill(session("w1", nowLine = "Using jq to pull the ids"))
+        assertEquals("Using jq to pull the ids", vm.state.agents.shown.single().doing, "a description the agent wrote is kept")
     }
 
     @Test
-    fun theMainConversationAndFinishedAgentsAreNotListed() {
+    fun theMainConversationAndEndedAgentsAreNotListed() {
         layout(listed = listOf("main"), background = listOf("w1", "w2"))
-        fill(session("w1"), session("w2", state = "done"))
+        fill(session("w1"), session("w2", state = "ended"))
         assertEquals(listOf("w1"), vm.state.agents.shown.map { it.recordId })
+    }
+
+    @Test
+    fun theLiveManagerIsNotListedAsAnAgentWhenItsEndedReviewerSharesItsPane() {
+        // The server now names the live manager as the task's main conversation (see TaskIndexTest);
+        // the dead plan reviewer from the same pane is over, so neither shows as an agent.
+        windowState.updateConfig(
+            WindowConfig(tabs = listOf(TabConfig("tab-1", "one", panes = listOf(pane("n345-ieg3")))), activeTabId = "tab-1"),
+        )
+        val manager = session("dcf42071", taskId = "g1").copy(leafId = "n345-ieg3", background = false)
+        val reviewer = session("b5502f2a", state = "ended", taskId = "g1").copy(leafId = "n345-ieg3")
+        windowState.updateAgentSessions(listOf(manager, reviewer), true)
+        windowState.updateAgentTasks(listOf(task().copy(mainConversation = "dcf42071")))
+        assertTrue(vm.state.beside)
+        assertTrue(vm.state.agents.shown.isEmpty())
     }
 
     @Test
@@ -113,7 +144,7 @@ class TaskPanelTest {
         layout(listed = listOf("main"))
         fill(session("lost", placed = false, nowLine = "Compiling"))
         val line = vm.state.agents.shown.single()
-        assertEquals("Compiling", line.name)
+        assertEquals("Compiling", line.doing)
         assertEquals(MemberAction.NONE, line.action)
         assertNull(line.hint)
         vm.activateMember(line)
@@ -131,13 +162,56 @@ class TaskPanelTest {
         val byId = vm.state.agents.shown.associateBy { it.recordId }
         assertEquals(MemberAction.JUMP, byId.getValue("w1").action)
         assertEquals(MemberAction.SHOW_WAITING, byId.getValue("w2").action)
-        assertEquals(MemberAction.NONE, byId.getValue("w3").action, "a working background agent has nothing to open")
+        assertEquals(MemberAction.PEEK, byId.getValue("w3").action, "a working agent in a hidden tab offers its screen")
+        assertEquals("↵ peek", byId.getValue("w3").hint)
 
         vm.activateMember(byId.getValue("w1"))
         assertEquals(listOf<WindowCommand>(WindowCommand.SetActiveTab("tab-2"), WindowCommand.SetFocusedPane("tab-2", "leaf-w1")), sent)
         sent.clear()
         vm.activateMember(byId.getValue("w2"))
         assertEquals(listOf<WindowCommand>(WindowCommand.ShowWaitingAgent("w2")), sent)
+    }
+
+    @Test
+    fun peekingAtAHiddenAgentReadsItsScreenAndLeavesItsTabHidden() = runNow {
+        layout(listed = listOf("main"), background = listOf("w1"))
+        fill(session("w1"))
+        val line = vm.state.agents.shown.single()
+        vm.activateMember(line)
+        assertEquals(listOf<WindowCommand>(WindowCommand.InspectAgentSession("w1")), sent, "it only asks for the screen: no tab is shown or switched to")
+        assertTrue(vm.state.peek!!.loading)
+
+        windowState.updateAgentInspection(WindowEnvelope.AgentSessionInspection("w1", live = true, screen = listOf("$ make test", "ok")))
+        assertEquals(listOf("$ make test", "ok"), vm.state.peek!!.lines)
+        assertEquals("session w1", vm.state.peek!!.title)
+        assertTrue(windowState.config.value!!.tabs.single { it.id == "tab-bg" }.isBackground)
+
+        vm.closePeek()
+        assertNull(vm.state.peek)
+        assertEquals(listOf("w1"), vm.state.agents.shown.map { it.recordId }, "the panel is as it was")
+    }
+
+    @Test
+    fun anAgentThatPausesStaysListedAsIdleInPlaceAndOnlyItsStateChanges() {
+        layout(listed = listOf("main"), background = listOf("w1", "w2"))
+        fun lineOf(id: String) = vm.state.agents.shown.single { it.recordId == id }
+        val first = session("w1", since = now - 5 * minute)
+        val second = session("w2", since = now - minute)
+        fill(first, second)
+        assertEquals(listOf("w1", "w2"), vm.state.agents.shown.map { it.recordId })
+        assertEquals("working", lineOf("w1").doing)
+
+        fill(first.copy(state = "done", nowLine = null), second)
+        assertEquals(listOf("w1", "w2"), vm.state.agents.shown.map { it.recordId }, "the row holds its place")
+        assertEquals("idle", lineOf("w1").doing)
+        assertEquals(MemberAction.PEEK, lineOf("w1").action, "an idle row in a hidden tab offers the same peek")
+
+        fill(first, second)
+        assertEquals(listOf("w1", "w2"), vm.state.agents.shown.map { it.recordId })
+        assertEquals("working", lineOf("w1").doing)
+
+        fill(first.copy(state = "ended"), second)
+        assertEquals(listOf("w2"), vm.state.agents.shown.map { it.recordId }, "it leaves only when its session ends")
     }
 
     @Test

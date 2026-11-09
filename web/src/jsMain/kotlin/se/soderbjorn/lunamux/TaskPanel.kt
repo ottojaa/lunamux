@@ -1,13 +1,15 @@
 /**
  * The task panel in the web client: a 320px column on the right of the window that sits beside a
  * task's main conversation. Under its header it shows the task's status line, then four blocks:
- * Agents (the members working or waiting on the person), Progress, Links (newest first, each with
- * its kind) and Recent activity. A list shows its first five entries and a "+ N more" line that
+ * Background agents (the task's live sessions: working, waiting on the person or idle), Progress,
+ * Links (newest first, each with its kind) and Recent activity. A list shows its first five entries and a "+ N more" line that
  * opens the rest in place. With nothing to show it says how to set the panel up.
  *
  * ⌘I shows and hides the column in any tab (as does its ×). Beside a main conversation the choice
  * is kept with the other UI settings; elsewhere it holds for that tab only. An agent's line can be
- * focused: ↵ or a click jumps to the session, or shows a waiting background session as a marked tab.
+ * focused: ↵ or a click jumps to the session, shows a waiting background session as a marked tab,
+ * or, for one working or idle in a hidden tab, opens a read-only peek at its screen over the panel
+ * (esc closes it); the tab stays hidden.
  *
  * All state and behaviour live in [TaskPanelViewModel]; this file draws its state with DOM nodes
  * and text only (an agent's words are never parsed as HTML). Each block keeps its element and
@@ -29,6 +31,8 @@ import kotlinx.serialization.json.put
 import org.w3c.dom.HTMLElement
 import org.w3c.dom.events.Event
 import org.w3c.dom.events.KeyboardEvent
+import se.soderbjorn.lunamux.client.viewmodel.AgentFacts
+import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel
 import se.soderbjorn.lunamux.client.viewmodel.TaskPanelViewModel
 import se.soderbjorn.lunamux.client.viewmodel.TaskPanelViewModel.AgentLine
 import se.soderbjorn.lunamux.client.viewmodel.TaskPanelViewModel.LinkRow
@@ -52,12 +56,13 @@ private val taskPanel: TaskPanelViewModel by lazy {
 private var taskPanelStarted = false
 
 /** The column and its parts, built once and put in or taken out of the page as the panel shows or hides. */
-private class PanelParts {
+internal class PanelParts {
     val root = (document.createElement("aside") as HTMLElement).also { it.className = "task-panel" }
     val title = span("tp-title")
     val status = div("tp-status")
     val scroll = div("tp-scroll")
     val blocks = HashMap<String, HTMLElement>()
+    val peek = div("tp-peek")
 
     init {
         val close = document.createElement("button") as HTMLElement
@@ -106,6 +111,15 @@ internal fun startTaskPanel() {
     taskPanelStarted = true
     startAgeClock()
     taskPanel.setOpen(taskPanelOpenIn(toolkitSettingsSnapshot[KEY_TASK_PANEL_OPEN]))
+    // Esc closes an open peek before anything else sees it, so the panel stays as it was.
+    document.addEventListener("keydown", { e: Event ->
+        val key = e as KeyboardEvent
+        if (key.key == "Escape" && taskPanel.state.peek != null) {
+            key.preventDefault()
+            key.stopPropagation()
+            taskPanel.closePeek()
+        }
+    }, true)
     GlobalScope.launch { taskPanel.stateFlow.collect { renderTaskPanel(it) } }
 }
 
@@ -152,6 +166,8 @@ private fun renderTaskPanel(state: TaskPanelViewModel.State) {
     val p = parts
     if (!state.visible) {
         p.root.remove()
+        if (state.peek != null) taskPanel.closePeek()
+        renderPeek(p, null)
         return
     }
     if (!p.root.isConnected) (document.querySelector(".${AppFrameClassNames.BODY}") as? HTMLElement)?.appendChild(p.root) ?: return
@@ -159,13 +175,14 @@ private fun renderTaskPanel(state: TaskPanelViewModel.State) {
     p.title.title = state.title
     p.status.textContent = state.status ?: ""
     p.status.style.display = if (state.status == null) "none" else ""
+    renderPeek(p, state.peek)
     val setup = state.setup
     if (setup != null) {
         syncChildren(p.scroll, listOf(setup), { "setup" }) { buildSetup(it) }
         return
     }
     val wanted = listOf(
-        p.block("Agents") to agentLines(state.agents),
+        p.block("Background agents") to agentLines(state.agents),
         p.block("Progress") to progressLines(state.progress),
         p.block("Links") to linkLines(state.links),
         p.block("Recent activity") to activityLines(state.activity),
@@ -174,8 +191,8 @@ private fun renderTaskPanel(state: TaskPanelViewModel.State) {
     syncChildren(p.scroll, wanted.map { it.first }, { it.getAttribute("data-block")!! }) { it }
 }
 
-private fun agentLines(block: TaskPanelViewModel.Block<AgentLine>): List<TpLine> = listOf<TpLine>(TpTitle("Agents")) +
-    (if (block.total == 0) listOf(TpMuted("No agents working.")) else block.shown.map { TpAgent(it) }) +
+private fun agentLines(block: TaskPanelViewModel.Block<AgentLine>): List<TpLine> = listOf<TpLine>(TpTitle("Background agents")) +
+    (if (block.total == 0) listOf(TpMuted("No background agents.")) else block.shown.map { TpAgent(it) }) +
     listOfNotNull(TpMore(Section.AGENTS, block.more).takeIf { block.more > 0 })
 
 private fun progressLines(progress: TaskPanelViewModel.ProgressView?): List<TpLine> =
@@ -221,22 +238,29 @@ private fun buildMore(line: TpMore): HTMLElement {
 }
 
 /**
- * One agent: the state mark (the spinner while it works, ◆ while it waits), what it is doing (or
- * asking) with its age, and the session's title as a quieter line under it.
+ * One agent: the state mark (spinner while it works, ◆ while it waits, ○ while idle), its title
+ * (two lines at most) with its age, and under it one activity line that never wraps, so the row is
+ * as tall whatever the agent does.
  */
 @OptIn(DelicateCoroutinesApi::class)
-private fun buildAgent(line: AgentLine): HTMLElement {
+internal fun buildAgent(line: AgentLine): HTMLElement {
     val row = div("tp-agent tp-state-${line.state}")
     val mark = div("tp-glyph")
-    if (line.state == "needs_you") mark.textContent = "◆" else mark.appendChild(spinner())
+    when (line.state) {
+        AgentFacts.NEEDS_YOU -> mark.textContent = "◆"
+        AgentFacts.WORKING -> mark.appendChild(spinner())
+        else -> mark.textContent = "○"
+    }
     row.appendChild(mark)
     val text = div("tp-agent-text")
     val top = div("tp-agent-top")
-    top.appendChild(span("tp-agent-title", line.name))
+    top.appendChild(span("tp-agent-title", line.title))
     top.appendChild(ageSpan("tp-agent-age", line.sinceMillis))
     text.appendChild(top)
-    text.appendChild(div("tp-agent-now").also { it.textContent = line.title ?: line.stateWord })
-    line.hint?.let { text.appendChild(buildHint(it)) }
+    val sub = div("tp-agent-sub")
+    sub.appendChild(div("tp-agent-now").also { it.textContent = line.doing; it.title = line.doing })
+    line.hint?.let { sub.appendChild(buildHint(it)) }
+    text.appendChild(sub)
     row.appendChild(text)
     if (line.action != MemberAction.NONE) {
         row.classList.add("tp-agent-active")
@@ -255,7 +279,35 @@ private fun buildAgent(line: AgentLine): HTMLElement {
     return row
 }
 
-/** The hint under an agent's line: each part of "↵ open · …" is a key, set in bold, and the words it does. */
+private var panelPeekTimer: Int? = null
+
+/**
+ * Puts the peek over the scrolling blocks while [peek] is open, re-reading a live screen every
+ * couple of seconds, and takes it away (and stops the timer) when it closes.
+ */
+@OptIn(DelicateCoroutinesApi::class)
+private fun renderPeek(p: PanelParts, peek: AgentsOverviewBackingViewModel.Peek?) {
+    if (peek == null) {
+        p.peek.remove()
+        panelPeekTimer?.let { kotlinx.browser.window.clearInterval(it) }
+        panelPeekTimer = null
+        return
+    }
+    p.peek.textContent = ""
+    p.peek.appendChild(buildPeek(peek))
+    p.peek.appendChild(div("tp-peek-hint").also { it.textContent = "esc closes" })
+    if (!p.peek.isConnected) p.root.appendChild(p.peek)
+    p.peek.style.top = "${p.scroll.offsetTop}px"
+    if (peek.live && panelPeekTimer == null) {
+        panelPeekTimer = kotlinx.browser.window.setInterval({ GlobalScope.launch { taskPanel.refreshPeek() } }, PEEK_REFRESH_MS)
+    } else if (!peek.live) {
+        panelPeekTimer?.let { kotlinx.browser.window.clearInterval(it) }
+        panelPeekTimer = null
+        if (peek.loading) GlobalScope.launch { taskPanel.refreshPeek() }
+    }
+}
+
+/** The hint at the end of an agent's activity line: each part of "↵ open · …" is a key, set in bold, and the words it does. */
 private fun buildHint(hint: String): HTMLElement {
     val host = div("tp-agent-hint")
     hint.split(" · ").forEachIndexed { i, part ->

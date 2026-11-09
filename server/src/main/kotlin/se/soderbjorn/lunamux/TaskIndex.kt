@@ -249,15 +249,14 @@ class TaskIndex(
 
     /** The terminal session id of the pane where a task's main conversation runs now. */
     fun ownSessionOf(taskId: String): String? = synchronized(lock) {
-        val conversation = tasks[taskId]?.mainConversation ?: return@synchronized null
-        tracker.snapshot().firstOrNull { (it.conversationId == conversation || it.id == conversation) && it.state != ENDED }
-            ?.terminalSessionId
+        val conversation = mainConversationOf(taskId) ?: return@synchronized null
+        tracker.snapshot().firstOrNull { it.conversationId == conversation && it.state != ENDED }?.terminalSessionId
     }
 
-    /** The conversation that speaks for a task, as stored, or null when none was named. */
+    /** The conversation that speaks for a task (see [speakerOf]), or null when none was named. */
     fun mainConversationOf(taskId: String): String? = synchronized(lock) {
         val stored = tasks[taskId]?.mainConversation ?: return@synchronized null
-        tracker.snapshot().firstOrNull { it.conversationId == stored || it.id == stored }?.conversationId ?: stored
+        speakerOf(taskId, stored, tracker.snapshot())
     }
 
     /** The `open` action a task file declares for the task whose main conversation is [record]. */
@@ -319,6 +318,21 @@ class TaskIndex(
         private const val SUFFIX_LENGTH = 4
         const val STATUS_MAX = 120
 
+        /**
+         * The conversation that speaks for task [taskId], given the [stored] name. That is the stored
+         * conversation, except when it has ended and a live conversation of the same task in the same
+         * pane started before it: the stored one then ran inside that conversation (a helper started
+         * in its pane) and was named by mistake, so the older live one speaks. A main that really
+         * closed while a helper works is not mended: the helper started after it.
+         */
+        internal fun speakerOf(taskId: String, stored: String, records: List<AgentSessionRecord>): String {
+            val named = records.firstOrNull { it.conversationId == stored || it.id == stored } ?: return stored
+            if (named.state != ENDED || named.leafId == null) return named.conversationId
+            return records
+                .filter { it.taskId == taskId && it.state != ENDED && it.leafId == named.leafId && it.createdAt < named.createdAt }
+                .minByOrNull { it.createdAt }?.conversationId ?: named.conversationId
+        }
+
         private fun isOpen(r: AgentSessionRecord) = r.state != ENDED && r.leafId != null
 
         /**
@@ -346,9 +360,7 @@ class TaskIndex(
                     ?: files.firstOrNull { it.id == t.id }?.modified
                     ?: m?.createdAt
                 t.copy(
-                    mainConversation = m?.mainConversation?.let { stored ->
-                        records.firstOrNull { it.conversationId == stored || it.id == stored }?.conversationId ?: stored
-                    },
+                    mainConversation = m?.mainConversation?.let { speakerOf(t.id, it, records) },
                     status = m?.status,
                     statusAtMillis = m?.statusAt,
                     questionWaits = m?.questionWaits == true && m.status != null,

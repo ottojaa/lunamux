@@ -116,6 +116,14 @@ class AgentSessionTracker(
      */
     private val pendingTasks = HashMap<String, String>()
 
+    /**
+     * Helper conversations: a second `claude` started inside a pane whose own conversation is still
+     * open (a plan reviewer, say), by helper record id to the record of the conversation it runs
+     * inside. Memory only. A helper takes its host's task, but it is never the pane's open record
+     * ([openFor]), so nothing that asks "what runs in this pane" ever answers with it.
+     */
+    private val helpers = HashMap<String, String>()
+
     private val _summaries = MutableStateFlow<List<AgentSessionSummary>>(emptyList())
 
     /** The rows to show clients, republished after every change. */
@@ -127,6 +135,7 @@ class AgentSessionTracker(
             rec.transcriptPath?.let { File(it).takeIf(File::isFile)?.lastModified() }
         }
         records.clear()
+        helpers.clear()
         repo.loadRecentEndedAgentSessions(clock() - HISTORY_WINDOW_MS, HISTORY_MAX).forEach { records[it.id] = it }
         publish()
     }
@@ -164,6 +173,7 @@ class AgentSessionTracker(
 
     private fun applyPoll(panes: List<PaneSnapshot>, interrupts: Map<String, Long>) = synchronized(lock) {
         val live = panes.associateBy { it.terminalSessionId }
+        endSilentHelpers()
         for (r in openRecords()) {
             val pane = live[r.terminalSessionId]
             if (pane == null || !pane.alive) end(r, pane?.screenText?.invoke())
@@ -285,7 +295,10 @@ class AgentSessionTracker(
         val name = event.str("hook_event_name") ?: return@synchronized
         val agentId = event.str("session_id")
         val transcript = event.str("transcript_path")
-        var rec = attach(pane, agentId, transcript)
+        var rec = helpers.keys.firstNotNullOfOrNull { id ->
+            records[id]?.takeIf { it.state != ENDED && it.agentSessionId == agentId && it.terminalSessionId == pane.terminalSessionId }
+        } ?: attach(pane, agentId, transcript, event.str("source"), name) ?: return@synchronized
+        val isHelper = rec.id in helpers
         val now = clock()
         fun set(state: String, nowLine: String? = rec.nowLine, question: String? = null) {
             rec = rec.copy(
@@ -301,7 +314,7 @@ class AgentSessionTracker(
                 toolInFlight.remove(rec.id)
                 set(WORKING, nowLine = null)
                 if (rec.firstPrompt == null) rec = rec.copy(firstPrompt = event.str("prompt")?.take(PROMPT_MAX))
-                if (rec.title == null) rec = rec.copy(title = cleanTitle(pane.programTitle))
+                if (rec.title == null && !isHelper) rec = rec.copy(title = cleanTitle(pane.programTitle))
             }
             "PreToolUse" -> {
                 toolInFlight[rec.id] = rawToolLine(event)
@@ -335,8 +348,9 @@ class AgentSessionTracker(
                 set(DONE, nowLine = null)
             }
             "SessionEnd" -> {
-                end(rec, pane.screenText())
-                awaitScreenClear.add(pane.terminalSessionId)
+                // A helper's end leaves the pane's screen to its own conversation.
+                end(rec, if (isHelper) null else pane.screenText())
+                if (!isHelper) awaitScreenClear.add(pane.terminalSessionId)
                 publish()
                 return@synchronized
             }
@@ -349,10 +363,29 @@ class AgentSessionTracker(
         publish()
     }
 
+    private fun endHelpersOf(hostId: String) {
+        helpers.filterValues { it == hostId }.keys.forEach { id -> records[id]?.let { end(it, null) } }
+    }
+
+    /**
+     * Ends helpers that went quiet: a helper killed without a SessionEnd sends nothing more, and its
+     * transcript stops growing, while a live one (also one running in the background after its host
+     * stopped) keeps doing one or the other. The screen cannot tell, because the pane shows the host.
+     */
+    private fun endSilentHelpers() {
+        val now = clock()
+        for (id in helpers.keys.toList()) {
+            val rec = records[id] ?: continue
+            val written = rec.transcriptPath?.let { File(it).takeIf(File::isFile)?.lastModified() } ?: 0L
+            val last = maxOf(lastHookAt[id] ?: 0L, written, rec.createdAt)
+            if (now - last >= HELPER_SILENT_MS) end(rec, null)
+        }
+    }
+
     /** End the open record of a terminal session that is being torn down. */
     fun onSessionDestroyed(terminalSessionId: String, screen: String?) = synchronized(lock) {
         awaitScreenClear.remove(terminalSessionId)
-        openFor(terminalSessionId)?.let { end(it, screen) }
+        openRecords().filter { it.terminalSessionId == terminalSessionId }.forEach { end(it, screen) }
         publish()
     }
 
@@ -411,9 +444,21 @@ class AgentSessionTracker(
         openRecords().any { it.agent == CLAUDE && it.agentSessionId == null && it.cwd == cwd }
     }
 
-    /** Pick the record a hook event belongs to, creating, adopting or reopening one. */
-    private fun attach(pane: PaneSnapshot, agentId: String?, transcript: String?): AgentSessionRecord {
+    /**
+     * Pick the record a hook event belongs to, creating, adopting or reopening one; null for a late
+     * event of a helper that has already ended. An unknown conversation that speaks while the pane's
+     * identified conversation is open and the pane still shows an agent is a helper started inside
+     * it, unless it is a `clear` or `resume` start, which replaces the conversation.
+     */
+    private fun attach(pane: PaneSnapshot, agentId: String?, transcript: String?, source: String?, hook: String): AgentSessionRecord? {
         val current = openFor(pane.terminalSessionId)
+        if (current != null && current.agent == CLAUDE && current.agentSessionId != null && agentId != null &&
+            current.agentSessionId != agentId && pane.agent != null && source !in REPLACING_STARTS
+        ) {
+            val ended = records.values.any { it.agentSessionId == agentId && it.state == ENDED && it.terminalSessionId == pane.terminalSessionId }
+            if (ended && hook != "SessionStart") return null
+            return open(pane, CLAUDE, SOURCE_HOOKS, agentId, transcript, host = current).also { helpers[it.id] = current.id }
+        }
         if (current != null && current.agent == CLAUDE) {
             if (agentId == null || current.agentSessionId == agentId) return current
         }
@@ -499,6 +544,7 @@ class AgentSessionTracker(
 
     private fun open(
         pane: PaneSnapshot, agent: String, source: String, agentSessionId: String?, transcriptPath: String?,
+        host: AgentSessionRecord? = null,
     ): AgentSessionRecord {
         val git = pane.cwd?.let { gitCache[it]?.second } ?: GitInfo()
         val now = clock()
@@ -514,18 +560,20 @@ class AgentSessionTracker(
             branch = git.branch,
             worktreePath = git.worktreePath,
             repoRoot = git.repoRoot,
-            title = pane.customName?.trim()?.takeIf { it.isNotEmpty() },
+            title = pane.customName?.trim()?.takeIf { it.isNotEmpty() && host == null },
             transcriptPath = transcriptPath,
             links = ticketKeys(git.branch),
             state = DONE,
             stateSince = now,
             createdAt = now,
-            taskId = pane.leafId?.let { pendingTasks.remove(it) } ?: agentSessionId?.let(::taskOfEarlier),
+            taskId = if (host != null) host.taskId
+            else pane.leafId?.let { pendingTasks.remove(it) } ?: agentSessionId?.let(::taskOfEarlier),
             background = pane.background,
         ).also { put(it) }
     }
 
     private fun end(rec: AgentSessionRecord, screen: String?) {
+        if (helpers.remove(rec.id) == null) endHelpersOf(rec.id)
         forgetTurn(rec.id)
         val now = clock()
         val ended = rec.copy(
@@ -563,7 +611,7 @@ class AgentSessionTracker(
     private fun openRecords() = records.values.filter { it.state != ENDED }
 
     private fun openFor(terminalSessionId: String) =
-        records.values.firstOrNull { it.state != ENDED && it.terminalSessionId == terminalSessionId }
+        records.values.firstOrNull { it.state != ENDED && it.terminalSessionId == terminalSessionId && it.id !in helpers }
 
     /**
      * Publish one summary per conversation. A conversation that ran in several panes over time has
@@ -588,6 +636,9 @@ class AgentSessionTracker(
         const val DONE = "done"
         const val ENDED = "ended"
 
+        /** SessionStart sources that replace the pane's conversation rather than start a helper beside it. */
+        val REPLACING_STARTS = setOf("clear", "resume")
+
         /**
          * How far back ended sessions are kept in memory and pushed to clients: the overview lists
          * two weeks. The edge is inclusive here; the client lists no more than this, so a row it
@@ -611,6 +662,9 @@ class AgentSessionTracker(
          * interrupt can land in between.
          */
         const val HOOK_LAG_MS = 1_000L
+
+        /** How long a helper may send no hook and write no transcript before it counts as gone. */
+        const val HELPER_SILENT_MS = 10 * 60_000L
 
         /**
          * Polls in a row (3 s apart, after the poller's own hold of the last state) that must show
