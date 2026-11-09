@@ -7,9 +7,6 @@
  * by peek, the close confirmation and the resume note. `WindowRoutes` calls it
  * for [WindowCommand.SearchAgentSessions] and [WindowCommand.InspectAgentSession]
  * and sends the answers to the asking connection only.
- *
- * @see resumeNoteOf
- * @see se.soderbjorn.lunamux.persistence.SettingsRepository.searchAgentSessions
  */
 package se.soderbjorn.lunamux
 
@@ -59,13 +56,6 @@ object AgentSessionSearch {
      * A task's title is not a column of the session, so the sessions of every task whose title
      * matches are read by task id as well, however old they are, and merged with the rows the
      * ordinary query found.
-     *
-     * @param repo the store to search.
-     * @param tracker supplies the live record for sessions that are open, so their state is current.
-     * @param query what the user typed; surrounding spaces are ignored.
-     * @param tasks says which task each session is in and what that task is called; null searches
-     *   the sessions' own fields only.
-     * @return at most [MAX_MATCHES] matches, best first; empty for a query shorter than [MIN_QUERY].
      */
     fun search(
         repo: SettingsRepository,
@@ -114,12 +104,6 @@ object AgentSessionSearch {
      *
      * The screen of an open session is read live; an ended one gives its saved last screen.
      * Unsaved work is read from the session's folder when it still exists.
-     *
-     * @param recordId the record the user selected.
-     * @param tracker where the record is looked up.
-     * @param tasks says which `open` action a task's main conversation resumes with, so the note
-     *   names the folder Resume really opens; null when no task is known.
-     * @return the details, or null when the record no longer exists.
      */
     fun inspect(recordId: String, tracker: AgentSessionTracker?, tasks: TaskIndex? = null): WindowEnvelope.AgentSessionInspection? {
         val rec = tracker?.find(recordId) ?: return null
@@ -170,8 +154,6 @@ object AgentSessionSearch {
      * About 40 characters either side of the first match of [q] in [text], on one line.
      *
      * Only the line holding the match is used. A cut end is shown with `…`.
-     *
-     * @return the snippet and where the match starts inside it, or null when [text] has no match.
      */
     internal fun snip(text: String, q: String): Pair<String, Int>? {
         val at = text.indexOf(q, ignoreCase = true)

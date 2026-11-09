@@ -16,9 +16,6 @@
  * The tracker publishes its current rows as [AgentSessionTracker.summaries];
  * `WindowRoutes` pushes that to every client as
  * [WindowEnvelope.AgentSessions].
- *
- * @see se.soderbjorn.lunamux.persistence.AgentSessionRecord
- * @see agentEventRoutes
  */
 package se.soderbjorn.lunamux
 
@@ -45,19 +42,6 @@ import java.util.concurrent.ConcurrentHashMap
  * Built by [livePaneSnapshot] from [TerminalSessions] and [WindowState] so the
  * tracker itself never calls into either (it is invoked while
  * [WindowState] holds its lock, during session teardown).
- *
- * @property terminalSessionId the live terminal session id.
- * @property leafId the layout leaf showing the session, if any.
- * @property cwd the pane's current working directory.
- * @property programTitle the program-set terminal title (OSC 0/2), if any.
- * @property agent `claude`, `codex` or `gemini` when the screen shows one, else null.
- * @property state the resolved screen state: `waiting`, `working` or null.
- * @property alive whether the session's process is still running.
- * @property customName the name the user gave the pane (F2), if any. It becomes the
- *   record's title so the name outlives the pane.
- * @property background whether the pane sits in a background tab (see [TabConfig.isBackground]).
- * @property screenText reads the rendered screen as plain text. Kept last so callers can pass it as a
- *   trailing lambda.
  */
 data class PaneSnapshot(
     val terminalSessionId: String,
@@ -72,14 +56,7 @@ data class PaneSnapshot(
     val screenText: () -> String? = { null },
 )
 
-/**
- * Git facts about a folder, read once when a record opens.
- *
- * @property repo folder name of the repository's main checkout.
- * @property branch current branch, null on a detached HEAD.
- * @property worktreePath root of the linked worktree the folder is in; null in a main checkout.
- * @property repoRoot absolute path of the repository's main checkout; null outside git.
- */
+/** Git facts about a folder, read once when a record opens. */
 data class GitInfo(
     val repo: String? = null,
     val branch: String? = null,
@@ -96,14 +73,6 @@ data class GitInfo(
  *
  * Constructed once in `main()` with the shared [SettingsRepository]; tests
  * construct it over a temporary database with a fake [gitInfo] and [clock].
- *
- * @param repo the store the records are persisted to.
- * @param gitInfo reads git metadata for a folder; replaced in tests.
- * @param clock epoch-millis time source; replaced in tests.
- * @param newId mints record ids; replaced in tests.
- * @param onEnded called, with the tracker's lock held, each time a record ends; it must only
- *   hand the record to another thread (the search indexer reads the transcript there).
- * @see PaneSnapshot
  */
 class AgentSessionTracker(
     private val repo: SettingsRepository,
@@ -210,8 +179,6 @@ class AgentSessionTracker(
      * prompt or an interrupted turn (read from the end of its transcript), and a
      * prompt the screen shows answered.
      * Called every 3 s by the state poller with a snapshot of all live panes.
-     *
-     * @param panes every live terminal session.
      */
     fun onPoll(panes: List<PaneSnapshot>) {
         val toOpen = synchronized(lock) {
@@ -227,9 +194,6 @@ class AgentSessionTracker(
      *
      * Runs outside the lock like [warmGit]: it touches files. A file is read again only when its
      * size or last write has moved since the last read.
-     *
-     * @return interrupt times by record id; a record whose last conversation line is not an
-     *   interrupt has no entry.
      */
     private fun interruptsOfHookFed(): Map<String, Long> {
         val candidates = synchronized(lock) {
@@ -347,9 +311,6 @@ class AgentSessionTracker(
      *
      * Called by [applyPoll] with the lock held, when the transcript or the screen shows that the
      * turn is over.
-     *
-     * @param rec the record to settle.
-     * @return the settled record, already stored.
      */
     private fun settleDone(rec: AgentSessionRecord): AgentSessionRecord {
         promptSeen.remove(rec.id)
@@ -368,8 +329,6 @@ class AgentSessionTracker(
      * every poll would push a new frame to every client every few seconds.
      *
      * Called by [applyPoll] with the lock held.
-     *
-     * @param recordId the open record whose pane shows work.
      */
     private fun noteWork(recordId: String) {
         val now = clock()
@@ -384,9 +343,6 @@ class AgentSessionTracker(
      * Events for a session id the tracker has not seen yet behave as an
      * implicit SessionStart, so connecting hooks while Claude is already
      * running still works.
-     *
-     * @param pane the pane the event came from; events from unknown panes are ignored.
-     * @param event the hook's stdin JSON.
      */
     fun onHook(pane: PaneSnapshot?, event: JsonObject) {
         if (pane == null) return
@@ -468,9 +424,6 @@ class AgentSessionTracker(
      *
      * Called from [TerminalSessions.destroy] just before the session shuts
      * down, so the screen can still be read.
-     *
-     * @param terminalSessionId the session being destroyed.
-     * @param screen its screen text at that moment.
      */
     fun onSessionDestroyed(terminalSessionId: String, screen: String?) = synchronized(lock) {
         awaitScreenClear.remove(terminalSessionId)
@@ -482,8 +435,6 @@ class AgentSessionTracker(
      * Mark every open record ended, saving each pane's screen.
      *
      * Called from the JVM shutdown hook so a clean stop leaves nothing open.
-     *
-     * @param panes the live panes whose screens to save.
      */
     fun endAll(panes: List<PaneSnapshot>) = synchronized(lock) {
         val live = panes.associateBy { it.terminalSessionId }
@@ -497,10 +448,6 @@ class AgentSessionTracker(
      * [id] is a record id, else the agent's own conversation id: a task stores its main
      * conversation that way, and the record of a conversation older than the ones held in memory
      * is found by it in the database.
-     *
-     * @param id the record id the user picked, or a conversation id.
-     * @return the record from memory or the database, or null if unknown. For a conversation id,
-     *   the newest record of that conversation.
      */
     fun find(id: String): AgentSessionRecord? = synchronized(lock) {
         records[id] ?: repo.findAgentSessionById(id)
@@ -514,8 +461,6 @@ class AgentSessionTracker(
      *
      * Called by [TaskIndex] whenever [summaries] changes, because a summary lacks the agent's own
      * session id that a task's main conversation is found by.
-     *
-     * @return the records, in the order [summaries] lists them.
      */
     fun snapshot(): List<AgentSessionRecord> = synchronized(lock) { conversationRecords() }
 
@@ -524,9 +469,6 @@ class AgentSessionTracker(
      *
      * Called by [TaskIndex] when an agent joins a pane to a task: the id the MCP tools use for a
      * pane is its terminal session id.
-     *
-     * @param terminalSessionId the `LUNAMUX_SESSION_ID` of the pane.
-     * @return the pane's open record, or null when no agent is running in it.
      */
     fun openRecordOf(terminalSessionId: String): AgentSessionRecord? = synchronized(lock) { openFor(terminalSessionId) }
 
@@ -535,10 +477,6 @@ class AgentSessionTracker(
      *
      * Called by [TaskIndex] for the MCP `add_to_task` and `remove_from_task` tools. The change is
      * stored and pushed like any other change to the record.
-     *
-     * @param recordId the record's id.
-     * @param taskId the task to join, or null to leave the task the agent chose.
-     * @return false when the record is not held in memory, true otherwise.
      */
     fun setTask(recordId: String, taskId: String?): Boolean = synchronized(lock) {
         val rec = records[recordId] ?: return false
@@ -555,9 +493,6 @@ class AgentSessionTracker(
      * Called by [TaskIndex] for a pane that has no agent yet (a window just created with a task,
      * or a shell the agent grouped before starting a session in it). [open] and the reopening of a
      * resumed record read the promise and clear it.
-     *
-     * @param leafId the pane's layout leaf id.
-     * @param taskId the task the pane's next session joins, or null to withdraw the promise.
      */
     fun setPendingTask(leafId: String, taskId: String?) = synchronized(lock) {
         if (taskId == null) pendingTasks.remove(leafId) else pendingTasks[leafId] = taskId
@@ -569,10 +504,6 @@ class AgentSessionTracker(
      *
      * Called by [TaskIndex.openLeavesOf], so a second window created for a task before the first
      * one's agent has started still finds the first one's tab.
-     *
-     * @param taskId the task's id.
-     * @return the layout leaf ids of those panes.
-     * @see setPendingTask
      */
     fun pendingLeavesOf(taskId: String): List<String> = synchronized(lock) {
         pendingTasks.filterValues { it == taskId }.keys.toList()
@@ -583,9 +514,6 @@ class AgentSessionTracker(
      * touching the database.
      *
      * Called by search so a hit on an open session shows its live state.
-     *
-     * @param id the record id.
-     * @return the in-memory record, or null.
      */
     fun cached(id: String): AgentSessionRecord? = synchronized(lock) { records[id] }
 
@@ -594,9 +522,6 @@ class AgentSessionTracker(
      *
      * Called by the history import through [AgentSearchIndexer.runningIn]: such a session was
      * seen on screen only, so its transcript cannot be matched to it by id.
-     *
-     * @param cwd the folder to check.
-     * @return true when an open, unidentified Claude record has exactly that folder.
      */
     fun hasUnidentifiedClaudeIn(cwd: String): Boolean = synchronized(lock) {
         openRecords().any { it.agent == CLAUDE && it.agentSessionId == null && it.cwd == cwd }
@@ -611,11 +536,6 @@ class AgentSessionTracker(
      * resumed conversation whose pane was seen before its first hook), the older record is
      * reopened in this pane and the screen record is dropped, in memory and in the database, so
      * the conversation is one record and search lists it once.
-     *
-     * @param pane the pane the event came from.
-     * @param agentId the hook's `session_id`, or null.
-     * @param transcript the hook's `transcript_path`, or null.
-     * @return the record to apply the event to; the caller stores it.
      */
     private fun attach(pane: PaneSnapshot, agentId: String?, transcript: String?): AgentSessionRecord {
         val current = openFor(pane.terminalSessionId)
@@ -835,23 +755,13 @@ class AgentSessionTracker(
     }
 }
 
-/**
- * One read of a hook-fed record's transcript tail, kept so the file is read again only when it changes.
- *
- * @property size the file's length in bytes when it was read.
- * @property written the file's last write time in epoch millis when it was read.
- * @property interruptedAt what [TranscriptTail.interruptedAt] returned.
- * @see AgentSessionTracker
- */
+/** One read of a hook-fed record's transcript tail, kept so the file is read again only when it changes. */
 internal data class TailRead(val size: Long, val written: Long, val interruptedAt: Long?)
 
 /**
  * The row the clients see for this record.
  *
  * Used by the tracker's published list and by search results.
- *
- * @receiver the stored record.
- * @return its summary.
  */
 internal fun AgentSessionRecord.toSummary() = AgentSessionSummary(
     id = id, agent = agent, state = state, stateSince = stateSince,
@@ -875,9 +785,6 @@ private const val FIRST_PROMPT_MAX = 160
  *
  * Called by [toSummary]; the overview shows it after "❯" for a row that has no tool line or
  * last reply to show.
- *
- * @param prompt the stored first prompt (up to 500 characters, any number of lines).
- * @return its first non-blank line, at most [FIRST_PROMPT_MAX] characters, or null when blank.
  */
 internal fun firstPromptLine(prompt: String): String? =
     prompt.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }?.take(FIRST_PROMPT_MAX)
@@ -890,9 +797,6 @@ private const val LAST_SAID_MAX = 160
  * is used.
  *
  * Called by [AgentSessionTracker] on every Stop hook, for questions and statements alike.
- *
- * @param message the full, trimmed reply text.
- * @return the first line of its last paragraph (possibly empty for blank input).
  */
 internal fun lastSaidOf(message: String): String {
     val paragraphs = message.trim().split("\n\n").asReversed()
@@ -905,30 +809,17 @@ internal fun lastSaidOf(message: String): String {
 private const val SCREEN_LINES = 200
 private val TICKET_KEY = Regex("""\b[A-Z][A-Z0-9]+-\d+\b""")
 
-/**
- * Ticket keys such as `ABC-12` found in a branch name or title.
- *
- * @param text a branch name or title, or null.
- * @return the distinct keys in order of appearance.
- */
+/** Ticket keys such as `ABC-12` found in a branch name or title. */
 internal fun ticketKeys(text: String?): List<String> =
     if (text == null) emptyList() else TICKET_KEY.findAll(text).map { it.value }.distinct().toList()
 
-/**
- * The last 200 lines of [screen], trailing blank lines removed.
- *
- * @param screen the rendered screen as plain text.
- * @return the lines to store as `last_screen`.
- */
+/** The last 200 lines of [screen], trailing blank lines removed. */
 internal fun lastLines(screen: String): String =
     screen.trimEnd().lines().takeLast(SCREEN_LINES).joinToString("\n")
 
 /**
  * Tidy a program-set terminal title for display: strips the spinner or
  * status glyph an agent prefixes and drops titles that only name the agent.
- *
- * @param raw the raw OSC title, or null.
- * @return the cleaned title, or null when nothing useful is left.
  */
 internal fun cleanTitle(raw: String?): String? {
     val t = raw?.trim()?.dropWhile { !it.isLetterOrDigit() }?.trim().orEmpty()
@@ -955,10 +846,6 @@ internal fun cleanTitle(raw: String?): String? {
  * shows what is asked. Every line is cut at [TOOL_LINE_MAX], which is ample for a row.
  *
  * Called from the tracker's `PreToolUse` handling.
- *
- * @param event a PreToolUse hook payload.
- * @return for example `Running the server tests`, or null without a tool name.
- * @see rawToolLine for the exact call, which a permission prompt names
  */
 internal fun toolLine(event: JsonObject): String? {
     val tool = event.str("tool_name") ?: return null
@@ -976,10 +863,6 @@ internal fun toolLine(event: JsonObject): String? {
  * [TOOL_LINE_MAX].
  *
  * Called from the tracker's `PreToolUse` handling, which keeps it while the call is in flight.
- *
- * @param event a PreToolUse hook payload.
- * @return for example `Bash ./gradlew test`, or null without a tool name.
- * @see toolLine for the wording a row shows
  */
 internal fun rawToolLine(event: JsonObject): String? {
     val tool = event.str("tool_name") ?: return null
@@ -996,9 +879,6 @@ internal fun rawToolLine(event: JsonObject): String? {
  *
  * Called from the tracker's `PreToolUse` handling: that call is a prompt on screen, so the
  * conversation needs the person from the moment it starts.
- *
- * @param event a PreToolUse hook payload.
- * @return the first question's text, or null when the call is another tool or carries no question.
  */
 internal fun askedQuestionOf(event: JsonObject): String? {
     if (event.str("tool_name") != ASK_TOOL) return null
@@ -1014,10 +894,6 @@ internal fun askedQuestionOf(event: JsonObject): String? {
  * any other type are not. A version that sends no type is read by its text.
  *
  * Called from the tracker's `Notification` handling.
- *
- * @param type the hook's `notification_type`, or null.
- * @param message the hook's text, or null.
- * @return true when the conversation now waits for the person.
  */
 internal fun isPromptNotification(type: String?, message: String?): Boolean = when (type) {
     "permission_prompt", "elicitation_dialog" -> true
@@ -1041,13 +917,7 @@ private fun firstLine(text: String): String? =
 private fun fileNameOf(path: String): String =
     path.trimEnd('/', '\\').substringAfterLast('/').substringAfterLast('\\')
 
-/**
- * The words for one tool call, before the length cut.
- *
- * @param tool the tool name from the hook payload.
- * @param input the call's `tool_input`, or null.
- * @return the phrase described at [toolLine].
- */
+/** The words for one tool call, before the length cut. */
 private fun wordsFor(tool: String, input: JsonObject?): String {
     fun arg(vararg keys: String): String? =
         keys.firstNotNullOfOrNull { input?.str(it)?.let(::firstLine) }
@@ -1086,9 +956,6 @@ private fun hostOf(url: String): String =
  *
  * A connector's own `claude_ai_` prefix is dropped and underscores become spaces, so
  * `mcp__lunamux__list_tasks` reads `lunamux: list tasks`.
- *
- * @param tool the tool name from the hook payload.
- * @return the phrase, or null when [tool] is not an MCP tool name.
  */
 private fun mcpWords(tool: String): String? {
     if (!tool.startsWith("mcp__")) return null
@@ -1117,14 +984,6 @@ private const val ASK_PREFIX = "Asks: "
  * it is not a request to allow the tool.
  *
  * Called from the tracker's `Notification` hook handling.
- *
- * @param pending the [rawToolLine] of the PreToolUse that preceded the prompt, or null.
- * @param message the hook's own text, used when no tool call is pending or the prompt is not a
- *   permission prompt.
- * @param type the hook's `notification_type`, or null from a version that omits it (taken as a
- *   permission prompt).
- * @return the line to show, or null when there is neither.
- * @see rawToolLine
  */
 internal fun pendingQuestionOf(pending: String?, message: String?, type: String? = null): String? = when {
     pending == null -> message
@@ -1141,9 +1000,6 @@ private fun JsonObject.str(key: String): String? =
  *
  * Called when a record opens. Any failure (no git, not a repository, a
  * timeout) yields an empty [GitInfo].
- *
- * @param cwd the folder to inspect, or null.
- * @return what git reported.
  */
 fun readGitInfo(cwd: String?): GitInfo {
     if (cwd.isNullOrBlank() || !File(cwd).isDirectory) return GitInfo()
@@ -1168,10 +1024,6 @@ private fun git(cwd: String, vararg args: String): String? =
  *
  * Called by the state poller, the events endpoint and the shutdown hook.
  * Reads [WindowState] to find the pane that shows the session.
- *
- * @param id the terminal session id.
- * @param states the poll's resolved states, to fill in the screen state.
- * @return the snapshot, or null if the session no longer exists.
  */
 internal fun livePaneSnapshot(id: String, states: Map<String, String?> = emptyMap()): PaneSnapshot? {
     val session = TerminalSessions.get(id) ?: return null

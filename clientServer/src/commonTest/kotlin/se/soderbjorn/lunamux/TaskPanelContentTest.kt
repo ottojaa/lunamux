@@ -5,9 +5,6 @@
  * Runs on every :clientServer target: the server encodes a block with [windowJson] and stores it,
  * and the web, Android and iOS clients decode it with the same configuration, so all of them
  * must agree on a link's own kind and time and on what a missing one means.
- *
- * @see TaskBlockContent.Links
- * @see TaskLink
  */
 package se.soderbjorn.lunamux
 

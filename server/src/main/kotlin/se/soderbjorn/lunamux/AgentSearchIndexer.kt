@@ -6,10 +6,6 @@
  * runs three kinds of job one at a time on a single daemon thread: index a
  * session that just ended, backfill sessions recorded before search existed,
  * and import Claude Code history.
- *
- * @see AgentTranscriptText
- * @see ClaudeHistoryImport
- * @see AgentSessionTracker
  */
 package se.soderbjorn.lunamux
 
@@ -27,9 +23,6 @@ import java.util.concurrent.Executors
  * [AgentSessionTracker] as its end-of-session hook, and `main()` calls [backfill]
  * and [importHistory] at start-up and when Claude Code becomes connected. Tests
  * construct it over a temporary database and call [awaitIdle].
- *
- * @param repo the store the text is written to.
- * @param projects supplies the transcript folder for [importHistory]; replaced in tests.
  */
 class AgentSearchIndexer(
     private val repo: SettingsRepository,
@@ -42,8 +35,6 @@ class AgentSearchIndexer(
      *
      * `main()` sets it once the tracker exists (the tracker needs this indexer first). Used by
      * [importHistory] to hold back a transcript that may belong to a session still running.
-     *
-     * @see AgentSessionTracker.hasUnidentifiedClaudeIn
      */
     @Volatile
     var runningIn: (String) -> Boolean = { false }
@@ -56,8 +47,6 @@ class AgentSearchIndexer(
      *
      * Called by the tracker (with its lock held, so it only queues). Records of other agents
      * and records without a transcript path are ignored: they match on their last screen.
-     *
-     * @param record the record that ended.
      */
     fun indexEnded(record: AgentSessionRecord) {
         val path = record.transcriptPath ?: return
@@ -79,8 +68,6 @@ class AgentSearchIndexer(
      *
      * Called at start-up and when the user connects Claude Code, never while it is
      * disconnected.
-     *
-     * @see ClaudeHistoryImport.run
      */
     fun importHistory() = submit("import") { ClaudeHistoryImport.run(repo, projects(), runningIn) }
 

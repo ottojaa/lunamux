@@ -11,9 +11,6 @@
  * the `LUNAMUX_*` variables every Lunamux pane exports, and does nothing
  * (exit 0, no output) when they are absent, so Claude Code runs outside
  * Lunamux are unaffected.
- *
- * @see agentEventRoutes
- * @see AgentSessionTracker
  */
 package se.soderbjorn.lunamux
 
@@ -45,10 +42,6 @@ import java.nio.file.StandardCopyOption
  *
  * Created once in `main()`; the `/window` socket reads [connected] and calls
  * [connect] / [disconnect] for the App Settings row.
- *
- * @param file the settings file. Defaults to `~/.claude/settings.json`, or the
- *   path in the `lunamux.claudeSettings` system property when set (used to try
- *   the feature against a throwaway file).
  */
 class ClaudeHooks(
     private val file: File = File(
@@ -65,16 +58,12 @@ class ClaudeHooks(
      * Re-read the file and update [connected].
      *
      * Called when a client connects, since the file may have been edited by hand.
-     *
-     * @return the new value of [connected].
      */
     fun refresh(): Boolean = readConnected().also { _connected.value = it }
 
     /**
      * Add a Lunamux hook entry for each event in [EVENTS], replacing any
      * Lunamux entries already present so the call is idempotent.
-     *
-     * @return null on success, or a message for the user (invalid JSON, unwritable file).
      */
     fun connect(): String? = edit { root ->
         val hooks = (root["hooks"] as? JsonObject).orEmpty().withoutOurs()
@@ -90,8 +79,6 @@ class ClaudeHooks(
      * Remove every Lunamux hook entry, leaving other hooks and keys alone.
      * Event lists and the `hooks` object are dropped only if removing ours
      * left them empty.
-     *
-     * @return null on success, or a message for the user.
      */
     fun disconnect(): String? {
         if (!file.exists()) return null

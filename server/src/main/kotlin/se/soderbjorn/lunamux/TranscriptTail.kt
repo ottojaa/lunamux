@@ -9,9 +9,6 @@
  * the evidence [AgentSessionTracker] settles such a record from.
  *
  * This file contains [TranscriptTail].
- *
- * @see AgentSessionTracker
- * @see AgentTranscriptText
  */
 package se.soderbjorn.lunamux
 
@@ -49,11 +46,6 @@ object TranscriptTail {
      * has followed is history and returns null. A tail whose last conversation line cannot be
      * read (it is larger than the window, or half written) returns null too: no evidence is
      * never taken as an interrupt.
-     *
-     * @param path the transcript file, from a hook's `transcript_path`.
-     * @return epoch millis of the interrupt line, or null when the turn was not interrupted, the
-     *   file is missing, or the line has no readable time.
-     * @see AgentSessionTracker.onPoll
      */
     fun interruptedAt(path: String): Long? {
         val file = File(path)

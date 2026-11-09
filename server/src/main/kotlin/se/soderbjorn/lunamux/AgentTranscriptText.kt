@@ -9,9 +9,6 @@
  * searchable text.
  *
  * This file contains [AgentTranscriptText] and its result type [TranscriptInfo].
- *
- * @see ClaudeHistoryImport
- * @see AgentSearchIndexer
  */
 package se.soderbjorn.lunamux
 
@@ -25,21 +22,7 @@ import kotlinx.serialization.json.contentOrNull
 import java.io.File
 import java.time.Instant
 
-/**
- * What one transcript file says about its session.
- *
- * @property text user and assistant text, oldest first, at most [AgentTranscriptText.MAX_CHARS]
- *   characters (the end of the conversation wins when it is longer).
- * @property sessionId Claude's session id, from the first line that carries one.
- * @property cwd the folder the session ran in.
- * @property gitBranch the branch checked out when the session ran, if recorded.
- * @property entrypoint how the session was started: `cli` for an interactive terminal session,
- *   `sdk-cli` for `claude -p`, `claude-desktop` for a background one.
- * @property title Claude's own title for the session (the last `ai-title` line), if any.
- * @property firstPrompt the first thing the user typed, shortened.
- * @property startedAt epoch millis of the first timestamped line, or null.
- * @property endedAt epoch millis of the last timestamped line, or null.
- */
+/** What one transcript file says about its session. */
 data class TranscriptInfo(
     val text: String,
     val sessionId: String?,
@@ -58,8 +41,6 @@ data class TranscriptInfo(
  * Called by [AgentSearchIndexer] when a session ends and for the one-off backfill,
  * and by [ClaudeHistoryImport] for transcripts written before Lunamux recorded
  * sessions. Stateless; safe to call from any thread.
- *
- * @see TranscriptInfo
  */
 object AgentTranscriptText {
     /** The most text kept per transcript; when there is more, the end is kept. */
@@ -73,11 +54,6 @@ object AgentTranscriptText {
      * The conversation text of one transcript.
      *
      * Called when a Claude record ends, to fill its `search_text`.
-     *
-     * @param path the transcript file.
-     * @return the text, an empty string when the transcript holds none, or null when the file
-     *   cannot be read (for example Claude Code already deleted it).
-     * @see read
      */
     fun extract(path: String): String? = read(File(path))?.text
 
@@ -87,13 +63,6 @@ object AgentTranscriptText {
      * Lines that are not JSON objects, side-chain lines (a sub-agent's own conversation) and
      * meta lines are skipped. From `user` and `assistant` lines only plain text parts are kept:
      * tool calls, tool results and thinking are dropped.
-     *
-     * @param file the transcript file.
-     * @param onlyEntrypoint when set, reading stops at the first line that names a different
-     *   entrypoint, so [ClaudeHistoryImport] does not parse the whole of a background or `-p`
-     *   transcript only to discard it. The returned info then holds the partial text and its
-     *   `entrypoint` shows why it stopped.
-     * @return what the file says, or null when it cannot be read.
      */
     fun read(file: File, onlyEntrypoint: String? = null): TranscriptInfo? {
         if (!file.isFile) return null

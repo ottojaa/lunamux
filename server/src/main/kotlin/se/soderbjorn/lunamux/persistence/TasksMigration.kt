@@ -8,8 +8,6 @@
  * changes nothing after the first.
  *
  * Contains [TasksMigration].
- *
- * @see SettingsRepository
  */
 package se.soderbjorn.lunamux.persistence
 
@@ -23,8 +21,6 @@ import app.cash.sqldelight.db.SqlDriver
  * Called by [SettingsRepository] while it opens the database, after every table it needs exists.
  * The copy and the drops happen in one transaction, so a failure leaves the old tables as they were
  * and the next start tries again. It is the only code that still names the old tables and columns.
- *
- * @see SettingsRepository
  */
 internal object TasksMigration {
     private const val OLD_TASKS = "agent_tasks"
@@ -40,10 +36,6 @@ internal object TasksMigration {
      * conversation of the newest session record that ran in that pane, preferring a record that
      * carries the task's id: the pane may have been the person's own session, which never carried
      * it. A record that carries another task's id is never taken. A pane with no record gives no main.
-     *
-     * @param driver the open database; `tasks` and `agent_sessions` must exist.
-     * @param inTransaction runs the given block as one transaction against [driver], rolling it back
-     *   if the block throws.
      */
     fun run(driver: SqlDriver, inTransaction: (() -> Unit) -> Unit) {
         val tables = tableNames(driver)

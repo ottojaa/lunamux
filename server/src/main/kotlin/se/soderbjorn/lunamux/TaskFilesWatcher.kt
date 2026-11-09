@@ -7,9 +7,6 @@
  * and [OpenJson]). The format is described in `docs/tasks.md`. A file only declares a task: its id,
  * its title, its repository and how to start a session for it. Who is in the task is not written
  * in the file; it is the sessions that carry the task's id. Lunamux only ever reads these files.
- *
- * @see TaskIndex
- * @see AgentTask
  */
 package se.soderbjorn.lunamux
 
@@ -32,11 +29,6 @@ import java.io.File
  * in [TaskFilesWatcher] (one warning, task skipped) instead of failing JSON decoding with a less
  * helpful message. Unknown fields are ignored, which is how a file written for an older version,
  * with a member list, a `lead` action or a `version`, still parses: those keys say nothing now.
- *
- * @property id the task's id, also what [WindowCommand.OpenTask] names.
- * @property title the task's name.
- * @property repo repository name shown beside the title.
- * @property open how and where to start the session the header's open action starts.
  */
 @Serializable
 internal data class TaskFileJson(
@@ -46,34 +38,17 @@ internal data class TaskFileJson(
     val open: OpenJson? = null,
 )
 
-/**
- * The `open` action of a task file.
- *
- * @property command the line typed into a new tab's shell to start the session.
- * @property folder absolute folder the session runs in (a leading `~/` is expanded).
- */
+/** The `open` action of a task file. */
 @Serializable
 internal data class OpenJson(val command: String? = null, val folder: String? = null)
 
-/**
- * The `open` action of a parsed task: the command the server types and where.
- *
- * @property command the line typed into a new tab's shell; never leaves the server.
- * @property folder canonical absolute folder the tab opens in.
- */
+/** The `open` action of a parsed task: the command the server types and where. */
 data class TaskOpen(val command: String, val folder: String)
 
 /**
  * A parsed, validated task file: what [TaskFilesWatcher] keeps per file between polls.
  *
  * The folder of the `open` action is already expanded and canonical.
- *
- * @property id the task's id.
- * @property title the task's name.
- * @property repo repository name shown beside the title, or null.
- * @property open the `open` action, or null when the file gives none.
- * @property modified the file's modification time in epoch millis; the earliest sign of when the
- *   task existed, used to place a task that has no session yet.
  */
 data class TaskFile(
     val id: String,
@@ -96,11 +71,6 @@ private class Seen(val modified: Long, val length: Long, val parsed: TaskFile?)
  *
  * Created once by `main()`; the [TaskIndex] collects [files] and answers every question about a
  * task, including which `open` command the open-task route runs.
- *
- * @param dir the folder holding `<id>.json` files; it may not exist. When two files share an id
- *   the newer file wins.
- * @param warn receives each warning about a file that was skipped; logs by default.
- * @see TaskIndex
  */
 class TaskFilesWatcher(
     private val dir: File,
@@ -117,8 +87,6 @@ class TaskFilesWatcher(
      * Start watching: poll the folder every 3 seconds.
      *
      * Called once from `main()` with the server's background scope.
-     *
-     * @param scope the scope the loop runs in; cancelling it stops the watcher.
      */
     fun start(scope: CoroutineScope) {
         scope.launch {
@@ -201,9 +169,6 @@ class TaskFilesWatcher(
  *
  * Used by the watcher for the folder of a task file's `open` action, so that a symlinked folder
  * compares equal to its target.
- *
- * @param path the path to resolve.
- * @return the canonical path.
  */
 internal fun canonical(path: String): String =
     try { File(path).canonicalPath } catch (_: Exception) { File(path).absolutePath }

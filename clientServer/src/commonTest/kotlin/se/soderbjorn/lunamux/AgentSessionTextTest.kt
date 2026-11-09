@@ -1,8 +1,6 @@
 /**
  * Tests for [AgentSessionText]: the rules that turn a session's stored words into what the agents
  * overview shows (plain previews, titles that name the work).
- *
- * @see AgentSessionText
  */
 package se.soderbjorn.lunamux
 

@@ -7,9 +7,6 @@
  * route itself). The hook command that calls the endpoint is installed by
  * [ClaudeHooks] and reads the three `LUNAMUX_*` variables from the pane's
  * environment, so a Claude Code run outside Lunamux posts nothing.
- *
- * @see AgentSessionTracker.onHook
- * @see ClaudeHooks
  */
 package se.soderbjorn.lunamux
 
@@ -55,12 +52,7 @@ object AgentEvents {
     @Volatile
     var port: Int = SERVER_TLS_PORT
 
-    /**
-     * The environment a pane's shell gets so hooks can reach the endpoint.
-     *
-     * @param sessionId the terminal session the shell belongs to.
-     * @return `LUNAMUX_SESSION_ID`, `LUNAMUX_EVENTS_URL` and `LUNAMUX_EVENTS_TOKEN`.
-     */
+    /** The environment a pane's shell gets so hooks can reach the endpoint. */
     fun env(sessionId: String): Map<String, String> = mapOf(
         "LUNAMUX_SESSION_ID" to sessionId,
         "LUNAMUX_EVENTS_URL" to "https://127.0.0.1:$port/api/agent-events",
@@ -82,12 +74,6 @@ private val eventScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limited
  * tracker's short fields is kept.
  *
  * Called by `Application.module`.
- *
- * @param tracker the tracker the events are folded into.
- * @param snapshot resolves a terminal session id to its pane; replaced in tests.
- * @param isLoopback decides whether a peer address is local; replaced in tests, since the
- *   test engine only ever reports a loopback peer.
- * @see AgentEvents
  */
 internal fun Route.agentEventRoutes(
     tracker: AgentSessionTracker,

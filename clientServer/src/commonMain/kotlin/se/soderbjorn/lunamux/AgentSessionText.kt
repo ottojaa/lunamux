@@ -43,9 +43,6 @@ object AgentSessionText {
     /**
      * Whether [line] is only a code fence (``` or ~~~, with or without a language), which says
      * nothing and so is never shown as a preview.
-     *
-     * @param line one line of text.
-     * @return true for a line that is just a fence.
      */
     fun isFenceLine(line: String): Boolean = FENCE.matches(line)
 
@@ -58,9 +55,6 @@ object AgentSessionText {
      *
      * Called by [previewOf] and [titleFromPrompt]; the view model calls it directly for lines it
      * already has.
-     *
-     * @param line one line of possibly marked-up text.
-     * @return the plain text, possibly empty.
      */
     fun plain(line: String): String {
         var t = line.replace(HEADING, "").replace(QUOTE, "").replace(LIST_MARKER, "")
@@ -78,9 +72,6 @@ object AgentSessionText {
      *
      * Blank lines, lines that are only a code fence and rules are passed over, so a reply whose
      * stored first line is a bare fence still gives the line after it.
-     *
-     * @param text a stored reply, prompt or status, possibly several lines; null for none.
-     * @return the plain first line with content, or null when there is none.
      */
     fun previewOf(text: String?): String? =
         text?.lineSequence()
@@ -96,9 +87,6 @@ object AgentSessionText {
      * ending with an ellipsis when it cut something off.
      *
      * Called by the view model for a session that has no stored title worth showing.
-     *
-     * @param prompt the first prompt or its first line; null for none.
-     * @return the title, or null when the prompt holds nothing but commands, paths or markup.
      */
     fun titleFromPrompt(prompt: String?): String? {
         val line = previewOf(prompt) ?: return null
@@ -124,12 +112,6 @@ object AgentSessionText {
      * checkout calls itself; none of them tells the person what the session was for.
      *
      * Called by the view model's title rule.
-     *
-     * @param title the stored title; null or blank is never meaningful.
-     * @param branch the session's branch, if any.
-     * @param repo the session's repository folder name, if any.
-     * @param folder the last segment of the session's working folder, if any.
-     * @return true when [title] can be shown as it is.
      */
     fun isMeaningfulTitle(title: String?, branch: String?, repo: String?, folder: String?): Boolean {
         val t = title?.trim().orEmpty()

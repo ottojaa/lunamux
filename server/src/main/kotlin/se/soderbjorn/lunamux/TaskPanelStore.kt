@@ -5,10 +5,6 @@
  * windows' push, writes every change through to the `task_panel_blocks` table, and checks every
  * block against [TaskPanelLimits] before it is kept; [TaskPanelLimits.check] is the one place
  * those rules live, so the MCP tools only turn an agent's JSON into blocks.
- *
- * @see se.soderbjorn.lunamux.mcp.registerMcpPanelTools
- * @see TaskPanelBlock
- * @see TaskIndex
  */
 package se.soderbjorn.lunamux
 
@@ -58,12 +54,7 @@ object TaskPanelLimits {
     private val idPattern = Regex("[A-Za-z0-9._:-]+")
     private val urlPattern = Regex("(https?|file)://\\S+", RegexOption.IGNORE_CASE)
 
-    /**
-     * Whether [s] holds a control character (anything below space, DEL, or a C1 control).
-     *
-     * @param s the text to look at.
-     * @return true when it holds one.
-     */
+    /** Whether [s] holds a control character (anything below space, DEL, or a C1 control). */
     fun hasControlChars(s: String): Boolean = s.any { it < ' ' || it == '\u007f' || it in '\u0080'..'\u009f' }
 
     /**
@@ -72,10 +63,6 @@ object TaskPanelLimits {
      * Called by [TaskPanelStore] for every block of a write. Timelines longer than
      * [TIMELINE_MAX] are cut to their newest entries (by time, keeping the order they came in);
      * every other broken rule throws.
-     *
-     * @param block the block as the agent gave it.
-     * @return the block to keep, equal to [block] unless a timeline was cut.
-     * @throws TaskException naming the block and the rule it broke.
      */
     fun check(block: TaskPanelBlock): TaskPanelBlock {
         val id = block.id
@@ -155,11 +142,6 @@ object TaskPanelLimits {
  * [remove]; the window routes collect [state] to push [WindowEnvelope.TaskPanel] frames. Reads are
  * lock-free through [state]; writes serialise on one lock and are stored before the new state is
  * published, so a window never sees a block that a restart would lose.
- *
- * @property repo where blocks are stored; this class is the only writer of that table.
- * @property taskIndex tells which tasks exist; a block is only kept for a known task.
- * @property clock the server clock that stamps each written block.
- * @see TaskPanelLimits
  */
 class TaskPanelStore(
     private val repo: SettingsRepository,
@@ -192,12 +174,7 @@ class TaskPanelStore(
         return byTask
     }
 
-    /**
-     * One task's blocks.
-     *
-     * @param taskId the task's id.
-     * @return its blocks in drawing order, empty when it has none.
-     */
+    /** One task's blocks. */
     fun blocksOf(taskId: String): List<TaskPanelBlock> = _state.value[taskId].orEmpty()
 
     /**
@@ -205,10 +182,6 @@ class TaskPanelStore(
      *
      * Called by `get_task_panel`, so an agent that mistypes a task id is told so instead of
      * reading an empty panel.
-     *
-     * @param taskId the task's id.
-     * @return its blocks in drawing order, empty when it has none.
-     * @throws TaskException when the task is unknown.
      */
     fun blocksOfKnown(taskId: String): List<TaskPanelBlock> {
         taskIndex.requireTask(taskId)
@@ -219,12 +192,6 @@ class TaskPanelStore(
      * Replace all of a task's blocks with [blocks], in the order given.
      *
      * Called by `set_task_panel`. Nothing is changed when any block breaks a rule.
-     *
-     * @param taskId the task; it must exist.
-     * @param blocks the new blocks; their own writer and time are ignored.
-     * @param writer who is writing, stored on every block, or null.
-     * @return the blocks as stored.
-     * @throws TaskException for an unknown task, a repeated id, too many blocks or a broken rule.
      */
     fun setPanel(taskId: String, blocks: List<TaskPanelBlock>, writer: String?): List<TaskPanelBlock> {
         taskIndex.requireTask(taskId)
@@ -247,12 +214,6 @@ class TaskPanelStore(
      *
      * Called by `upsert_task_block`. Replacing never counts against the block limit; adding a
      * new block to a full panel is refused.
-     *
-     * @param taskId the task; it must exist.
-     * @param block the block to keep; its own writer and time are ignored.
-     * @param writer who is writing, or null.
-     * @return the block as stored.
-     * @throws TaskException for an unknown task, a full panel or a broken rule.
      */
     fun upsert(taskId: String, block: TaskPanelBlock, writer: String?): TaskPanelBlock {
         taskIndex.requireTask(taskId)
@@ -276,10 +237,6 @@ class TaskPanelStore(
      * Remove one block, keeping the order of the others.
      *
      * Called by `remove_task_block`.
-     *
-     * @param taskId the task; it must exist.
-     * @param blockId the block to remove.
-     * @throws TaskException for an unknown task or a block the task does not have.
      */
     fun remove(taskId: String, blockId: String) {
         taskIndex.requireTask(taskId)

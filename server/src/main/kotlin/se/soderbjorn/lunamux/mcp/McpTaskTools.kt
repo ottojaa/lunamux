@@ -12,9 +12,6 @@
  * The rules (what counts as a known task, what happens to a pane with no agent yet) live in
  * [TaskIndex]; this file only maps its answers to tool results and its [TaskException]s to
  * [McpArgumentException]s.
- *
- * @see registerMcpTaskTools
- * @see TaskIndex
  */
 package se.soderbjorn.lunamux.mcp
 
@@ -36,10 +33,6 @@ import se.soderbjorn.lunamux.TaskListing
  * as a tool error.
  *
  * Called by every tool here and by `create_window` when it is given a task.
- *
- * @param block the [TaskIndex] call to make.
- * @return what [block] returned.
- * @throws McpArgumentException carrying the exception's message, which names the offender.
  */
 internal fun <T> taskCall(block: () -> T): T =
     try {
@@ -48,13 +41,7 @@ internal fun <T> taskCall(block: () -> T): T =
         throw McpArgumentException(e.message ?: "Task request refused")
     }
 
-/**
- * Read an optional array of strings argument.
- *
- * @param name the argument's name.
- * @return the strings, or an empty list when the argument is absent.
- * @throws McpArgumentException when the argument is not an array of strings.
- */
+/** Read an optional array of strings argument. */
 private fun JsonObject.stringList(name: String): List<String> {
     val el = this[name] ?: return emptyList()
     if (el is JsonNull) return emptyList()
@@ -68,9 +55,6 @@ private fun JsonObject.stringList(name: String): List<String> {
  *
  * Called once at boot from [mcpRoutes], when the server has a [TaskIndex]. The tools that
  * change tasks need a `read+write` token; `list_tasks` needs only `read`.
- *
- * @param taskIndex the index every tool reads and writes.
- * @see registerMcpWriteTools
  */
 fun registerMcpTaskTools(taskIndex: TaskIndex) {
     val sessionIdsSchema = schemaArray(
@@ -261,8 +245,6 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
  * a null sessionId while the conversation is closed, or null when no conversation was named.
  *
  * Called by `create_task`, `set_task_lead` and `list_tasks`.
- *
- * @param listed the task's listing, or null when it is not listed.
  */
 private fun mainConversationJson(listed: TaskListing?): JsonElement {
     val conversation = listed?.mainConversation ?: return JsonNull

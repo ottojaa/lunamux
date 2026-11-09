@@ -7,10 +7,6 @@
  * A task's members are the sessions whose record carries the task's id, and nothing else. It also
  * holds the operations behind the MCP task tools, so that the tools and the overview agree on
  * every rule.
- *
- * @see TaskFilesWatcher
- * @see AgentSessionTracker
- * @see AgentTask
  */
 package se.soderbjorn.lunamux
 
@@ -32,42 +28,16 @@ import java.util.UUID
  */
 class TaskException(message: String) : IllegalArgumentException(message)
 
-/**
- * What [TaskIndex] last decided.
- *
- * @property tasks the tasks the clients get, sorted by id.
- * @property assignment the task id of every record that belongs to one, by record id. A record
- *   missing from it is a task of its own.
- */
+/** What [TaskIndex] last decided. */
 data class TaskSnapshot(
     val tasks: List<AgentTask> = emptyList(),
     val assignment: Map<String, String> = emptyMap(),
 )
 
-/**
- * One line of a task listing: a session that carries the task's id.
- *
- * @property sessionId the `LUNAMUX_SESSION_ID` of the pane the session runs in, or null when it is not
- *   open (ended).
- * @property title what to call it.
- * @property state `needs_you`, `working`, `done` or `ended`.
- */
+/** One line of a task listing: a session that carries the task's id. */
 data class TaskListSession(val sessionId: String?, val title: String, val state: String)
 
-/**
- * One task as the `list_tasks` MCP tool reports it.
- *
- * @property id the task's id.
- * @property title the task's name.
- * @property source `file` when a task file declares it, else `agents`.
- * @property sessions the sessions that carry the task's id.
- * @property mainConversation the conversation that speaks for the task, or null when none was named.
- * @property ownSessionId the terminal session id (`LUNAMUX_SESSION_ID`) of the pane where the main
- *   conversation runs now, or null when none was named or it is closed. The task remembers the
- *   conversation, not a pane, so the id is current even after a restart renumbered the panes.
- * @property status the task's one-line status, or null.
- * @property questionWaits whether the status says a question waits for the person.
- */
+/** One task as the `list_tasks` MCP tool reports it. */
 data class TaskListing(
     val id: String,
     val title: String,
@@ -90,15 +60,6 @@ data class TaskListing(
  *
  * Created once by `main()`. [start] keeps [state] current as files and records change; the
  * mutating methods publish immediately so a tool's answer already reflects its own change.
- *
- * @param repo the store of agent-made tasks.
- * @param tracker the session records; tasks are written back to it.
- * @param files the parsed task files, usually [TaskFilesWatcher.files].
- * @param leafOfSession maps a pane's `LUNAMUX_SESSION_ID` to its layout leaf id, or null for a pane
- *   that does not exist; replaced in tests.
- * @param clock epoch-millis time source; replaced in tests.
- * @param newSuffix mints the short random suffix of a new task id; replaced in tests.
- * @see TaskSnapshot
  */
 class TaskIndex(
     private val repo: SettingsRepository,
@@ -127,19 +88,12 @@ class TaskIndex(
      * Keep [state] current: recompute whenever the session records or the task files change.
      *
      * Called once from `main()` with the server's background scope.
-     *
-     * @param scope the scope the collector runs in; cancelling it stops the index.
      */
     fun start(scope: CoroutineScope) {
         scope.launch { combine(tracker.summaries, files) { _, _ -> }.collect { recompute() } }
     }
 
-    /**
-     * Look up a task file by id, for the route that runs its `open` action.
-     *
-     * @param taskId the task's id.
-     * @return the parsed file, or null when no file declares the task.
-     */
+    /** Look up a task file by id, for the route that runs its `open` action. */
     fun fileTask(taskId: String): TaskFile? = files.value.firstOrNull { it.id == taskId }
 
     /**
@@ -149,9 +103,6 @@ class TaskIndex(
      * title matches the query. Unlike [state], which lists only tasks that hold a session in
      * memory, this knows every task file and every agent-made task row. A task file's title wins
      * over the row with the same id.
-     *
-     * @param taskId the task's id.
-     * @return the title, or null when no file and no row has that id.
      */
     fun titleOf(taskId: String): String? = synchronized(lock) {
         files.value.firstOrNull { it.id == taskId }?.title ?: tasks[taskId]?.title
@@ -162,9 +113,6 @@ class TaskIndex(
      *
      * Called by [AgentSessionSearch] before it queries, so sessions that ended long ago are
      * found through their task even though no field of their own matches.
-     *
-     * @param text what the user typed, already trimmed.
-     * @return task ids from files and agent-made rows, using each task's effective title.
      */
     fun taskIdsTitled(text: String): Set<String> = synchronized(lock) {
         (files.value.map { it.id } + agentMade().map { it.id }).toSet()
@@ -178,9 +126,6 @@ class TaskIndex(
      * Called by [AgentSessionSearch]. A session in memory takes the assignment [state] made; one
      * that is only in the database falls back to the task id it was stored with, if that task
      * still exists.
-     *
-     * @param record the session record.
-     * @return the task id, or null when the session is a task of its own.
      */
     fun taskIdOf(record: AgentSessionRecord): String? =
         _state.value.assignment[record.id] ?: record.taskId?.takeIf { titleOf(it) != null }
@@ -208,12 +153,6 @@ class TaskIndex(
      * The task's main conversation is the one running in the caller's pane when the caller is a
      * known pane, else the one in the first of [sessionIds], else none. The pane is turned into its
      * conversation once, here; what the task stores is the conversation.
-     *
-     * @param title the task's name; blank is refused.
-     * @param sessionIds panes (`LUNAMUX_SESSION_ID` values) to put in it straight away.
-     * @param callerSessionId the pane the calling agent runs in, when the request says so.
-     * @return the new task's id.
-     * @throws TaskException when the title is blank or a session id names no pane.
      */
     fun createTask(title: String, sessionIds: List<String>, callerSessionId: String? = null): String {
         val clean = cleanTitle(title)
@@ -242,10 +181,6 @@ class TaskIndex(
      * `add_to_task` looks up its panes, so the same mistake gets the same error, and is turned into
      * the conversation running in it right now; the task stores that conversation and forgets the
      * pane. It is not moved into the task.
-     *
-     * @param taskId an agent-made task or a task file's id.
-     * @param sessionId the pane (`LUNAMUX_SESSION_ID` value) whose conversation speaks for the task.
-     * @throws TaskException when the task is unknown, the id names no pane, or no agent runs in it.
      */
     fun setOwnSession(taskId: String, sessionId: String) {
         requireTask(taskId)
@@ -260,10 +195,6 @@ class TaskIndex(
      *
      * Called by the MCP `set_task_lead` tool when it is given a conversation id (the agent's own
      * session id, which `claude --resume` takes).
-     *
-     * @param taskId an agent-made task or a task file's id.
-     * @param conversationId a conversation the tracker or its database holds.
-     * @throws TaskException when the task or the conversation is unknown.
      */
     fun setMainConversation(taskId: String, conversationId: String) {
         requireTask(taskId)
@@ -282,12 +213,6 @@ class TaskIndex(
      * repeat the flag takes it back, and clearing the status clears it too. The overview reads it
      * to keep the row of a task whose main conversation is closed where the person looks, since
      * resuming that conversation is what asks the question.
-     *
-     * @param taskId an agent-made task or a task file's id.
-     * @param text what the work is doing now.
-     * @param questionWaits whether a question waits for the person; ignored when [text] is empty.
-     * @return the stored status, or null when it was cleared.
-     * @throws TaskException when the task is unknown.
      */
     fun setStatus(taskId: String, text: String, questionWaits: Boolean = false): String? {
         requireTask(taskId)
@@ -341,11 +266,6 @@ class TaskIndex(
      *
      * Called by the MCP `add_to_task` tool and by `create_window` with a task. A pane with no agent
      * yet is promised the task for the next session that starts in it.
-     *
-     * @param taskId an agent-made task or a task file's id.
-     * @param sessionIds panes (`LUNAMUX_SESSION_ID` values) to move.
-     * @throws TaskException when the task is unknown or a session id names no pane; nothing is
-     *   changed in that case.
      */
     fun addToTask(taskId: String, sessionIds: List<String>) {
         requireTask(taskId)
@@ -358,10 +278,6 @@ class TaskIndex(
      * Take sessions out of the task an agent put them in, so each is a task of its own again.
      *
      * Called by the MCP `remove_from_task` tool.
-     *
-     * @param sessionIds panes (`LUNAMUX_SESSION_ID` values) to take out.
-     * @return the task each pane is in afterwards (null for none), by pane id.
-     * @throws TaskException when a session id names no pane; nothing is changed in that case.
      */
     fun removeFromTask(sessionIds: List<String>): Map<String, String?> {
         val targets = sessionIds.map(::targetOf)
@@ -375,11 +291,6 @@ class TaskIndex(
      * Rename an agent-made task.
      *
      * Called by the MCP `rename_task` tool.
-     *
-     * @param taskId the task's id.
-     * @param title the new name; blank is refused.
-     * @throws TaskException when the task is unknown or a task file declares it (its file owns the
-     *   title).
      */
     fun renameTask(taskId: String, title: String) {
         val clean = cleanTitle(title)
@@ -399,8 +310,6 @@ class TaskIndex(
      * Every task there is, with what is in it.
      *
      * Called by the MCP `list_tasks` tool. Includes agent-made tasks that hold no session yet.
-     *
-     * @return the tasks, task files first, each sorted by id.
      */
     fun listing(): List<TaskListing> {
         val records = tracker.snapshot()
@@ -431,9 +340,6 @@ class TaskIndex(
      * again on every start and only the conversation is stored.
      *
      * Called by [listing] for `list_tasks`.
-     *
-     * @param taskId the task's id.
-     * @return the terminal session id, or null when no conversation was named or it is closed.
      */
     fun ownSessionOf(taskId: String): String? = synchronized(lock) {
         val conversation = tasks[taskId]?.mainConversation ?: return@synchronized null
@@ -459,10 +365,6 @@ class TaskIndex(
      * is resumed plainly. The match is by conversation id, so every run of the conversation counts as
      * the main one. When several tasks name the conversation, the first by id that declares an
      * `open` action wins.
-     *
-     * @param record the conversation being resumed.
-     * @return the declared action, or null when the conversation is no task's main one or its
-     *   task declares no `open` action (a task made through MCP never does).
      */
     fun openOfMain(record: AgentSessionRecord): TaskOpen? = synchronized(lock) {
         _state.value.tasks.filter { it.mainConversation == record.conversationId }.sortedBy { it.id }
@@ -493,9 +395,6 @@ class TaskIndex(
      * Called by the MCP `create_window` and `run_command` tools to open a task's next window in the
      * tab the task already uses. A session that has ended no longer counts, because its pane is
      * gone or only holds a shell.
-     *
-     * @param taskId the task's id.
-     * @return layout leaf ids, in no particular order; empty when the task has no pane.
      */
     fun openLeavesOf(taskId: String): List<String> {
         val sessions = tracker.snapshot()
@@ -508,9 +407,6 @@ class TaskIndex(
      * Check that a task exists, before something is created for it.
      *
      * Called by `create_window` so a mistyped task id fails before a pane is opened.
-     *
-     * @param taskId the task's id.
-     * @throws TaskException when no agent-made task and no task file has that id.
      */
     fun requireTask(taskId: String) {
         val known = synchronized(lock) { tasks[taskId]?.title != null } || files.value.any { it.id == taskId }
@@ -542,12 +438,6 @@ class TaskIndex(
          * Work out the tasks and every record's task from the three inputs. A record belongs to the
          * task it names if that task exists, and to none otherwise. Pure, so tests and
          * [recompute] share it.
-         *
-         * @param records the session records in memory.
-         * @param files the parsed task files.
-         * @param tasks what is stored per task (name, start, main conversation, status), by task id;
-         *   the rows that carry a title are the agent-made tasks.
-         * @return the tasks to push and the assignment of records to them.
          */
         fun resolve(
             records: List<AgentSessionRecord>,

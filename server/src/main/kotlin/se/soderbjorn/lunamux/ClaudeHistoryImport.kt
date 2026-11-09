@@ -7,10 +7,6 @@
  * the interactive ones into ended records with `source = "import"`. Those
  * records are kept out of the "Earlier" list (it shows only sessions run in
  * Lunamux) and are found by search alone.
- *
- * @see AgentTranscriptText
- * @see AgentSearchIndexer
- * @see se.soderbjorn.lunamux.persistence.AgentSessionRecord
  */
 package se.soderbjorn.lunamux
 
@@ -38,8 +34,6 @@ object ClaudeHistoryImport {
      *
      * The `lunamux.claudeProjects` system property overrides it, so tests and dev servers can
      * point at a copy.
-     *
-     * @return `~/.claude/projects` unless overridden.
      */
     fun projectsDir(): File =
         System.getProperty("lunamux.claudeProjects")?.takeIf { it.isNotBlank() }?.let(::File)
@@ -61,13 +55,6 @@ object ClaudeHistoryImport {
      * A transcript whose folder has a Claude session open in a pane that Lunamux has seen only
      * on screen (no session id yet) is held back: that session may be this very transcript, and
      * importing it would leave two records for one conversation once its first hook arrives.
-     *
-     * @param repo the store to write records to.
-     * @param projects the folder of per-project transcript folders.
-     * @param runningIn tells whether an unidentified Claude session is open in a folder; held-back
-     *   transcripts are those for which it returns true.
-     * @param newId mints record ids; replaced in tests.
-     * @return how many records were created.
      */
     fun run(
         repo: SettingsRepository,
