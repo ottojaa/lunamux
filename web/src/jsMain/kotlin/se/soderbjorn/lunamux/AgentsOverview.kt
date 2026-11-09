@@ -263,7 +263,7 @@ private fun renderList(state: AgentsOverviewBackingViewModel.State) {
     fitSelectedStatus()
     if (state.selectedId != lastSelected) {
         lastSelected = state.selectedId
-        (list.querySelector(".ao-sel") as? HTMLElement)?.asDynamic().scrollIntoView(js("({block: 'nearest'})"))
+        (list.querySelector(".ao-sel") as? HTMLElement)?.let { it.asDynamic().scrollIntoView(js("({block: 'nearest'})")) }
     }
 }
 
