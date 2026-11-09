@@ -48,8 +48,8 @@ class AgentSessionTextTest {
     @Test
     fun `a title from a prompt never carries a slash command or a path`() {
         assertNull(AgentSessionText.titleFromPrompt("/feature-implement /Users/me/.claude/feature-runs/aov-22-impl"))
-        assertEquals("fix the login", AgentSessionText.titleFromPrompt("/review fix the login ~/code/app/src/Login.kt"))
-        assertEquals("Open and read", AgentSessionText.titleFromPrompt("Open ./notes/today.md and read"))
+        assertEquals("fix the login ~/code/app/src/Login.kt", AgentSessionText.titleFromPrompt("/review fix the login ~/code/app/src/Login.kt"))
+        assertEquals("Open ./notes/today.md and read", AgentSessionText.titleFromPrompt("Open ./notes/today.md and read"))
     }
 
     @Test

@@ -42,7 +42,16 @@ kotlin {
         }
     }
 
-    jvm()
+    jvm {
+        // The overview checks live in their own source set: they run against a live server and are
+        // tested by jvmTest, but are no part of the shipped client.
+        val jvmCompilations = this.compilations
+        val checks = jvmCompilations.create("checks") {
+            associateWith(jvmCompilations.getByName("main"))
+            defaultSourceSet.kotlin.srcDir("src/checks/kotlin")
+        }
+        jvmCompilations.getByName("test").associateWith(checks)
+    }
 
     js {
         browser()
@@ -93,27 +102,6 @@ android {
     }
 }
 
-// WorkingGlyphStyleTest reads the web module's stylesheet; naming it an input makes the test rerun
-// when the stylesheet changes, and hands the test its path instead of relying on the working folder.
-tasks.named<Test>("jvmTest") {
-    val stylesCss = rootProject.layout.projectDirectory.file("web/src/jsMain/resources/styles.css")
-    inputs.file(stylesCss).withPropertyName("stylesCss")
-    systemProperty("lunamux.stylesCss", stylesCss.asFile.absolutePath)
-    val glyphSource = rootProject.layout.projectDirectory.file("web/src/jsMain/kotlin/se/soderbjorn/lunamux/WorkingGlyph.kt")
-    inputs.file(glyphSource).withPropertyName("workingGlyphSource")
-    systemProperty("lunamux.workingGlyphSource", glyphSource.asFile.absolutePath)
-    // SpinnerNeverRestartsTest reads the files that draw the spinner.
-    for ((property, name) in mapOf(
-        "lunamux.agentsOverviewSource" to "AgentsOverview.kt",
-        "lunamux.taskPanelSource" to "TaskPanel.kt",
-        "lunamux.toolkitBootstrapSource" to "LunamuxToolkitBootstrap.kt",
-    )) {
-        val file = rootProject.layout.projectDirectory.file("web/src/jsMain/kotlin/se/soderbjorn/lunamux/$name")
-        inputs.file(file).withPropertyName(property)
-        systemProperty(property, file.asFile.absolutePath)
-    }
-}
-
 // Connects to a running server as a read-only client and prints whether the overview, the footer
 // count and the task panel keep their rules (C1 to C7 and the panel's block check). Exits non-zero
 // on a FAIL. -Pwatch=<seconds> keeps watching the tabs for that long (C6 needs it); -Pmain=<task
@@ -121,9 +109,9 @@ tasks.named<Test>("jvmTest") {
 tasks.register<JavaExec>("overviewChecks") {
     group = "verification"
     description = "Runs the overview, footer and panel checks against a running server (-Purl, -Ptoken, -Pwatch, -Pmain)."
-    val jvmMain = kotlin.targets.getByName("jvm").compilations.getByName("main")
-    dependsOn("jvmMainClasses")
-    classpath(jvmMain.output.allOutputs, jvmMain.runtimeDependencyFiles)
+    val checks = kotlin.targets.getByName("jvm").compilations.getByName("checks")
+    dependsOn("jvmChecksClasses")
+    classpath(checks.output.allOutputs, checks.runtimeDependencyFiles)
     mainClass.set("se.soderbjorn.lunamux.client.OverviewChecksMainKt")
     val url = providers.gradleProperty("url")
     val token = providers.gradleProperty("token")

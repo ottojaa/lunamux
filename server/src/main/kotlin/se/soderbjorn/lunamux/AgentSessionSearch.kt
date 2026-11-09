@@ -152,20 +152,24 @@ object AgentSessionSearch {
     /**
      * About 40 characters either side of the first match of [q] in [text], on one line.
      *
-     * Only the line holding the match is used. A cut end is shown with `…`.
+     * Only the line holding the match is used, shown as the plain text it reads as
+     * ([AgentSessionText.plain]) unless cleaning would break the match. A cut end is shown with `…`.
+     * The result is the snippet and where the match starts in it.
      */
     internal fun snip(text: String, q: String): Pair<String, Int>? {
-        val at = text.indexOf(q, ignoreCase = true)
-        if (at < 0) return null
-        val lineStart = text.lastIndexOf('\n', at - 1) + 1
-        val lineEnd = text.indexOf('\n', at).let { if (it < 0) text.length else it }
-        val from = maxOf(lineStart, at - SNIPPET_SIDE)
-        val to = minOf(lineEnd, at + q.length + SNIPPET_SIDE)
-        val head = if (from > lineStart) "…" else ""
-        val tail = if (to < lineEnd) "…" else ""
-        val lead = text.substring(from, at)
-        val trimmedLead = lead.trimStart()
-        val body = trimmedLead + text.substring(at, to).trimEnd()
-        return (head + body + tail) to (head.length + trimmedLead.length)
+        val first = text.indexOf(q, ignoreCase = true)
+        if (first < 0) return null
+        val from0 = text.lastIndexOf('\n', first - 1) + 1
+        val to0 = text.indexOf('\n', first).let { if (it < 0) text.length else it }
+        val raw = text.substring(from0, to0)
+        val plain = AgentSessionText.plain(raw)
+        val line = if (plain.contains(q, ignoreCase = true)) plain else raw
+        val at = line.indexOf(q, ignoreCase = true)
+        val from = maxOf(0, at - SNIPPET_SIDE)
+        val to = minOf(line.length, at + q.length + SNIPPET_SIDE)
+        val head = if (from > 0) "…" else ""
+        val tail = if (to < line.length) "…" else ""
+        val lead = line.substring(from, at).trimStart()
+        return (head + lead + line.substring(at, to).trimEnd() + tail) to (head.length + lead.length)
     }
 }

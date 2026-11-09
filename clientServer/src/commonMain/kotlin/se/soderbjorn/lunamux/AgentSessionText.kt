@@ -79,16 +79,15 @@ object AgentSessionText {
     /**
      * A title made from the first words of a prompt.
      *
-     * Takes the first line with content, drops a leading slash command and any word that is a path
-     * (starts with `/`, `~/` or `./`), strips markdown, and keeps the first few words, ending with
-     * an ellipsis when it cut something off.
+     * Takes the first line with content, strips markdown, drops the slash command or path words it
+     * starts with, and keeps the first few words, ending with an ellipsis when it cut something off.
      */
     fun titleFromPrompt(prompt: String?): String? {
         val line = previewOf(prompt) ?: return null
         val words = line.split(' ').filter { it.isNotEmpty() }
-        // A leading slash command ("/review ...") is how the prompt was typed, not what it asks.
-        val first = words.first()
-        val prose = (if (first.startsWith("/") && !isPathWord(first)) words.drop(1) else words).filterNot(::isPathWord)
+        // Only the words the prompt starts with are dropped (a slash command, a path): they say how it
+        // was started, not what it asks. The same words later on are code the person typed and stay.
+        val prose = words.dropWhile { it.startsWith("/") || isPathWord(it) }
         if (prose.isEmpty()) return null
         var kept = prose.take(TITLE_WORDS).joinToString(" ")
         var cut = prose.size > TITLE_WORDS
