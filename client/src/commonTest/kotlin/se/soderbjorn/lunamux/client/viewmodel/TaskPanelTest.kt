@@ -78,7 +78,11 @@ class TaskPanelTest {
         val s = vm.state
         assertTrue(s.visible && s.beside)
         assertEquals("Release", s.title)
-        assertEquals("Waiting on review", s.status)
+        val head = s.head!!
+        assertEquals("Waiting on review", head.headline, "the headline is the overview row's")
+        assertEquals("one" to "Release", head.name to head.about, "the tab's name leads, the title follows")
+        assertEquals(AgentFacts.WORKING to "working", head.state to head.stateWord)
+        assertTrue(head.meta.startsWith("proj"))
         assertNull(s.setup)
     }
 
@@ -210,6 +214,7 @@ class TaskPanelTest {
         assertEquals(2, s.links.more)
         assertEquals(1, s.activity.more)
         assertEquals("step 1", s.activity.shown.first().text, "newest first")
+        assertEquals("Yesterday", s.activity.shown.first().day, "a minute before midnight is the day before")
 
         vm.showMore(TaskPanelViewModel.Section.LINKS)
         assertEquals(7, vm.state.links.shown.size)

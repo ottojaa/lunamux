@@ -1,7 +1,9 @@
 /**
  * The task panel: the column beside a task's main conversation that shows what is happening now.
- * It has four blocks (Background agents, Progress, Links, Recent activity) under the task's title and status
- * line, and no list is drawn in full: each shows its five newest entries, then "+ N more".
+ * Its header says where the work is (the tab's name, the task's title, its state and the same
+ * headline the agents overview shows for it). Under it come four blocks in the order a person
+ * asks about them: Plan (how far), Background agents (who is on it), Activity (what happened, by
+ * day) and Links. No list is drawn in full: each shows its five newest entries, then "+ N more".
  *
  * The panel shows by itself beside a task's main conversation while the person has it open, and in
  * any other tab only when they ask for it there (⌘I). With nothing to show it says how to set the
@@ -87,7 +89,23 @@ class TaskPanelViewModel(
     /** One row of the links block; [kind] is the word the writer sent, [time] a clock time or empty. */
     data class LinkRow(val kind: String, val title: String, val url: String, val time: String)
 
-    data class ActivityRow(val time: String, val text: String)
+    /** One thing that happened: [day] is "Today", "Yesterday" or a date, [time] the clock time in it. */
+    data class ActivityRow(val day: String, val time: String, val text: String)
+
+    /**
+     * The header: [name] is the tab's name (or the title when the tab has none) and [about] the
+     * title under it; [meta] says where and since when; [state] and [stateWord] are the overview
+     * row's, [headline] its headline, so the two screens cannot disagree.
+     */
+    data class Head(
+        val name: String,
+        val about: String?,
+        val meta: String,
+        val state: String,
+        val stateWord: String,
+        val sinceMillis: Long,
+        val headline: String,
+    )
 
     /** What is being worked on, then how far along: [fraction] 0 to 1 and [count] "2 of 5" are null without a count. */
     data class ProgressView(val current: String?, val fraction: Double?, val count: String?)
@@ -95,7 +113,7 @@ class TaskPanelViewModel(
     /** One list of the panel, cut to five unless opened: [more] entries are not drawn, [total] are held. */
     data class Block<out T>(val shown: List<T>, val more: Int, val total: Int)
 
-    /** How to set the panel up, shown in place of the four blocks when it has nothing to show. */
+    /** How to set the panel up, shown under the header when the panel has no block to show. */
     data class Setup(val lead: String, val prompt: String)
 
     /** Everything a view needs to draw the panel. */
@@ -105,7 +123,7 @@ class TaskPanelViewModel(
         val beside: Boolean = false,
         val taskId: String? = null,
         val title: String = "",
-        val status: String? = null,
+        val head: Head? = null,
         val setup: Setup? = null,
         val agents: Block<AgentLine> = EMPTY_BLOCK,
         val progress: ProgressView? = null,
@@ -181,6 +199,27 @@ class TaskPanelViewModel(
         fun mainIn(t: AgentTask) = t.mainConversation?.let(byKey::get)?.takeIf { it in here }
         val focusedPane = config.effectiveTabs.firstOrNull { it.id == activeTab }?.focusedPaneId
         val focused = here.firstOrNull { it.leafId == focusedPane }
+        val now = clock()
+        // The header is the overview's own row for this task or session, so both say the same thing.
+        val rows = buildOverview(
+            OverviewInputs(sessions, tasks, layout, null, null, null, panels), OverviewUi(showAllEarlier = true), now,
+        ).rows
+        fun headOf(rowId: String, startedAt: Long?): Head? = rows.firstOrNull { it.id == rowId }?.let { row ->
+            Head(
+                name = row.tabName ?: row.title,
+                about = row.title.takeIf { row.tabName != null },
+                meta = listOfNotNull(row.where, startedAt?.let { "started ${clockOf(it, now, zone())}" }).joinToString(" · "),
+                state = when {
+                    row.needsYou -> AgentFacts.NEEDS_YOU
+                    row.working -> AgentFacts.WORKING
+                    row.finished -> AgentFacts.ENDED
+                    else -> AgentFacts.DONE
+                },
+                stateWord = row.stateWord,
+                sinceMillis = row.sinceMillis,
+                headline = row.detail,
+            )
+        }
         val task = focused?.taskId?.let(tasksById::get)
             ?: tasks.filter { mainIn(it) != null }.minByOrNull { it.startedAtMillis ?: Long.MAX_VALUE }
             ?: here.firstNotNullOfOrNull { it.taskId?.let(tasksById::get) }
@@ -192,17 +231,17 @@ class TaskPanelViewModel(
                 open = ui.open,
                 visible = visible,
                 title = session?.let(AgentFacts::titleOf) ?: NO_SESSION_TITLE,
+                head = session?.let { headOf(it.conversationId, AgentFacts.startedOf(it)) },
                 setup = Setup(if (session != null) SETUP_SESSION else SETUP_NO_SESSION, SETUP_NEW_TASK_PROMPT),
             )
         }
-        val now = clock()
         val blocks = panels[task.id].orEmpty()
         val mainId = task.mainConversation?.let(byKey::get)?.conversationId
         val agents = agentLines(task, sessions, layout, mainId)
         val progress = progressOf(blocks)
         val links = linkRows(blocks, now)
         val activity = activityRows(blocks, now)
-        val status = task.status?.trim()?.takeIf { it.isNotEmpty() }
+        val head = headOf("task:${task.id}", task.startedAtMillis)
         val empty = agents.isEmpty() && progress == null && links.isEmpty() && activity.isEmpty()
         return State(
             open = ui.open,
@@ -210,8 +249,8 @@ class TaskPanelViewModel(
             beside = beside,
             taskId = task.id,
             title = task.title,
-            status = status,
-            setup = if (empty && status == null) Setup(SETUP_TASK, SETUP_TASK_PROMPT) else null,
+            head = head,
+            setup = if (empty && head?.headline.isNullOrEmpty()) Setup(SETUP_TASK, SETUP_TASK_PROMPT) else null,
             agents = cut(agents, task.id, Section.AGENTS, ui),
             progress = progress,
             links = cut(links, task.id, Section.LINKS, ui),
@@ -292,7 +331,7 @@ class TaskPanelViewModel(
         val zone = zone()
         return blocks.flatMap { b -> (b.content as? TaskBlockContent.Timeline)?.items.orEmpty() }
             .sortedByDescending { it.atMillis }
-            .map { ActivityRow(clockOf(it.atMillis, now, zone), it.text) }
+            .map { ActivityRow(dayOf(it.atMillis, now, zone), timeOf(it.atMillis, zone), it.text) }
     }
 
     companion object {
@@ -302,7 +341,7 @@ class TaskPanelViewModel(
         const val NO_SESSION_TITLE = "Task panel"
 
         /** What the set-up view says the panel is for and what it needs. */
-        const val SETUP_NOTE = "The panel shows a task's agents, progress and links. Agents fill it with the Lunamux tools create_task and upsert_task_block."
+        const val SETUP_NOTE = "The panel shows a task's plan, agents, activity and links. Agents fill it with the Lunamux tools create_task and upsert_task_block."
 
         private const val SETUP_TASK = "Nothing here yet. To fill it, tell an agent in this task:"
         private const val SETUP_SESSION = "This session has no panel yet. To set one up, tell its agent:"
@@ -324,6 +363,23 @@ class TaskPanelViewModel(
         /** A line about what a member does if it is in words, else null. */
         fun inWords(line: String?): String? = line?.trim()?.takeIf { it.isNotEmpty() && !BARE_TOOL.matches(it) }
 
+        /** The clock time alone, `21:31`, in [zone]. */
+        fun timeOf(atMillis: Long, zone: TimeZone): String {
+            val at = Instant.fromEpochMilliseconds(atMillis).toLocalDateTime(zone)
+            return "${at.hour.toString().padStart(2, '0')}:${at.minute.toString().padStart(2, '0')}"
+        }
+
+        /** The day a moment fell on, as a heading: "Today", "Yesterday", else `Mon 9 Nov`. */
+        fun dayOf(atMillis: Long, nowMillis: Long, zone: TimeZone): String {
+            val at = Instant.fromEpochMilliseconds(atMillis).toLocalDateTime(zone).date
+            fun short(name: String) = name.take(3).lowercase().replaceFirstChar { it.uppercase() }
+            return when (Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(zone).date.toEpochDays() - at.toEpochDays()) {
+                0 -> "Today"
+                1 -> "Yesterday"
+                else -> "${short(at.dayOfWeek.name)} ${at.dayOfMonth} ${short(at.month.name)}"
+            }
+        }
+
         /**
          * A clock time: `21:31` today, `Tue 21:31` within the last six days, else `4 Oct 21:31`,
          * always in [zone] so the viewer reads it in their own time.
@@ -331,7 +387,7 @@ class TaskPanelViewModel(
         fun clockOf(atMillis: Long, nowMillis: Long, zone: TimeZone): String {
             val at = Instant.fromEpochMilliseconds(atMillis).toLocalDateTime(zone)
             val today = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(zone).date
-            val time = "${at.hour.toString().padStart(2, '0')}:${at.minute.toString().padStart(2, '0')}"
+            val time = timeOf(atMillis, zone)
             val daysAgo = today.toEpochDays() - at.date.toEpochDays()
             fun short(name: String) = name.take(3).lowercase().replaceFirstChar { it.uppercase() }
             return when (daysAgo) {

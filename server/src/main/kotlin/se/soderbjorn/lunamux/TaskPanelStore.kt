@@ -45,7 +45,7 @@ object TaskPanelLimits {
     /** Longest timeline entry. */
     const val TIMELINE_TEXT_MAX = 200
     /** Longest progress phase or label. */
-    const val PHASE_MAX = 80
+    const val PHASE_MAX = 200
     /** Longest name of a writer. */
     const val WRITER_MAX = 40
     /** The block id the windows use for the agents block they draw themselves. */

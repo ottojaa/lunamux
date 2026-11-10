@@ -9,9 +9,13 @@
  * [AgentsOverviewBackingViewModel.state] always sees the result of the key before it.
  *
  * A row is one conversation, or one task. NOW lists every live conversation in a listed tab and
- * every task with a live conversation, in the order their work began. EARLIER lists the rest by
- * recency in two bands (three days, two weeks), five rows and a "+ N more" line. Typing two or more
- * characters switches to the server's search, one row per task.
+ * every task with a live conversation, grouped by repo, in the order their work began. EARLIER
+ * lists the rest by recency in two bands (three days, two weeks), five rows and a "+ N more" line.
+ * Typing two or more characters switches to the server's search, one row per task.
+ *
+ * Every row has one headline ([AgentsOverviewBackingViewModel.Row.detail]) that says where it is:
+ * the question while it needs the person, what it is doing while it works, and the last thing it
+ * said once it is done or closed. The task panel shows the same line ([headlineOf]).
  */
 package se.soderbjorn.lunamux.client.viewmodel
 
@@ -27,19 +31,20 @@ import se.soderbjorn.lunamux.AgentSessionMatch
 import se.soderbjorn.lunamux.AgentSessionSummary
 import se.soderbjorn.lunamux.AgentSessionText
 import se.soderbjorn.lunamux.AgentTask
+import se.soderbjorn.lunamux.TaskBlockContent
+import se.soderbjorn.lunamux.TaskPanelBlock
 import se.soderbjorn.lunamux.WindowCommand
 import se.soderbjorn.lunamux.WindowEnvelope
-import se.soderbjorn.lunamux.activeWorldOrNull
 import se.soderbjorn.lunamux.client.WindowStateRepository
 import se.soderbjorn.lunamux.client.viewmodel.AgentFacts.ENDED
 import se.soderbjorn.lunamux.client.viewmodel.AgentFacts.NEEDS_YOU
 import se.soderbjorn.lunamux.client.viewmodel.AgentFacts.WORKING
 import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Ask
-import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Chip
-import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.ChipKind
+import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Agent
 import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Enter
 import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.FooterKey
 import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Kind
+import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Progress
 import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Row
 import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.State
 import se.soderbjorn.lunamux.effectiveActiveTabId
@@ -79,6 +84,7 @@ internal data class OverviewInputs(
     val matches: WindowEnvelope.AgentSessionMatches?,
     val inspection: WindowEnvelope.AgentSessionInspection?,
     val error: String?,
+    val panels: Map<String, List<TaskPanelBlock>> = emptyMap(),
 )
 
 private const val TASK_PREFIX = "task:"
@@ -114,9 +120,11 @@ class AgentsOverviewBackingViewModel(
 
     enum class Kind { NEEDS_YOU, WORKING, DONE, FINISHED }
 
-    enum class ChipKind { FOLDER, TAB }
+    /** How far a task's plan is: [fraction] 0 to 1 for the bar, [count] as "13/14". */
+    data class Progress(val fraction: Double, val count: String)
 
-    data class Chip(val kind: ChipKind, val text: String)
+    /** One conversation of a task, listed under its row while the row is selected. */
+    data class Agent(val recordId: String, val title: String, val doing: String, val state: String, val sinceMillis: Long)
 
     data class FooterKey(val key: String, val label: String)
 
@@ -124,9 +132,11 @@ class AgentsOverviewBackingViewModel(
     data class Ask(val rowId: String, val tag: String, val question: String, val keys: List<FooterKey>, val inTab: Boolean = false)
 
     /**
-     * One line of the overview. [detail] is the one-line status (the task's, or the question or
-     * what the agent is doing); [extra] is what else matters for opening it (a search hit's place,
-     * a resume note, an error).
+     * One row of the overview. [tabName] is the name the person gave the tab it runs in (null for
+     * an unnamed or closed tab); the row leads with it and [title] follows as the description.
+     * [detail] is the headline (see [headlineOf]), or the snippet of a search hit. [extra] is what
+     * else matters for opening it (its folder, a search hit's place, a resume note, an error).
+     * [where] is the repo or folder, which NOW groups by.
      */
     data class Row(
         val id: String,
@@ -137,7 +147,9 @@ class AgentsOverviewBackingViewModel(
         val stateWord: String,
         val detail: String,
         val extra: String,
-        val chips: List<Chip> = emptyList(),
+        val tabName: String? = null,
+        val progress: Progress? = null,
+        val agents: List<Agent> = emptyList(),
         val ask: Ask? = null,
         val sinceMillis: Long,
         val enter: Enter,
@@ -181,6 +193,7 @@ class AgentsOverviewBackingViewModel(
         val earlierHidden: Int = 0,
         val needYouCount: Int = 0,
         val workingCount: Int = 0,
+        val doneCount: Int = 0,
         val selectedId: String? = null,
         val peek: Peek? = null,
         val confirm: Confirm? = null,
@@ -215,6 +228,7 @@ class AgentsOverviewBackingViewModel(
                 listOf<Flow<Any?>>(
                     windowState.agentSessions, windowState.agentTasks, windowState.config,
                     windowState.agentSessionError, windowState.agentMatches, windowState.agentInspection,
+                    windowState.taskPanels,
                 ),
             ) { }.collect {
                 rebuild()
@@ -248,6 +262,7 @@ class AgentsOverviewBackingViewModel(
     private fun inputs() = OverviewInputs(
         windowState.agentSessions.value, windowState.agentTasks.value, Layout(windowState.config.value),
         windowState.agentMatches.value, windowState.agentInspection.value, windowState.agentSessionError.value,
+        windowState.taskPanels.value,
     )
 
     private fun change(edit: (OverviewUi) -> OverviewUi) {
@@ -422,12 +437,16 @@ class AgentsOverviewBackingViewModel(
         const val STATE_NEEDS_YOU = "needs you"
         const val STATE_WORKING = "working"
         const val STATE_DONE = "done"
-        const val STATE_FINISHED = "finished"
+        const val STATE_FINISHED = "closed"
+        const val MAIN_AGENT_TITLE = "Main conversation"
         const val NO_TRANSCRIPT_NOTE = "nothing to resume: its transcript is gone"
         const val MARKER = "◆"
         const val HIDDEN_MAIN_NOTE = "it works in a background tab: ↵ has nothing to open until it asks"
         const val HIDDEN_MAIN_DONE_NOTE = "it has finished in a background tab: ↵ has nothing to open, → shows what it said"
         fun needYouText(n: Int): String = if (n == 1) "1 needs you" else "$n need you"
+
+        /** The state word of a task whose main conversation waits on [n] of its agents. */
+        fun agentsWorkingText(n: Int): String = if (n == 1) "1 agent working" else "$n agents working"
     }
 }
 
@@ -485,10 +504,12 @@ internal fun buildOverview(inputs: OverviewInputs, ui: OverviewUi, now: Long): S
         it.id !in claimed && !(it.nothingSaid && !AgentFacts.isLive(it)) && (!it.background || (it.state == NEEDS_YOU && AgentFacts.isLive(it)))
     }
     val nowSingles = singles.filter { AgentFacts.isLive(it) }
+    // Grouped by repo, the groups and the rows in each in the order their work began, so no row moves when a state flips.
     val nowRows = (
         nowSingles.map { Triple(AgentFacts.startedOf(it), it.conversationId, sessionRow(it, earlier = false, c = c)) } +
             units.filter { it.inNow }.map { Triple(it.started, it.task.id, taskRow(it, c)) }
         ).sortedWith(compareBy({ it.first }, { it.second })).map { it.third }
+        .groupBy { it.where }.values.flatten()
 
     val nowIds = nowSingles.mapTo(HashSet()) { it.id }
     val earlierAll = (
@@ -545,6 +566,7 @@ internal fun buildOverview(inputs: OverviewInputs, ui: OverviewUi, now: Long): S
         earlierHidden = earlierAll.size - earlierShown.size,
         needYouCount = tally.waiting,
         workingCount = tally.working,
+        doneCount = nowRows.count { it.kind == Kind.DONE },
         selectedId = selectedId,
         peek = peek,
         confirm = confirm,
@@ -641,14 +663,18 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
     val (kind, word) = when {
         waitingAll.size >= 2 -> Kind.NEEDS_YOU to AgentsOverviewBackingViewModel.needYouText(waitingAll.size)
         waiting != null -> Kind.NEEDS_YOU to AgentsOverviewBackingViewModel.STATE_NEEDS_YOU
-        working.size >= 2 -> Kind.WORKING to "${working.size} ${AgentsOverviewBackingViewModel.STATE_WORKING}"
-        working.size == 1 -> Kind.WORKING to AgentsOverviewBackingViewModel.STATE_WORKING
+        working.any { it.id == u.mainId } || (u.mainId == null && working.size == 1) -> Kind.WORKING to AgentsOverviewBackingViewModel.STATE_WORKING
+        working.isNotEmpty() -> Kind.WORKING to AgentsOverviewBackingViewModel.agentsWorkingText(working.size)
         !u.inNow -> Kind.FINISHED to AgentsOverviewBackingViewModel.STATE_FINISHED
         else -> Kind.DONE to AgentsOverviewBackingViewModel.STATE_DONE
     }
-    val detail = t.status?.trim()?.takeIf { it.isNotEmpty() }
-        ?: waiting?.let(AgentFacts::lineOf)?.let(::quoted)
-        ?: working.sortedByDescending { it.lastActivityAt ?: it.stateSince }.firstNotNullOfOrNull(AgentFacts::lineOf)
+    val blocks = c.inputs.panels[t.id].orEmpty()
+    val main = u.sessions.firstOrNull { it.id == u.mainId }
+    val detail = waiting?.let(::headlineOf)
+        ?: t.status?.trim()?.takeIf { it.isNotEmpty() }
+        ?: blocks.firstNotNullOfOrNull { b -> (b.content as? TaskBlockContent.Progress)?.let { it.phase ?: it.label }?.trim()?.takeIf { it.isNotEmpty() } }
+        ?: working.sortedByDescending { it.lastActivityAt ?: it.stateSince }.firstNotNullOfOrNull(::headlineOf)
+        ?: (main ?: u.sessions.maxByOrNull(AgentFacts::activityOf))?.let(::headlineOf)
         ?: ""
     val target = u.target
     val single = u.sessions.singleOrNull()
@@ -663,7 +689,7 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
         stateWord = word,
         detail = detail,
         extra = extraOf(
-            c.noteOf(target?.id),
+            target?.cwdShown, c.noteOf(target?.id),
             target?.let {
                 when {
                     it.noTranscript -> AgentsOverviewBackingViewModel.NO_TRANSCRIPT_NOTE
@@ -673,7 +699,11 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
             }.takeIf { u.enter == Enter.NONE },
             error,
         ),
-        chips = chipsOf(t.title, target, c),
+        tabName = c.tabNameOf(main?.takeIf(AgentFacts::isLive) ?: target, t.title),
+        progress = progressOf(blocks),
+        agents = u.sessions.filter(AgentFacts::isLive).takeIf { it.size > 1 || it.any { s -> s.id != u.mainId } }.orEmpty().sortedBy { it.id != u.mainId }.map { s ->
+            Agent(s.id, if (s.id == u.mainId) AgentsOverviewBackingViewModel.MAIN_AGENT_TITLE else AgentFacts.titleOf(s), headlineOf(s).orEmpty(), s.state, s.stateSince)
+        },
         ask = askOf(id, u.enter, own = if (target != null) target.id == u.mainId else u.resumeId != null, inTab = target?.inTab == true),
         sinceMillis = if (!u.inNow) u.recency else u.since,
         enter = u.enter,
@@ -689,12 +719,6 @@ private fun sessionRow(s: AgentSessionSummary, earlier: Boolean, c: Ctx, taskTit
     val id = if (taskTitle != null) "$TASK_PREFIX${s.taskId}" else s.conversationId
     val needs = AgentFacts.isWaiting(s)
     val works = AgentFacts.isWorking(s)
-    val nowLine = s.nowLine?.trim()?.takeIf { it.isNotEmpty() }
-    val detail = when {
-        needs -> (AgentSessionText.previewOf(s.question) ?: nowLine)?.let(::quoted) ?: ""
-        works -> nowLine ?: ""
-        else -> ""
-    }
     val enter = when {
         live && s.background && needs -> Enter.SHOW_WAITING
         live -> Enter.JUMP
@@ -716,9 +740,9 @@ private fun sessionRow(s: AgentSessionSummary, earlier: Boolean, c: Ctx, taskTit
         where = s.repo ?: AgentFacts.folderOf(s),
         kind = kind,
         stateWord = word,
-        detail = detail,
-        extra = extraOf(c.noteOf(s.id), AgentsOverviewBackingViewModel.NO_TRANSCRIPT_NOTE.takeIf { enter == Enter.NONE }, error),
-        chips = chipsOf(title, s, c),
+        detail = headlineOf(s).orEmpty(),
+        extra = extraOf(s.cwdShown, c.noteOf(s.id), AgentsOverviewBackingViewModel.NO_TRANSCRIPT_NOTE.takeIf { enter == Enter.NONE }, error),
+        tabName = c.tabNameOf(s, title),
         ask = askOf(id, enter, own = false, inTab = s.inTab),
         sinceMillis = sinceOf(s),
         enter = enter,
@@ -758,7 +782,6 @@ private fun matchRow(base: Row, m: AgentSessionMatch, s: AgentSessionSummary, c:
             AgentsOverviewBackingViewModel.NO_TRANSCRIPT_NOTE.takeIf { enter == Enter.NONE } ?: m.resumeNote ?: c.noteOf(s.id),
             base.error, place,
         ),
-        chips = chipsOf(base.title, s, c),
         ask = askOf(base.id, enter, own = s.id == mainId, inTab = s.inTab),
         enter = enter,
         recordId = s.id,
@@ -777,25 +800,36 @@ private fun fieldLabel(field: String): String = when (field) {
     else -> field
 }
 
-/** The folder of the session ↵ opens, and its tab unless the tab's name already says the title. */
-private fun chipsOf(title: String, target: AgentSessionSummary?, c: Ctx): List<Chip> {
-    if (target == null) return emptyList()
-    val folder = target.cwdShown?.takeIf { it.isNotBlank() }?.let { Chip(ChipKind.FOLDER, it) }
-    val spot = c.layout.spotOf(target)?.takeIf { it.tabNumber != null && AgentFacts.isLive(target) }
-    val tab = spot?.takeIf { it.tab.title.isNotBlank() && !containsEveryWord(it.tab.title, title) }?.let {
-        val shown = c.layout.config?.activeWorldOrNull()?.id
-        val world = it.worldName?.takeIf { _ -> it.worldId != null && it.worldId != shown }
-        Chip(ChipKind.TAB, if (world != null) "${it.tab.title} · $world" else it.tab.title)
+/**
+ * The one line that says where a conversation is, the same on every screen: the question while it
+ * needs the person, what it is doing while it works, and the last thing it said once it is done or
+ * closed. Null when it has nothing to say. Called for overview rows and the task panel's header.
+ */
+internal fun headlineOf(s: AgentSessionSummary): String? {
+    val now = s.nowLine?.trim()?.takeIf { it.isNotEmpty() }
+    return when (s.state) {
+        NEEDS_YOU -> (AgentSessionText.previewOf(s.question) ?: now)?.let(::quoted)
+        WORKING -> now
+        else -> s.lastSaid?.trim()?.takeIf { it.isNotEmpty() }
     }
-    return listOfNotNull(folder, tab)
 }
 
-private fun containsEveryWord(text: String, title: String): Boolean {
-    val wanted = wordsOf(title)
-    return wanted.isNotEmpty() && wordsOf(text).containsAll(wanted)
+/** A task's progress block as the row and the panel's bar show it; null without a count. */
+internal fun progressOf(blocks: List<TaskPanelBlock>): Progress? {
+    val p = blocks.firstNotNullOfOrNull { it.content as? TaskBlockContent.Progress } ?: return null
+    val done = p.done ?: return null
+    val total = p.total?.takeIf { it > 0 } ?: return null
+    return Progress((done.toDouble() / total).coerceIn(0.0, 1.0), "$done/$total")
 }
 
-private fun wordsOf(text: String): Set<String> = text.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter { it.isNotEmpty() }.toSet()
+private val DEFAULT_TAB_NAME = Regex("^Tab \\d+$")
+
+/** The name the person gave the listed tab [s] runs in; null for a default name, a background tab, or one that only repeats [title]. */
+private fun Ctx.tabNameOf(s: AgentSessionSummary?, title: String): String? {
+    if (s == null || !AgentFacts.isLive(s)) return null
+    val name = layout.spotOf(s)?.takeIf { it.listed }?.tab?.title?.trim() ?: return null
+    return name.takeIf { it.isNotEmpty() && !DEFAULT_TAB_NAME.matches(it) && !it.equals(title.trim(), ignoreCase = true) }
+}
 
 private fun askOf(rowId: String, enter: Enter, own: Boolean, inTab: Boolean): Ask? = when (enter) {
     Enter.RESUME -> Ask(

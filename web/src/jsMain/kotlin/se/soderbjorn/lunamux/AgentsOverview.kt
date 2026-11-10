@@ -3,11 +3,12 @@
  * footer of keys. NOW lists live conversations and tasks, EARLIER the closed ones in two bands, and
  * typing two or more characters swaps both for search results.
  *
- * Every row is one grid: a ◆ when the row needs the person, the title, where it runs, a state word
- * (the working one has the turning glyph in front), the detail and the age. The selected row shows
- * more under it: the status in full when its detail cell cut it short, a question before a resume,
- * the folder and tab chips, and the peek. That cut is measured here after drawing, because only the
- * browser knows the width.
+ * A live row leads with a state mark (the turning glyph while it works, ◆ when it needs the person,
+ * ✓ when done) and the name of its tab, with the plan's progress, a state word and the age on the
+ * right. Under them come its description and its headline: the question, what it is doing, or the
+ * last thing it said. NOW is grouped by repo. A closed row is one line: its title, the last thing
+ * it said, where it ran and its age. The selected row shows more under it: a task's agents, a
+ * question before a resume, its folder and any note, and the peek.
  *
  * All state and behaviour live in [AgentsOverviewBackingViewModel]; this file draws its state and
  * turns keys and clicks into calls on it. Lists are drawn with [syncChildren], so a row that did
@@ -45,6 +46,7 @@ private var overlayElement: HTMLElement? = null
 private var searchInput: HTMLInputElement? = null
 private var listElement: HTMLElement? = null
 private var footerElement: HTMLElement? = null
+private var tallyElement: HTMLElement? = null
 private var searchTimer: Int? = null
 private var peekTimer: Int? = null
 private var lastSelected: String? = null
@@ -85,6 +87,7 @@ private fun renderAgentsOverview(state: AgentsOverviewBackingViewModel.State) {
                 it.appendChild(document.createTextNode(key.label))
             }
         }
+        renderTally(state)
         renderList(state)
     } else {
         closeOverlayElement()
@@ -139,6 +142,8 @@ private fun ensureOverlay(query: String) {
         if (overlayElement != null) kotlinx.browser.window.setTimeout({ input.focus() }, 0)
     })
     line.appendChild(input)
+    val tally = span("ao-tally")
+    line.appendChild(tally)
     val list = div("ao-list")
     list.addEventListener("click", { e: Event -> onListClick(e.target as? HTMLElement) })
     val foot = div("ao-foot")
@@ -155,21 +160,19 @@ private fun ensureOverlay(query: String) {
     searchInput = input
     listElement = list
     footerElement = foot
-    kotlinx.browser.window.addEventListener("resize", resizeListener)
+    tallyElement = tally
     input.focus()
 }
-
-private val resizeListener: (Event) -> Unit = { fitSelectedStatus() }
 
 private fun closeOverlayElement() {
     searchTimer?.let { kotlinx.browser.window.clearTimeout(it) }
     searchTimer = null
-    kotlinx.browser.window.removeEventListener("resize", resizeListener)
     overlayElement?.remove()
     overlayElement = null
     searchInput = null
     listElement = null
     footerElement = null
+    tallyElement = null
     lastSelected = null
 }
 
@@ -224,17 +227,19 @@ private fun launchAgentsOverview(block: suspend () -> Unit) {
 /** What the list holds, top to bottom; each has a key so [syncChildren] can tell what changed. */
 private sealed interface Item { val key: String }
 private data class Heading(val text: String) : Item { override val key get() = "h:$text" }
+private data class Group(val text: String) : Item { override val key get() = "g:$text" }
 private data class Empty(val text: String) : Item { override val key get() = "empty" }
 private data class More(val hidden: Int) : Item { override val key get() = "more" }
-private data class RowItem(val row: Row, val selected: Boolean, val ask: Ask?, val peek: Peek?) : Item { override val key get() = "r:${row.id}" }
+private data class RowItem(val row: Row, val selected: Boolean, val ask: Ask?, val peek: Peek?, val grouped: Boolean) : Item { override val key get() = "r:${row.id}" }
 private data class ConfirmItem(val confirm: Confirm) : Item { override val key get() = "c:${confirm.rowId}" }
 
 private fun itemsOf(state: AgentsOverviewBackingViewModel.State): List<Item> {
     if (state.rows.isEmpty()) return listOf(Empty(state.emptyText))
     val out = ArrayList<Item>()
-    fun add(rows: List<Row>) = rows.forEach { row ->
+    fun add(rows: List<Row>, grouped: Boolean = false) = rows.forEachIndexed { i, row ->
+        if (grouped && (i == 0 || rows[i - 1].where != row.where)) out += Group(row.where ?: "no folder")
         val selected = row.id == state.selectedId
-        out += RowItem(row, selected, state.ask?.takeIf { it.rowId == row.id }, state.peek.takeIf { selected })
+        out += RowItem(row, selected, state.ask?.takeIf { it.rowId == row.id }, state.peek.takeIf { selected }, grouped)
         state.confirm?.takeIf { it.rowId == row.id }?.let { out += ConfirmItem(it) }
     }
     if (state.matchMode) {
@@ -242,7 +247,7 @@ private fun itemsOf(state: AgentsOverviewBackingViewModel.State): List<Item> {
         add(state.matches)
         return out
     }
-    if (state.now.isNotEmpty()) { out += Heading("NOW"); add(state.now) }
+    if (state.now.isNotEmpty()) { out += Heading("NOW"); add(state.now, grouped = true) }
     if (state.recent.isNotEmpty()) { out += Heading("EARLIER · LAST FEW DAYS"); add(state.recent) }
     if (state.fortnight.isNotEmpty()) { out += Heading("EARLIER · LAST TWO WEEKS"); add(state.fortnight) }
     if (state.earlierHidden > 0) out += More(state.earlierHidden)
@@ -254,43 +259,27 @@ private fun renderList(state: AgentsOverviewBackingViewModel.State) {
     syncChildren(list, itemsOf(state), Item::key) { item ->
         when (item) {
             is Heading -> div("ao-sec").also { it.textContent = item.text }
+            is Group -> div("ao-grp").also { it.textContent = item.text }
             is Empty -> div("ao-empty").also { it.textContent = item.text }
             is More -> buildMoreLine(item.hidden)
             is RowItem -> buildRow(item)
             is ConfirmItem -> buildConfirm(item.confirm)
         }
     }
-    fitSelectedStatus()
     if (state.selectedId != lastSelected) {
         lastSelected = state.selectedId
         (list.querySelector(".ao-sel") as? HTMLElement)?.let { it.asDynamic().scrollIntoView(js("({block: 'nearest'})")) }
     }
 }
 
-/**
- * Shows the selected row's status in full under it when its detail cell cut the text short (an
- * ellipsis, or hidden in a narrow panel), and takes it away when the cell fits again.
- */
-private fun fitSelectedStatus() {
-    val list = listElement ?: return
-    val row = list.querySelector(".ao-sel") as? HTMLElement ?: return
-    if (list.clientWidth == 0 || row.querySelector(".ao-ask") != null) return
-    val cell = row.querySelector(".ao-n") as? HTMLElement ?: return
-    val hidden = kotlinx.browser.window.getComputedStyle(cell).display == "none"
-    val cut = !cell.textContent.isNullOrBlank() && (hidden || cell.scrollWidth > cell.clientWidth)
-    val shown = row.querySelector(".ao-full") as? HTMLElement
-    if (!cut) {
-        shown?.remove()
-        (row.querySelector(".ao-focus") as? HTMLElement)?.takeIf { !it.hasChildNodes() }?.remove()
-        return
-    }
-    if (shown != null) return
-    val focus = row.querySelector(".ao-focus") as? HTMLElement ?: div("ao-focus").also {
-        row.insertBefore(it, row.querySelector(".ao-peek"))
-    }
-    val full = div("ao-full")
-    cell.childNodes.let { nodes -> for (i in 0 until nodes.length) full.appendChild(nodes.item(i)!!.cloneNode(true)) }
-    focus.insertBefore(full, focus.firstChild)
+/** The counts at the end of the search line: who needs the person, who works, who is done. Zero counts are left out. */
+private fun renderTally(state: AgentsOverviewBackingViewModel.State) {
+    val parts = listOfNotNull(
+        ("ao-sw-need" to "◆ ${AgentsOverviewBackingViewModel.needYouText(state.needYouCount)}").takeIf { state.needYouCount > 0 },
+        ("ao-sw-work" to "${state.workingCount} working").takeIf { state.workingCount > 0 },
+        ("ao-sw-done" to "✓ ${state.doneCount} done").takeIf { state.doneCount > 0 },
+    )
+    syncChildren(tallyElement ?: return, parts, { it.second }) { (cls, text) -> span(cls, text) }
 }
 
 /** [text] as a fragment with `[start, start + length)` wrapped in a highlight mark. */
@@ -312,8 +301,9 @@ private fun highlighted(text: String, start: Int, length: Int): org.w3c.dom.Docu
 }
 
 /**
- * One row of the six-column grid. Its class says how bright it is: `ao-live` while it works or
- * needs the person, `ao-done` when done in NOW, `ao-old` when finished in EARLIER.
+ * One row. Its class says how bright it is: `ao-live` while it works or needs the person, `ao-done`
+ * when done in NOW, `ao-old` when closed in EARLIER. A closed row is one line ([buildClosedCells]);
+ * any other has its description and headline under the first line.
  */
 private fun buildRow(item: RowItem): HTMLElement {
     val row = item.row
@@ -324,57 +314,89 @@ private fun buildRow(item: RowItem): HTMLElement {
     }
     val el = div("ao-row $brightness" + if (item.selected) " ao-sel" else "")
     el.setAttribute("data-id", row.id)
-    el.appendChild(span(if (row.needsYou) "ao-m ao-m-need" else "ao-m", if (row.needsYou) "◆" else ""))
-    val title = span("ao-t")
-    if (row.matchInTitle) title.appendChild(highlighted(row.title, row.matchStart, row.matchLength)) else title.textContent = row.title
-    el.appendChild(title)
-    el.appendChild(span("ao-w", row.where ?: ""))
-    el.appendChild(buildState(row))
-    val detail = span("ao-n")
-    if (row.matchInSnippet) detail.appendChild(highlighted(row.detail, row.matchStart, row.matchLength)) else detail.textContent = row.detail
-    el.appendChild(detail)
-    el.appendChild(ageSpan("ao-age", row.sinceMillis))
+    if (row.finished) buildClosedCells(el, row) else buildLiveCells(el, row, item.grouped)
+    if (item.selected && row.agents.isNotEmpty()) el.appendChild(buildAgents(row))
     if (item.selected) buildFocus(row, item.ask)?.let { el.appendChild(it) }
     item.peek?.let { el.appendChild(buildPeek(it)) }
     return el
 }
 
-/** The state word in its state's colour; a working row has the spinner in front. */
-private fun buildState(row: Row): HTMLElement {
-    val cell = span(
-        "ao-sw" + when {
-            row.needsYou -> " ao-sw-need"
-            row.working -> " ao-sw-work"
-            !row.finished -> " ao-sw-done"
-            else -> ""
-        },
-    )
-    if (row.working) {
-        cell.appendChild(spinner())
-        cell.appendChild(document.createTextNode(" ${row.stateWord}"))
-    } else {
-        cell.textContent = row.stateWord
-    }
-    return cell
+/** [row]'s title into [host], with the search match marked when it fell in the title. */
+private fun fillTitle(host: HTMLElement, row: Row) {
+    if (row.matchInTitle) host.appendChild(highlighted(row.title, row.matchStart, row.matchLength)) else host.textContent = row.title
+}
+
+/** [row]'s headline (or search snippet) into [host]. */
+private fun fillDetail(host: HTMLElement, row: Row) {
+    if (row.matchInSnippet) host.appendChild(highlighted(row.detail, row.matchStart, row.matchLength)) else host.textContent = row.detail
+}
+
+/** The mark that opens a row: the turning glyph while it works, ◆ when it needs the person, ✓ when done. */
+private fun stateMark(state: String): HTMLElement = when (state) {
+    AgentFacts.WORKING -> span("ao-m").also { it.appendChild(spinner()) }
+    AgentFacts.NEEDS_YOU -> span("ao-m ao-m-need", "◆")
+    AgentFacts.ENDED -> span("ao-m")
+    else -> span("ao-m ao-m-done", "✓")
 }
 
 /**
- * What the selected row shows under its columns: the question before a resume or a start, then the
- * chips (folder, and the tab when it says something), then any extra text (where a search matched,
- * a failed resume in the error colour).
+ * A live or done row: the mark, the tab's name (or the title when the tab has none), the plan's
+ * progress, the state word and the age; then the title as a description when the tab's name led,
+ * and the headline. A row outside a repo group shows where it runs in place of an absent progress.
+ */
+private fun buildLiveCells(el: HTMLElement, row: Row, grouped: Boolean) {
+    el.appendChild(stateMark(if (row.needsYou) AgentFacts.NEEDS_YOU else if (row.working) AgentFacts.WORKING else AgentFacts.DONE))
+    val name = span("ao-t")
+    if (row.tabName != null) name.textContent = row.tabName else fillTitle(name, row)
+    el.appendChild(name)
+    val progress = row.progress
+    el.appendChild(
+        if (progress != null) span("ao-p").also {
+            val bar = span("ao-bar")
+            bar.appendChild(span("ao-bar-fill").also { fill -> fill.style.width = "${(progress.fraction * 100).toInt()}%" })
+            it.appendChild(bar)
+            it.appendChild(span("ao-count", progress.count))
+        } else span("ao-w", if (grouped) "" else row.where ?: ""),
+    )
+    el.appendChild(span("ao-sw " + if (row.needsYou) "ao-sw-need" else if (row.working) "ao-sw-work" else "ao-sw-done", row.stateWord))
+    el.appendChild(ageSpan("ao-age", row.sinceMillis))
+    if (row.tabName != null) el.appendChild(div("ao-about").also { fillTitle(it, row) })
+    if (row.detail.isNotEmpty()) el.appendChild(div("ao-n").also { fillDetail(it, row) })
+}
+
+/** A closed row, on one line: its title with the last thing it said after it, where it ran, the state word and the age. */
+private fun buildClosedCells(el: HTMLElement, row: Row) {
+    el.appendChild(stateMark(AgentFacts.ENDED))
+    val name = span("ao-t")
+    name.appendChild(span("ao-t-name").also { fillTitle(it, row) })
+    if (row.detail.isNotEmpty()) name.appendChild(span("ao-said").also { fillDetail(it, row) })
+    el.appendChild(name)
+    el.appendChild(span("ao-w", row.where ?: ""))
+    el.appendChild(span("ao-sw", row.stateWord))
+    el.appendChild(ageSpan("ao-age", row.sinceMillis))
+}
+
+/** The conversations of the selected task, one line each: its mark, its name with what it says after it, and its age. */
+private fun buildAgents(row: Row): HTMLElement {
+    val box = div("ao-agents")
+    row.agents.forEach { agent ->
+        box.appendChild(stateMark(agent.state))
+        val text = span("ao-agent")
+        text.appendChild(span("ao-agent-name", agent.title))
+        if (agent.doing.isNotEmpty()) text.appendChild(span("ao-said", agent.doing))
+        box.appendChild(text)
+        box.appendChild(ageSpan("ao-age", agent.sinceMillis))
+    }
+    return box
+}
+
+/**
+ * What the selected row shows last: the question before a resume or a start, else its extra text
+ * (its folder, where a search matched, a failed resume in the error colour).
  */
 private fun buildFocus(row: Row, ask: Ask?): HTMLElement? {
     val focus = div("ao-focus")
     if (ask != null) focus.appendChild(buildAsk(ask))
-    if (row.chips.isNotEmpty()) {
-        val chips = div("ao-chips")
-        // While a question is up only its own keys answer it: a click on a chip is not an answer.
-        if (ask != null) chips.addEventListener("click", { e: Event -> e.stopPropagation() })
-        row.chips.forEach { chip ->
-            chips.appendChild(span("ao-pill " + if (chip.kind == AgentsOverviewBackingViewModel.ChipKind.TAB) "ao-pill-tab" else "ao-pill-dir", chip.text))
-        }
-        focus.appendChild(chips)
-    }
     if (ask == null && row.extra.isNotEmpty()) {
         val line = div("ao-xtra")
         val error = row.error

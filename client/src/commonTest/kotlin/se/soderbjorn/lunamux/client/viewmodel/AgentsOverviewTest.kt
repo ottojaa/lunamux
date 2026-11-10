@@ -13,6 +13,8 @@ import se.soderbjorn.lunamux.AgentTask
 import se.soderbjorn.lunamux.LeafNode
 import se.soderbjorn.lunamux.Pane
 import se.soderbjorn.lunamux.TabConfig
+import se.soderbjorn.lunamux.TaskPanelBlock
+import se.soderbjorn.lunamux.TaskBlockContent
 import se.soderbjorn.lunamux.WindowCommand
 import se.soderbjorn.lunamux.WindowConfig
 import se.soderbjorn.lunamux.WindowEnvelope
@@ -71,8 +73,10 @@ class AgentsOverviewTest {
         inTab: Boolean = false,
         noTranscript: Boolean = false,
         nothingSaid: Boolean = false,
+        lastSaid: String? = null,
+        repo: String = "proj",
     ) = AgentSessionSummary(
-        id = id, agent = "claude", state = state, stateSince = since, title = title, repo = "proj", cwd = "/work/proj",
+        id = id, agent = "claude", state = state, stateSince = since, title = title, repo = repo, cwd = "/work/proj", lastSaid = lastSaid,
         cwdShown = "~/work/proj", nowLine = nowLine, question = question, leafId = "leaf-$id".takeIf { placed && endedAt == null },
         endedAt = endedAt, lastActivityAt = endedAt ?: since, startedAt = since, taskId = taskId, background = background, inTab = inTab,
         noTranscript = noTranscript, nothingSaid = nothingSaid,
@@ -98,7 +102,8 @@ class AgentsOverviewTest {
         assertEquals(listOf("task:g1", "solo"), vm.state.now.map { it.id })
         val row = vm.state.now.first()
         assertEquals("Release", row.title)
-        assertEquals("3 working", row.stateWord)
+        assertEquals("working", row.stateWord, "the main conversation itself works")
+        assertEquals(listOf("Main conversation", "session b1", "session b2"), row.agents.map { it.title })
         assertEquals("Waiting on review", row.detail, "the task's own status line is what the row says")
         assertEquals(Enter.JUMP, row.enter)
     }
@@ -350,7 +355,7 @@ class AgentsOverviewTest {
         assertEquals("helper", taskRow().recordId, "a working main one hides nothing: Return goes to a conversation in a listed tab")
         sessions(session("main", taskId = "g1", background = true))
         assertEquals(Enter.NONE, taskRow().enter)
-        assertEquals(AgentsOverviewBackingViewModel.HIDDEN_MAIN_NOTE, taskRow().extra)
+        assertTrue(taskRow().extra.endsWith(AgentsOverviewBackingViewModel.HIDDEN_MAIN_NOTE))
         assertTrue(vm.state.footer.none { it.key == "↵" } && vm.state.footer.any { it.key == "→" })
         sessions(session("main", taskId = "g1", background = true, state = "needs_you"))
         assertEquals(Enter.SHOW_WAITING, taskRow().enter)
@@ -408,18 +413,74 @@ class AgentsOverviewTest {
     }
 
     @Test
-    fun aRowSaysWhereItRunsAndNamesItsTabUnlessTheTabNameSaysTheTitleAlready() {
+    fun aRowLeadsWithItsTabsNameUnlessTheTabIsUnnamedHiddenOrSaysTheTitleAlready() {
         layout(listed = listOf("a"), second = listOf("b"), background = listOf("bg"))
         sessions(session("a"), session("b", title = "two"), session("bg", state = "needs_you", background = true))
         vm.open()
         val a = vm.state.now.first { it.id == "a" }
         assertEquals("proj", a.where)
-        assertEquals(
-            listOf(AgentsOverviewBackingViewModel.Chip(AgentsOverviewBackingViewModel.ChipKind.FOLDER, "~/work/proj"), AgentsOverviewBackingViewModel.Chip(AgentsOverviewBackingViewModel.ChipKind.TAB, "one")),
-            a.chips,
+        assertEquals("one", a.tabName)
+        assertEquals("session a", a.title, "the title stays, as the description")
+        assertTrue("~/work/proj" in a.extra, "the selected row can still say its folder")
+        assertNull(vm.state.now.first { it.id == "bg" }.tabName, "a background tab is not named")
+        assertNull(vm.state.now.first { it.id == "b" }.tabName, "a tab named as the title adds nothing")
+        windowState.updateConfig(WindowConfig(tabs = listOf(TabConfig("tab-1", "Tab 3", panes = listOf(pane("leaf-a")))), activeTabId = "tab-1"))
+        assertNull(vm.state.now.first { it.id == "a" }.tabName, "a tab nobody named is not a name")
+    }
+
+    @Test
+    fun everyRowHasAHeadlineThatSaysWhereItIs() {
+        layout(listed = listOf("q", "w", "d"))
+        sessions(
+            session("q", state = "needs_you", question = "Allow Bash?", lastSaid = "old words"),
+            session("w", nowLine = "Running the tests", lastSaid = "old words"),
+            session("d", state = "done", lastSaid = "All 14 tests pass."),
+            session("e", state = "ended", endedAt = now - minute, lastSaid = "Pushed to the branch."),
         )
-        assertEquals(listOf(AgentsOverviewBackingViewModel.ChipKind.FOLDER), vm.state.now.first { it.id == "bg" }.chips.map { it.kind }, "a background tab is not named")
-        assertTrue(vm.state.now.first { it.id == "b" }.chips.none { it.kind == AgentsOverviewBackingViewModel.ChipKind.TAB })
+        vm.open()
+        fun detail(id: String) = vm.state.rows.first { it.id == id }.detail
+        assertEquals("\"Allow Bash?\"", detail("q"))
+        assertEquals("Running the tests", detail("w"))
+        assertEquals("All 14 tests pass.", detail("d"), "a done row says the last thing it said")
+        assertEquals("Pushed to the branch.", detail("e"), "and so does a closed one")
+        assertEquals(1, vm.state.doneCount)
+    }
+
+    @Test
+    fun aTaskRowShowsItsPlanAndSaysWhenOnlyItsAgentsWork() {
+        layout(listed = listOf("main"), background = listOf("b1"))
+        sessions(
+            session("main", state = "done", taskId = "g1", lastSaid = "I'll keep an eye on the run."),
+            session("b1", taskId = "g1", background = true, title = "Fix resume", nowLine = "Reading the backup"),
+        )
+        windowState.updateAgentTasks(listOf(task("main")))
+        windowState.updateTaskPanel(
+            "g1",
+            listOf(TaskPanelBlock("p", content = TaskBlockContent.Progress(done = 13, total = 14, label = "Resume still offers the helper"), writtenAtMillis = now)),
+        )
+        vm.open()
+        val row = vm.state.now.single()
+        assertEquals("1 agent working", row.stateWord)
+        assertEquals(AgentsOverviewBackingViewModel.Progress(13.0 / 14, "13/14"), row.progress)
+        assertEquals("Resume still offers the helper", row.detail, "with no status the plan's current step is the headline")
+        assertEquals(
+            listOf("Main conversation" to "I'll keep an eye on the run.", "Fix resume" to "Reading the backup"),
+            row.agents.map { it.title to it.doing },
+        )
+        windowState.updateAgentTasks(listOf(task("main", status = "Final build ready")))
+        assertEquals("Final build ready", vm.state.now.single().detail, "the task's own status comes first")
+    }
+
+    @Test
+    fun nowIsGroupedByRepoWithoutMovingRowsInsideAGroup() {
+        layout(listed = listOf("a", "b", "c"))
+        sessions(
+            session("a", since = now - 30 * minute), session("b", since = now - 20 * minute, repo = "skills"),
+            session("c", since = now - 10 * minute),
+        )
+        vm.open()
+        assertEquals(listOf("a", "c", "b"), vm.state.now.map { it.id }, "proj began first, so its rows come first, in start order")
+        assertEquals(listOf("proj", "proj", "skills"), vm.state.now.map { it.where })
     }
 
     @Test
@@ -452,7 +513,7 @@ class AgentsOverviewTest {
         windowState.updateAgentTasks(listOf(task("gone")))
         vm.open()
         assertEquals(Enter.NONE, taskRow().enter)
-        assertEquals(AgentsOverviewBackingViewModel.NO_TRANSCRIPT_NOTE, taskRow().extra)
+        assertTrue(taskRow().extra.endsWith(AgentsOverviewBackingViewModel.NO_TRANSCRIPT_NOTE))
         val saved = session("saved", taskId = "g1", state = "ended", endedAt = now - 2 * minute)
         sessions(session("a"), gone, saved)
         assertEquals(listOf(Enter.RESUME, "saved"), listOf(taskRow().enter, taskRow().recordId), "another conversation of the task can still be resumed")

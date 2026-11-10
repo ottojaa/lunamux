@@ -1,9 +1,11 @@
 /**
  * The task panel in the web client: a 320px column on the right of the window that sits beside a
- * task's main conversation. Under its header it shows the task's status line, then four blocks:
- * Background agents (the task's live sessions: working, waiting on the person or idle), Progress,
- * Links (newest first, each with its kind) and Recent activity. A list shows its first five entries and a "+ N more" line that
- * opens the rest in place. With nothing to show it says how to set the panel up.
+ * task's main conversation. Its header says where the work is: the tab's name, the task's title in
+ * full, where and since when, then the state and the headline the agents overview shows too. Under
+ * it come four blocks: Plan (the step in hand and the bar), Background agents (the task's live
+ * sessions: working, waiting on the person or idle), Activity (newest first, under day headings)
+ * and Links. A list shows its first five entries and a "+ N more" line that opens the rest in
+ * place. With no block to show it says how to set the panel up.
  *
  * ⌘I shows and hides the column in any tab (as does its ×). Beside a main conversation the choice
  * is kept with the other UI settings; elsewhere it holds for that tab only. An agent's line can be
@@ -57,6 +59,9 @@ private var taskPanelStarted = false
 internal class PanelParts {
     val root = (document.createElement("aside") as HTMLElement).also { it.className = "task-panel" }
     val title = span("tp-title")
+    val about = div("tp-about")
+    val meta = div("tp-meta")
+    val state = div("tp-state")
     val status = div("tp-status")
     val scroll = div("tp-scroll")
     val blocks = HashMap<String, HTMLElement>()
@@ -73,8 +78,7 @@ internal class PanelParts {
         side.appendChild(close)
         side.appendChild(span("tp-hint", "⌘I"))
         val main = div("tp-main")
-        main.appendChild(title)
-        main.appendChild(status)
+        listOf(title, about, meta, state, status).forEach { main.appendChild(it) }
         head.appendChild(main)
         head.appendChild(side)
         root.appendChild(head)
@@ -152,6 +156,7 @@ private data class TpMore(val section: Section, val more: Int) : TpLine { overri
 private data class TpProgress(val view: TaskPanelViewModel.ProgressView) : TpLine { override val key get() = "progress" }
 private data class TpLink(val index: Int, val link: LinkRow) : TpLine { override val key get() = "l:$index" }
 private data class TpActivity(val index: Int, val item: TaskPanelViewModel.ActivityRow) : TpLine { override val key get() = "t:$index" }
+private data class TpDay(val day: String) : TpLine { override val key get() = "d:$day" }
 
 /** Draws [state] into the column, or takes the column out of the page when the panel is not visible. */
 private fun renderTaskPanel(state: TaskPanelViewModel.State) {
@@ -161,23 +166,58 @@ private fun renderTaskPanel(state: TaskPanelViewModel.State) {
         return
     }
     if (!p.root.isConnected) (document.querySelector(".${AppFrameClassNames.BODY}") as? HTMLElement)?.appendChild(p.root) ?: return
-    if (p.title.textContent != state.title) p.title.textContent = state.title
-    p.title.title = state.title
-    p.status.textContent = state.status ?: ""
-    p.status.style.display = if (state.status == null) "none" else ""
+    renderHead(p, state)
     val setup = state.setup
     if (setup != null) {
         syncChildren(p.scroll, listOf(setup), { "setup" }) { buildSetup(it) }
         return
     }
     val wanted = listOf(
+        p.block("Plan") to progressLines(state.progress),
         p.block("Background agents") to agentLines(state.agents),
-        p.block("Progress") to progressLines(state.progress),
+        p.block("Activity") to activityLines(state.activity),
         p.block("Links") to linkLines(state.links),
-        p.block("Recent activity") to activityLines(state.activity),
     )
     wanted.forEach { (el, lines) -> syncChildren(el, lines, TpLine::key) { buildLine(it) } }
     syncChildren(p.scroll, wanted.map { it.first }, { it.getAttribute("data-block")!! }) { it }
+}
+
+/** Sets [el]'s text, and hides it when there is none. */
+private fun show(el: HTMLElement, text: String?) {
+    if (el.textContent != text.orEmpty()) el.textContent = text.orEmpty()
+    el.style.display = if (text.isNullOrEmpty()) "none" else ""
+}
+
+/**
+ * The header: the name, the title under it when the tab's name led, where and since when, then the
+ * state (mark, word, age) and the headline. The state line is rebuilt only when its words change,
+ * so a working glyph keeps turning.
+ */
+private fun renderHead(p: PanelParts, state: TaskPanelViewModel.State) {
+    val head = state.head
+    show(p.title, head?.name ?: state.title)
+    show(p.about, head?.about)
+    show(p.meta, head?.meta)
+    show(p.status, head?.headline)
+    val stateKey = head?.let { "${it.state}/${it.stateWord}/${it.sinceMillis}" }.orEmpty()
+    if (p.state.getAttribute("data-key") != stateKey) {
+        p.state.setAttribute("data-key", stateKey)
+        p.state.textContent = ""
+        p.state.className = "tp-state tp-state-${head?.state.orEmpty()}"
+        if (head != null) {
+            val mark = div("tp-glyph")
+            when (head.state) {
+                AgentFacts.NEEDS_YOU -> mark.textContent = "◆"
+                AgentFacts.WORKING -> mark.appendChild(spinner())
+                AgentFacts.DONE -> mark.textContent = "✓"
+                else -> mark.textContent = "○"
+            }
+            p.state.appendChild(mark)
+            p.state.appendChild(span("tp-state-word", head.stateWord))
+            p.state.appendChild(ageSpan("tp-agent-age", head.sinceMillis))
+        }
+    }
+    p.state.style.display = if (head == null) "none" else ""
 }
 
 private fun agentLines(block: TaskPanelViewModel.Block<AgentLine>): List<TpLine> = listOf<TpLine>(TpTitle("Background agents")) +
@@ -185,14 +225,16 @@ private fun agentLines(block: TaskPanelViewModel.Block<AgentLine>): List<TpLine>
     listOfNotNull(TpMore(Section.AGENTS, block.more).takeIf { block.more > 0 })
 
 private fun progressLines(progress: TaskPanelViewModel.ProgressView?): List<TpLine> =
-    listOf<TpLine>(TpTitle("Progress")) + (progress?.let { listOf(TpProgress(it)) } ?: listOf(TpMuted("No progress written yet.")))
+    listOf<TpLine>(TpTitle("Plan")) + (progress?.let { listOf(TpProgress(it)) } ?: listOf(TpMuted("No plan written yet.")))
 
 private fun linkLines(block: TaskPanelViewModel.Block<LinkRow>): List<TpLine> = listOf<TpLine>(TpTitle("Links")) +
     (if (block.total == 0) listOf(TpMuted("No links yet.")) else block.shown.mapIndexed { i, l -> TpLink(i, l) }) +
     listOfNotNull(TpMore(Section.LINKS, block.more).takeIf { block.more > 0 })
 
-private fun activityLines(block: TaskPanelViewModel.Block<TaskPanelViewModel.ActivityRow>): List<TpLine> = listOf<TpLine>(TpTitle("Recent activity")) +
-    (if (block.total == 0) listOf(TpMuted("Nothing yet.")) else block.shown.mapIndexed { i, a -> TpActivity(i, a) }) +
+/** The activity entries, each day's under a heading of its own. */
+private fun activityLines(block: TaskPanelViewModel.Block<TaskPanelViewModel.ActivityRow>): List<TpLine> = listOf<TpLine>(TpTitle("Activity")) +
+    (if (block.total == 0) listOf(TpMuted("Nothing yet."))
+    else block.shown.flatMapIndexed { i, a -> listOfNotNull(TpDay(a.day).takeIf { i == 0 || block.shown[i - 1].day != a.day }, TpActivity(i, a)) }) +
     listOfNotNull(TpMore(Section.ACTIVITY, block.more).takeIf { block.more > 0 })
 
 private fun buildLine(line: TpLine): HTMLElement = when (line) {
@@ -202,6 +244,7 @@ private fun buildLine(line: TpLine): HTMLElement = when (line) {
     is TpMore -> buildMore(line)
     is TpProgress -> buildProgress(line.view)
     is TpLink -> buildLink(line.link)
+    is TpDay -> div("tp-day").also { it.textContent = line.day }
     is TpActivity -> div("tp-tl").also {
         it.appendChild(span("tp-tl-age", line.item.time))
         it.appendChild(span("tp-tl-text", line.item.text))
@@ -289,16 +332,18 @@ private fun buildHint(hint: String): HTMLElement {
     return host
 }
 
-/** The task in hand above the bar, "x of y" below it. */
+/** The bar with "x of y" beside it, then the step in hand. */
 private fun buildProgress(progress: TaskPanelViewModel.ProgressView): HTMLElement {
     val root = div("tp-progress")
-    progress.current?.let { root.appendChild(div("tp-progress-current").also { e -> e.textContent = it }) }
     progress.fraction?.let { f ->
+        val line = div("tp-bar-line")
         val bar = div("tp-bar")
         bar.appendChild(div("tp-bar-fill").also { it.style.width = "${(f.coerceIn(0.0, 1.0) * 100).toInt()}%" })
-        root.appendChild(bar)
+        line.appendChild(bar)
+        progress.count?.let { line.appendChild(span("tp-progress-text", it)) }
+        root.appendChild(line)
     }
-    progress.count?.let { root.appendChild(div("tp-progress-text").also { e -> e.textContent = it }) }
+    progress.current?.let { root.appendChild(div("tp-progress-current").also { e -> e.textContent = it }) }
     return root
 }
 
@@ -308,7 +353,8 @@ private fun buildProgress(progress: TaskPanelViewModel.ProgressView): HTMLElemen
  */
 private fun buildLink(link: LinkRow): HTMLElement {
     val row = div("tp-link-row")
-    row.appendChild(span("tp-kind", link.kind))
+    // The default kind says nothing; only a kind the writer chose is worth its column.
+    row.appendChild(span("tp-kind", link.kind.takeIf { it != TaskLink.DEFAULT_KIND }.orEmpty()))
     row.appendChild(span("tp-link-title", link.title).also { it.appendChild(span("tp-link-arrow", " ↗")) })
     row.appendChild(span("tp-link-time", link.time))
     row.setAttribute("role", "link")

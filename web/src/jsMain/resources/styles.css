@@ -3535,14 +3535,15 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 }
 
 /* ── Agents overview (AgentsOverview.kt) ──
-   Topbar chip plus the ⌘⇧A overlay, drawn as a terminal table: one row per task, every row the same
-   six-column grid (marker, title, where, state word, detail, age). Brightness and colour follow the
-   state: a working or needs-you row (`.ao-live`) has a bright title, a done row (`.ao-done`) a
-   mid-grey one, and a finished one (`.ao-old`) in EARLIER is dim all over. The state word is coloured
-   by state: the accent for "working" (with the working glyph), amber for "needs you", a muted green
-   for "done"; the accent also marks the selected row, red a failed open. Every other text is a shade
-   of the theme's text colour. Lifted above the pane modals so it opens over whatever is on screen.
-   The colours below follow the active theme and fall back to the dark teal defaults. */
+   The ⌘⇧A overlay, drawn as a terminal table: one row per task or session on one five-column grid
+   (state mark, name, progress or folder, state word, age). A live row has its description and its
+   headline under that line; a closed row is the one line. Brightness and colour follow the state: a
+   working or needs-you row (`.ao-live`) has a bright name, a done row (`.ao-done`) a mid-grey one,
+   and a closed one (`.ao-old`) in EARLIER is dim all over. The accent is for working, amber for
+   "needs you", a muted green for done; the accent also marks the selected row, red a failed open.
+   Every other text is a shade of the theme's text colour. Lifted above the pane modals so it opens
+   over whatever is on screen. The colours below follow the active theme and fall back to the dark
+   teal defaults. */
 .ao-panel, .task-panel {
     --ao-surface: var(--dt-window-bg, var(--t-surface, #0c1a1e));
     --ao-text: var(--t-text, #cfe3e2);
@@ -3591,8 +3592,9 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     flex: none;
     height: 44px;
     padding: 0 2ch;
-    border-bottom: 1px solid var(--ao-line);
 }
+/* The counts at the end of the search line. */
+.ao-tally { flex: none; display: flex; gap: 2ch; font-size: 12px; white-space: nowrap; }
 .ao-prompt { color: var(--ao-accent); font-weight: 700; }
 .ao-search {
     flex: 1;
@@ -3620,13 +3622,15 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-sec::after { content: ""; flex: 1; height: 1px; background: var(--ao-line); }
 .ao-empty { padding: 24px 14px; color: var(--ao-dim); }
 
-/* The one grid every row uses: marker, title, where, state word, detail, age. The title and the
-   detail share the flexible width two to three, the title never narrower than 20 characters; the
-   folder (room for "lunamux-fork"), the state (room for "⠆ 2 working") and the age are fixed, so the
-   columns line up in every row. */
+.ao-grp { padding: 4px 14px 0; font-size: 11px; letter-spacing: 0.06em; color: var(--ao-dim); }
+
+/* The one grid every row uses: state mark, name, progress (or folder), state word, age. The name
+   takes the width the fixed columns leave; the third column has room for a bar and "13/14" or for
+   "lunamux-fork", the fourth for "2 agents working". What a row shows under that line (the
+   description, the headline, a task's agents, the question, the peek) spans from the name on. */
 .ao-row {
     display: grid;
-    grid-template-columns: 14px minmax(20ch, 2fr) 16ch 15ch minmax(0, 3fr) 36px;
+    grid-template-columns: 2ch minmax(0, 1fr) 22ch 17ch 36px;
     gap: 0 12px;
     align-items: start;
     padding: 3px 14px;
@@ -3635,18 +3639,56 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     cursor: pointer;
 }
 .ao-row > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* The description and the headline run to two lines, then end in an ellipsis. */
+.ao-about, .ao-n {
+    grid-column: 2 / -1;
+    min-width: 0;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+}
+.ao-about { color: var(--ao-dim); }
+.ao-live + .ao-live, .ao-live + .ao-done, .ao-done + .ao-live, .ao-done + .ao-done { margin-top: 4px; }
 /* The pointer's row is a faint tint; only the selected row has the strong fill and the accent bar. */
 .ao-row:hover { background: var(--ao-hover); }
 .ao-row.ao-sel { background: var(--ao-sel); box-shadow: inset 2px 0 0 var(--ao-accent); }
 
+/* Progress on the row: a thin bar, then the count. */
+.ao-p { display: flex; align-items: center; gap: 1ch; color: var(--ao-dim); font-variant-numeric: tabular-nums; }
+.ao-bar { flex: 1; height: 4px; border-radius: 2px; overflow: hidden; background: color-mix(in srgb, var(--ao-text) 12%, transparent); }
+.ao-bar-fill { display: block; height: 100%; border-radius: 2px; background: var(--ao-accent); }
+.ao-done .ao-bar-fill { background: var(--ao-done); }
+/* What a closed row or an agent last said, after its name. */
+.ao-said { margin-left: 1.5ch; color: var(--ao-dim); font-weight: 400; }
+.ao-old .ao-said { color: var(--ao-faint); }
+/* The selected task's conversations: mark, name and words, age. */
+.ao-agents {
+    grid-column: 2 / -1;
+    display: grid;
+    grid-template-columns: 2ch minmax(0, 1fr) 36px;
+    gap: 0 12px;
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px dashed var(--ao-line);
+}
+.ao-agents > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ao-agents > .ao-m { overflow: visible; }
+.ao-agent-name { color: var(--ao-text); }
+
 .ao-m { color: var(--ao-accent); user-select: none; }
 .ao-m-need { color: var(--ao-warn); }
+.ao-m-done { color: var(--ao-done); }
+.ao-row > .ao-m { overflow: visible; }
 /* Brightness by state: live rows bright, done rows mid-grey, EARLIER rows dim. */
 .ao-live .ao-t { color: var(--ao-text); font-weight: 600; }
 .ao-live .ao-w, .ao-live .ao-n { color: var(--ao-muted); }
 .ao-done .ao-t { color: var(--ao-muted); }
 .ao-done .ao-w, .ao-done .ao-n { color: var(--ao-dim); }
 .ao-row.ao-sel .ao-t { color: var(--ao-accent); font-weight: 600; }
+.ao-live .ao-t, .ao-done .ao-t { font-weight: 600; }
 .ao-sw { color: var(--ao-dim); }
 .ao-sw-work { color: var(--ao-accent); font-weight: 600; }
 .ao-sw-need { color: var(--ao-warn); font-weight: 600; }
@@ -3654,8 +3696,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-age { text-align: right; color: var(--ao-dim); }
 .ao-n-error { color: var(--ao-error); }
 
-/* The selected row's own block under the columns after the marker: the status in full, the chips, any extra
-   text, and in place of the status the question the first enter asks. */
+/* The selected row's own block under its lines: its folder and any note, or the question the first enter asks. */
 .ao-focus {
     grid-column: 2 / -1;
     display: grid;
@@ -3664,26 +3705,10 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     gap: 7px;
     white-space: normal;
     font-size: 12px;
-    color: var(--ao-muted);
+    color: var(--ao-dim);
     padding: 3px 0 6px;
 }
-.ao-full, .ao-xtra { line-height: 1.5; }
-.ao-chips { display: flex; flex-wrap: wrap; gap: 8px; line-height: 1; min-width: 0; }
-.ao-pill {
-    display: inline-block;
-    padding: 4px 9px;
-    border-radius: 999px;
-    white-space: nowrap;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-.ao-pill-dir { border: 1px solid var(--ao-line); color: var(--ao-dim); background: var(--ao-surface); }
-.ao-pill-tab {
-    color: var(--ao-accent);
-    background: color-mix(in srgb, var(--ao-accent) 12%, var(--ao-surface));
-    border: 1px solid color-mix(in srgb, var(--ao-accent) 35%, transparent);
-}
+.ao-xtra { line-height: 1.5; }
 
 /* The question the first enter asks before it resumes or starts anything. */
 .ao-ask {
@@ -3733,7 +3758,6 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
    never the word's beside it: the monospace face has no braille, so the system falls back to Apple
    Braille, and a bold weight there picks its outlined six-dot face, which draws a ring at every dot
    position the pair does not light. */
-.ao-row > .ao-sw { overflow: visible; }
 .ao-work {
     position: relative;
     display: inline-block;
@@ -3781,11 +3805,10 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-seg { cursor: pointer; }
 .ao-k { color: var(--ao-accent); margin-right: 0.8ch; }
 
-/* Narrow panels: the folder and the detail give way, the extra line then carries the detail. */
+/* Narrow panels: the progress and the folder give way. */
 @container ao (max-width: 700px) {
-    .ao-row { grid-template-columns: 14px minmax(0, 1fr) 15ch 36px; }
-    .ao-row > .ao-w, .ao-row > .ao-n { display: none; }
-    .ao-focus { grid-column: 2 / -1; }
+    .ao-row { grid-template-columns: 2ch minmax(0, 1fr) 17ch 36px; }
+    .ao-row > .ao-w, .ao-row > .ao-p { display: none; }
 }
 
 /* A search match is underlined in the accent colour, never filled: amber is reserved for needs-you. */
@@ -3879,8 +3902,17 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 /* A block's heading is its name alone, set like the sidebar's group labels. */
 .tp-block-title { margin-bottom: 8px; color: var(--ao-dim); font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
 .tp-muted { color: var(--ao-dim); }
-/* The task's own status line, under its title. */
-.tp-status { padding-top: 4px; color: var(--ao-muted); overflow-wrap: anywhere; }
+/* Under the name: the task's title in full, dim; where and since when, fainter; the state (mark, word,
+   age); then the headline, the one line the agents overview shows for this work too. */
+.tp-about { color: var(--ao-dim); overflow-wrap: anywhere; }
+.tp-meta { margin-top: 2px; color: var(--ao-faint); font-size: 11px; }
+.tp-state { display: flex; align-items: center; gap: 6px; margin-top: 8px; line-height: 20px; color: var(--ao-done); }
+.tp-state.tp-state-working { color: var(--ao-accent); }
+.tp-state.tp-state-needs_you { color: var(--ao-warn); background: none; }
+.tp-state.tp-state-ended { color: var(--ao-dim); }
+.tp-state .tp-glyph { color: inherit; }
+.tp-state-word { font-weight: 600; }
+.tp-status { padding-top: 2px; color: var(--ao-text); overflow-wrap: anywhere; }
 .tp-setup { display: flex; flex-direction: column; gap: 12px; padding: 14px var(--tp-pad); overflow-wrap: anywhere; }
 .tp-setup-prompt { padding: 10px 12px; border: 1px solid var(--ao-line); border-radius: 6px; user-select: text; -webkit-user-select: text; }
 
@@ -3937,11 +3969,12 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-state-needs_you.tp-agent-active:hover, .tp-state-needs_you.tp-agent-active:focus-visible { background: color-mix(in srgb, var(--ao-warn) 14%, transparent); }
 .tp-state-needs_you .tp-agent-title { color: var(--ao-warn); }
 
-/* Progress: the task in hand, a thin rounded bar, then "x of y" dim. */
-.tp-progress-current { margin-bottom: 8px; overflow-wrap: anywhere; }
-.tp-bar { height: 4px; border-radius: 2px; overflow: hidden; background: color-mix(in srgb, var(--ao-text) 12%, transparent); }
+/* Plan: a thin rounded bar with "x of y" dim beside it, then the step in hand. */
+.tp-progress-current { margin-top: 8px; overflow-wrap: anywhere; }
+.tp-bar-line { display: flex; align-items: center; gap: 10px; }
+.tp-bar { flex: 1; height: 4px; border-radius: 2px; overflow: hidden; background: color-mix(in srgb, var(--ao-text) 12%, transparent); }
 .tp-bar-fill { height: 100%; border-radius: 2px; background: var(--ao-accent); }
-.tp-progress-text { margin-top: 6px; color: var(--ao-dim); font-size: 11px; }
+.tp-progress-text { flex: none; color: var(--ao-dim); font-size: 11px; font-variant-numeric: tabular-nums; }
 
 /* A link: kind, label, time, the same three columns in every row. The kind column fits the
    longest kind ("decision", 8 characters at 11px) and never wraps; the label runs to two lines
@@ -3952,11 +3985,13 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-link-row:hover .tp-link-title, .tp-link-row:focus-visible .tp-link-title { text-decoration: underline; }
 .tp-link-time { color: var(--ao-dim); font-size: 11px; line-height: 17.4px; text-align: right; font-variant-numeric: tabular-nums; }
 
-/* Recent activity: the time in a fixed column and the item beside it, wrapping under itself.
-   Entries stand one full line apart (1.45em is the panel's line height), so a long entry's last
-   line never runs into the next entry's first at any width. */
+/* Activity: under a day heading, the time in a fixed column and the item beside it, wrapping under
+   itself. Entries stand half a line apart, so a long entry's last line never runs into the next
+   entry's first at any width. */
+.tp-day { margin: 10px 0 4px; color: var(--ao-faint); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+.tp-block-title + .tp-day { margin-top: 0; }
 .tp-tl { display: flex; gap: 10px; }
-.tp-tl + .tp-tl { margin-top: 1.45em; }
+.tp-tl + .tp-tl { margin-top: 0.7em; }
 .tp-tl-age { flex: none; width: 5ch; color: var(--ao-dim); font-variant-numeric: tabular-nums; }
 .tp-tl-text { min-width: 0; overflow-wrap: anywhere; }
 

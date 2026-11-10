@@ -43,7 +43,7 @@ class PanelLayoutTest {
         assertTrue(title.right <= close.left, "the title runs under the close button")
         assertTrue(hint.top >= close.bottom - 1, "the shortcut is not under the close button")
         assertTrue(hint.right <= close.right && close.right - hint.right < 8, "the shortcut is not right-aligned to the close button")
-        assertTrue(gap in 0.0..8.0, "the status line is not a small gap under the title: $gap px")
+        assertTrue(gap in 0.0..8.0, "the headline is not a small gap under the title: $gap px")
     }
 
     private fun row(title: String, doing: String, state: String, hint: String?) = AgentLine(
