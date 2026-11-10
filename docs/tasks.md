@@ -330,7 +330,7 @@ Four blocks, in this order, each headed by its name alone:
 1. **Plan**: a bar with "x of y" beside it, then the step in hand. When an agent wrote the plan's
    steps (a `steps` block) they are listed under the bar: the finished ones folded into "N earlier
    steps" but for the last, the one in hand bright with the spinner, the rest dim; the count then
-   comes from the steps.
+   comes from the steps. A plan with every step done is one line, "Plan · 15 of 15 done".
 2. **Background agents**: the task's live agents but for the main conversation. Each line has its
    state mark (the spinner, ◆ when it waits, ○ when idle), its title with its age at the right and,
    as a quieter second line that never wraps, what it is doing: its own status (`set_status`), else
@@ -345,9 +345,14 @@ Four blocks, in this order, each headed by its name alone:
 In the tab of **a session that has no task** the panel shows what Lunamux sees by itself: the same
 header, then **You asked** (each thing the person asked in that conversation, its time or day, and
 how long the turn took, read from the transcript) and **Work in its folder** (uncommitted changes
-and unpushed commits), then how to ask the agent for a plan, links and activity.
+and unpushed commits), then one faint line saying how to ask the agent for a task.
 
-Every list shows five entries, then **+ N more**, which opens the rest in place; the panel scrolls.
+In the header the state of a conversation whose turn has ended reads "idle" (the overview's row
+says "done"), with its age after a dot, and the headline has a small label saying whose words it
+is: "asks", "now" or "last said". A block with nothing in it is not drawn.
+
+Every list shows five entries, then **+ N more**, which opens the rest in place, and then **show
+less**, which folds it again; the panel scrolls.
 The blocks agents write are kept in the database, survive a restart and are not removed when the task
 ends. Only the types below exist; any other is refused.
 

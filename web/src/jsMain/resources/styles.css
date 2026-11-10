@@ -3915,7 +3915,12 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-state.tp-state-ended { color: var(--ao-dim); }
 .tp-state .tp-glyph { color: inherit; }
 .tp-state-word { font-weight: 600; }
-.tp-status { padding-top: 2px; color: var(--ao-text); overflow-wrap: anywhere; }
+.tp-status { padding-top: 6px; color: var(--ao-text); overflow-wrap: anywhere; }
+/* Whose words the headline is ("asks", "now", "last said"), as a small label over it. */
+.tp-status[data-label]:not([data-label=""])::before { content: attr(data-label); display: block; color: var(--ao-dim); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; line-height: 16px; }
+.tp-state.tp-state-done { color: var(--ao-muted); }
+.tp-state .tp-agent-age::before { content: "· "; }
+.tp-setup-compact { color: var(--ao-faint); font-size: 12px; }
 .tp-setup { display: flex; flex-direction: column; gap: 12px; padding: 14px var(--tp-pad); overflow-wrap: anywhere; }
 .tp-setup-prompt { padding: 10px 12px; border: 1px solid var(--ao-line); border-radius: 6px; user-select: text; -webkit-user-select: text; }
 

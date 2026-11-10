@@ -86,6 +86,7 @@ class TaskPanelTest {
         assertEquals("Waiting on review", head.headline, "the headline is the overview row's")
         assertEquals("one" to "Release", head.name to head.about, "the tab's name leads, the title follows")
         assertEquals(AgentFacts.WORKING to "working", head.state to head.stateWord)
+        assertEquals(TaskPanelViewModel.LABEL_NOW, head.headlineLabel, "the headline says whose words it is")
         assertTrue(head.meta.startsWith("proj"))
         assertNull(s.setup)
     }
@@ -214,6 +215,10 @@ class TaskPanelTest {
         assertEquals(7, vm.state.links.shown.size)
         assertEquals(0, vm.state.links.more)
         assertEquals(1, vm.state.activity.more, "the other lists stay cut")
+        assertTrue(vm.state.links.opened, "an opened list offers to fold again")
+        vm.showLess(TaskPanelViewModel.Section.LINKS)
+        assertEquals(2, vm.state.links.more, "and folds back to its first five")
+        assertFalse(vm.state.links.opened)
     }
 
     @Test
@@ -312,6 +317,9 @@ class TaskPanelTest {
         vm.toggleInActiveTab()
         val before = vm.state
         assertEquals("The tunnel is stopped.", before.head?.headline)
+        assertEquals(TaskPanelViewModel.STATE_IDLE, before.head?.stateWord, "a turn that ended is idle, not done")
+        assertEquals(TaskPanelViewModel.LABEL_LAST_SAID, before.head?.headlineLabel)
+        assertTrue(before.setup!!.compact, "having no task is the usual case: one line says how to get one")
         assertEquals("solo", before.story?.recordId)
         assertEquals(0, before.story?.turns?.total, "nothing is shown until the server has answered")
         runNow { vm.readStory() }

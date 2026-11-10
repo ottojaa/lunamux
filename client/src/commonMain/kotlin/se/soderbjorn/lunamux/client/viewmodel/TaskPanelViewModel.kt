@@ -43,7 +43,7 @@ internal fun isSafeUrl(url: String): Boolean = SAFE_URL.matches(url)
  * links and recent activity, and whether the panel is open.
  *
  * The web and Android screens create one, collect [stateFlow] and draw it. [setOpen], [toggle] and
- * [toggleInActiveTab] show or hide the panel; [showMore] opens a list in full; a click on an agent
+ * [toggleInActiveTab] show or hide the panel; [showMore] opens a list in full and [showLess] folds it again; a click on an agent
  * line goes out through [send].
  *
  * @param windowState where the server's pushes (sessions, tasks, layout) arrive.
@@ -98,7 +98,10 @@ class TaskPanelViewModel(
     /**
      * The header: [name] is the tab's name (or the title when the tab has none) and [about] the
      * title under it; [meta] says where and since when; [state] and [stateWord] are the overview
-     * row's, [headline] its headline, so the two screens cannot disagree.
+     * row's, [headline] its headline, so the two screens cannot disagree. The one difference is the
+     * word for a conversation whose turn has ended: the panel says "idle", since "done" beside a
+     * plan reads as the task being done. [headlineLabel] says whose words the headline is ("asks",
+     * "now", "last said").
      */
     data class Head(
         val name: String,
@@ -108,6 +111,7 @@ class TaskPanelViewModel(
         val stateWord: String,
         val sinceMillis: Long,
         val headline: String,
+        val headlineLabel: String = "",
     )
 
     /**
@@ -121,10 +125,17 @@ class TaskPanelViewModel(
         val count: String?,
         val steps: List<TaskStep> = emptyList(),
         val earlierDone: Int = 0,
-    )
+    ) {
+        /** True when every step is done: the view then draws the plan as one line. */
+        val finished: Boolean get() = (fraction ?: 0.0) >= 1.0 && steps.all { it.state == TaskStep.DONE }
+    }
 
-    /** One list of the panel, cut to five unless opened: [more] entries are not drawn, [total] are held. */
-    data class Block<out T>(val shown: List<T>, val more: Int, val total: Int)
+    /**
+     * One list of the panel, cut to five unless opened: [more] entries are not drawn, [total] are
+     * held. [opened] is true when the person opened a longer list in full, so the view offers to
+     * fold it again.
+     */
+    data class Block<out T>(val shown: List<T>, val more: Int, val total: Int, val opened: Boolean = false)
 
     /** One thing the person asked: [time] as a clock time, the prompt's first line, and how long the turn [took] ("12m", empty while it runs). */
     data class TurnRow(val time: String, val prompt: String, val took: String)
@@ -136,8 +147,12 @@ class TaskPanelViewModel(
      */
     data class Story(val key: String, val recordId: String, val turns: Block<TurnRow>, val work: List<String>)
 
-    /** How to set the panel up, shown under the header when the panel has no block to show. */
-    data class Setup(val lead: String, val prompt: String)
+    /**
+     * How to set the panel up, shown under the header when the panel has no block to show.
+     * [compact] is for a session that simply has no task, the usual case: the view then draws
+     * [lead] as one faint line and leaves [prompt] out.
+     */
+    data class Setup(val lead: String, val prompt: String, val compact: Boolean = false)
 
     /** Everything a view needs to draw the panel. */
     data class State(
@@ -193,6 +208,16 @@ class TaskPanelViewModel(
         ui.update { it.copy(expanded = it.expanded + (key to section)) }
     }
 
+    /**
+     * Folds a list opened with [showMore] back to its first five. Called by the view's "show less".
+     *
+     * @param section the list to fold.
+     */
+    fun showLess(section: Section) {
+        val key = state.taskId ?: state.story?.recordId ?: return
+        ui.update { it.copy(expanded = it.expanded - (key to section)) }
+    }
+
     /** Asks the server for the story of the session the panel shows; the view calls it when [Story.key] changes. */
     suspend fun readStory() {
         state.story?.let { send(WindowCommand.ReadAgentStory(it.recordId)) }
@@ -245,9 +270,15 @@ class TaskPanelViewModel(
                     row.finished -> AgentFacts.ENDED
                     else -> AgentFacts.DONE
                 },
-                stateWord = row.stateWord,
+                stateWord = if (row.stateWord == AgentsOverviewBackingViewModel.STATE_DONE) STATE_IDLE else row.stateWord,
                 sinceMillis = row.sinceMillis,
                 headline = row.detail,
+                headlineLabel = when {
+                    row.detail.isEmpty() -> ""
+                    row.needsYou -> LABEL_ASKS
+                    row.working -> LABEL_NOW
+                    else -> LABEL_LAST_SAID
+                },
             )
         }
         val task = focused?.taskId?.let(tasksById::get)
@@ -263,7 +294,8 @@ class TaskPanelViewModel(
                 title = session?.let(AgentFacts::titleOf) ?: NO_SESSION_TITLE,
                 head = session?.let { headOf(it.conversationId, AgentFacts.startedOf(it)) },
                 story = session?.let { storyOf(it, windowState.agentStory.value, now, ui) },
-                setup = Setup(if (session != null) SETUP_SESSION else SETUP_NO_SESSION, SETUP_NEW_TASK_PROMPT),
+                setup = if (session != null) Setup(SETUP_SESSION, SETUP_NEW_TASK_PROMPT, compact = true)
+                else Setup(SETUP_NO_SESSION, SETUP_NEW_TASK_PROMPT),
             )
         }
         val blocks = panels[task.id].orEmpty()
@@ -308,8 +340,11 @@ class TaskPanelViewModel(
     }
 
     private fun <T> cut(all: List<T>, taskId: String, section: Section, ui: Ui): Block<T> =
-        if ((taskId to section) in ui.expanded || all.size <= SHOWN) Block(all, 0, all.size)
-        else Block(all.take(SHOWN), all.size - SHOWN, all.size)
+        when {
+            all.size <= SHOWN -> Block(all, 0, all.size)
+            (taskId to section) in ui.expanded -> Block(all, 0, all.size, opened = true)
+            else -> Block(all.take(SHOWN), all.size - SHOWN, all.size)
+        }
 
     /**
      * The task's live sessions, the waiting ones first, then by start, so a row keeps its place
@@ -398,7 +433,11 @@ class TaskPanelViewModel(
         const val SETUP_NOTE = "The panel shows a task's plan, agents, activity and links. Agents fill it with the Lunamux tools create_task and upsert_task_block."
 
         private const val SETUP_TASK = "Nothing here yet. To fill it, tell an agent in this task:"
-        private const val SETUP_SESSION = "This is what Lunamux sees by itself. For a plan, links and activity, tell the agent:"
+        const val SETUP_SESSION = "No task here. For a plan and activity, ask the agent to make this work a Lunamux task."
+        const val STATE_IDLE = "idle"
+        const val LABEL_ASKS = "asks"
+        const val LABEL_NOW = "now"
+        const val LABEL_LAST_SAID = "last said"
         private const val SETUP_NO_SESSION = "No agent is running in this tab. Start Claude or Codex here, then tell it:"
         private const val SETUP_TASK_PROMPT = "Keep this task's Lunamux panel up to date with progress, links and recent activity."
         private const val SETUP_NEW_TASK_PROMPT = "Make this work a Lunamux task and keep its panel up to date with progress, links and recent activity."

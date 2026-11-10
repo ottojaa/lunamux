@@ -152,7 +152,7 @@ private sealed interface TpLine { val key: String }
 private data class TpTitle(val name: String) : TpLine { override val key get() = "title" }
 private data class TpMuted(val text: String) : TpLine { override val key get() = "muted" }
 private data class TpAgent(val line: AgentLine) : TpLine { override val key get() = "a:${line.recordId}" }
-private data class TpMore(val section: Section, val more: Int) : TpLine { override val key get() = "more" }
+private data class TpMore(val section: Section, val more: Int) : TpLine { override val key get() = "more:${more > 0}" }
 private data class TpProgress(val view: TaskPanelViewModel.ProgressView) : TpLine { override val key get() = "progress" }
 private data class TpLink(val index: Int, val link: LinkRow) : TpLine { override val key get() = "l:$index" }
 private data class TpActivity(val index: Int, val item: TaskPanelViewModel.ActivityRow) : TpLine { override val key get() = "t:$index" }
@@ -187,11 +187,12 @@ private fun renderTaskPanel(state: TaskPanelViewModel.State) {
         syncChildren(p.scroll, seen.map { it.first } + setupEl, { it.getAttribute("data-block")!! }) { it }
         return
     }
-    val wanted = listOf(
-        p.block("Plan") to progressLines(state.progress),
-        p.block("Background agents") to agentLines(state.agents),
-        p.block("Activity") to activityLines(state.activity),
-        p.block("Links") to linkLines(state.links),
+    // A block with nothing in it is left out: an empty heading tells the person nothing.
+    val wanted = listOfNotNull(
+        state.progress?.let { p.block("Plan") to progressLines(it) },
+        (p.block("Background agents") to agentLines(state.agents)).takeIf { state.agents.total > 0 },
+        (p.block("Activity") to activityLines(state.activity)).takeIf { state.activity.total > 0 },
+        (p.block("Links") to linkLines(state.links)).takeIf { state.links.total > 0 },
     )
     wanted.forEach { (el, lines) -> syncChildren(el, lines, TpLine::key) { buildLine(it) } }
     syncChildren(p.scroll, wanted.map { it.first }, { it.getAttribute("data-block")!! }) { it }
@@ -201,7 +202,7 @@ private fun renderTaskPanel(state: TaskPanelViewModel.State) {
 private var lastStoryKey: String? = null
 
 private fun turnLines(block: TaskPanelViewModel.Block<TaskPanelViewModel.TurnRow>): List<TpLine> = listOf<TpLine>(TpTitle("You asked")) +
-    block.shown.mapIndexed { i, t -> TpTurn(i, t) } + listOfNotNull(TpMore(Section.TURNS, block.more).takeIf { block.more > 0 })
+    block.shown.mapIndexed { i, t -> TpTurn(i, t) } + listOfNotNull(moreLine(Section.TURNS, block))
 
 /** Sets [el]'s text, and hides it when there is none. */
 private fun show(el: HTMLElement, text: String?) {
@@ -220,6 +221,8 @@ private fun renderHead(p: PanelParts, state: TaskPanelViewModel.State) {
     show(p.about, head?.about)
     show(p.meta, head?.meta)
     show(p.status, head?.headline)
+    // Whose words the headline is, drawn as a small label over it (see `.tp-status` in styles.css).
+    p.status.setAttribute("data-label", head?.headlineLabel.orEmpty())
     val stateKey = head?.let { "${it.state}/${it.stateWord}/${it.sinceMillis}" }.orEmpty()
     if (p.state.getAttribute("data-key") != stateKey) {
         p.state.setAttribute("data-key", stateKey)
@@ -230,7 +233,6 @@ private fun renderHead(p: PanelParts, state: TaskPanelViewModel.State) {
             when (head.state) {
                 AgentFacts.NEEDS_YOU -> mark.textContent = "◆"
                 AgentFacts.WORKING -> mark.appendChild(spinner())
-                AgentFacts.DONE -> mark.textContent = "✓"
                 else -> mark.textContent = "○"
             }
             p.state.appendChild(mark)
@@ -242,21 +244,22 @@ private fun renderHead(p: PanelParts, state: TaskPanelViewModel.State) {
 }
 
 private fun agentLines(block: TaskPanelViewModel.Block<AgentLine>): List<TpLine> = listOf<TpLine>(TpTitle("Background agents")) +
-    (if (block.total == 0) listOf(TpMuted("No background agents.")) else block.shown.map { TpAgent(it) }) +
-    listOfNotNull(TpMore(Section.AGENTS, block.more).takeIf { block.more > 0 })
+    block.shown.map { TpAgent(it) } +
+    listOfNotNull(moreLine(Section.AGENTS, block))
 
-private fun progressLines(progress: TaskPanelViewModel.ProgressView?): List<TpLine> =
-    listOf<TpLine>(TpTitle("Plan")) + (progress?.let { listOf(TpProgress(it)) } ?: listOf(TpMuted("No plan written yet.")))
+/** The plan: one line when every step is done ("Plan · 15 of 15 done"), else the bar and the steps. */
+private fun progressLines(progress: TaskPanelViewModel.ProgressView): List<TpLine> =
+    if (progress.finished) listOf(TpTitle(listOfNotNull("Plan", progress.count?.let { "$it done" } ?: "done").joinToString(" · ")))
+    else listOf(TpTitle("Plan"), TpProgress(progress))
 
 private fun linkLines(block: TaskPanelViewModel.Block<LinkRow>): List<TpLine> = listOf<TpLine>(TpTitle("Links")) +
-    (if (block.total == 0) listOf(TpMuted("No links yet.")) else block.shown.mapIndexed { i, l -> TpLink(i, l) }) +
-    listOfNotNull(TpMore(Section.LINKS, block.more).takeIf { block.more > 0 })
+    block.shown.mapIndexed { i, l -> TpLink(i, l) } +
+    listOfNotNull(moreLine(Section.LINKS, block))
 
 /** The activity entries, each day's under a heading of its own. */
 private fun activityLines(block: TaskPanelViewModel.Block<TaskPanelViewModel.ActivityRow>): List<TpLine> = listOf<TpLine>(TpTitle("Activity")) +
-    (if (block.total == 0) listOf(TpMuted("Nothing yet."))
-    else block.shown.flatMapIndexed { i, a -> listOfNotNull(TpDay(a.day).takeIf { i == 0 || block.shown[i - 1].day != a.day }, TpActivity(i, a)) }) +
-    listOfNotNull(TpMore(Section.ACTIVITY, block.more).takeIf { block.more > 0 })
+    block.shown.flatMapIndexed { i, a -> listOfNotNull(TpDay(a.day).takeIf { i == 0 || block.shown[i - 1].day != a.day }, TpActivity(i, a)) } +
+    listOfNotNull(moreLine(Section.ACTIVITY, block))
 
 private fun buildLine(line: TpLine): HTMLElement = when (line) {
     is TpTitle -> div("tp-block-title").also { it.textContent = line.name }
@@ -279,8 +282,12 @@ private fun buildLine(line: TpLine): HTMLElement = when (line) {
     }
 }
 
-/** What the panel shows when it has nothing to show: how to set it up. */
+/**
+ * How to get more into the panel. A session with no task gets one faint line, since that is the
+ * usual case; a panel with nothing at all to show gets the lead, the prompt to copy and the note.
+ */
 private fun buildSetup(setup: TaskPanelViewModel.Setup): HTMLElement {
+    if (setup.compact) return div("tp-setup tp-setup-compact").also { it.textContent = setup.lead }
     val root = div("tp-setup")
     root.appendChild(div("tp-setup-lead").also { it.textContent = setup.lead })
     root.appendChild(div("tp-setup-prompt").also { it.textContent = setup.prompt })
@@ -288,12 +295,20 @@ private fun buildSetup(setup: TaskPanelViewModel.Setup): HTMLElement {
     return root
 }
 
+/** The line under a cut list ("+ 8 more") or under one opened in full ("show less"); none for a short list. */
+private fun moreLine(section: Section, block: TaskPanelViewModel.Block<*>): TpLine? = when {
+    block.more > 0 -> TpMore(section, block.more)
+    block.opened -> TpMore(section, 0)
+    else -> null
+}
+
+/** The button that opens a list in full, or, when [TpMore.more] is 0, folds an opened one again. */
 private fun buildMore(line: TpMore): HTMLElement {
     val button = document.createElement("button") as HTMLElement
     button.asDynamic().type = "button"
     button.className = "tp-more"
-    button.textContent = "+ ${line.more} more"
-    button.addEventListener("click", { _: Event -> taskPanel.showMore(line.section) })
+    button.textContent = if (line.more > 0) "+ ${line.more} more" else "show less"
+    button.addEventListener("click", { _: Event -> if (line.more > 0) taskPanel.showMore(line.section) else taskPanel.showLess(line.section) })
     return button
 }
 
