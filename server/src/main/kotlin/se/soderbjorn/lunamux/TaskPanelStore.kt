@@ -46,6 +46,10 @@ object TaskPanelLimits {
     const val TIMELINE_TEXT_MAX = 200
     /** Longest progress phase or label. */
     const val PHASE_MAX = 200
+    /** Most steps in a plan. */
+    const val STEPS_MAX = 60
+    /** Longest step. */
+    const val STEP_TEXT_MAX = 200
     /** Longest name of a writer. */
     const val WRITER_MAX = 40
     /** The block id the windows use for the agents block they draw themselves. */
@@ -122,6 +126,18 @@ object TaskPanelLimits {
                 }
                 c.phase?.let { limit("the phase", it, PHASE_MAX) }
                 c.label?.let { limit("the label", it, PHASE_MAX) }
+                c
+            }
+            is TaskBlockContent.Steps -> {
+                if (c.items.isEmpty()) throw TaskException("Block '$id': a plan needs at least one step.")
+                if (c.items.size > STEPS_MAX) throw TaskException("Block '$id': a plan holds at most $STEPS_MAX steps.")
+                c.items.forEachIndexed { i, step ->
+                    limit("step ${i + 1}", step.text, STEP_TEXT_MAX)
+                    if (step.text.isBlank()) throw TaskException("Block '$id': step ${i + 1} has no text.")
+                    if (step.state !in TaskStep.STATES) {
+                        throw TaskException("Block '$id': step ${i + 1} has state '${step.state.take(20)}'. Use ${TaskStep.STATES.joinToString(", ")}.")
+                    }
+                }
                 c
             }
         }

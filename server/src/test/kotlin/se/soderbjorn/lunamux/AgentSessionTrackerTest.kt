@@ -192,7 +192,7 @@ class AgentSessionTrackerTest {
         t.onHook(p, event("PreToolUse", "a-1", "tool_name" to "Bash"))
         var row = t.summaries.value.single()
         assertEquals("working", row.state)
-        assertEquals("Running a command", row.nowLine, "a call with no input says what it is, never a bare tool name")
+        assertNull(row.nowLine, "a call with nothing to say says nothing, never a bare tool name")
         assertEquals("Refactor tracker", row.title)
         assertEquals("please run the tests", row.firstPrompt)
 
@@ -449,22 +449,23 @@ class AgentSessionTrackerTest {
 
     @Test
     fun `a tool call says what it does in words`() {
-        val said = mapOf(
+        val said = mapOf<JsonObject, String?>(
             call("Bash", """{"command":"x","description":"\n  Run the server tests\nsecond line"}""") to "Run the server tests",
             call("Edit", """{"file_path":"/Users/o/bin/card-check"}""") to "Editing card-check",
             call("Read", """{"file_path":"/work/scripts/tick.py"}""") to "Reading tick.py",
             call("LS", """{"path":"/a/b/src/"}""") to "Listing src",
             call("Grep", """{"pattern":"fun toolLine"}""") to "Searching for \"fun toolLine\"",
-            call("Glob") to "Finding files",
+            call("Glob") to null,
             call("WebSearch", """{"query":"kotlin flow"}""") to "Searching the web for \"kotlin flow\"",
             call("mcp__claude_ai_Claude_Docs__batch") to "Claude Docs: batch",
             call("mcp__claude-in-chrome__tabs_context_mcp") to "claude-in-chrome: tabs context mcp",
-            call("mcp__") to "Using mcp",
+            call("mcp__") to null,
             call("Agent", """{"description":"Review the diff"}""") to "Running an agent: Review the diff",
-            call("KillShell") to "Stopping a background task",
+            call("KillShell") to null,
+            call("Bash", """{"command":"cd /tmp"}""") to null,
             call("Skill", """{"skill":"lunamux"}""") to "Using the lunamux skill",
             call("AskUserQuestion", """{"questions":[{"question":"Which port?","options":[]}]}""") to "Asks: Which port?",
-            call("AskUserQuestion") to "Asking a question",
+            call("AskUserQuestion") to null,
         )
         said.forEach { (input, line) -> assertEquals(line, toolLine(input)) }
         assertNull(toolLine(Json.parseToJsonElement("""{"x":1}""") as JsonObject))

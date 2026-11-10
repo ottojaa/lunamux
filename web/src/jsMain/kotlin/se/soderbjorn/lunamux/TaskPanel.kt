@@ -344,7 +344,23 @@ private fun buildProgress(progress: TaskPanelViewModel.ProgressView): HTMLElemen
         root.appendChild(line)
     }
     progress.current?.let { root.appendChild(div("tp-progress-current").also { e -> e.textContent = it }) }
+    if (progress.earlierDone > 0) root.appendChild(buildStep(TaskStep.DONE, "${progress.earlierDone} earlier ${if (progress.earlierDone == 1) "step" else "steps"}"))
+    progress.steps.forEach { root.appendChild(buildStep(it.state, it.text)) }
     return root
+}
+
+/** One step of the plan: ✓ and dim when done, the turning glyph and bright when in hand, dim when still to do. */
+private fun buildStep(state: String, text: String): HTMLElement {
+    val row = div("tp-step tp-step-$state")
+    val mark = div("tp-glyph")
+    when (state) {
+        TaskStep.DONE -> mark.textContent = "✓"
+        TaskStep.CURRENT -> mark.appendChild(spinner())
+        else -> mark.textContent = "·"
+    }
+    row.appendChild(mark)
+    row.appendChild(div("tp-step-text").also { it.textContent = text })
+    return row
 }
 
 /**

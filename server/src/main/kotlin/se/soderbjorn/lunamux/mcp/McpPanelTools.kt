@@ -24,6 +24,7 @@ import se.soderbjorn.lunamux.AgentSessionTracker
 import se.soderbjorn.lunamux.TaskBlockContent
 import se.soderbjorn.lunamux.TaskException
 import se.soderbjorn.lunamux.TaskLink
+import se.soderbjorn.lunamux.TaskStep
 import se.soderbjorn.lunamux.TaskPanelBlock
 import se.soderbjorn.lunamux.TaskPanelLimits
 import se.soderbjorn.lunamux.TaskPanelStore
@@ -32,7 +33,7 @@ import java.time.Instant
 import java.time.OffsetDateTime
 
 /** The block types an agent may write, in the order the tool descriptions list them. */
-private val BLOCK_TYPES = listOf("links", "timeline", "progress")
+private val BLOCK_TYPES = listOf("links", "timeline", "progress", "steps")
 
 /** Read a JSON value as the array of objects a block field expects. */
 private fun JsonObject.objects(field: String, blockId: String): List<JsonObject> {
@@ -92,6 +93,9 @@ internal fun parsePanelBlock(json: JsonObject): TaskPanelBlock {
             phase = (json["phase"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() },
             label = (json["label"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() },
         )
+        "steps" -> TaskBlockContent.Steps(json.objects("items", id).mapIndexed { i, o ->
+            TaskStep(o.str("text", "Block '$id' step ${i + 1}"), (o["state"] as? JsonPrimitive)?.contentOrNull ?: TaskStep.TODO)
+        })
         else -> throw McpArgumentException("Block '$id' has an unknown type '${type.take(40)}'. Use ${BLOCK_TYPES.joinToString(", ")}.")
     }
     return TaskPanelBlock(id = id, title = title, content = content, writtenAtMillis = 0L)
@@ -132,6 +136,9 @@ internal fun panelBlockJson(b: TaskPanelBlock): JsonObject = buildJsonObject {
             c.phase?.let { put("phase", it) }
             c.label?.let { put("label", it) }
         }
+        is TaskBlockContent.Steps -> put("items", buildJsonArray {
+            c.items.forEach { add(buildJsonObject { put("text", it.text); put("state", it.state) }) }
+        })
     }
     put("writtenBy", b.writtenBy)
     put("writtenAt", Instant.ofEpochMilli(b.writtenAtMillis).toString())
@@ -152,7 +159,10 @@ fun registerMcpPanelTools(store: TaskPanelStore, tracker: AgentSessionTracker) {
                 "up to ${TaskPanelLimits.KIND_MAX} characters, and \"link\" when you give none; at is when the linked thing was made or changed, " +
                 "ISO-8601 or epoch milliseconds, and a link without one is listed after the others; only http, https and file addresses). " +
                 "type timeline: [{at, text}] where at is ISO-8601 or epoch milliseconds (text ${TaskPanelLimits.TIMELINE_TEXT_MAX} characters; " +
-                "past ${TaskPanelLimits.TIMELINE_MAX} entries the newest are kept).",
+                "past ${TaskPanelLimits.TIMELINE_MAX} entries the newest are kept). " +
+                "type steps: the plan, in order: [{text, state}] where state is done, current or todo (todo when you give none; " +
+                "up to ${TaskPanelLimits.STEPS_MAX} steps of ${TaskPanelLimits.STEP_TEXT_MAX} characters). The panel shows the steps and counts them, " +
+                "so a steps block needs no progress block beside it.",
             buildJsonObject { put("type", "object") },
         ),
         "done" to schemaInt("type progress: how many parts are finished (with total)."),

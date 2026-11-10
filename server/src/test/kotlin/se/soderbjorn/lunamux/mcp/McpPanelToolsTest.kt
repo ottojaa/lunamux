@@ -19,6 +19,7 @@ import se.soderbjorn.lunamux.ClaudeUsageMonitor
 import se.soderbjorn.lunamux.GitInfo
 import se.soderbjorn.lunamux.PaneSnapshot
 import se.soderbjorn.lunamux.TaskBlockContent
+import se.soderbjorn.lunamux.TaskStep
 import se.soderbjorn.lunamux.TaskFile
 import se.soderbjorn.lunamux.TaskIndex
 import se.soderbjorn.lunamux.TaskLink
@@ -216,5 +217,19 @@ class McpPanelToolsTest {
         assertEquals(store.blocksOf(taskId), reopened.blocksOf(taskId))
         assertEquals(listOf("t", "l"), reopened.blocksOf(taskId).map { it.id })
         assertEquals("writer", reopened.blocksOf(taskId)[0].writtenBy)
+    }
+
+    @Test
+    fun `a plan is written as steps, read back the same, and refused when a step is unreadable`() {
+        set("""[{"id":"plan","type":"steps","items":[{"text":"Cut the server","state":"done"},{"text":"Fix resume","state":"current"},{"text":"Hand off"}]}]""")
+        assertEquals(
+            TaskBlockContent.Steps(listOf(TaskStep("Cut the server", "done"), TaskStep("Fix resume", "current"), TaskStep("Hand off", "todo"))),
+            store.blocksOf(taskId).single().content,
+        )
+        val read = blocksJson().single().jsonObject
+        assertEquals("steps", read["type"]!!.jsonPrimitive.content)
+        assertEquals(listOf("done", "current", "todo"), read["items"]!!.jsonArray.map { it.jsonObject["state"]!!.jsonPrimitive.content })
+        assertTrue("state" in refusal(set("""[{"id":"plan","type":"steps","items":[{"text":"x","state":"soon"}]}]""")))
+        assertTrue("at least one" in refusal(set("""[{"id":"plan","type":"steps","items":[]}]""")))
     }
 }

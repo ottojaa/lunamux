@@ -3974,6 +3974,14 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-bar-line { display: flex; align-items: center; gap: 10px; }
 .tp-bar { flex: 1; height: 4px; border-radius: 2px; overflow: hidden; background: color-mix(in srgb, var(--ao-text) 12%, transparent); }
 .tp-bar-fill { height: 100%; border-radius: 2px; background: var(--ao-accent); }
+/* The plan's steps under the bar: a mark, then the step, wrapping under itself. */
+.tp-step { display: flex; align-items: flex-start; gap: 8px; margin-top: 4px; color: var(--ao-dim); }
+.tp-bar-line + .tp-step { margin-top: 10px; }
+.tp-step .tp-glyph { color: var(--ao-dim); }
+.tp-step-done .tp-glyph { color: var(--ao-done); }
+.tp-step-current { color: var(--ao-text); }
+.tp-step-current .tp-glyph { color: var(--ao-accent); }
+.tp-step-text { min-width: 0; line-height: 20px; overflow-wrap: anywhere; }
 .tp-progress-text { flex: none; color: var(--ao-dim); font-size: 11px; font-variant-numeric: tabular-nums; }
 
 /* A link: kind, label, time, the same three columns in every row. The kind column fits the

@@ -15,6 +15,7 @@ import se.soderbjorn.lunamux.TabConfig
 import se.soderbjorn.lunamux.TaskBlockContent
 import se.soderbjorn.lunamux.TaskLink
 import se.soderbjorn.lunamux.TaskPanelBlock
+import se.soderbjorn.lunamux.TaskStep
 import se.soderbjorn.lunamux.TaskTimelineItem
 import se.soderbjorn.lunamux.WindowCommand
 import se.soderbjorn.lunamux.WindowConfig
@@ -87,7 +88,7 @@ class TaskPanelTest {
     }
 
     @Test
-    fun everyRowKeepsItsTitleAndOneActivityLineThatNeverFallsBackToABareToolPhrase() {
+    fun everyRowKeepsItsTitleAndOneActivityLine() {
         layout(listed = listOf("main"), background = listOf("w1", "w2", "w3", "w4", "w5"))
         fill(
             session("w1", title = "Check the schema", nowLine = "Reading db/schema.sql", since = now - 3 * minute),
@@ -100,24 +101,14 @@ class TaskPanelTest {
         assertEquals(listOf("w2", "w3", "w1", "w4", "w5").sorted(), lines.keys.sorted())
         assertEquals("w2", vm.state.agents.shown.first().recordId, "the agent that asks comes first, then by start")
         assertEquals("Migration" to "Drop the `users` table?", lines.getValue("w2").let { it.title to it.doing })
-        assertEquals("Idle one" to "working", lines.getValue("w3").let { it.title to it.doing }, "a bare tool name shows as working")
+        assertEquals("Idle one" to "Running cd", lines.getValue("w3").let { it.title to it.doing }, "what the agent wrote is shown as it wrote it")
         assertEquals("Check the schema" to "Reading db/schema.sql", lines.getValue("w1").let { it.title to it.doing })
         assertEquals("Quiet" to "idle", lines.getValue("w4").let { it.title to it.doing })
         assertEquals("findings", lines.getValue("w5").doing)
-        // The fixed phrase for an undescribed command shows as "working", and a question with no text as "needs you".
-        fill(
-            session("w1", nowLine = "Running a command"),
-            session("w2", state = "needs_you", question = null, nowLine = null),
-        )
+        // With nothing to say an agent's line is the plain state word, so the row keeps its height.
+        fill(session("w1", nowLine = null), session("w2", state = "needs_you", question = null, nowLine = null))
         assertEquals("working", vm.state.agents.shown.single { it.recordId == "w1" }.doing)
         assertEquals("needs you", vm.state.agents.shown.single { it.recordId == "w2" }.doing)
-        for (bare in listOf("Searching the code", "Editing a file", "Updating the task list", "Presenting a plan")) {
-            fill(session("w1", nowLine = bare), session("w2", nowLine = "Editing Panel.kt"))
-            assertEquals("working", vm.state.agents.shown.single { it.recordId == "w1" }.doing, bare)
-            assertEquals("Editing Panel.kt", vm.state.agents.shown.single { it.recordId == "w2" }.doing)
-        }
-        fill(session("w1", nowLine = "Using jq to pull the ids"))
-        assertEquals("Using jq to pull the ids", vm.state.agents.shown.single().doing, "a description the agent wrote is kept")
     }
 
     @Test
@@ -294,5 +285,20 @@ class TaskPanelTest {
         assertEquals("Sun 22:13", TaskPanelViewModel.clockOf(at - 2 * day, at, TimeZone.UTC))
         assertEquals("4 Nov 22:13", TaskPanelViewModel.clockOf(at - 10 * day, at, TimeZone.UTC))
         assertEquals(listOf("now", "6m", "3h", "2d"), listOf(30_000L, 6 * 60_000L, 3 * 3_600_000L, 2 * day).map { AgentFacts.ageText(at - it, at) })
+    }
+
+    @Test
+    fun aPlanShowsItsStepsWithTheFinishedOnesFoldedAndCountsThem() {
+        layout(listed = listOf("main"))
+        fill()
+        val states = listOf("done", "done", "done", "current", "todo")
+        windowState.updateTaskPanel("g1", listOf(block(TaskBlockContent.Steps(states.mapIndexed { i, s -> TaskStep("step ${i + 1}", s) }))))
+        val plan = vm.state.progress!!
+        assertEquals("3 of 5", plan.count)
+        assertEquals(0.6, plan.fraction)
+        assertEquals(2, plan.earlierDone, "all but the last finished step fold into one line")
+        assertEquals(listOf("step 3", "step 4", "step 5"), plan.steps.map { it.text })
+        assertNull(plan.current, "the list shows the step in hand")
+        assertEquals("step 4", vm.state.head?.headline, "with no status, the step in hand is the headline")
     }
 }

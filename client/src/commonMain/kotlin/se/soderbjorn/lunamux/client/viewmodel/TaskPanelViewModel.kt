@@ -24,6 +24,7 @@ import se.soderbjorn.lunamux.AgentTask
 import se.soderbjorn.lunamux.TaskBlockContent
 import se.soderbjorn.lunamux.TaskLink
 import se.soderbjorn.lunamux.TaskPanelBlock
+import se.soderbjorn.lunamux.TaskStep
 import se.soderbjorn.lunamux.WindowCommand
 import se.soderbjorn.lunamux.WindowConfig
 import se.soderbjorn.lunamux.client.WindowStateRepository
@@ -107,8 +108,18 @@ class TaskPanelViewModel(
         val headline: String,
     )
 
-    /** What is being worked on, then how far along: [fraction] 0 to 1 and [count] "2 of 5" are null without a count. */
-    data class ProgressView(val current: String?, val fraction: Double?, val count: String?)
+    /**
+     * How far along, then what is being worked on: [fraction] 0 to 1 and [count] "2 of 5" are null
+     * without a count. [steps] is the plan when an agent wrote one, with the steps done before the
+     * last finished one folded into [earlierDone]; [current] is then left to the list.
+     */
+    data class ProgressView(
+        val current: String?,
+        val fraction: Double?,
+        val count: String?,
+        val steps: List<TaskStep> = emptyList(),
+        val earlierDone: Int = 0,
+    )
 
     /** One list of the panel, cut to five unless opened: [more] entries are not drawn, [total] are held. */
     data class Block<out T>(val shown: List<T>, val more: Int, val total: Int)
@@ -278,7 +289,7 @@ class TaskPanelViewModel(
                     spot.listed -> MemberAction.JUMP
                     else -> MemberAction.SHOW
                 }
-                val said = inWords(AgentFacts.lineOf(s))
+                val said = AgentFacts.lineOf(s)
                 AgentLine(
                     title = AgentFacts.titleOf(s),
                     doing = when {
@@ -301,14 +312,19 @@ class TaskPanelViewModel(
     }
 
     private fun progressOf(blocks: List<TaskPanelBlock>): ProgressView? {
-        val c = blocks.firstNotNullOfOrNull { it.content as? TaskBlockContent.Progress } ?: return null
-        val done = c.done
-        val total = c.total
-        val hasCount = done != null && total != null && total > 0
+        val bar = se.soderbjorn.lunamux.client.viewmodel.progressOf(blocks)
+        val steps = stepsOf(blocks)
+        val current = currentStepOf(blocks)
+        if (bar == null && current == null && steps.isEmpty()) return null
+        // Everything done before the last finished step folds into one line; that step and the rest show.
+        val lastDone = steps.indexOfLast { it.state == TaskStep.DONE }
+        val firstShown = if (lastDone > 0 && steps.take(lastDone).all { it.state == TaskStep.DONE }) lastDone else 0
         return ProgressView(
-            current = (c.phase ?: c.label)?.trim()?.takeIf { it.isNotEmpty() },
-            fraction = if (hasCount) (done!!.toDouble() / total!!).coerceIn(0.0, 1.0) else null,
-            count = if (hasCount) "$done of $total" else null,
+            current = current.takeIf { steps.isEmpty() },
+            fraction = bar?.fraction,
+            count = bar?.count?.replace("/", " of "),
+            steps = steps.drop(firstShown),
+            earlierDone = firstShown,
         )
     }
 
@@ -350,18 +366,6 @@ class TaskPanelViewModel(
         private const val SETUP_NEW_TASK_PROMPT = "Make this work a Lunamux task and keep its panel up to date with progress, links and recent activity."
 
         private val EMPTY_BLOCK = Block<Nothing>(emptyList(), 0, 0)
-
-        /** A tool-call line that names a tool, not an act ("Running cd", "Running a command"): it says nothing the person can use. */
-        private val BARE_TOOL = Regex(
-            "^(Running|Calling|Using) (a command|an agent|a skill|[\\w./:-]+)$|" +
-                "^(Entering plan mode|Presenting a plan|Asking a question)$|" +
-                "^(Editing|Writing|Reading) (a file|a notebook)$|^Listing a folder$|^Searching the (code|web)$|" +
-                "^Finding files$|^Fetching a web page$|^(Stopping|Checking) a background task$|" +
-                "^Updating the task list$|^Looking up tools$",
-        )
-
-        /** A line about what a member does if it is in words, else null. */
-        fun inWords(line: String?): String? = line?.trim()?.takeIf { it.isNotEmpty() && !BARE_TOOL.matches(it) }
 
         /** The clock time alone, `21:31`, in [zone]. */
         fun timeOf(atMillis: Long, zone: TimeZone): String {

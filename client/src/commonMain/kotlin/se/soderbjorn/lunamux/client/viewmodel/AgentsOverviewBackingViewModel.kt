@@ -34,6 +34,7 @@ import se.soderbjorn.lunamux.AgentSessionText
 import se.soderbjorn.lunamux.AgentTask
 import se.soderbjorn.lunamux.TaskBlockContent
 import se.soderbjorn.lunamux.TaskPanelBlock
+import se.soderbjorn.lunamux.TaskStep
 import se.soderbjorn.lunamux.WindowCommand
 import se.soderbjorn.lunamux.WindowEnvelope
 import se.soderbjorn.lunamux.client.WindowStateRepository
@@ -696,7 +697,7 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
     val main = u.sessions.firstOrNull { it.id == u.mainId }
     val detail = waiting?.let(::headlineOf)
         ?: t.status?.trim()?.takeIf { it.isNotEmpty() }
-        ?: blocks.firstNotNullOfOrNull { b -> (b.content as? TaskBlockContent.Progress)?.let { it.phase ?: it.label }?.trim()?.takeIf { it.isNotEmpty() } }
+        ?: currentStepOf(blocks)
         ?: working.sortedByDescending { it.lastActivityAt ?: it.stateSince }.firstNotNullOfOrNull(::headlineOf)
         ?: (main ?: u.sessions.maxByOrNull(AgentFacts::activityOf))?.let(::headlineOf)
         ?: ""
@@ -855,13 +856,26 @@ private fun wasLine(s: AgentSessionSummary): String = extraOf(
     headlineOf(s),
 )
 
-/** A task's progress block as the row and the panel's bar show it; null without a count. */
+/** The steps of a task's plan, when an agent wrote them. */
+internal fun stepsOf(blocks: List<TaskPanelBlock>): List<TaskStep> =
+    blocks.firstNotNullOfOrNull { it.content as? TaskBlockContent.Steps }?.items.orEmpty()
+
+/**
+ * How far a task is, as the row and the panel's bar show it: the count its progress block gives,
+ * else the done steps of its plan; null without either.
+ */
 internal fun progressOf(blocks: List<TaskPanelBlock>): Progress? {
-    val p = blocks.firstNotNullOfOrNull { it.content as? TaskBlockContent.Progress } ?: return null
-    val done = p.done ?: return null
-    val total = p.total?.takeIf { it > 0 } ?: return null
+    val p = blocks.firstNotNullOfOrNull { it.content as? TaskBlockContent.Progress }
+    val steps = stepsOf(blocks)
+    val done = p?.done?.takeIf { p.total != null } ?: steps.count { it.state == TaskStep.DONE }.takeIf { steps.isNotEmpty() } ?: return null
+    val total = (p?.total ?: steps.size).takeIf { it > 0 } ?: return null
     return Progress((done.toDouble() / total).coerceIn(0.0, 1.0), "$done/$total")
 }
+
+/** The step in hand: the progress block's phase or label, else the plan's current step. */
+internal fun currentStepOf(blocks: List<TaskPanelBlock>): String? =
+    blocks.firstNotNullOfOrNull { b -> (b.content as? TaskBlockContent.Progress)?.let { it.phase ?: it.label }?.trim()?.takeIf { it.isNotEmpty() } }
+        ?: stepsOf(blocks).firstOrNull { it.state == TaskStep.CURRENT }?.text
 
 private val DEFAULT_TAB_NAME = Regex("^Tab \\d+$")
 

@@ -4,8 +4,8 @@
  * `task_panel_blocks` table), pushes them to every window as [WindowEnvelope.TaskPanel], and the
  * clients draw them in the panel beside the task's own session.
  *
- * Contains [TaskPanelBlock], the sealed [TaskBlockContent] with its three cases (links, a timeline
- * and progress), and the small item types those cases carry. Everything here is plain data; the
+ * Contains [TaskPanelBlock], the sealed [TaskBlockContent] with its four cases (links, a timeline,
+ * progress and the steps of a plan), and the small item types those cases carry. Everything here is plain data; the
  * limits on sizes and counts are enforced by the server when a block is written, not by these
  * types.
  */
@@ -61,6 +61,24 @@ sealed class TaskBlockContent {
         val label: String? = null,
     ) : TaskBlockContent() {
         override val kindName: String get() = "progress"
+    }
+
+    /** The steps of the plan, in order, each done, in hand or still to do. */
+    @Serializable
+    @SerialName("steps")
+    data class Steps(val items: List<TaskStep>) : TaskBlockContent() {
+        override val kindName: String get() = "steps"
+    }
+}
+
+/** One step in a [TaskBlockContent.Steps] block; [state] is `done`, `current` or `todo`. */
+@Serializable
+data class TaskStep(val text: String, val state: String = TODO) {
+    companion object {
+        const val DONE = "done"
+        const val CURRENT = "current"
+        const val TODO = "todo"
+        val STATES = listOf(DONE, CURRENT, TODO)
     }
 }
 

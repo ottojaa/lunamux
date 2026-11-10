@@ -331,7 +331,7 @@ class AgentSessionTracker(
                 // A question put through AskUserQuestion is a prompt on screen the moment it starts.
                 val asked = askedQuestionOf(event)
                 if (asked != null) set(NEEDS_YOU, nowLine = null, question = asked.take(QUESTION_MAX))
-                else set(WORKING, nowLine = toolLine(event))
+                else set(WORKING, nowLine = toolLine(event) ?: rec.nowLine)
             }
             "PostToolUse" -> {
                 toolInFlight.remove(rec.id)
@@ -808,12 +808,12 @@ internal fun cleanTitle(raw: String?): String? {
     return if (t.lowercase() in setOf("claude", "claude code", "codex", "gemini", "gemini cli")) null else t
 }
 
-/** One line saying in words what a tool call does, for the row of a working session. */
+/** One line saying in words what a tool call does, for the row of a working session; null when the call says nothing specific. */
 internal fun toolLine(event: JsonObject): String? {
     val tool = event.str("tool_name") ?: return null
     val input = event["tool_input"] as? JsonObject
     askedLine(tool, input)?.let { return it }
-    return wordsFor(tool, input).take(TOOL_LINE_MAX)
+    return wordsFor(tool, input)?.take(TOOL_LINE_MAX)
 }
 
 /**
@@ -861,32 +861,28 @@ private fun firstLine(text: String): String? =
 private fun fileNameOf(path: String): String =
     path.trimEnd('/', '\\').substringAfterLast('/').substringAfterLast('\\')
 
-/** The words for one tool call, before the length cut. */
-private fun wordsFor(tool: String, input: JsonObject?): String {
+/**
+ * The words for one tool call, before the length cut; null when the call names nothing a person
+ * could use (a command with no description, a tool with no argument), so the row keeps its last line.
+ */
+private fun wordsFor(tool: String, input: JsonObject?): String? {
     fun arg(vararg keys: String): String? =
         keys.firstNotNullOfOrNull { input?.str(it)?.let(::firstLine) }
     fun file(vararg keys: String): String? = arg(*keys)?.let(::fileNameOf)?.takeIf { it.isNotEmpty() }
     return when (tool) {
-        "Bash" -> arg("description") ?: "Running a command"
-        "Edit", "MultiEdit" -> "Editing " + (file("file_path") ?: "a file")
-        "NotebookEdit" -> "Editing " + (file("notebook_path", "file_path") ?: "a notebook")
-        "Write" -> "Writing " + (file("file_path") ?: "a file")
-        "Read" -> "Reading " + (file("file_path") ?: "a file")
-        "Grep" -> arg("pattern")?.let { "Searching for \"$it\"" } ?: "Searching the code"
-        "Glob" -> arg("pattern")?.let { "Finding files matching \"$it\"" } ?: "Finding files"
-        "LS" -> "Listing " + (file("path") ?: "a folder")
-        "WebSearch" -> arg("query")?.let { "Searching the web for \"$it\"" } ?: "Searching the web"
-        "WebFetch" -> "Fetching " + (arg("url")?.let(::hostOf) ?: "a web page")
-        "Task", "Agent" -> arg("description")?.let { "Running an agent: $it" } ?: "Running an agent"
-        "TaskStop", "KillShell", "KillBash" -> "Stopping a background task"
-        "TaskOutput", "BashOutput" -> "Checking a background task"
-        "TodoWrite" -> "Updating the task list"
-        "Skill" -> arg("skill", "name")?.let { "Using the $it skill" } ?: "Using a skill"
-        "EnterPlanMode" -> "Entering plan mode"
-        "ExitPlanMode" -> "Presenting a plan"
-        "ToolSearch" -> "Looking up tools"
-        ASK_TOOL -> "Asking a question"
-        else -> mcpWords(tool) ?: "Using ${wordsOf(tool)}"
+        "Bash" -> arg("description")
+        "Edit", "MultiEdit" -> file("file_path")?.let { "Editing $it" }
+        "NotebookEdit" -> file("notebook_path", "file_path")?.let { "Editing $it" }
+        "Write" -> file("file_path")?.let { "Writing $it" }
+        "Read" -> file("file_path")?.let { "Reading $it" }
+        "Grep" -> arg("pattern")?.let { "Searching for \"$it\"" }
+        "Glob" -> arg("pattern")?.let { "Finding files matching \"$it\"" }
+        "LS" -> file("path")?.let { "Listing $it" }
+        "WebSearch" -> arg("query")?.let { "Searching the web for \"$it\"" }
+        "WebFetch" -> arg("url")?.let { "Fetching ${hostOf(it)}" }
+        "Task", "Agent" -> arg("description")?.let { "Running an agent: $it" }
+        "Skill" -> arg("skill", "name")?.let { "Using the $it skill" }
+        else -> mcpWords(tool)
     }
 }
 
