@@ -156,6 +156,8 @@ private data class TpMore(val section: Section, val more: Int) : TpLine { overri
 private data class TpProgress(val view: TaskPanelViewModel.ProgressView) : TpLine { override val key get() = "progress" }
 private data class TpLink(val index: Int, val link: LinkRow) : TpLine { override val key get() = "l:$index" }
 private data class TpActivity(val index: Int, val item: TaskPanelViewModel.ActivityRow) : TpLine { override val key get() = "t:$index" }
+private data class TpTurn(val index: Int, val turn: TaskPanelViewModel.TurnRow) : TpLine { override val key get() = "u:$index" }
+private data class TpWork(val text: String) : TpLine { override val key get() = "w:$text" }
 private data class TpDay(val day: String) : TpLine { override val key get() = "d:$day" }
 
 /** Draws [state] into the column, or takes the column out of the page when the panel is not visible. */
@@ -167,9 +169,22 @@ private fun renderTaskPanel(state: TaskPanelViewModel.State) {
     }
     if (!p.root.isConnected) (document.querySelector(".${AppFrameClassNames.BODY}") as? HTMLElement)?.appendChild(p.root) ?: return
     renderHead(p, state)
+    val story = state.story
+    if (story?.key != lastStoryKey) {
+        lastStoryKey = story?.key
+        if (story != null) GlobalScope.launch { taskPanel.readStory() }
+    }
     val setup = state.setup
     if (setup != null) {
-        syncChildren(p.scroll, listOf(setup), { "setup" }) { buildSetup(it) }
+        // A session with no task: what Lunamux sees by itself, then how to get more.
+        val seen = listOfNotNull(
+            story?.takeIf { it.turns.total > 0 }?.let { p.block("You asked") to turnLines(it.turns) },
+            story?.takeIf { it.work.isNotEmpty() }?.let { p.block("Work in its folder") to (listOf<TpLine>(TpTitle("Work in its folder")) + it.work.map(::TpWork)) },
+        )
+        seen.forEach { (el, lines) -> syncChildren(el, lines, TpLine::key) { buildLine(it) } }
+        val setupEl = p.blocks.getOrPut("setup") { div("tp-setup-host").also { it.setAttribute("data-block", "setup") } }
+        syncChildren(setupEl, listOf(setup), { "setup" }) { buildSetup(it) }
+        syncChildren(p.scroll, seen.map { it.first } + setupEl, { it.getAttribute("data-block")!! }) { it }
         return
     }
     val wanted = listOf(
@@ -181,6 +196,12 @@ private fun renderTaskPanel(state: TaskPanelViewModel.State) {
     wanted.forEach { (el, lines) -> syncChildren(el, lines, TpLine::key) { buildLine(it) } }
     syncChildren(p.scroll, wanted.map { it.first }, { it.getAttribute("data-block")!! }) { it }
 }
+
+/** The story key the server was last asked about, so one state asks once. */
+private var lastStoryKey: String? = null
+
+private fun turnLines(block: TaskPanelViewModel.Block<TaskPanelViewModel.TurnRow>): List<TpLine> = listOf<TpLine>(TpTitle("You asked")) +
+    block.shown.mapIndexed { i, t -> TpTurn(i, t) } + listOfNotNull(TpMore(Section.TURNS, block.more).takeIf { block.more > 0 })
 
 /** Sets [el]'s text, and hides it when there is none. */
 private fun show(el: HTMLElement, text: String?) {
@@ -245,6 +266,13 @@ private fun buildLine(line: TpLine): HTMLElement = when (line) {
     is TpProgress -> buildProgress(line.view)
     is TpLink -> buildLink(line.link)
     is TpDay -> div("tp-day").also { it.textContent = line.day }
+    is TpWork -> div("tp-muted").also { it.textContent = line.text }
+    is TpTurn -> div("tp-tl").also {
+        it.appendChild(span("tp-tl-age", line.turn.time))
+        val text = span("tp-tl-text", line.turn.prompt)
+        if (line.turn.took.isNotEmpty()) text.appendChild(span("tp-tl-took", " · ${line.turn.took}"))
+        it.appendChild(text)
+    }
     is TpActivity -> div("tp-tl").also {
         it.appendChild(span("tp-tl-age", line.item.time))
         it.appendChild(span("tp-tl-text", line.item.text))

@@ -6,6 +6,9 @@
  */
 package se.soderbjorn.lunamux.client.viewmodel
 
+import kotlin.test.assertNotNull
+import se.soderbjorn.lunamux.WindowEnvelope
+import se.soderbjorn.lunamux.AgentTurn
 import kotlinx.datetime.TimeZone
 import se.soderbjorn.lunamux.AgentSessionSummary
 import se.soderbjorn.lunamux.AgentTask
@@ -300,5 +303,33 @@ class TaskPanelTest {
         assertEquals(listOf("step 3", "step 4", "step 5"), plan.steps.map { it.text })
         assertNull(plan.current, "the list shows the step in hand")
         assertEquals("step 4", vm.state.head?.headline, "with no status, the step in hand is the headline")
+    }
+
+    @Test
+    fun aSessionWithNoTaskShowsWhatWasAskedAndTheWorkLeftInItsFolder() {
+        layout(listed = listOf("solo"))
+        windowState.updateAgentSessions(listOf(session("solo", state = "done", taskId = null).copy(background = false, lastSaid = "The tunnel is stopped.")), true)
+        vm.toggleInActiveTab()
+        val before = vm.state
+        assertEquals("The tunnel is stopped.", before.head?.headline)
+        assertEquals("solo", before.story?.recordId)
+        assertEquals(0, before.story?.turns?.total, "nothing is shown until the server has answered")
+        runNow { vm.readStory() }
+        assertEquals(listOf<WindowCommand>(WindowCommand.ReadAgentStory("solo")), sent)
+        windowState.updateAgentStory(
+            WindowEnvelope.AgentStory(
+                "solo",
+                turns = listOf(AgentTurn(now, "stop the tunnel", 30_000), AgentTurn(now - 3 * 24 * 60 * minute, "try it over frp", 31 * minute)),
+                uncommitted = 3, unpushed = 1, branch = "spike/remote",
+            ),
+        )
+        val story = vm.state.story!!
+        assertEquals(listOf("stop the tunnel" to "<1m", "try it over frp" to "31m"), story.turns.shown.map { it.prompt to it.took })
+        assertEquals(5, story.turns.shown.first().time.length, "a turn from today shows its clock time")
+        assertFalse(':' in story.turns.shown.last().time, "an older one shows its day")
+        assertEquals(listOf("3 uncommitted changes on spike/remote", "1 unpushed commit"), story.work)
+        assertNotNull(vm.state.setup, "and it still says how to get a plan, links and activity")
+        windowState.updateAgentStory(WindowEnvelope.AgentStory("other", turns = listOf(AgentTurn(now, "not mine"))))
+        assertEquals(0, vm.state.story!!.turns.total, "an answer about another conversation is not shown")
     }
 }

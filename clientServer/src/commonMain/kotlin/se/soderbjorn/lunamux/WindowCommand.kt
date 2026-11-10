@@ -300,6 +300,15 @@ sealed class WindowCommand {
     data class InspectAgentSession(val recordId: String) : WindowCommand()
 
     /**
+     * Ask for the story of one conversation as Lunamux saw it: what the person asked, when, and
+     * how long each turn took, plus the uncommitted and unpushed work in its folder. The task
+     * panel sends it for a session that has no task; the answer is [WindowEnvelope.AgentStory].
+     */
+    @Serializable
+    @SerialName("readAgentStory")
+    data class ReadAgentStory(val recordId: String) : WindowCommand()
+
+    /**
      * Add or remove Lunamux's hook entries in the user's Claude Code settings file. Sent when the
      * App Settings "Connect Claude Code" row is pressed.
      */

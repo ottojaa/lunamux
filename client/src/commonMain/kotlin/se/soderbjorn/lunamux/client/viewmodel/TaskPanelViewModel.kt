@@ -6,8 +6,9 @@
  * day) and Links. No list is drawn in full: each shows its five newest entries, then "+ N more".
  *
  * The panel shows by itself beside a task's main conversation while the person has it open, and in
- * any other tab only when they ask for it there (⌘I). With nothing to show it says how to set the
- * panel up. Web draws it today; another client can draw the same [TaskPanelViewModel.State].
+ * any other tab only when they ask for it there (⌘I). For a session with no task it shows what
+ * Lunamux sees by itself: what the person asked, when and how long each turn took, and the work
+ * left in its folder, then how to set the panel up. Web draws it today; another client can draw the same [TaskPanelViewModel.State].
  */
 package se.soderbjorn.lunamux.client.viewmodel
 
@@ -27,6 +28,7 @@ import se.soderbjorn.lunamux.TaskPanelBlock
 import se.soderbjorn.lunamux.TaskStep
 import se.soderbjorn.lunamux.WindowCommand
 import se.soderbjorn.lunamux.WindowConfig
+import se.soderbjorn.lunamux.WindowEnvelope
 import se.soderbjorn.lunamux.client.WindowStateRepository
 import se.soderbjorn.lunamux.effectiveActiveTabId
 import se.soderbjorn.lunamux.effectiveTabs
@@ -70,7 +72,7 @@ class TaskPanelViewModel(
     }
 
     /** The lists of the panel that can open in full. */
-    enum class Section { AGENTS, LINKS, ACTIVITY }
+    enum class Section { AGENTS, LINKS, ACTIVITY, TURNS }
 
     /**
      * One row of the agents block: the session's [title], then one fixed [doing] line that is always
@@ -124,6 +126,16 @@ class TaskPanelViewModel(
     /** One list of the panel, cut to five unless opened: [more] entries are not drawn, [total] are held. */
     data class Block<out T>(val shown: List<T>, val more: Int, val total: Int)
 
+    /** One thing the person asked: [time] as a clock time, the prompt's first line, and how long the turn [took] ("12m", empty while it runs). */
+    data class TurnRow(val time: String, val prompt: String, val took: String)
+
+    /**
+     * What Lunamux sees of a session with no task: [key] names the conversation and its state, so
+     * the view asks again when either changes; [turns] and [work] (uncommitted and unpushed lines)
+     * are empty until the server has answered.
+     */
+    data class Story(val key: String, val recordId: String, val turns: Block<TurnRow>, val work: List<String>)
+
     /** How to set the panel up, shown under the header when the panel has no block to show. */
     data class Setup(val lead: String, val prompt: String)
 
@@ -136,6 +148,7 @@ class TaskPanelViewModel(
         val title: String = "",
         val head: Head? = null,
         val setup: Setup? = null,
+        val story: Story? = null,
         val agents: Block<AgentLine> = EMPTY_BLOCK,
         val progress: ProgressView? = null,
         val links: Block<LinkRow> = EMPTY_BLOCK,
@@ -152,8 +165,9 @@ class TaskPanelViewModel(
     private val ui = MutableStateFlow(Ui())
 
     val stateFlow: Flow<State> = combine(
-        windowState.agentTasks, windowState.agentSessions, windowState.config, windowState.taskPanels, ui,
-    ) { tasks, sessions, config, panels, ui -> build(tasks, sessions, config, panels, ui) }
+        combine(windowState.agentTasks, windowState.agentSessions, windowState.config, windowState.taskPanels, ui) { _, _, _, _, _ -> },
+        windowState.agentStory,
+    ) { _, _ -> state }
 
     /** The state right now, for key handlers that must act on what is on screen. */
     val state: State
@@ -173,10 +187,15 @@ class TaskPanelViewModel(
         ui.update { it.copy(askedTabs = if (tab in it.askedTabs) it.askedTabs - tab else it.askedTabs + tab) }
     }
 
-    /** Opens a list of the shown task in full, in place; the block's "+ N more". */
+    /** Opens a list of the shown task (or session) in full, in place; the block's "+ N more". */
     fun showMore(section: Section) {
-        val taskId = state.taskId ?: return
-        ui.update { it.copy(expanded = it.expanded + (taskId to section)) }
+        val key = state.taskId ?: state.story?.recordId ?: return
+        ui.update { it.copy(expanded = it.expanded + (key to section)) }
+    }
+
+    /** Asks the server for the story of the session the panel shows; the view calls it when [Story.key] changes. */
+    suspend fun readStory() {
+        state.story?.let { send(WindowCommand.ReadAgentStory(it.recordId)) }
     }
 
     suspend fun activateMember(line: AgentLine) {
@@ -243,6 +262,7 @@ class TaskPanelViewModel(
                 visible = visible,
                 title = session?.let(AgentFacts::titleOf) ?: NO_SESSION_TITLE,
                 head = session?.let { headOf(it.conversationId, AgentFacts.startedOf(it)) },
+                story = session?.let { storyOf(it, windowState.agentStory.value, now, ui) },
                 setup = Setup(if (session != null) SETUP_SESSION else SETUP_NO_SESSION, SETUP_NEW_TASK_PROMPT),
             )
         }
@@ -267,6 +287,24 @@ class TaskPanelViewModel(
             links = cut(links, task.id, Section.LINKS, ui),
             activity = cut(activity, task.id, Section.ACTIVITY, ui),
         )
+    }
+
+    private fun storyOf(s: AgentSessionSummary, answer: WindowEnvelope.AgentStory?, now: Long, ui: Ui): Story {
+        val known = answer?.takeIf { it.recordId == s.id }
+        val zone = zone()
+        val turns = known?.turns.orEmpty().map { t ->
+            // Today's turns show their time, older ones their day ("Tue", "4 Oct"): the column has room for one.
+            val clock = clockOf(t.atMillis, now, zone)
+            val took = t.tookMillis?.let { AgentFacts.ageText(0, it) }?.let { if (it == "now") "<1m" else it }
+            TurnRow(if (' ' in clock) clock.substringBeforeLast(' ') else clock, t.prompt, took.orEmpty())
+        }
+        val uncommitted = known?.uncommitted ?: 0
+        val unpushed = known?.unpushed ?: 0
+        val work = listOfNotNull(
+            "$uncommitted uncommitted ${if (uncommitted == 1) "change" else "changes"}${known?.branch?.let { " on $it" }.orEmpty()}".takeIf { uncommitted > 0 },
+            "$unpushed unpushed ${if (unpushed == 1) "commit" else "commits"}".takeIf { unpushed > 0 },
+        )
+        return Story("${s.id}/${s.state}/${s.stateSince}", s.id, cut(turns, s.id, Section.TURNS, ui), work)
     }
 
     private fun <T> cut(all: List<T>, taskId: String, section: Section, ui: Ui): Block<T> =
@@ -360,7 +398,7 @@ class TaskPanelViewModel(
         const val SETUP_NOTE = "The panel shows a task's plan, agents, activity and links. Agents fill it with the Lunamux tools create_task and upsert_task_block."
 
         private const val SETUP_TASK = "Nothing here yet. To fill it, tell an agent in this task:"
-        private const val SETUP_SESSION = "This session has no panel yet. To set one up, tell its agent:"
+        private const val SETUP_SESSION = "This is what Lunamux sees by itself. For a plan, links and activity, tell the agent:"
         private const val SETUP_NO_SESSION = "No agent is running in this tab. Start Claude or Codex here, then tell it:"
         private const val SETUP_TASK_PROMPT = "Keep this task's Lunamux panel up to date with progress, links and recent activity."
         private const val SETUP_NEW_TASK_PROMPT = "Make this work a Lunamux task and keep its panel up to date with progress, links and recent activity."

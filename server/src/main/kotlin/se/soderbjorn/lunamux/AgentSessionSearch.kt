@@ -97,6 +97,19 @@ object AgentSessionSearch {
         )
     }
 
+    /** What the person asked in one conversation and the work left in its folder, for the panel of a session with no task. */
+    fun story(recordId: String, tracker: AgentSessionTracker?): WindowEnvelope.AgentStory? {
+        val rec = tracker?.find(recordId) ?: return null
+        val folder = rec.cwd?.takeIf { it.isNotBlank() && File(it).isDirectory }?.let { Path.of(it) }
+        return WindowEnvelope.AgentStory(
+            recordId = recordId,
+            turns = rec.transcriptPath?.let { AgentTranscriptText.turns(File(it)) }.orEmpty(),
+            uncommitted = folder?.let(GitCatalog::uncommittedCount),
+            unpushed = folder?.let(GitCatalog::unpushedCount),
+            branch = folder?.let { GitCatalog.runGit(it, "branch", "--show-current")?.trim()?.takeIf(String::isNotEmpty) },
+        )
+    }
+
     /** The last segment of the record's working folder, as the overview names the folder; null when it has none. */
     private fun folderName(rec: AgentSessionRecord): String? =
         rec.cwd?.trimEnd('/')?.substringAfterLast('/')?.takeIf { it.isNotBlank() }

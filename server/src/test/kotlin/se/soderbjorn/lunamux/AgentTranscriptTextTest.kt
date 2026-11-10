@@ -86,4 +86,26 @@ class AgentTranscriptTextTest {
         assertEquals("", info.text)
         assertEquals("headless one\nheadless two", AgentTranscriptText.read(f)!!.text)
     }
+
+    @Test
+    fun `turns are what the person asked, newest first, with how long each took`() {
+        val file = File.createTempFile("turns", ".jsonl").apply { deleteOnExit() }
+        fun line(type: String, at: String, text: String, extra: String = "") =
+            """{"type":"$type","timestamp":"2026-11-10T$at.000Z","message":{"content":"$text"}$extra}"""
+        file.writeText(
+            listOf(
+                line("user", "08:00:00", "Spike: remote access\\nwith a second line"),
+                line("assistant", "08:00:40", "Looking."),
+                line("user", "08:01:00", "<command-name>/model</command-name>"),
+                line("assistant", "08:12:00", "Here is the plan."),
+                line("user", "08:20:00", "[Request interrupted by user]"),
+                line("user", "08:30:00", "helper noise", ""","isSidechain":true"""),
+                line("user", "09:00:00", "stop the tunnel"),
+            ).joinToString("\n"),
+        )
+        val turns = AgentTranscriptText.turns(file)
+        assertEquals(listOf("stop the tunnel", "Spike: remote access"), turns.map { it.prompt })
+        assertEquals(listOf(null, 20 * 60_000L), turns.map { it.tookMillis }, "the last prompt has no answer yet; the first ran to the interrupt")
+        assertEquals(emptyList(), AgentTranscriptText.turns(File("/nonexistent/x.jsonl")))
+    }
 }

@@ -829,6 +829,13 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
                 ctx.send(WindowEnvelope.AgentSessionMatches(cmd.query, emptyList()))
             }
         }
+        is WindowCommand.ReadAgentStory -> ctx.scope.launch {
+            runCatching {
+                withTimeoutOrNull(INSPECT_TIMEOUT_MS) {
+                    withContext(Dispatchers.IO) { AgentSessionSearch.story(cmd.recordId, ctx.agentTracker) }
+                }?.let { ctx.send(it) }
+            }.onFailure { log.warn("Reading the story of agent session {} failed", cmd.recordId, it) }
+        }
         is WindowCommand.InspectAgentSession -> ctx.scope.launch {
             // A live peek asks again every couple of seconds; while git is still busy on the
             // previous ask for the same row, that ask is enough.

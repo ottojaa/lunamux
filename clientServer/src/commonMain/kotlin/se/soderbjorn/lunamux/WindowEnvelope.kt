@@ -283,7 +283,22 @@ sealed class WindowEnvelope {
         val branch: String? = null,
         val resumeNote: String? = null,
     ) : WindowEnvelope()
+
+    /** The answer to [WindowCommand.ReadAgentStory], sent only to the connection that asked. */
+    @Serializable
+    @SerialName("agentStory")
+    data class AgentStory(
+        val recordId: String,
+        val turns: List<AgentTurn> = emptyList(),
+        val uncommitted: Int? = null,
+        val unpushed: Int? = null,
+        val branch: String? = null,
+    ) : WindowEnvelope()
 }
+
+/** One thing the person asked a conversation: when, its first line, and how long the agent then worked (null while it still does). */
+@Serializable
+data class AgentTurn(val atMillis: Long, val prompt: String, val tookMillis: Long? = null)
 
 /**
  * One row of the agents overview: a run of Claude Code, Codex or Gemini in a pane, as the server's

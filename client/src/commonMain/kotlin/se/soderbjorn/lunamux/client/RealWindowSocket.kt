@@ -189,6 +189,7 @@ class RealWindowSocket internal constructor(
                             is WindowEnvelope.AgentSessionError -> client.windowState.setAgentSessionError(envelope.message)
                             is WindowEnvelope.AgentSessionMatches -> client.windowState.updateAgentMatches(envelope)
                             is WindowEnvelope.AgentSessionInspection -> client.windowState.updateAgentInspection(envelope)
+                            is WindowEnvelope.AgentStory -> client.windowState.updateAgentStory(envelope)
                             is WindowEnvelope.FileBrowserDir,
                             is WindowEnvelope.FileBrowserContentMsg,
                             is WindowEnvelope.FileBrowserError,

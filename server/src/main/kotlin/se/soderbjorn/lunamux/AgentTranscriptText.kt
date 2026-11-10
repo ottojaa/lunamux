@@ -96,6 +96,52 @@ object AgentTranscriptText {
         return TranscriptInfo(kept, sessionId, cwd, branch, entrypoint, title, firstPrompt, first, last)
     }
 
+    /**
+     * What the person asked in one transcript, newest first, at most [TURNS_MAX]: each prompt's
+     * first line, when it was sent, and how long the agent then went on writing (null for the last
+     * prompt when nothing has answered it yet). Lines Claude Code writes on the person's behalf
+     * (commands, reminders, an interrupt marker) are not prompts.
+     */
+    fun turns(file: File): List<AgentTurn> {
+        if (!file.isFile) return emptyList()
+        val out = ArrayList<AgentTurn>()
+        var at: Long? = null
+        var prompt = ""
+        var last: Long? = null
+        fun close() {
+            val began = at ?: return
+            out += AgentTurn(began, prompt, last?.takeIf { it > began }?.let { it - began })
+        }
+        try {
+            file.bufferedReader().useLines { lines ->
+                for (line in lines) {
+                    val obj = parse(line) ?: continue
+                    val type = obj.str("type")
+                    if (type != "user" && type != "assistant") continue
+                    if ((obj["isSidechain"] as? JsonPrimitive)?.booleanOrNull == true) continue
+                    if ((obj["isMeta"] as? JsonPrimitive)?.booleanOrNull == true) continue
+                    val time = obj.str("timestamp")?.let(::epoch) ?: continue
+                    val said = if (type == "user") textOf((obj["message"] as? JsonObject)?.get("content")).trim() else ""
+                    if (type == "user" && said.isNotEmpty() && !said.startsWith("<") && !said.startsWith("[Request interrupted")) {
+                        close()
+                        at = time
+                        prompt = said.lineSequence().first { it.isNotBlank() }.trim().take(TURN_PROMPT_MAX)
+                        last = null
+                    } else if (at != null) {
+                        last = time
+                    }
+                }
+            }
+        } catch (_: java.io.IOException) {
+            return emptyList()
+        }
+        close()
+        return out.takeLast(TURNS_MAX).asReversed()
+    }
+
+    private const val TURNS_MAX = 30
+    private const val TURN_PROMPT_MAX = 200
+
     private fun parse(line: String): JsonObject? {
         if (line.isBlank() || line[0] != '{') return null
         return runCatching { json.parseToJsonElement(line) as? JsonObject }.getOrNull()

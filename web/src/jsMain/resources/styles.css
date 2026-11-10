@@ -4000,6 +4000,9 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-block-title + .tp-day { margin-top: 0; }
 .tp-tl { display: flex; gap: 10px; }
 .tp-tl + .tp-tl { margin-top: 0.7em; }
+.tp-tl-took { color: var(--ao-dim); }
+/* What a person asked is cut at two lines; the transcript has the rest. */
+[data-block="You asked"] .tp-tl-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 .tp-tl-age { flex: none; width: 5ch; color: var(--ao-dim); font-variant-numeric: tabular-nums; }
 .tp-tl-text { min-width: 0; overflow-wrap: anywhere; }
 

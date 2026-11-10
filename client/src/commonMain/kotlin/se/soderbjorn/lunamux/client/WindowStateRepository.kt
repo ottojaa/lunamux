@@ -220,6 +220,15 @@ class WindowStateRepository {
         _agentMatches.value = matches
     }
 
+    /** The server's latest story of one conversation, for the task panel of a session with no task. */
+    private val _agentStory = MutableStateFlow<WindowEnvelope.AgentStory?>(null)
+    val agentStory: StateFlow<WindowEnvelope.AgentStory?> = _agentStory.asStateFlow()
+
+    /** Remember the story the server read for one conversation. */
+    fun updateAgentStory(story: WindowEnvelope.AgentStory) {
+        _agentStory.value = story
+    }
+
     /** Remember the server's inspection of one agent session. */
     fun updateAgentInspection(inspection: WindowEnvelope.AgentSessionInspection) {
         _agentInspection.value = inspection
