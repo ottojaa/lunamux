@@ -705,18 +705,19 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
     val single = u.sessions.singleOrNull()
     val repo = t.repo ?: u.sessions.takeIf { s -> s.isNotEmpty() && s.none { it.repo == null } }?.map { it.repo }?.distinct()?.singleOrNull()
     val error = c.errorOf(id)
+    val where = repo ?: u.sessions.map(AgentFacts::folderOf).distinct().singleOrNull()
     val cutOff = target?.takeIf { !u.inNow && u.enter == Enter.RESUME && stoppedByRestart(it, c.now) }
     return Row(
         id = id,
         taskId = t.id,
         title = t.title,
-        where = repo ?: u.sessions.map(AgentFacts::folderOf).distinct().singleOrNull(),
+        where = where,
         kind = kind,
         stateWord = word,
         detail = cutOff?.let(::wasLine) ?: detail,
         stopped = cutOff != null,
         extra = extraOf(
-            target?.cwdShown, c.noteOf(target?.id),
+            folderNote(target, where), c.noteOf(target?.id),
             target?.let {
                 when {
                     it.noTranscript -> AgentsOverviewBackingViewModel.NO_TRANSCRIPT_NOTE
@@ -769,7 +770,7 @@ private fun sessionRow(s: AgentSessionSummary, earlier: Boolean, c: Ctx, taskTit
         stateWord = word,
         detail = if (enter == Enter.RESUME && stoppedByRestart(s, c.now)) wasLine(s) else headlineOf(s).orEmpty(),
         stopped = enter == Enter.RESUME && stoppedByRestart(s, c.now),
-        extra = extraOf(s.cwdShown, c.noteOf(s.id), AgentsOverviewBackingViewModel.NO_TRANSCRIPT_NOTE.takeIf { enter == Enter.NONE }, error),
+        extra = extraOf(folderNote(s, s.repo ?: AgentFacts.folderOf(s)), c.noteOf(s.id), AgentsOverviewBackingViewModel.NO_TRANSCRIPT_NOTE.takeIf { enter == Enter.NONE }, error),
         tabName = c.tabNameOf(s, title),
         ask = askOf(id, enter, own = false, inTab = s.inTab),
         sinceMillis = sinceOf(s),
@@ -842,6 +843,10 @@ internal fun headlineOf(s: AgentSessionSummary): String? {
     }
 }
 
+/** [s]'s folder for the selected row, when it says more than the repo or folder name [where] the row already sits under (a worktree, a subfolder). */
+private fun folderNote(s: AgentSessionSummary?, where: String?): String? =
+    s?.cwdShown?.takeIf { it != where && it.trimEnd('/').substringAfterLast('/') != where }
+
 /** Whether Lunamux stopped under [s] within the last day. */
 private fun stoppedByRestart(s: AgentSessionSummary, now: Long): Boolean =
     s.state == ENDED && s.endReason == RESTART && now - (s.endedAt ?: s.stateSince) <= STOPPED_WINDOW_MS
@@ -879,9 +884,12 @@ internal fun currentStepOf(blocks: List<TaskPanelBlock>): String? =
 
 private val DEFAULT_TAB_NAME = Regex("^Tab \\d+$")
 
-/** The name the person gave the listed tab [s] runs in; null for a default name, a background tab, or one that only repeats [title]. */
+/**
+ * The name the person gave the listed tab [s] runs in (or ran in, when a restart stopped it and the
+ * tab is still there); null for a default name, a background tab, or one that only repeats [title].
+ */
 private fun Ctx.tabNameOf(s: AgentSessionSummary?, title: String): String? {
-    if (s == null || !AgentFacts.isLive(s)) return null
+    if (s == null || !(AgentFacts.isLive(s) || stoppedByRestart(s, now))) return null
     val name = layout.spotOf(s)?.takeIf { it.listed }?.tab?.title?.trim() ?: return null
     return name.takeIf { it.isNotEmpty() && !DEFAULT_TAB_NAME.matches(it) && !it.equals(title.trim(), ignoreCase = true) }
 }

@@ -373,11 +373,15 @@ private fun buildLiveCells(el: HTMLElement, row: Row, grouped: Boolean) {
     if (row.detail.isNotEmpty()) el.appendChild(div("ao-n").also { fillDetail(it, row) })
 }
 
-/** A closed row, on one line: its title with the last thing it said after it, where it ran, the state word and the age. */
+/**
+ * A closed row, on one line: its title with the last thing it said after it, where it ran, the state
+ * word and the age. One a restart stopped in a tab that is still there leads with the tab's name.
+ */
 private fun buildClosedCells(el: HTMLElement, row: Row) {
     el.appendChild(stateMark(AgentFacts.ENDED))
     val name = span("ao-t")
-    name.appendChild(span("ao-t-name").also { fillTitle(it, row) })
+    name.appendChild(span("ao-t-name").also { if (row.tabName != null) it.textContent = row.tabName else fillTitle(it, row) })
+    if (row.tabName != null) name.appendChild(span("ao-said").also { fillTitle(it, row) })
     if (row.detail.isNotEmpty()) name.appendChild(span("ao-said").also { fillDetail(it, row) })
     el.appendChild(name)
     el.appendChild(span("ao-w", row.where ?: ""))
