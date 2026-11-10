@@ -443,6 +443,14 @@ class AgentsOverviewTest {
         fun detail(id: String) = vm.state.rows.first { it.id == id }.detail
         assertEquals("\"Allow Bash?\"", detail("q"))
         assertEquals("Running the tests", detail("w"))
+        sessions(session("w", nowLine = "Running the tests").copy(status = "Checking the migration on a copy"))
+        assertEquals("Checking the migration on a copy", vm.state.rows.first { it.id == "w" }.detail, "its own words come before its tool call")
+        sessions(
+            session("q", state = "needs_you", question = "Allow Bash?", lastSaid = "old words"),
+            session("w", nowLine = "Running the tests", lastSaid = "old words"),
+            session("d", state = "done", lastSaid = "All 14 tests pass."),
+            session("e", state = "ended", endedAt = now - minute, lastSaid = "Pushed to the branch."),
+        )
         assertEquals("All 14 tests pass.", detail("d"), "a done row says the last thing it said")
         assertEquals("Pushed to the branch.", detail("e"), "and so does a closed one")
         assertEquals(1, vm.state.doneCount)

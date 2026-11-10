@@ -232,4 +232,17 @@ class McpPanelToolsTest {
         assertTrue("state" in refusal(set("""[{"id":"plan","type":"steps","items":[{"text":"x","state":"soon"}]}]""")))
         assertTrue("at least one" in refusal(set("""[{"id":"plan","type":"steps","items":[]}]""")))
     }
+
+    @Test
+    fun `set_status puts a conversation's own words on its row and refuses when there is none`() {
+        val pane = PaneSnapshot("s-status", leafId = "leaf-status", cwd = "/work", programTitle = null, agent = "claude", state = "working")
+        tracker.onHook(pane, buildJsonObject { put("hook_event_name", "UserPromptSubmit"); put("session_id", "a-status"); put("prompt", "go") })
+        val r = call("set_status", """{"text":"Reading the backup"}""", caller = "s-status")
+        assertEquals("Reading the backup", mcpJson.parseToJsonElement(textOf(r)).jsonObject["status"]!!.jsonPrimitive.content)
+        assertEquals("Reading the backup", tracker.summaries.value.single { it.conversationId == "a-status" }.status)
+        call("set_status", """{"text":"By its id","conversationId":"a-status"}""")
+        assertEquals("By its id", tracker.summaries.value.single { it.conversationId == "a-status" }.status)
+        assertTrue("No open agent conversation" in refusal(call("set_status", """{"text":"x","sessionId":"s-nobody"}""")))
+        assertTrue(isError(call("set_status", """{"text":"x"}""", caller = "s-status", scope = McpScope.READ)), "a read token cannot write it")
+    }
 }

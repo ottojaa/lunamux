@@ -338,6 +338,8 @@ data class AgentSessionSummary(
     val endReason: String? = null,
     /** The state a closed conversation was in when it ended. */
     val endedFrom: String? = null,
+    /** What the conversation says it is doing this turn, in its own words (the `set_status` tool). */
+    val status: String? = null,
 )
 
 /**

@@ -327,7 +327,7 @@ class TaskPanelViewModel(
                     spot.listed -> MemberAction.JUMP
                     else -> MemberAction.SHOW
                 }
-                val said = AgentFacts.lineOf(s)
+                val said = s.status?.trim()?.takeIf { it.isNotEmpty() && AgentFacts.isWorking(s) } ?: AgentFacts.lineOf(s)
                 AgentLine(
                     title = AgentFacts.titleOf(s),
                     doing = when {

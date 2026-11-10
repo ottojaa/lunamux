@@ -144,7 +144,7 @@ internal fun panelBlockJson(b: TaskPanelBlock): JsonObject = buildJsonObject {
     put("writtenAt", Instant.ofEpochMilli(b.writtenAtMillis).toString())
 }
 
-/** Register `set_task_panel`, `upsert_task_block`, `remove_task_block` and `get_task_panel`. */
+/** Register `set_status`, `set_task_panel`, `upsert_task_block`, `remove_task_block` and `get_task_panel`. */
 fun registerMcpPanelTools(store: TaskPanelStore, tracker: AgentSessionTracker) {
     val blockSchema = schemaObject(
         "id" to schemaString(
@@ -192,6 +192,30 @@ fun registerMcpPanelTools(store: TaskPanelStore, tracker: AgentSessionTracker) {
 
     /** Run a store call, turning its [TaskException] into a tool error. */
     fun <T> panelCall(block: () -> T): T = taskCall(block)
+
+    writeTool(
+        name = "set_status",
+        description = "Say in one line what you are doing right now, in your own words (for example \"Reproducing the " +
+            "failed resume on a copy of the data\"). It shows as your line in the agents overview and in the task panel " +
+            "while you work, in place of the name of your last tool call, and it goes when the person next prompts you. " +
+            "Call it when you start a distinct piece of work, not on every step. Line breaks become spaces and the text " +
+            "is cut at 120 characters. An empty text clears it. A task's own one-line status is set_task_status.",
+        inputSchema = schemaObject(
+            "text" to schemaString("The status line; empty clears it."),
+            "sessionId" to schemaString("Your pane: \$LUNAMUX_SESSION_ID from your environment. Defaults to the caller's."),
+            "conversationId" to schemaString(
+                "Your own conversation id (\$CLAUDE_CODE_SESSION_ID). Pass it when you are an agent started inside another " +
+                    "conversation's pane, or the status lands on that conversation.",
+            ),
+            required = listOf("text"),
+        ),
+    ) { ctx, args ->
+        val text = (args["text"] as? JsonPrimitive)?.contentOrNull ?: throw McpArgumentException("'text' must be a string")
+        val pane = (args["sessionId"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() } ?: ctx.callerSessionId
+        val conversation = (args["conversationId"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+        val kept = taskCall { tracker.setStatus(pane, conversation, text) }
+        McpToolResult.json(buildJsonObject { put("status", kept) })
+    }
 
     writeTool(
         name = "set_task_panel",

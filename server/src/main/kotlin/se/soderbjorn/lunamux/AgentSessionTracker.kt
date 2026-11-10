@@ -133,6 +133,12 @@ class AgentSessionTracker(
      */
     private val pids = HashMap<String, Long>()
 
+    /**
+     * What each open conversation says it is doing, in its own words (the `set_status` tool), by
+     * record id. Memory only: it holds for the turn it was said in and goes with the next prompt.
+     */
+    private val statuses = HashMap<String, String>()
+
     private val _summaries = MutableStateFlow<List<AgentSessionSummary>>(emptyList())
 
     /** The rows to show clients, republished after every change. */
@@ -322,6 +328,7 @@ class AgentSessionTracker(
             "SessionStart" -> {}
             "UserPromptSubmit" -> {
                 toolInFlight.remove(rec.id)
+                statuses.remove(rec.id)
                 set(WORKING, nowLine = null)
                 if (rec.firstPrompt == null) rec = rec.copy(firstPrompt = event.str("prompt")?.take(PROMPT_MAX))
                 if (rec.title == null && !isHelper) rec = rec.copy(title = cleanTitle(pane.programTitle))
@@ -438,6 +445,22 @@ class AgentSessionTracker(
         true
     }
 
+    /**
+     * Sets, or with a blank [text] clears, what an open conversation says it is doing. It is named
+     * by [conversationId] (the agent's own session id, which also reaches a helper) or, without
+     * one, taken to be the conversation of pane [terminalSessionId]. Returns the text kept, cut to
+     * [STATUS_MAX], or null when it was cleared; throws when no open conversation is found.
+     */
+    fun setStatus(terminalSessionId: String?, conversationId: String?, text: String): String? = synchronized(lock) {
+        val rec = conversationId?.let { id -> openRecords().firstOrNull { it.conversationId == id } }
+            ?: terminalSessionId?.takeIf { conversationId == null }?.let(::openFor)
+            ?: throw TaskException("No open agent conversation found. Pass your own \$LUNAMUX_SESSION_ID as sessionId, or your conversation id.")
+        val clean = text.replace(Regex("\\s*[\\r\\n]+\\s*"), " ").trim().take(STATUS_MAX).trim().ifEmpty { null }
+        if (clean == null) statuses.remove(rec.id) else statuses[rec.id] = clean
+        publish()
+        clean
+    }
+
     /** Promise a task to the next agent session that opens in a pane. */
     fun setPendingTask(leafId: String, taskId: String?) = synchronized(lock) {
         if (taskId == null) pendingTasks.remove(leafId) else pendingTasks[leafId] = taskId
@@ -547,6 +570,7 @@ class AgentSessionTracker(
         lastActivity.remove(recordId)
         lastHookAt.remove(recordId)
         pids.remove(recordId)
+        statuses.remove(recordId)
         tailReads.remove(recordId)
         toolInFlight.remove(recordId)
         idlePolls.remove(recordId)
@@ -651,7 +675,7 @@ class AgentSessionTracker(
      * several records; its summary is the open record's, else the newest one's.
      */
     private fun publish() {
-        _summaries.value = conversationRecords().map { it.toSummary().copy(lastActivityAt = lastActivity[it.id]) }
+        _summaries.value = conversationRecords().map { it.toSummary().copy(lastActivityAt = lastActivity[it.id], status = statuses[it.id]) }
     }
 
     /** One record per conversation: the open one (the newest if several), else the newest ended. */
@@ -712,6 +736,7 @@ class AgentSessionTracker(
          */
         const val IDLE_POLLS_TO_DONE = 3
         const val PROMPT_MAX = 500
+        const val STATUS_MAX = 120
         const val QUESTION_MAX = 400
         const val GIT_CACHE_MS = 60_000L
     }

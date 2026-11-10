@@ -831,14 +831,14 @@ private fun fieldLabel(field: String): String = when (field) {
 
 /**
  * The one line that says where a conversation is, the same on every screen: the question while it
- * needs the person, what it is doing while it works, and the last thing it said once it is done or
- * closed. Null when it has nothing to say. Called for overview rows and the task panel's header.
+ * needs the person, what it is doing while it works (in its own words when it gave a status, else
+ * its tool call), and the last thing it said once it is done or closed. Null when it has nothing to say. Called for overview rows and the task panel's header.
  */
 internal fun headlineOf(s: AgentSessionSummary): String? {
     val now = s.nowLine?.trim()?.takeIf { it.isNotEmpty() }
     return when (s.state) {
         NEEDS_YOU -> (AgentSessionText.previewOf(s.question) ?: now)?.let(::quoted)
-        WORKING -> now
+        WORKING -> s.status?.trim()?.takeIf { it.isNotEmpty() } ?: now
         else -> s.lastSaid?.trim()?.takeIf { it.isNotEmpty() }
     }
 }

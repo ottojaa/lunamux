@@ -567,4 +567,28 @@ class AgentSessionTrackerTest {
         assertEquals("replaced", t.snapshot().single { it.conversationId == "main" }.endReason)
         assertNull(t.snapshot().single { it.conversationId == "fresh" }.host)
     }
+
+    @Test
+    fun aConversationSaysWhatItIsDoingUntilTheNextPrompt() {
+        val t = AgentSessionTracker(
+            repo, gitInfo = { GitInfo() }, clock = { now }, newId = { "r${++nextId}" },
+            isUnder = { pid, ancestor -> pid == 200L && ancestor == 100L },
+        ).also { it.start() }
+        val p = pane("s1", agent = "claude", state = "working")
+        t.onHook(p, event("UserPromptSubmit", "main", "prompt" to "go"), pid = 100)
+        t.onHook(p, event("UserPromptSubmit", "helper", "prompt" to "review"), pid = 200)
+        fun status(conversation: String) = t.summaries.value.single { it.conversationId == conversation }.status
+        assertEquals("Reproducing the resume", t.setStatus("s1", null, "  Reproducing\n the resume "))
+        assertEquals("Reproducing the resume", status("main"), "the pane's own conversation, named by its pane")
+        t.setStatus("s1", "helper", "Reading the plan")
+        assertEquals("Reading the plan", status("helper"), "a helper is reached by its conversation id")
+        assertEquals("Reproducing the resume", status("main"))
+        t.onHook(p, event("PreToolUse", "main", "tool_name" to "Bash"), pid = 100)
+        assertEquals("Reproducing the resume", status("main"), "a tool call does not replace it")
+        t.onHook(p, event("UserPromptSubmit", "main", "prompt" to "next"), pid = 100)
+        assertNull(status("main"), "the next prompt starts a new turn")
+        assertNull(t.setStatus("s1", "helper", " "))
+        assertNull(status("helper"))
+        assertTrue(runCatching { t.setStatus("nowhere", null, "x") }.isFailure)
+    }
 }
