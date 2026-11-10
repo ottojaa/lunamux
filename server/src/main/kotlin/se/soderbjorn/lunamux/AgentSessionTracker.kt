@@ -64,6 +64,8 @@ class AgentSessionTracker(
     private val clock: () -> Long = System::currentTimeMillis,
     private val newId: () -> String = { UUID.randomUUID().toString() },
     private val onEnded: (AgentSessionRecord) -> Unit = {},
+    private val isUnder: (Long, Long) -> Boolean = ::processIsUnder,
+    private val isAlive: (Long) -> Boolean = { pid -> ProcessHandle.of(pid).map { it.isAlive }.orElse(false) },
 ) {
     private val log = LoggerFactory.getLogger(AgentSessionTracker::class.java)
     private val lock = Any()
@@ -123,6 +125,13 @@ class AgentSessionTracker(
      * ([openFor]), so nothing that asks "what runs in this pane" ever answers with it.
      */
     private val helpers = HashMap<String, String>()
+
+    /**
+     * The process id of the `claude` behind each open hook-fed record, as its hooks report it. Memory
+     * only, and empty for a `claude` whose hooks predate the report. With both ids known, whether a
+     * second conversation in a pane is a helper is read from the process tree instead of guessed.
+     */
+    private val pids = HashMap<String, Long>()
 
     private val _summaries = MutableStateFlow<List<AgentSessionSummary>>(emptyList())
 
@@ -283,21 +292,22 @@ class AgentSessionTracker(
         if (last == null || now - last >= ACTIVITY_REFRESH_MS) lastActivity[recordId] = now
     }
 
-    /** Fold one Claude Code hook event into the records. */
-    fun onHook(pane: PaneSnapshot?, event: JsonObject) {
+    /** Fold one Claude Code hook event into the records; [pid] is the `claude` that ran the hook, when it said. */
+    fun onHook(pane: PaneSnapshot?, event: JsonObject, pid: Long? = null) {
         if (pane == null) return
         val known = synchronized(lock) { openFor(pane.terminalSessionId)?.agentSessionId }
         if (known == null || known != event.str("session_id")) warmGit(pane.cwd)
-        applyHook(pane, event)
+        applyHook(pane, event, pid)
     }
 
-    private fun applyHook(pane: PaneSnapshot, event: JsonObject) = synchronized(lock) {
+    private fun applyHook(pane: PaneSnapshot, event: JsonObject, pid: Long?) = synchronized(lock) {
         val name = event.str("hook_event_name") ?: return@synchronized
         val agentId = event.str("session_id")
         val transcript = event.str("transcript_path")
         var rec = helpers.keys.firstNotNullOfOrNull { id ->
             records[id]?.takeIf { it.state != ENDED && it.agentSessionId == agentId && it.terminalSessionId == pane.terminalSessionId }
-        } ?: attach(pane, agentId, transcript, event.str("source"), name) ?: return@synchronized
+        } ?: attach(pane, agentId, transcript, event.str("source"), name, pid) ?: return@synchronized
+        if (pid != null) pids[rec.id] = pid
         val isHelper = rec.id in helpers
         val now = clock()
         fun set(state: String, nowLine: String? = rec.nowLine, question: String? = null) {
@@ -376,6 +386,12 @@ class AgentSessionTracker(
         val now = clock()
         for (id in helpers.keys.toList()) {
             val rec = records[id] ?: continue
+            // A helper whose process is known ends when the process does, however quiet it was.
+            val pid = pids[id]
+            if (pid != null) {
+                if (!isAlive(pid)) end(rec, null, END_EXIT)
+                continue
+            }
             val written = rec.transcriptPath?.let { File(it).takeIf(File::isFile)?.lastModified() } ?: 0L
             val last = maxOf(lastHookAt[id] ?: 0L, written, rec.createdAt)
             if (now - last >= HELPER_SILENT_MS) end(rec, null, END_EXIT)
@@ -447,14 +463,19 @@ class AgentSessionTracker(
     /**
      * Pick the record a hook event belongs to, creating, adopting or reopening one; null for a late
      * event of a helper that has already ended. An unknown conversation that speaks while the pane's
-     * identified conversation is open and the pane still shows an agent is a helper started inside
-     * it, unless it is a `clear` or `resume` start, which replaces the conversation.
+     * identified conversation is open is a helper when its `claude` runs underneath that
+     * conversation's `claude` in the process tree. When either process is unknown (hooks installed
+     * before they reported it) that is guessed as before: it is a helper if the pane still shows an
+     * agent, unless it is a `clear` or `resume` start, which replaces the conversation.
      */
-    private fun attach(pane: PaneSnapshot, agentId: String?, transcript: String?, source: String?, hook: String): AgentSessionRecord? {
+    private fun attach(pane: PaneSnapshot, agentId: String?, transcript: String?, source: String?, hook: String, pid: Long?): AgentSessionRecord? {
         val current = openFor(pane.terminalSessionId)
-        if (current != null && current.agent == CLAUDE && current.agentSessionId != null && agentId != null &&
-            current.agentSessionId != agentId && pane.agent != null && source !in REPLACING_STARTS
-        ) {
+        val second = current != null && current.agent == CLAUDE && current.agentSessionId != null && agentId != null &&
+            current.agentSessionId != agentId
+        val hostPid = current?.let { pids[it.id] }
+        val helper = second && if (pid != null && hostPid != null) pid != hostPid && isUnder(pid, hostPid)
+        else pane.agent != null && source !in REPLACING_STARTS
+        if (current != null && helper) {
             val ended = records.values.any { it.agentSessionId == agentId && it.state == ENDED && it.terminalSessionId == pane.terminalSessionId }
             if (ended && hook != "SessionStart") return null
             return open(pane, CLAUDE, SOURCE_HOOKS, agentId, transcript, host = current).also { helpers[it.id] = current.id }
@@ -525,6 +546,7 @@ class AgentSessionTracker(
     private fun forgetTurn(recordId: String) {
         lastActivity.remove(recordId)
         lastHookAt.remove(recordId)
+        pids.remove(recordId)
         tailReads.remove(recordId)
         toolInFlight.remove(recordId)
         idlePolls.remove(recordId)
@@ -576,6 +598,7 @@ class AgentSessionTracker(
             taskId = if (host != null) host.taskId
             else pane.leafId?.let { pendingTasks.remove(it) } ?: agentSessionId?.let(::taskOfEarlier),
             background = pane.background,
+            host = host?.conversationId,
         ).also { put(it) }
     }
 
@@ -693,6 +716,19 @@ class AgentSessionTracker(
         const val GIT_CACHE_MS = 60_000L
     }
 }
+
+/** Whether process [pid] runs underneath process [ancestor]: one of its parents, however far up, is [ancestor]. */
+internal fun processIsUnder(pid: Long, ancestor: Long): Boolean {
+    var at = ProcessHandle.of(pid).flatMap { it.parent() }
+    repeat(MAX_PROCESS_DEPTH) {
+        val handle = at.orElse(null) ?: return false
+        if (handle.pid() == ancestor) return true
+        at = handle.parent()
+    }
+    return false
+}
+
+private const val MAX_PROCESS_DEPTH = 32
 
 /** One read of a hook-fed record's transcript tail, kept so the file is read again only when it changes. */
 internal data class TailRead(val size: Long, val written: Long, val interruptedAt: Long?)

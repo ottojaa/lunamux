@@ -181,4 +181,20 @@ class ClaudeHooksTest {
         assertTrue(ClaudeHooks.EVENTS.containsAll(listOf("SessionStart", "UserPromptSubmit", "PreToolUse", "Notification", "Stop", "SessionEnd")))
         assertTrue(JsonObject(emptyMap()).isEmpty())
     }
+
+    @Test
+    fun `an older Lunamux command is rewritten at start and a current or absent one is left alone`() {
+        val hooks = ClaudeHooks(file)
+        hooks.upgrade()
+        assertTrue(!file.exists(), "a file that is not connected is not touched")
+        hooks.connect()
+        val current = file.readText()
+        assertTrue("X-Lunamux-Claude-Pid: \$PPID" in current.replace("\\\"", "\""), "the hook names the claude that ran it")
+        hooks.upgrade()
+        assertEquals(current, file.readText())
+        file.writeText(current.replace("-H \\\"X-Lunamux-Claude-Pid: \$PPID\\\" ", ""))
+        assertTrue(file.readText() != current)
+        ClaudeHooks(file).upgrade()
+        assertEquals(current, file.readText())
+    }
 }

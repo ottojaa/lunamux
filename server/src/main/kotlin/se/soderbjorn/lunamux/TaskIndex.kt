@@ -345,14 +345,16 @@ class TaskIndex(
         }
 
         /**
-         * Whether [r] is a helper conversation of task [taskId]: one that is not tagged with the task
+         * Whether [r] is a helper conversation of task [taskId]: one the tracker recorded as started
+         * inside another conversation ([AgentSessionRecord.host]). For records from before that was
+         * stored it is worked out: one that is not tagged with the task
          * (the tracker used to leave helpers untagged, and so did the stored records of that time),
          * or that was started while another conversation in its pane was still open (which is how the
          * tracker makes a helper). Record age alone proves nothing: reopening a conversation makes a
          * newer record than its helper's.
          */
         private fun isHelper(r: AgentSessionRecord, taskId: String, records: List<AgentSessionRecord>): Boolean =
-            r.taskId != taskId || records.any {
+            r.host != null || r.taskId != taskId || records.any {
                 it.leafId == r.leafId && it.createdAt < r.createdAt && (it.state != ENDED || (it.endedAt ?: 0L) > r.createdAt)
             }
 

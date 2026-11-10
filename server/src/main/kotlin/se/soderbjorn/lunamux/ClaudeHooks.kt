@@ -59,6 +59,20 @@ class ClaudeHooks(
     }
 
     /**
+     * Rewrites the Lunamux entries when the file is connected with a command from an older build,
+     * so the hooks send what this build reads. Called once at server start; does nothing when the
+     * file is not connected or already current.
+     */
+    fun upgrade() {
+        if (!readConnected()) return
+        val hooks = runCatching { Json.parseToJsonElement(file.readText()) as? JsonObject }.getOrNull()?.get("hooks") as? JsonObject ?: return
+        val commands = hooks.values.flatMap { (it as? JsonArray).orEmpty() }.filter(::isOurs)
+            .flatMap { ((it as? JsonObject)?.get("hooks") as? JsonArray).orEmpty() }
+            .mapNotNull { ((it as? JsonObject)?.get("command") as? JsonPrimitive)?.contentOrNull }
+        if (commands.any { MARKER in it && it != COMMAND }) connect()
+    }
+
+    /**
      * Remove every Lunamux hook entry, leaving other hooks and keys alone. Event lists and the
      * `hooks` object are dropped only if removing ours left them empty.
      */
@@ -122,11 +136,13 @@ class ClaudeHooks(
         /**
          * The shell command each hook runs: post stdin to the events URL when the pane's
          * `LUNAMUX_*` variables are set, otherwise do nothing; always exit 0 so a failing post
-         * never blocks Claude Code.
+         * never blocks Claude Code. `$PPID` is the `claude` that ran the hook, which lets the
+         * server tell a helper `claude` started inside a conversation from the pane's own.
          */
         val COMMAND = "[ -n \"\$LUNAMUX_EVENTS_URL\" ] && curl -sk -m 2 -X POST " +
             "-H \"$EVENTS_TOKEN_HEADER: \$LUNAMUX_EVENTS_TOKEN\" " +
             "-H \"$EVENTS_SESSION_HEADER: \$LUNAMUX_SESSION_ID\" " +
+            "-H \"$EVENTS_PID_HEADER: \$PPID\" " +
             "--data-binary @- \"\$LUNAMUX_EVENTS_URL\" >/dev/null 2>&1; exit 0 $MARKER"
 
         private val PRETTY = Json { prettyPrint = true; prettyPrintIndent = "  " }

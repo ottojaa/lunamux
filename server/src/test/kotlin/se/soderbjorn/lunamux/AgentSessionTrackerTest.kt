@@ -544,4 +544,26 @@ class AgentSessionTrackerTest {
         after.onHook(pane("s6", agent = "claude"), event("SessionStart", "a-5", "source" to "resume"))
         assertEquals(null, after.summaries.value.single { it.conversationId == "a-5" }.endReason)
     }
+
+    @Test
+    fun aSecondClaudeInAPaneIsAHelperOnlyWhenItRunsUnderThePanesOwn() {
+        // Process 200 runs under 100; 300 is a claude of its own, started after 100 died without saying so.
+        val t = AgentSessionTracker(
+            repo, gitInfo = { GitInfo() }, clock = { now }, newId = { "r${++nextId}" },
+            isUnder = { pid, ancestor -> pid == 200L && ancestor == 100L }, isAlive = { it != 200L },
+        ).also { it.start() }
+        val p = pane("s1", agent = "claude", state = "working")
+        t.onHook(p, event("UserPromptSubmit", "main", "prompt" to "go"), pid = 100)
+        t.onHook(p, event("SessionStart", "reviewer", "source" to "resume"), pid = 200)
+        assertEquals("main", t.openRecordOf("s1")?.conversationId, "a resume start underneath the conversation is still its helper")
+        assertEquals("main", t.snapshot().single { it.conversationId == "reviewer" }.host)
+        // The helper's process is gone: it ends at the next poll, with no ten quiet minutes.
+        t.onPoll(listOf(p))
+        assertEquals("ended", t.snapshot().single { it.conversationId == "reviewer" }.state)
+        // A claude that is not underneath takes the pane, though the screen still shows an agent.
+        t.onHook(p, event("SessionStart", "fresh", "source" to "startup"), pid = 300)
+        assertEquals("fresh", t.openRecordOf("s1")?.conversationId)
+        assertEquals("replaced", t.snapshot().single { it.conversationId == "main" }.endReason)
+        assertNull(t.snapshot().single { it.conversationId == "fresh" }.host)
+    }
 }

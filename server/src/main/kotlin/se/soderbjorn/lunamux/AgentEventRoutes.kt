@@ -35,6 +35,9 @@ internal const val EVENTS_TOKEN_HEADER = "X-Lunamux-Events-Token"
 /** Header carrying the id of the terminal session the hook ran in. */
 internal const val EVENTS_SESSION_HEADER = "X-Lunamux-Session"
 
+/** Header carrying the process id of the `claude` that ran the hook (the hook shell's parent). */
+internal const val EVENTS_PID_HEADER = "X-Lunamux-Claude-Pid"
+
 /** Credentials and addresses for the agent-events endpoint. */
 object AgentEvents {
     /** Random secret that must accompany every event; regenerated on each server start. */
@@ -76,13 +79,14 @@ internal fun Route.agentEventRoutes(
             return@post
         }
         val sessionId = call.request.header(EVENTS_SESSION_HEADER)
+        val pid = call.request.header(EVENTS_PID_HEADER)?.trim()?.toLongOrNull()?.takeIf { it > 1 }
         val body = call.receiveText()
         call.respond(HttpStatusCode.NoContent)
         if (sessionId.isNullOrBlank()) return@post
         eventScope.launch {
             runCatching {
                 val event = Json.parseToJsonElement(body) as? JsonObject ?: return@runCatching
-                tracker.onHook(snapshot(sessionId), event)
+                tracker.onHook(snapshot(sessionId), event, pid)
             }.onFailure { log.debug("Ignoring malformed agent event", it) }
         }
     }
