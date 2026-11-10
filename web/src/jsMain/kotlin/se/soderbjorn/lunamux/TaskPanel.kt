@@ -417,13 +417,13 @@ private fun buildLink(link: LinkRow): HTMLElement {
 }
 
 /** The words on the tag over a background agent's tab that is shown for now. */
-internal const val WAITING_TAB_TAG_TEXT = "background agent · hides again by itself"
+internal const val WAITING_TAB_TAG_TEXT = "background agent · hides when you leave"
 
 private var waitingTabTag: HTMLElement? = null
 
 /**
  * Show or remove the tag that marks the active tab as a background agent's tab shown for now. The
- * tag floats over the top edge of the window body, centred, and says the tab hides again by itself.
+ * tag floats over the top edge of the window body, centred, and says the tab hides when the person leaves it.
  */
 internal fun updateWaitingTabTag(shown: Boolean) {
     val body = document.querySelector(".${AppFrameClassNames.BODY}") as? HTMLElement

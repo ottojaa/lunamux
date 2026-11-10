@@ -858,14 +858,14 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
             if (error != null) ctx.send(WindowEnvelope.AgentSessionError(null, error))
         }
         // A window lists a background tab only while it is shown for its agent (ShowWaitingAgent).
-        // That tab is not the person's to close: it hides again by itself, and only the agent that
+        // That tab is not the person's to close: it hides when they leave it, and only the agent that
         // opened it closes it (the MCP close_tab tool).
         is WindowCommand.CloseTab -> if (!WindowState.isBackgroundTab(cmd.tabId)) WindowState.closeTab(cmd.tabId)
         is WindowCommand.ShowWaitingAgent -> {
             val rec = ctx.agentTracker?.find(cmd.recordId)
             val live = rec?.takeIf { it.background && it.state != "ended" }
             val leaf = live?.leafId
-            if (leaf != null) WindowState.showWaitingAgent(leaf, waiting = live.state == "needs_you")
+            if (leaf != null) WindowState.showWaitingAgent(leaf)
         }
         is WindowCommand.RenameTab -> WindowState.renameTab(cmd.tabId, cmd.title)
         is WindowCommand.MoveTab -> WindowState.moveTab(cmd.tabId, cmd.targetTabId, cmd.before)

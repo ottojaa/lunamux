@@ -47,16 +47,16 @@ class WindowStateWaitingTabTest {
         }
     }
 
-    /** Once the agent no longer waits, the tab hides again and the tab the person was on returns. */
+    /** Once no agent in it is live, the tab hides again and the tab the person was on returns. */
     @Test
-    fun theTabHidesAgainWhenTheAgentStopsWaitingAndThePreviousTabReturns() {
+    fun theTabHidesAgainWhenItsAgentEndsAndThePreviousTabReturns() {
         val visible = WindowState.addTab()
         val bg = WindowState.addTab(background = true)
         try {
             WindowState.setActiveTab(visible)
             WindowState.showWaitingAgent(leafOf(bg))
             WindowState.hideSettledWaitingTabs(setOf(leafOf(bg)))
-            assertTrue(tab(bg).shownWhileWaiting, "still waiting, so it stays")
+            assertTrue(tab(bg).shownWhileWaiting, "its agent is live and the person is on it, so it stays")
             WindowState.hideSettledWaitingTabs(emptySet())
             assertFalse(tab(bg).isListed)
             assertFalse(tab(bg).shownWhileWaiting)
@@ -132,7 +132,7 @@ class WindowStateWaitingTabTest {
         try {
             WindowState.setActiveWorld(home)
             WindowState.setActiveTab(visible)
-            WindowState.showWaitingAgent(leafOf(bg), waiting = false)
+            WindowState.showWaitingAgent(leafOf(bg))
             WindowState.setActiveWorld(other)
             assertFalse(tab(bg).isListed)
             WindowState.setActiveWorld(home)
@@ -214,15 +214,26 @@ class WindowStateWaitingTabTest {
         }
     }
 
-    /** A tab shown because its agent waits stays when the person goes to another tab. */
+    /**
+     * One rule for every shown tab: a waiting agent's tab stays while the person is on it, also
+     * after the answer when the agent works on, and hides when they go to another tab.
+     */
     @Test
-    fun aWaitingAgentsTabStaysWhenTheyLeaveIt() {
+    fun aWaitingAgentsTabStaysWhileTheyAreOnItAndHidesWhenTheyLeave() {
         val visible = WindowState.addTab()
         val bg = WindowState.addTab(background = true)
         try {
-            WindowState.showWaitingAgent(leafOf(bg))
             WindowState.setActiveTab(visible)
-            assertTrue(tab(bg).isListed)
+            val (pane, recordId) = workingAgentIn(bg)
+            hook(pane, "Notification")
+            show(recordId)
+            hook(pane, "UserPromptSubmit")
+            WindowState.hideSettledWaitingTabsFor(tracker.summaries.value)
+            assertTrue(tab(bg).isListed, "the agent works on and the tab stays under the person")
+            assertEquals(bg, WindowState.config.value.activeTabId)
+
+            WindowState.setActiveTab(visible)
+            assertFalse(tab(bg).isListed, "leaving the tab hides it")
         } finally {
             WindowState.closeTab(bg); WindowState.closeTab(visible)
         }
@@ -235,7 +246,7 @@ class WindowStateWaitingTabTest {
         val bg = WindowState.addTab(background = true)
         try {
             WindowState.setActiveTab(visible)
-            WindowState.showWaitingAgent(leafOf(bg), waiting = false)
+            WindowState.showWaitingAgent(leafOf(bg))
             val saved = WindowState.forSaving(WindowState.config.value).worlds.flatMap { it.tabs }.first { it.id == bg }
             assertFalse(saved.isListed)
             assertEquals(visible, WindowState.forSaving(WindowState.config.value).activeTabId)

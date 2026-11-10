@@ -452,7 +452,7 @@ class AgentsOverviewBackingViewModel(
             FooterKey("esc", "close"),
         )
 
-        const val SHOW_WAITING_HINT = "answer it · opens as a tab until it works on"
+        const val SHOW_WAITING_HINT = "open · a tab until you leave it"
         const val STATE_NEEDS_YOU = "needs you"
         const val STATE_WORKING = "working"
         const val STATE_DONE = "done"
@@ -460,8 +460,6 @@ class AgentsOverviewBackingViewModel(
         const val MAIN_AGENT_TITLE = "Main conversation"
         const val NO_TRANSCRIPT_NOTE = "nothing to resume: its transcript is gone"
         const val MARKER = "◆"
-        const val HIDDEN_MAIN_NOTE = "it works in a background tab: ↵ has nothing to open until it asks"
-        const val HIDDEN_MAIN_DONE_NOTE = "it has finished in a background tab: ↵ has nothing to open, → shows what it said"
         fun needYouText(n: Int): String = if (n == 1) "1 needs you" else "$n need you"
 
         /** The state word of a task whose main conversation waits on [n] of its agents. */
@@ -647,9 +645,9 @@ private fun enterOf(
 ): Pair<Enter, AgentSessionSummary?> {
     val asking = open.filter { it.state == NEEDS_YOU }.minByOrNull { it.stateSince }
     val mainAsks = main != null && main.state == NEEDS_YOU
+    // A live main conversation is always reachable: a hidden tab is shown until the person leaves it.
     if (mainLive && main != null && (asking == null || mainAsks)) {
-        if (!main.background) return Enter.JUMP to main
-        if (mainAsks) return Enter.SHOW_WAITING to main
+        return (if (main.background) Enter.SHOW_WAITING else Enter.JUMP) to main
     } else if (asking != null) {
         return (if (asking.background) Enter.SHOW_WAITING else Enter.JUMP) to asking
     }
@@ -659,8 +657,6 @@ private fun enterOf(
     )
     val listed = open.filter { !it.background }.minWithOrNull(urgency)
     return when {
-        mainLive && listed != null -> Enter.JUMP to listed
-        mainLive -> Enter.NONE to main
         main != null && !main.noTranscript -> Enter.RESUME to main
         resumeId != null -> Enter.RESUME to null
         listed != null -> Enter.JUMP to listed
@@ -718,13 +714,7 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
         stopped = cutOff != null,
         extra = extraOf(
             folderNote(target, where), c.noteOf(target?.id),
-            target?.let {
-                when {
-                    it.noTranscript -> AgentsOverviewBackingViewModel.NO_TRANSCRIPT_NOTE
-                    it.state == WORKING -> AgentsOverviewBackingViewModel.HIDDEN_MAIN_NOTE
-                    else -> AgentsOverviewBackingViewModel.HIDDEN_MAIN_DONE_NOTE
-                }
-            }.takeIf { u.enter == Enter.NONE },
+            AgentsOverviewBackingViewModel.NO_TRANSCRIPT_NOTE.takeIf { u.enter == Enter.NONE && target?.noTranscript == true },
             error,
         ),
         tabName = c.tabNameOf(main?.takeIf(AgentFacts::isLive) ?: target, t.title),
@@ -748,7 +738,7 @@ private fun sessionRow(s: AgentSessionSummary, earlier: Boolean, c: Ctx, taskTit
     val needs = AgentFacts.isWaiting(s)
     val works = AgentFacts.isWorking(s)
     val enter = when {
-        live && s.background && needs -> Enter.SHOW_WAITING
+        live && s.background -> Enter.SHOW_WAITING
         live -> Enter.JUMP
         s.noTranscript -> Enter.NONE
         else -> Enter.RESUME

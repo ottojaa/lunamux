@@ -137,7 +137,6 @@ object OverviewChecks {
             val row = rows(s).firstOrNull { it.taskId == task.id } ?: continue
             val target = byKey(s)[row.recordId]
             val mainSession = s.sessions.firstOrNull { it.conversationId == main }
-            val mainHidden = mainSession?.let { it.background && it.state != ENDED } == true
             when (row.enter) {
                 Enter.JUMP, Enter.RESUME -> when {
                     target == null && row.enter == Enter.RESUME && row.recordId == main -> Unit
@@ -147,7 +146,7 @@ object OverviewChecks {
                     target.conversationId == main -> Unit
                     target.conversationId !in conversationsOf(row, s) ->
                         problems += "↵ on \"${row.title}\" goes to conversation ${target.conversationId}, which is not a conversation of the task"
-                    target.state != NEEDS_YOU && !mainHidden ->
+                    target.state != NEEDS_YOU ->
                         problems += "↵ on \"${row.title}\" goes to ${target.conversationId}, which is neither the main one $main nor one that asks"
                 }
                 Enter.SHOW_WAITING -> {
@@ -155,7 +154,7 @@ object OverviewChecks {
                     if (target == null) problems += "↵ on \"${row.title}\" names no conversation"
                     else if (target.conversationId != main && target.conversationId !in conversationsOf(row, s)) problems += "↵ on \"${row.title}\" shows a tab that is not the task's"
                 }
-                Enter.NONE, Enter.OPEN -> if (!mainHidden) problems += "↵ on \"${row.title}\" does nothing (${row.enter}) although its main conversation $main can be reached"
+                Enter.NONE, Enter.OPEN -> problems += "↵ on \"${row.title}\" does nothing (${row.enter}) although its main conversation $main can be reached"
             }
         }
         return Check("C4", "↵ on a task's row reaches or resumes the main conversation by conversation id", problems)
@@ -209,17 +208,16 @@ object OverviewChecks {
         fun observe(config: WindowConfig, sessions: List<AgentSessionSummary>, nowMillis: Long) {
             observed++
             for (tab in tabsOf(config)) {
-                val waiting = sessions.any { it.state == NEEDS_YOU && tabOf(config, it.leafId)?.id == tab.id }
                 val live = sessions.any { it.state != ENDED && tabOf(config, it.leafId)?.id == tab.id }
                 if (wasListed[tab.id] == false && tab.isListed) {
                     if (!tab.shownWhileWaiting) problems += "tab \"${tab.title}\" became listed without being marked as a background agent's"
                     else if (!live) problems += "tab \"${tab.title}\" was shown while no conversation in it is live"
                 }
-                // A shown tab has a reason to stay: its agent waits, or it is the tab the person is looking at.
-                val stuck = tab.isBackground && tab.shownWhileWaiting && (!live || (!waiting && !isActive(config, tab)))
+                // A shown tab stays only while it is the tab the person is on and an agent in it is live.
+                val stuck = tab.isBackground && tab.shownWhileWaiting && (!live || !isActive(config, tab))
                 if (stuck) {
                     val since = markedSince.getOrPut(tab.id) { nowMillis }
-                    if (nowMillis - since > HIDE_AGAIN_GRACE_MS) problems += "tab \"${tab.title}\" stays listed though nothing in it waits and it is not being looked at"
+                    if (nowMillis - since > HIDE_AGAIN_GRACE_MS) problems += "tab \"${tab.title}\" stays listed though the person left it or nothing in it is live"
                 } else markedSince.remove(tab.id)
                 wasListed[tab.id] = tab.isListed
             }

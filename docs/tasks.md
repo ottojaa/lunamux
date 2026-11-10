@@ -110,10 +110,8 @@ restart and a resume keep. The main conversation is the one that made the task, 
 1. **A conversation of the task waits and the main one does not:** the oldest waiting one is
    reached. In a tab of the strip ↵ jumps to its pane; in a hidden tab the tab is shown (below).
 2. **The main conversation is live in a tab of the strip:** jump to its pane ("↵ open").
-3. **It is live in a hidden tab:** while it asks, the tab is shown as in 1. Otherwise ↵ goes to a
-   conversation of the task in a tab of the strip (the freshest), else offers nothing: the row says
-   "it works in a background tab: ↵ has nothing to open until it asks" or "it has finished in a
-   background tab: ↵ has nothing to open, → shows what it said". The footer leaves ↵ out.
+3. **It is live in a hidden tab:** the tab is shown as in 1, whether it asks or works, and hides
+   again when the person leaves it.
 4. **It is closed:** ask "conversation closed / Resume it in a new tab?" and resume on a second ↵.
    When its own pane is still open at an idle shell in the same folder, the question is "Resume it in
    its tab?" and the resume types into that pane. The command is the task file's `open` action when there
@@ -177,11 +175,12 @@ state word. A background agent gets no row of its own unless it waits for the pe
 holds it. Search never finds a background conversation. The agent closes its tab with `close_tab`;
 a server restart closes them all.
 
-When a background agent asks, the tab stays hidden until the person asks: ↵ on the row (or on the
-agent in the task panel) lists the tab, makes it active and marks it "background agent · hides again
-once it works on". The tab before it, and its world, is remembered. When the agent stops waiting,
-by an answer or a refusal, the tab hides again and the remembered tab returns. A restart forgets
-this. No other tab ever appears by itself.
+A background tab stays hidden until the person asks for it: ↵ on the row (or on the agent in the
+task panel) lists the tab, makes it active and marks it "background agent · hides when you leave".
+This works whether the agent asks or works. The tab before it, and its world, is remembered. One
+rule hides it again: the person leaves the tab (another tab or world), or no agent in it is live
+any more, in which case the remembered tab returns. It does not hide under the person when the
+agent works on after an answer. A restart forgets this. No tab ever appears by itself.
 
 ## Closing a tab that is working
 

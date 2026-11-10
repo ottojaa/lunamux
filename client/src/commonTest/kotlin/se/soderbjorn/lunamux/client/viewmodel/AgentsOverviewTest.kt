@@ -136,7 +136,7 @@ class AgentsOverviewTest {
         val row = vm.state.now.first { it.id == "bg" }
         assertEquals(Enter.SHOW_WAITING, row.enter)
         vm.select("bg")
-        assertEquals("answer it · opens as a tab until it works on", vm.state.footer.first().label)
+        assertEquals("open · a tab until you leave it", vm.state.footer.first().label)
         vm.activateSelected()
         assertEquals(listOf<WindowCommand>(WindowCommand.ShowWaitingAgent("bg")), sent)
         assertTrue(!vm.state.open)
@@ -347,16 +347,14 @@ class AgentsOverviewTest {
     }
 
     @Test
-    fun aMainConversationInABackgroundTabIsShownWhileItAsksAndOtherwiseOnlyPeekedAt() {
+    fun aMainConversationInABackgroundTabIsShownWhetherItAsksOrWorks() {
         layout(listed = listOf("helper"), background = listOf("main"))
         sessions(session("main", taskId = "g1", background = true), session("helper", taskId = "g1", state = "done"))
         windowState.updateAgentTasks(listOf(task("main")))
         vm.open()
-        assertEquals("helper", taskRow().recordId, "a working main one hides nothing: Return goes to a conversation in a listed tab")
-        sessions(session("main", taskId = "g1", background = true))
-        assertEquals(Enter.NONE, taskRow().enter)
-        assertTrue(taskRow().extra.endsWith(AgentsOverviewBackingViewModel.HIDDEN_MAIN_NOTE))
-        assertTrue(vm.state.footer.none { it.key == "↵" } && vm.state.footer.any { it.key == "→" })
+        assertEquals("main", taskRow().recordId, "Return reaches the main conversation, also in a hidden tab")
+        assertEquals(Enter.SHOW_WAITING, taskRow().enter, "a working one is shown until the person leaves the tab")
+        assertEquals(AgentsOverviewBackingViewModel.SHOW_WAITING_HINT, vm.state.footer.first { it.key == "↵" }.label)
         sessions(session("main", taskId = "g1", background = true, state = "needs_you"))
         assertEquals(Enter.SHOW_WAITING, taskRow().enter)
     }
