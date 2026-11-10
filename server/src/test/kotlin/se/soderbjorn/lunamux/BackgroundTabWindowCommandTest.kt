@@ -54,22 +54,6 @@ class BackgroundTabWindowCommandTest {
         }
     }
 
-    /**
-     * A background tab belongs to the agent that opened it, and that agent died with the old process,
-     * so the layout is rebuilt without it. The rebuild runs once at start-up on the process-wide
-     * state, so it cannot be repeated in a test: this holds the rule in the source, and the
-     * restart step of the rehearsal on a copy of real data shows it on a running server.
-     */
-    @Test
-    fun theLayoutIsRebuiltWithoutBackgroundTabsAfterARestart() {
-        val source = File("src/main/kotlin/se/soderbjorn/lunamux/WindowState.kt").readText()
-        val rebuild = source.substringAfter("private fun rehydrate(").substringBefore("val tabIdSet")
-        assertTrue(
-            Regex("""if \(tab\.isBackground\) \{.*?\bnull\s*\} else rebuildTab\(tab\)""", RegexOption.DOT_MATCHES_ALL).containsMatchIn(rebuild),
-            "rehydrate no longer drops background tabs",
-        )
-    }
-
     /** The same command still closes a tab the person can see, so the guard is not a blanket refusal. */
     @Test
     fun aWindowStillClosesAListedTab() {

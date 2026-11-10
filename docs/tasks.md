@@ -15,21 +15,33 @@ and, if wanted, an `open` action. It lists no sessions, and Lunamux only ever re
 
 One row per conversation. A conversation in no task is a row of its own. A task's main conversation
 carries the task's row; its other agents are not rows. A **background agent** (one working in a tab
-out of sight) is counted in the row's state word ("2 working") and shown in the task panel. A row
-has one mark: **◆** at the start of a row that needs the person. Titles are bright for working and
-needs-you rows, mid-grey for done ones and dim for finished ones.
+out of sight) is counted in the row's state word and listed under the row while it is selected, and
+shown in the task panel.
 
-A row reads: **title**, **where** (the task's repo, else the folder the conversation runs in, home as
-`~`), one **state word**, a **detail** and the **age**. Folder and detail are hidden when the panel is
-narrower than 700px. A conversation is **working**, **needs you** or **done**; Lunamux never guesses
-from the last words of a reply that the agent is asking.
+A live row leads with a **state mark** (the spinner while it works, **◆** when it needs the person,
+**✓** when done) and the **name of its tab** when the person named the tab; the title then follows
+on a line of its own as the description. A tab nobody named ("Tab 3"), a hidden tab, or one whose
+name only repeats the title leaves the title to lead. On the same first line, at the right: the
+plan's **progress** (a bar and "13/14", from the task's progress block or its plan's steps), one
+**state word** and the **age**. Under them comes the **headline**, two lines at most. Names are
+bright for working and needs-you rows, mid-grey for done ones and dim for closed ones.
+
+NOW is **grouped by repo** (the task's repo, else the folder the conversation runs in, home as
+`~`). Groups and the rows in each stand in the order their work began, so no row moves when a state
+changes. The search line ends in a tally: "◆ 1 needs you · 2 working · ✓ 2 done".
+
+A **closed row** in EARLIER is one line: the title, the last thing the conversation said, where it
+ran, "closed" and the age. Progress and folder are hidden when the panel is narrower than 700px. A
+conversation is **working**, **needs you** or **done**; Lunamux never guesses from the last words of
+a reply that the agent is asking.
 
 | Word | When |
 |---|---|
 | **needs you** (yellow) | a conversation waits for the person; "2 need you" for more |
-| **N working** / **working** (cyan, with the spinner) | background ones counted |
+| **working** (cyan, with the spinner) | the conversation itself works (for a task: its main conversation) |
+| **1 agent working** / **N agents working** | the task's main conversation waits on its agents |
 | **done** (muted green) | the row is in NOW and nothing works or waits |
-| **finished** (dim) | the row is in EARLIER and nothing works or waits |
+| **closed** (dim) | the row is in EARLIER and nothing works or waits |
 
 **Needs you** means a question the person can see and answer: a permission prompt or elicitation
 Claude Code reports, an `AskUserQuestion` call, or Codex's approval overlay. One question counts
@@ -45,31 +57,49 @@ still frame. A conversation **works** until a hook or the screen says otherwise,
 silent; no timer ends it. The screen says otherwise when it reads idle for three polls in a row after
 the poller's own three-poll hold (about fifteen seconds), with no hook between.
 
-The **detail** is the first that exists: the task's status line, the question of the conversation
-that waits (in quotes), what a working conversation is doing, or nothing. What a working
-conversation is doing is said **in words, never as the raw command**:
+### The headline
+
+Every row has one line that says where it is, and the task panel's header shows the same line:
+
+| State | The headline |
+|---|---|
+| needs you | the question, in quotes |
+| working | the task's status line; else the plan's step in hand; else what the conversation says it is doing (`set_status`); else its tool call in words |
+| done, closed | the last thing it said |
+
+A tool call is said **in words, never as the raw command**, and only when it has something specific
+to say; a call that has none (a command with no description, a tool with no argument) leaves the
+line as it was:
 
 | Tool call | The row says |
 |---|---|
-| Bash | the call's `description`; without one "Running" and the program ("Running gradlew") |
+| Bash | the call's `description` |
 | Edit, Write, Read | the file's name: "Editing card-check" |
 | Grep, Glob, web search | the pattern: `Searching for "fun toolLine"` |
 | Web fetch | the host: "Fetching example.com" |
 | an MCP tool | server and tool in words: "lunamux: list tasks" |
-| an agent, a background task, the task list | "Running an agent: <description>", "Stopping a background task", "Updating the task list" |
-| an unknown tool | "Using <name>", never its arguments |
+| an agent, a skill | "Running an agent: <description>", "Using the <name> skill" |
 | a question to the person | the question ("Asks: …") |
 
 A permission prompt still names the exact command, since that is what the person is asked to allow.
 
 ### The selected row
 
-The selected row shows more under it, in this order: the whole status (only when the row cut it
-short or hides it), up to two chips about the session ↵ goes to, then any text the model put there
-(where a search matched, a failed resume, why ↵ has nothing to open). The **folder chip** is that
-session's folder. The **tab chip** names its tab, shown only when the tab's name does not already
-contain every word of the row's title (whole words, case and punctuation ignored); a tab in another
-world adds the world's name ("Checkout · Work"). A row with nothing to add has no extra line.
+The selected row shows more under it, in this order: a task's live conversations, one line each (its
+mark, its name, what it says, its age; the main conversation first), then the question before a
+resume or a start, or else any extra text: the conversation's folder when it is not simply the
+repo's own (a worktree, a subfolder), where a search matched, a failed resume, why ↵ has nothing to
+open. A row with nothing to add has no extra line.
+
+### What a restart stopped
+
+A conversation's record says why it ended: Lunamux stopped under it (`restart`), the agent exited,
+its pane went, or another conversation took the pane. Between NOW and EARLIER, **STOPPED BY THE
+RESTART** lists the conversations Lunamux cut off in the last day that can be resumed, each with the
+state it was in ("was working", "was waiting for you", "was done") and the last thing it said, and
+with the name of its tab when the tab is still there. ↵ on one asks to resume it as on any closed
+row; **⇧↵** resumes all of them at once, each in its own tab when that tab still sits at an idle
+shell in the same folder, else in a new one.
 
 ### Where ↵ goes
 
@@ -108,7 +138,7 @@ a change to the search text, or a refresh that changes what ↵ would do, cancel
 
 ### Other keys
 
-The footer is `↵ open · → peek · ↑↓ move · esc close`. **→** at the end of the search text peeks the
+The footer is `↵ open · → peek · ↑↓ move · esc close`, with `⇧↵ resume all N` while a restart's section has rows. **→** at the end of the search text peeks the
 conversation ↵ would open (**←** or esc goes back). **⌘⌫** asks to close a row that is one live
 conversation in a tab of the strip; it never closes a task of several, and it works from search
 results too. A working or waiting conversation says what it is doing or asking, and any uncommitted or unpushed
@@ -177,6 +207,15 @@ is interrupted, so what really happened ends the wait, in this order and never b
   refused before Lunamux saw it. Lunamux reads the end of the file only when it has changed.
 - The screen showed the prompt and now shows work: it was approved, **working**.
 - The screen showed the prompt and now shows neither: it left without a go-ahead, **done**.
+
+Each hook also names the `claude` process that ran it. When a second conversation speaks in a pane
+whose own conversation is open, it is a **helper** (a reviewer started inside it, say) exactly when
+its process runs underneath that conversation's process; it then never becomes the pane's
+conversation or a task's main one, and it ends when its process does. A `claude` that is not
+underneath takes the pane. Hooks installed by an older build do not name the process (the server
+rewrites them at start, and a `claude` already running keeps the old ones); for those the old
+rule stands: it is a helper while the pane still shows an agent, unless it is a `/clear` or
+`/resume` start.
 
 A prompt that no poll ever showed is settled only by the transcript rule or a hook: a poll can be
 taken before the prompt is drawn, and the "background agents" line reads "working" whatever else is
@@ -281,25 +320,33 @@ itself in the tab where the task's main conversation is live. ⌘I opens it in a
 including a lone session or a plain terminal; there it holds for that tab only and is not kept across
 a restart. It shows the task of the focused session, else of the main conversation in the tab. The
 header reads "<title> · ⌘I hides" with a × at the end; ⌘I and the × both hide it, and beside a main
-conversation the choice is kept with the other UI settings. Under the header comes the task's status
-line. With nothing to show, the panel says how to set it up. The shortcut is listed in the
+conversation the choice is kept with the other UI settings. The header says where the work is: the
+tab's name (the title, when the tab has none), the title in full under it, the repo and when it
+started, then the state (mark, word, age) and the headline, which are the overview row's own. The shortcut is listed in the
 Keyboard-shortcuts sidebar and can be rebound there (off macOS the default is Ctrl+I, which a terminal
 reads as Tab).
 
 Four blocks, in this order, each headed by its name alone:
 
-1. **Agents**: the task's agents that work or wait, and only those. Each line has its state mark
-   (the spinner, or ◆ when it waits), a name saying what the agent is doing in words (or the question
-   it asks; the session's title when it says nothing), its age at the right and, as a quieter second
-   line, the session's title. Lines can be reached with Tab and pressed; on hover or focus a line
-   shows what ↵ does: "↵ answer it · opens as a tab until it works on" for an agent in a hidden tab,
-   "↵ open" for one in a tab of the strip.
-2. **Progress**: the task in hand above a bar, with "x of y" below.
-3. **Links**: any kind of link, newest first, each with the writer's kind word (up to 8 characters,
-   `link` when none), its label as a link (accent colour, ↗, underlined on hover) and its time. Links
+1. **Plan**: a bar with "x of y" beside it, then the step in hand. When an agent wrote the plan's
+   steps (a `steps` block) they are listed under the bar: the finished ones folded into "N earlier
+   steps" but for the last, the one in hand bright with the spinner, the rest dim; the count then
+   comes from the steps.
+2. **Background agents**: the task's live agents but for the main conversation. Each line has its
+   state mark (the spinner, ◆ when it waits, ○ when idle), its title with its age at the right and,
+   as a quieter second line that never wraps, what it is doing: its own status (`set_status`), else
+   its tool call in words, else the plain state word. Lines can be reached with Tab and pressed; on
+   hover or focus a line shows what ↵ does.
+3. **Activity**: under a heading for each day ("Today", "Yesterday", "Mon 9 Nov"), one line per
+   item with its time at the left; a long item wraps under itself. Newest first.
+4. **Links**: newest first, each with the writer's kind word when one was given (up to 8
+   characters), its label as a link (accent colour, ↗, underlined on hover) and its time. Links
    without a time come after the dated ones and show none. Pressing one opens it.
-4. **Recent activity**: one line per item with its time at the left; a long item wraps under itself.
-   Newest first.
+
+In the tab of **a session that has no task** the panel shows what Lunamux sees by itself: the same
+header, then **You asked** (each thing the person asked in that conversation, its time or day, and
+how long the turn took, read from the transcript) and **Work in its folder** (uncommitted changes
+and unpushed commits), then how to ask the agent for a plan, links and activity.
 
 Every list shows five entries, then **+ N more**, which opens the rest in place; the panel scrolls.
 The blocks agents write are kept in the database, survive a restart and are not removed when the task
@@ -307,6 +354,7 @@ ends. Only the types below exist; any other is refused.
 
 | Tool | Arguments | What it does |
 | --- | --- | --- |
+| `set_status` | `text`, optional `sessionId`, `conversationId` | Says in one line what a conversation is doing this turn (120 characters; empty clears it). It shows as its headline while it works and goes with the next prompt. An agent started inside another conversation's pane passes its own `conversationId`. |
 | `set_task_panel` | `taskId`, `blocks`, optional `by` | Replaces all of the task's blocks in the order given. Nothing changes if any block breaks a rule. |
 | `upsert_task_block` | `taskId`, `block`, optional `by` | Replaces the block with that id where it stands, or adds it at the end. |
 | `remove_task_block` | `taskId`, `id` | Removes one block. |
@@ -321,7 +369,8 @@ with the block and not shown. The panel follows each call within a second. A blo
 |---|---|---|
 | `links` | `items`: `{kind?, label, url, at?}` | 30 items; label 80; `http`, `https` or `file` addresses only, 2000 characters; `at` is an ISO time or epoch milliseconds. A link stored before `kind` and `at` existed reads as kind `link` with no time. |
 | `timeline` | `items`: `{at, text}` | 50 items; `at` an ISO time or epoch milliseconds; text 200. |
-| `progress` | `done` and `total`, and/or `phase`; optional `label` | A bar when there is a count. |
+| `progress` | `done` and `total`, and/or `phase`; optional `label` | A bar when there is a count. Phase and label 200. |
+| `steps` | `items`: `{text, state?}` | The plan in order; `state` is `done`, `current` or `todo` (`todo` when none). 60 steps; text 200. The panel lists and counts them, so no `progress` block is needed beside it. |
 
 A panel holds at most 24 blocks. Every refusal names the block, field or id at fault. A stored block
 of a type that no longer exists is skipped when the server starts; the rest of the panel is kept.
