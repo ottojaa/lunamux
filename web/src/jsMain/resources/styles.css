@@ -3553,7 +3553,10 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     --ao-line: var(--t-border, #1b3136);
     --ao-sel: color-mix(in srgb, var(--t-accent, #5fd4d0) 14%, var(--ao-surface));
     --ao-hover: color-mix(in srgb, var(--t-accent, #5fd4d0) 5%, var(--ao-surface));
-    --ao-done: color-mix(in srgb, var(--t-add, #86c9a0) 78%, var(--ao-surface));
+    /* A fixed green, not the theme's "added" colour: a one-hue theme makes that the same hue as
+       the accent, and done then reads like working. The text colour is mixed in so it stays
+       readable on a light theme. */
+    --ao-done: color-mix(in srgb, #5fd08f 80%, var(--ao-text));
     --ao-accent: var(--t-accent, #5fd4d0);
     --ao-warn: var(--t-warn, #f2c14e);
     --ao-error: var(--t-danger, #ff7b72);
