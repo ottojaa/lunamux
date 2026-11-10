@@ -423,6 +423,7 @@ class AgentsOverviewBackingViewModel(
         const val STATE_WORKING = "working"
         const val STATE_DONE = "done"
         const val STATE_FINISHED = "finished"
+        const val NO_TRANSCRIPT_NOTE = "nothing to resume: its transcript is gone"
         const val MARKER = "◆"
         const val HIDDEN_MAIN_NOTE = "it works in a background tab: ↵ has nothing to open until it asks"
         const val HIDDEN_MAIN_DONE_NOTE = "it has finished in a background tab: ↵ has nothing to open, → shows what it said"
@@ -480,7 +481,9 @@ internal fun buildOverview(inputs: OverviewInputs, ui: OverviewUi, now: Long): S
 
     // Singles are conversations of no task; a background one shows only while it waits.
     val claimed = units.flatMap { u -> u.sessions.map { it.id } }.toSet()
-    val singles = sessions.filter { it.id !in claimed && (!it.background || (it.state == NEEDS_YOU && AgentFacts.isLive(it))) }
+    val singles = sessions.filter {
+        it.id !in claimed && !(it.nothingSaid && !AgentFacts.isLive(it)) && (!it.background || (it.state == NEEDS_YOU && AgentFacts.isLive(it)))
+    }
     val nowSingles = singles.filter { AgentFacts.isLive(it) }
     val nowRows = (
         nowSingles.map { Triple(AgentFacts.startedOf(it), it.conversationId, sessionRow(it, earlier = false, c = c)) } +
@@ -611,11 +614,17 @@ private fun enterOf(
     return when {
         mainLive && listed != null -> Enter.JUMP to listed
         mainLive -> Enter.NONE to main
-        main != null -> Enter.RESUME to main
+        main != null && !main.noTranscript -> Enter.RESUME to main
         resumeId != null -> Enter.RESUME to null
         listed != null -> Enter.JUMP to listed
         t.hasOpen -> Enter.OPEN to null
-        else -> Enter.RESUME to sessions.maxByOrNull(AgentFacts::activityOf)
+        else -> {
+            val resumable = sessions.filter { !it.noTranscript }.maxByOrNull(AgentFacts::activityOf)
+            when {
+                resumable != null || sessions.isEmpty() -> Enter.RESUME to resumable
+                else -> Enter.NONE to (main ?: sessions.maxBy(AgentFacts::activityOf))
+            }
+        }
     }
 }
 
@@ -655,8 +664,13 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
         detail = detail,
         extra = extraOf(
             c.noteOf(target?.id),
-            target?.let { if (it.state == WORKING) AgentsOverviewBackingViewModel.HIDDEN_MAIN_NOTE else AgentsOverviewBackingViewModel.HIDDEN_MAIN_DONE_NOTE }
-                .takeIf { u.enter == Enter.NONE },
+            target?.let {
+                when {
+                    it.noTranscript -> AgentsOverviewBackingViewModel.NO_TRANSCRIPT_NOTE
+                    it.state == WORKING -> AgentsOverviewBackingViewModel.HIDDEN_MAIN_NOTE
+                    else -> AgentsOverviewBackingViewModel.HIDDEN_MAIN_DONE_NOTE
+                }
+            }.takeIf { u.enter == Enter.NONE },
             error,
         ),
         chips = chipsOf(t.title, target, c),
@@ -684,6 +698,7 @@ private fun sessionRow(s: AgentSessionSummary, earlier: Boolean, c: Ctx, taskTit
     val enter = when {
         live && s.background && needs -> Enter.SHOW_WAITING
         live -> Enter.JUMP
+        s.noTranscript -> Enter.NONE
         else -> Enter.RESUME
     }
     val error = c.errorOf(id)
@@ -702,7 +717,7 @@ private fun sessionRow(s: AgentSessionSummary, earlier: Boolean, c: Ctx, taskTit
         kind = kind,
         stateWord = word,
         detail = detail,
-        extra = extraOf(c.noteOf(s.id), error),
+        extra = extraOf(c.noteOf(s.id), AgentsOverviewBackingViewModel.NO_TRANSCRIPT_NOTE.takeIf { enter == Enter.NONE }, error),
         chips = chipsOf(title, s, c),
         ask = askOf(id, enter, own = false, inTab = s.inTab),
         sinceMillis = sinceOf(s),
@@ -717,7 +732,11 @@ private fun sessionRow(s: AgentSessionSummary, earlier: Boolean, c: Ctx, taskTit
 /** Turns a task or conversation row into the row for a search hit: where it matched, and the snippet. */
 private fun matchRow(base: Row, m: AgentSessionMatch, s: AgentSessionSummary, c: Ctx, mainId: String?): Row {
     val live = AgentFacts.isLive(s)
-    val enter = if (live) Enter.JUMP else Enter.RESUME
+    val enter = when {
+        live -> Enter.JUMP
+        s.noTranscript -> Enter.NONE
+        else -> Enter.RESUME
+    }
     val sessionTitle = AgentFacts.titleOf(s)
     // A hit in the title is stale when the title has changed since the server matched it.
     val titleCurrent = m.field != "title" || sessionTitle == (m.summary.title ?: sessionTitle)
@@ -735,7 +754,10 @@ private fun matchRow(base: Row, m: AgentSessionMatch, s: AgentSessionSummary, c:
     val place = "in ${fieldLabel(m.field)}" + if (sessionTitle != base.title && m.field != "task") " of $sessionTitle" else ""
     return base.copy(
         detail = snippet ?: base.detail,
-        extra = extraOf(m.resumeNote ?: c.noteOf(s.id), base.error, place),
+        extra = extraOf(
+            AgentsOverviewBackingViewModel.NO_TRANSCRIPT_NOTE.takeIf { enter == Enter.NONE } ?: m.resumeNote ?: c.noteOf(s.id),
+            base.error, place,
+        ),
         chips = chipsOf(base.title, s, c),
         ask = askOf(base.id, enter, own = s.id == mainId, inTab = s.inTab),
         enter = enter,

@@ -257,4 +257,18 @@ class AgentSessionSearchTest {
         assertEquals(listOf("tidy my notes"), search("tidy").map { it.summary.firstPrompt })
         assertEquals("prompt", search("tidy").single().field)
     }
+
+    @Test
+    fun `a closed conversation in which nothing was said is not found, and a live one is`() {
+        fun hooked(id: String, state: String, prompt: String?) = repo.saveAgentSession(
+            AgentSessionRecord(
+                id = id, agent = "claude", source = "hooks", branch = "feature/demandbase", firstPrompt = prompt,
+                state = state, createdAt = 1_000, endedAt = if (state == "ended") 1_000 else null, cwd = "/work/$id",
+            ),
+        )
+        hooked("empty", "ended", null)
+        hooked("said", "ended", "start")
+        hooked("running", "working", null)
+        assertEquals(setOf("said", "running"), search("demandbase").map { it.summary.id }.toSet())
+    }
 }

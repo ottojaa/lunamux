@@ -466,6 +466,11 @@ class AgentSessionTracker(
             (records.values.firstOrNull { it.agent == CLAUDE && it.agentSessionId == id && it.id != current?.id }
                 ?: repo.findAgentSession(CLAUDE, id)?.takeIf { it.id != current?.id })
         }
+        // A hook for a conversation whose transcript is gone (a failed `claude --resume`) must not
+        // pull its old record into this pane or make it look live. Unless the hook's own transcript
+        // exists: Claude writes the file lazily, so a conversation closed before anything was said
+        // is real once the person types.
+        if (earlier != null && earlier.transcriptMissing() && (transcript == null || !File(transcript).isFile)) return null
         val provisional = current != null && current.agent == CLAUDE &&
             current.agentSessionId == null && current.source == SOURCE_SCREEN
         if (provisional && earlier == null) {
@@ -694,7 +699,24 @@ internal fun AgentSessionRecord.toSummary() = AgentSessionSummary(
     background = background,
     startedAt = createdAt,
     conversationId = conversationId,
+    noTranscript = transcriptMissing(),
+    nothingSaid = nothingSaid(),
 )
+
+/**
+ * Whether this closed Claude conversation recorded a transcript file that is no longer on disk, so
+ * `claude --resume` could not find it. A record that never named a file is not judged.
+ */
+internal fun AgentSessionRecord.transcriptMissing(): Boolean =
+    state == "ended" && agent == "claude" && transcriptPath != null && !File(transcriptPath).isFile
+
+/**
+ * Whether this closed conversation was fed by Claude's hooks yet never saw a prompt submitted or an
+ * answer given, and was never titled: the person started `claude` and left (or cancelled `/resume`).
+ * Records fed by the screen never carry a prompt, so they are not judged.
+ */
+internal fun AgentSessionRecord.nothingSaid(): Boolean =
+    state == "ended" && agent == "claude" && source == "hooks" && firstPrompt == null && lastSaid == null && title == null
 
 private const val TOOL_LINE_MAX = 160
 private const val FIRST_PROMPT_MAX = 160

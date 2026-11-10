@@ -1094,6 +1094,9 @@ internal fun nearestExistingFolder(path: String): String? {
 /** What a row says when its conversation never recorded a folder; also the answer to Resume. */
 private const val NO_FOLDER_RECORDED = "No folder was recorded for this session."
 
+/** What a closed row says when its transcript file is gone; also the answer to Resume. */
+private const val NO_TRANSCRIPT = "Its transcript is gone, so it can't be resumed."
+
 /** What a row says when its folder is gone and nothing above it exists either. */
 private const val NO_FOLDER_ABOVE = "Its folder is gone, and no folder above it exists."
 
@@ -1102,6 +1105,8 @@ private const val NO_FOLDER_ABOVE = "Its folder is gone, and no folder above it 
  * the folder the conversation ran in.
  */
 internal fun resumeNoteOf(rec: AgentSessionRecord, open: TaskOpen?): String? {
+    // No note: the overview itself says there is nothing to resume, and a folder note would mislead.
+    if (rec.transcriptMissing()) return null
     val recorded = startFolderOf(rec, open) ?: return NO_FOLDER_RECORDED
     if (java.io.File(recorded).isDirectory) return null
     val nearest = nearestExistingFolder(recorded) ?: return NO_FOLDER_ABOVE
@@ -1118,6 +1123,10 @@ internal suspend fun resumeAgentSession(
     val rec = ctx.agentTracker?.find(recordId)
     if (rec == null) {
         ctx.send(WindowEnvelope.AgentSessionError(recordId, "session no longer exists"))
+        return
+    }
+    if (rec.transcriptMissing()) {
+        ctx.send(WindowEnvelope.AgentSessionError(recordId, NO_TRANSCRIPT))
         return
     }
     val declared = ctx.taskIndex?.openOfMain(rec)

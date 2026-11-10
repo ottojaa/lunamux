@@ -320,21 +320,28 @@ class TaskIndex(
 
         /**
          * The conversation that speaks for task [taskId], given the [stored] name. That is the stored
-         * conversation, unless it is a helper (see [isHelper]): then the task's real conversation in
-         * the same pane speaks, the latest one, live or closed, as long as it was still open when the
-         * stored one began (a real conversation that closed before it, say before a /clear, is not
-         * what the person named). A main that really closed keeps its name, and with no real
-         * conversation to take over the stored name stays.
+         * conversation, unless it is a helper (see [isHelper]) or has no transcript left to resume
+         * (see [transcriptMissing]): then the task's real conversation speaks, one that was still
+         * open when the stored one began (a real conversation that closed before it, say before a
+         * /clear, is not what the person named). A helper with a transcript is answered from its own
+         * pane, the latest there. One with no transcript can't be the conversation the person
+         * means, and reopening the real conversation in another pane moves its record there, so
+         * every pane is looked at: the stored one's pane first, then a foreground one, then the
+         * latest. A main that really closed keeps its name, and with no real conversation to take
+         * over the stored name stays.
          */
         internal fun speakerOf(taskId: String, stored: String, records: List<AgentSessionRecord>): String {
             val named = records.firstOrNull { it.conversationId == stored || it.id == stored } ?: return stored
-            if (named.leafId == null || !isHelper(named, taskId, records)) return named.conversationId
-            return records
-                .filter {
-                    it.taskId == taskId && it.leafId == named.leafId && !isHelper(it, taskId, records) &&
-                        (it.endedAt ?: Long.MAX_VALUE) > named.createdAt
-                }
-                .maxByOrNull { it.createdAt }?.conversationId ?: named.conversationId
+            val sound = !named.transcriptMissing() && (named.leafId == null || !isHelper(named, taskId, records))
+            if (sound) return named.conversationId
+            val anywhere = named.transcriptMissing()
+            val real = records.filter {
+                it.taskId == taskId && it.conversationId != named.conversationId && !it.transcriptMissing() &&
+                    (anywhere || it.leafId == named.leafId) &&
+                    !isHelper(it, taskId, records) && (it.endedAt ?: Long.MAX_VALUE) > named.createdAt
+            }
+            val preferred = real.filter { it.leafId == named.leafId }.ifEmpty { real.filter { !it.background } }.ifEmpty { real }
+            return preferred.maxByOrNull { it.createdAt }?.conversationId ?: named.conversationId
         }
 
         /**

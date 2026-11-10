@@ -315,6 +315,10 @@ data class AgentSessionSummary(
     val conversationId: String = id,
     /** A closed conversation whose own pane is still at an idle shell in the same folder, so Resume can reuse it. */
     val inTab: Boolean = false,
+    /** A closed Claude conversation whose transcript file is gone: it cannot be resumed. */
+    val noTranscript: Boolean = false,
+    /** A closed conversation in which no prompt was ever submitted: nothing to find or resume. */
+    val nothingSaid: Boolean = false,
 )
 
 /**

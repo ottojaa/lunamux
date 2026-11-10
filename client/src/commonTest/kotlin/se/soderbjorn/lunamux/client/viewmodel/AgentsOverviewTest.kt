@@ -69,10 +69,13 @@ class AgentsOverviewTest {
         question: String? = null,
         endedAt: Long? = null,
         inTab: Boolean = false,
+        noTranscript: Boolean = false,
+        nothingSaid: Boolean = false,
     ) = AgentSessionSummary(
         id = id, agent = "claude", state = state, stateSince = since, title = title, repo = "proj", cwd = "/work/proj",
         cwdShown = "~/work/proj", nowLine = nowLine, question = question, leafId = "leaf-$id".takeIf { placed && endedAt == null },
         endedAt = endedAt, lastActivityAt = endedAt ?: since, startedAt = since, taskId = taskId, background = background, inTab = inTab,
+        noTranscript = noTranscript, nothingSaid = nothingSaid,
     )
 
     private fun sessions(vararg all: AgentSessionSummary) = windowState.updateAgentSessions(all.toList(), true)
@@ -439,5 +442,33 @@ class AgentsOverviewTest {
         assertEquals("s2", row.recordId, "the conversation that matched, not the task's main one")
         assertEquals("in transcript of session s2", row.extra)
         assertEquals("1 MATCH", vm.state.matchHeading)
+    }
+
+    @Test
+    fun aConversationWithNoTranscriptIsNeverOfferedForResumeSoTheRowSaysThereIsNothingToResume() {
+        layout(listed = listOf("a"))
+        val gone = session("gone", taskId = "g1", state = "ended", endedAt = now - minute, noTranscript = true)
+        sessions(session("a"), gone)
+        windowState.updateAgentTasks(listOf(task("gone")))
+        vm.open()
+        assertEquals(Enter.NONE, taskRow().enter)
+        assertEquals(AgentsOverviewBackingViewModel.NO_TRANSCRIPT_NOTE, taskRow().extra)
+        val saved = session("saved", taskId = "g1", state = "ended", endedAt = now - 2 * minute)
+        sessions(session("a"), gone, saved)
+        assertEquals(listOf(Enter.RESUME, "saved"), listOf(taskRow().enter, taskRow().recordId), "another conversation of the task can still be resumed")
+    }
+
+    @Test
+    fun aClosedConversationInWhichNothingWasSaidIsLeftOutOfTheHistoryWhileALiveOneShows() {
+        layout(listed = listOf("live"))
+        sessions(
+            session("live", title = null, nothingSaid = false),
+            session("empty", title = null, state = "ended", endedAt = now - minute, nothingSaid = true),
+            session("said", state = "ended", endedAt = now - 2 * minute),
+        )
+        vm.open()
+        assertEquals(listOf("said"), vm.state.earlier.map { it.id }.filter { it != "live" })
+        sessions(session("live", title = null, nothingSaid = true))
+        assertEquals(listOf("live"), vm.state.now.map { it.id }, "a conversation that runs shows even before anything is said")
     }
 }
