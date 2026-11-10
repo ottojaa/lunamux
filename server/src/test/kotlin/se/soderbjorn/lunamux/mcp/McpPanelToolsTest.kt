@@ -150,7 +150,7 @@ class McpPanelToolsTest {
         assertTrue("needs" in refusal(set(progress())))
         assertTrue("both" in refusal(set(progress(done = 1))))
         assertTrue("between" in refusal(set(progress(done = 6, total = 5))))
-        assertTrue("phase" in refusal(set(progress("p".repeat(81)))))
+        assertTrue("phase" in refusal(set(progress("p".repeat(201)))))
 
         for (url in listOf("javascript:alert(1)", "data:text/html,x", "ftp://a.b", "//a.b", "a.b", "https://a b")) {
             assertTrue("'x'" in refusal(set(links(item(url)))), url)

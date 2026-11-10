@@ -319,6 +319,10 @@ data class AgentSessionSummary(
     val noTranscript: Boolean = false,
     /** A closed conversation in which no prompt was ever submitted: nothing to find or resume. */
     val nothingSaid: Boolean = false,
+    /** Why a closed conversation ended: `restart` when Lunamux stopped under it, else `exit`, `closed` or `replaced`; null on older records. */
+    val endReason: String? = null,
+    /** The state a closed conversation was in when it ended. */
+    val endedFrom: String? = null,
 )
 
 /**

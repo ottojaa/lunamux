@@ -532,4 +532,32 @@ class AgentsOverviewTest {
         sessions(session("live", title = null, nothingSaid = true))
         assertEquals(listOf("live"), vm.state.now.map { it.id }, "a conversation that runs shows even before anything is said")
     }
+
+    @Test
+    fun whatTheRestartStoppedHasItsOwnSectionAndResumesWithOneKey() {
+        layout(listed = listOf("live"))
+        fun cut(id: String, from: String, ago: Long, said: String? = null) =
+            session(id, state = "ended", endedAt = now - ago, lastSaid = said, inTab = id == "a").copy(endReason = "restart", endedFrom = from)
+        sessions(
+            session("live"),
+            cut("a", "working", 5 * minute, said = "Running the migration."),
+            cut("b", "done", 6 * minute),
+            cut("old", "working", 30 * 60 * minute),
+            session("closed", state = "ended", endedAt = now - 4 * minute).copy(endReason = "closed"),
+            cut("gone", "working", 5 * minute).copy(noTranscript = true),
+        )
+        vm.open()
+        assertEquals(listOf("a", "b"), vm.state.stopped.map { it.id }, "only what a restart cut off in the last day, and can be resumed")
+        assertEquals("was working · Running the migration.", vm.state.stopped.first().detail)
+        assertEquals("was done", vm.state.stopped.last().detail)
+        assertEquals(setOf("closed", "old", "gone"), vm.state.recent.map { it.id }.toSet(), "the rest stay in EARLIER")
+        assertEquals(listOf("live", "a", "b"), vm.state.rows.take(3).map { it.id }, "the section sits between NOW and EARLIER")
+        assertTrue(vm.state.footer.any { it.key == "⇧↵" && it.label == "resume all 2" })
+        runNow { vm.resumeStopped() }
+        assertEquals(
+            listOf<WindowCommand>(WindowCommand.ResumeAgentSession("a", inTab = true), WindowCommand.ResumeAgentSession("b", inTab = false)),
+            sent,
+        )
+        assertFalse(vm.state.open)
+    }
 }

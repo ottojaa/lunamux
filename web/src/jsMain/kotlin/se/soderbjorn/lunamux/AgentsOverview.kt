@@ -6,7 +6,8 @@
  * A live row leads with a state mark (the turning glyph while it works, ◆ when it needs the person,
  * ✓ when done) and the name of its tab, with the plan's progress, a state word and the age on the
  * right. Under them come its description and its headline: the question, what it is doing, or the
- * last thing it said. NOW is grouped by repo. A closed row is one line: its title, the last thing
+ * last thing it said. NOW is grouped by repo. What a restart cut off has a section of its own, with
+ * ⇧↵ to resume all of it. A closed row is one line: its title, the last thing
  * it said, where it ran and its age. The selected row shows more under it: a task's agents, a
  * question before a resume, its folder and any note, and the peek.
  *
@@ -190,6 +191,7 @@ private fun onFooterKey(key: String) {
         "↵" -> launchAgentsOverview { agentsOverview.activateSelected() }
         "esc" -> agentsOverview.back()
         "→" -> launchAgentsOverview { agentsOverview.peek() }
+        "⇧↵" -> launchAgentsOverview { agentsOverview.resumeStopped() }
     }
 }
 
@@ -204,6 +206,7 @@ private fun onSearchKey(e: KeyboardEvent) {
     when {
         e.key == "ArrowDown" -> { e.preventDefault(); agentsOverview.moveSelection(1) }
         e.key == "ArrowUp" -> { e.preventDefault(); agentsOverview.moveSelection(-1) }
+        e.key == "Enter" && e.shiftKey -> { e.preventDefault(); launchAgentsOverview { agentsOverview.resumeStopped() } }
         e.key == "Enter" -> { e.preventDefault(); launchAgentsOverview { agentsOverview.activateSelected() } }
         e.key == "Escape" -> { e.preventDefault(); agentsOverview.back() }
         state.confirm != null && (e.key == "ArrowLeft" || e.key == "ArrowRight" || e.key == "Tab") -> {
@@ -248,6 +251,12 @@ private fun itemsOf(state: AgentsOverviewBackingViewModel.State): List<Item> {
         return out
     }
     if (state.now.isNotEmpty()) { out += Heading("NOW"); add(state.now, grouped = true) }
+    if (state.stopped.isNotEmpty()) {
+        val at = state.stoppedAtMillis?.let { AgentFacts.ageText(it, kotlin.js.Date.now().toLong()) }
+            ?.let { if (it == "now") " · JUST NOW" else " · ${it.uppercase()} AGO" }.orEmpty()
+        out += Heading("STOPPED BY THE RESTART$at")
+        add(state.stopped)
+    }
     if (state.recent.isNotEmpty()) { out += Heading("EARLIER · LAST FEW DAYS"); add(state.recent) }
     if (state.fortnight.isNotEmpty()) { out += Heading("EARLIER · LAST TWO WEEKS"); add(state.fortnight) }
     if (state.earlierHidden > 0) out += More(state.earlierHidden)
@@ -372,7 +381,7 @@ private fun buildClosedCells(el: HTMLElement, row: Row) {
     if (row.detail.isNotEmpty()) name.appendChild(span("ao-said").also { fillDetail(it, row) })
     el.appendChild(name)
     el.appendChild(span("ao-w", row.where ?: ""))
-    el.appendChild(span("ao-sw", row.stateWord))
+    el.appendChild(span("ao-sw", if (row.stopped) "↵ resume" else row.stateWord))
     el.appendChild(ageSpan("ao-age", row.sinceMillis))
 }
 

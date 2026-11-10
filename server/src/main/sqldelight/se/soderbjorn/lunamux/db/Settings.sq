@@ -37,14 +37,18 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
     search_text         TEXT,
     last_said           TEXT,
     task_id             TEXT,
-    background          INTEGER NOT NULL DEFAULT 0
+    background          INTEGER NOT NULL DEFAULT 0,
+    end_reason          TEXT,
+    ended_from          TEXT,
+    host                TEXT
 );
 
 -- Every agent_sessions column but the long transcript text, so the hot reads below never carry it.
 CREATE VIEW IF NOT EXISTS agent_session_row AS
 SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
     worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at, repo_root, last_said, task_id, background
+    question, last_screen, created_at, ended_at, repo_root, last_said, task_id, background,
+    end_reason, ended_from, host
 FROM agent_sessions;
 
 -- Every task the server keeps something about, any task id (an agent-made task or a task file's).
@@ -113,9 +117,10 @@ upsertAgentSession:
 INSERT OR REPLACE INTO agent_sessions(
     id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch,
     worktree_path, title, first_prompt, transcript_path, links, state, state_since, now_line,
-    question, last_screen, created_at, ended_at, repo_root, search_text, last_said, task_id, background
+    question, last_screen, created_at, ended_at, repo_root, search_text, last_said, task_id, background,
+    end_reason, ended_from, host
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-    (SELECT search_text FROM agent_sessions WHERE id = ?), ?, ?, ?);
+    (SELECT search_text FROM agent_sessions WHERE id = ?), ?, ?, ?, ?, ?, ?);
 
 -- The hot reads below name their columns so the long search_text never rides
 -- along; imported history (source = 'import') is only ever found by search.
@@ -135,9 +140,10 @@ SELECT * FROM agent_session_row WHERE id = ?;
 selectOpenAgentSessions:
 SELECT * FROM agent_session_row WHERE state != 'ended';
 
--- Close one record at the time it was last known to be alive, not at the time it was found closed.
+-- Close one record a server run left open, at the time it was last known to be alive, not at the
+-- time it was found closed. It was cut off by the restart, in the state it still shows.
 endAgentSessionAt:
-UPDATE agent_sessions SET state = 'ended', ended_at = :endedAt, state_since = :endedAt WHERE id = :id;
+UPDATE agent_sessions SET end_reason = 'restart', ended_from = state, state = 'ended', ended_at = :endedAt, state_since = :endedAt WHERE id = :id;
 
 -- A screen record that a hook later named, and whose conversation already had a record, is
 -- dropped: the older record carries on in its place.
@@ -154,7 +160,9 @@ WHERE state = 'ended' AND transcript_path IS NOT NULL AND search_text IS NULL;
 -- Records matching :raw (:pattern is its LIKE form); the two long columns come back as a short window
 -- around the first match. Background sessions are never found.
 searchAgentSessions:
-SELECT r.*,
+SELECT r.id, r.agent, r.agent_session_id, r.source, r.leaf_id, r.terminal_session_id, r.cwd, r.repo, r.branch,
+    r.worktree_path, r.title, r.first_prompt, r.transcript_path, r.links, r.state, r.state_since, r.now_line,
+    r.question, r.last_screen, r.created_at, r.ended_at, r.repo_root, r.last_said, r.task_id, r.background,
     CASE WHEN s.search_text LIKE :pattern ESCAPE '\'
         THEN substr(s.search_text, max(1, instr(lower(s.search_text), lower(:raw)) - 80), 240) END AS transcript_window,
     CASE WHEN r.last_screen LIKE :pattern ESCAPE '\'

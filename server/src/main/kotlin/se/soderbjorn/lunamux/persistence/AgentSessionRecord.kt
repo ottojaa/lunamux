@@ -35,6 +35,12 @@ data class AgentSessionRecord(
     val lastSaid: String? = null,
     val taskId: String? = null,
     val background: Boolean = false,
+    /** Why the record ended: `restart` (Lunamux stopped under it), `exit`, `closed` (its pane went) or `replaced`; null while open and on older rows. */
+    val endReason: String? = null,
+    /** The state it was in when it ended. */
+    val endedFrom: String? = null,
+    /** For a helper (a `claude` started inside another conversation): the conversation it ran inside. */
+    val host: String? = null,
 ) {
     /**
      * The conversation this record is a run of: the agent's own session id when it is known, else

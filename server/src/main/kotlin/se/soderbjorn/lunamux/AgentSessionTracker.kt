@@ -176,13 +176,13 @@ class AgentSessionTracker(
         endSilentHelpers()
         for (r in openRecords()) {
             val pane = live[r.terminalSessionId]
-            if (pane == null || !pane.alive) end(r, pane?.screenText?.invoke())
+            if (pane == null || !pane.alive) end(r, pane?.screenText?.invoke(), END_CLOSED)
         }
         for (pane in panes) {
             if (pane.agent == null || pane.state == null) awaitScreenClear.remove(pane.terminalSessionId)
             var rec = openFor(pane.terminalSessionId)
             if (rec != null && rec.source == SOURCE_SCREEN && pane.agent != null && pane.agent != rec.agent) {
-                end(rec, pane.screenText())
+                end(rec, pane.screenText(), END_REPLACED)
                 rec = null
             }
             if (rec == null) {
@@ -349,7 +349,7 @@ class AgentSessionTracker(
             }
             "SessionEnd" -> {
                 // A helper's end leaves the pane's screen to its own conversation.
-                end(rec, if (isHelper) null else pane.screenText())
+                end(rec, if (isHelper) null else pane.screenText(), END_EXIT)
                 if (!isHelper) awaitScreenClear.add(pane.terminalSessionId)
                 publish()
                 return@synchronized
@@ -364,7 +364,7 @@ class AgentSessionTracker(
     }
 
     private fun endHelpersOf(hostId: String) {
-        helpers.filterValues { it == hostId }.keys.forEach { id -> records[id]?.let { end(it, null) } }
+        helpers.filterValues { it == hostId }.keys.forEach { id -> records[id]?.let { end(it, null, END_EXIT) } }
     }
 
     /**
@@ -378,21 +378,21 @@ class AgentSessionTracker(
             val rec = records[id] ?: continue
             val written = rec.transcriptPath?.let { File(it).takeIf(File::isFile)?.lastModified() } ?: 0L
             val last = maxOf(lastHookAt[id] ?: 0L, written, rec.createdAt)
-            if (now - last >= HELPER_SILENT_MS) end(rec, null)
+            if (now - last >= HELPER_SILENT_MS) end(rec, null, END_EXIT)
         }
     }
 
     /** End the open record of a terminal session that is being torn down. */
     fun onSessionDestroyed(terminalSessionId: String, screen: String?) = synchronized(lock) {
         awaitScreenClear.remove(terminalSessionId)
-        openRecords().filter { it.terminalSessionId == terminalSessionId }.forEach { end(it, screen) }
+        openRecords().filter { it.terminalSessionId == terminalSessionId }.forEach { end(it, screen, END_CLOSED) }
         publish()
     }
 
-    /** Mark every open record ended, saving each pane's screen. */
+    /** Mark every open record ended by Lunamux stopping, saving each pane's screen. Called at shutdown. */
     fun endAll(panes: List<PaneSnapshot>) = synchronized(lock) {
         val live = panes.associateBy { it.terminalSessionId }
-        openRecords().forEach { end(it, live[it.terminalSessionId]?.screenText?.invoke()) }
+        openRecords().forEach { end(it, live[it.terminalSessionId]?.screenText?.invoke(), END_RESTART) }
         publish()
     }
 
@@ -488,7 +488,7 @@ class AgentSessionTracker(
             ).also { put(it) }
         }
         if (current != null) {
-            if (provisional) discard(current) else end(current, pane.screenText())
+            if (provisional) discard(current) else end(current, pane.screenText(), END_REPLACED)
         }
         awaitScreenClear.remove(pane.terminalSessionId)
         if (earlier != null && earlier.state == ENDED) {
@@ -502,6 +502,8 @@ class AgentSessionTracker(
                 question = null,
                 lastScreen = null,
                 endedAt = null,
+                endReason = null,
+                endedFrom = null,
                 title = earlier.title ?: current?.title.takeIf { provisional },
                 taskId = pane.leafId?.let { pendingTasks.remove(it) } ?: earlier.taskId ?: current?.taskId.takeIf { provisional },
                 background = pane.background,
@@ -577,11 +579,14 @@ class AgentSessionTracker(
         ).also { put(it) }
     }
 
-    private fun end(rec: AgentSessionRecord, screen: String?) {
+    /** Ends [rec], keeping [screen] as its last and [reason] (one of the `END_` words) as why. */
+    private fun end(rec: AgentSessionRecord, screen: String?, reason: String) {
         if (helpers.remove(rec.id) == null) endHelpersOf(rec.id)
         forgetTurn(rec.id)
         val now = clock()
         val ended = rec.copy(
+            endReason = reason,
+            endedFrom = rec.state,
             state = ENDED,
             stateSince = now,
             endedAt = now,
@@ -641,6 +646,12 @@ class AgentSessionTracker(
         const val DONE = "done"
         const val ENDED = "ended"
 
+        /** Why a record ended: Lunamux stopped under it, the agent exited, its pane went, or another conversation took the pane. */
+        const val END_RESTART = "restart"
+        const val END_EXIT = "exit"
+        const val END_CLOSED = "closed"
+        const val END_REPLACED = "replaced"
+
         /** SessionStart sources that replace the pane's conversation rather than start a helper beside it. */
         val REPLACING_STARTS = setOf("clear", "resume")
 
@@ -694,6 +705,8 @@ internal fun AgentSessionRecord.toSummary() = AgentSessionSummary(
     cwdShown = cwd?.let(::prettifyPath),
     nowLine = nowLine, question = question, leafId = leafId, endedAt = endedAt,
     lastSaid = lastSaid,
+    endReason = endReason,
+    endedFrom = endedFrom,
     firstPrompt = firstPrompt?.let(::firstPromptLine),
     taskId = taskId,
     background = background,

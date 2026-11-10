@@ -9,7 +9,8 @@
  * [AgentsOverviewBackingViewModel.state] always sees the result of the key before it.
  *
  * A row is one conversation, or one task. NOW lists every live conversation in a listed tab and
- * every task with a live conversation, grouped by repo, in the order their work began. EARLIER
+ * every task with a live conversation, grouped by repo, in the order their work began. STOPPED BY
+ * THE RESTART lists what Lunamux cut off when it last stopped, with one key to resume all. EARLIER
  * lists the rest by recency in two bands (three days, two weeks), five rows and a "+ N more" line.
  * Typing two or more characters switches to the server's search, one row per task.
  *
@@ -93,6 +94,8 @@ private const val EARLIER_LIMIT = 5
 private const val RECENT_MS = 3L * 24 * 60 * 60_000L
 private const val WINDOW_MS = 14L * 24 * 60 * 60_000L
 private const val MIN_QUERY = 2
+private const val RESTART = "restart"
+private const val STOPPED_WINDOW_MS = 24L * 60 * 60_000L
 
 /**
  * The state behind the agents overview: which rows show, which is selected, and what ↵ does on it.
@@ -150,6 +153,8 @@ class AgentsOverviewBackingViewModel(
         val tabName: String? = null,
         val progress: Progress? = null,
         val agents: List<Agent> = emptyList(),
+        /** Lunamux stopped under it within the last day and it can be resumed: it lists under STOPPED BY THE RESTART. */
+        val stopped: Boolean = false,
         val ask: Ask? = null,
         val sinceMillis: Long,
         val enter: Enter,
@@ -188,6 +193,9 @@ class AgentsOverviewBackingViewModel(
         val matches: List<Row> = emptyList(),
         val searching: Boolean = false,
         val now: List<Row> = emptyList(),
+        val stopped: List<Row> = emptyList(),
+        /** When the restart that stopped [stopped] happened. */
+        val stoppedAtMillis: Long? = null,
         val recent: List<Row> = emptyList(),
         val fortnight: List<Row> = emptyList(),
         val earlierHidden: Int = 0,
@@ -201,7 +209,7 @@ class AgentsOverviewBackingViewModel(
         val footer: List<FooterKey> = defaultFooter(Enter.JUMP),
     ) {
         val earlier: List<Row> get() = recent + fortnight
-        val rows: List<Row> get() = if (matchMode) matches else now + recent + fortnight
+        val rows: List<Row> get() = if (matchMode) matches else now + stopped + recent + fortnight
         val selected: Int get() = rows.indexOfFirst { it.id == selectedId }
         val selectedRow: Row? get() = rows.firstOrNull { it.id == selectedId }
         val matchHeading: String?
@@ -371,6 +379,15 @@ class AgentsOverviewBackingViewModel(
         }
     }
 
+    /** ⇧↵: resumes everything the restart stopped, each in its own tab (the one it ran in when that is still free), and closes the overview. */
+    suspend fun resumeStopped() {
+        val rows = state.stopped.filter { it.recordId != null }
+        if (rows.isEmpty()) return
+        windowState.clearAgentSessionError()
+        rows.forEach { send(WindowCommand.ResumeAgentSession(it.recordId!!, inTab = it.ask?.inTab == true)) }
+        close()
+    }
+
     /** Asks the server about the selected row (its resume note, uncommitted work, saved screen). */
     suspend fun inspectSelected(force: Boolean = false) {
         val row = state.selectedRow ?: return
@@ -426,8 +443,9 @@ class AgentsOverviewBackingViewModel(
     }
 
     companion object {
-        fun defaultFooter(enter: Enter?, canPeek: Boolean = true): List<FooterKey> = listOfNotNull(
+        fun defaultFooter(enter: Enter?, canPeek: Boolean = true, stopped: Int = 0): List<FooterKey> = listOfNotNull(
             FooterKey("↵", if (enter == Enter.SHOW_WAITING) SHOW_WAITING_HINT else "open").takeIf { enter != Enter.NONE },
+            FooterKey("⇧↵", "resume all $stopped").takeIf { stopped > 0 },
             FooterKey("→", "peek").takeIf { canPeek },
             FooterKey("↑↓", "move"),
             FooterKey("esc", "close"),
@@ -512,15 +530,17 @@ internal fun buildOverview(inputs: OverviewInputs, ui: OverviewUi, now: Long): S
         .groupBy { it.where }.values.flatten()
 
     val nowIds = nowSingles.mapTo(HashSet()) { it.id }
-    val earlierAll = (
+    var earlierAll = (
         singles.filter { it.id !in nowIds }.map { s -> sinceOf(s) to sessionRow(s, earlier = true, c = c) } +
             units.filter { !it.inNow }.map { it.recency to taskRow(it, c) }
         ).filter { now - it.first <= WINDOW_MS }.sortedByDescending { it.first }
+    val stopped = earlierAll.filter { it.second.stopped }.map { it.second }
+    earlierAll = earlierAll.filter { !it.second.stopped }
     val earlierShown = if (ui.showAllEarlier) earlierAll else earlierAll.take(EARLIER_LIMIT)
     val recent = earlierShown.filter { now - it.first <= RECENT_MS }.map { it.second }
     val fortnight = earlierShown.filter { now - it.first > RECENT_MS }.map { it.second }
 
-    val listed = if (matchMode) matchRows else nowRows + recent + fortnight
+    val listed = if (matchMode) matchRows else nowRows + stopped + recent + fortnight
     val selectedId = when {
         listed.isEmpty() -> null
         ui.selectedId != null && listed.any { it.id == ui.selectedId } -> ui.selectedId
@@ -561,6 +581,8 @@ internal fun buildOverview(inputs: OverviewInputs, ui: OverviewUi, now: Long): S
         matches = if (matchMode) matchRows else emptyList(),
         searching = matchMode && answer == null,
         now = if (matchMode) emptyList() else nowRows,
+        stopped = if (matchMode) emptyList() else stopped,
+        stoppedAtMillis = stopped.maxOfOrNull { it.sinceMillis },
         recent = if (matchMode) emptyList() else recent,
         fortnight = if (matchMode) emptyList() else fortnight,
         earlierHidden = earlierAll.size - earlierShown.size,
@@ -571,7 +593,9 @@ internal fun buildOverview(inputs: OverviewInputs, ui: OverviewUi, now: Long): S
         peek = peek,
         confirm = confirm,
         ask = ask,
-        footer = ask?.keys ?: AgentsOverviewBackingViewModel.defaultFooter(selectedRow?.enter, canPeek = selectedRow?.recordId != null),
+        footer = ask?.keys ?: AgentsOverviewBackingViewModel.defaultFooter(
+            selectedRow?.enter, canPeek = selectedRow?.recordId != null, stopped = if (matchMode) 0 else stopped.size,
+        ),
     )
 }
 
@@ -680,6 +704,7 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
     val single = u.sessions.singleOrNull()
     val repo = t.repo ?: u.sessions.takeIf { s -> s.isNotEmpty() && s.none { it.repo == null } }?.map { it.repo }?.distinct()?.singleOrNull()
     val error = c.errorOf(id)
+    val cutOff = target?.takeIf { !u.inNow && u.enter == Enter.RESUME && stoppedByRestart(it, c.now) }
     return Row(
         id = id,
         taskId = t.id,
@@ -687,7 +712,8 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
         where = repo ?: u.sessions.map(AgentFacts::folderOf).distinct().singleOrNull(),
         kind = kind,
         stateWord = word,
-        detail = detail,
+        detail = cutOff?.let(::wasLine) ?: detail,
+        stopped = cutOff != null,
         extra = extraOf(
             target?.cwdShown, c.noteOf(target?.id),
             target?.let {
@@ -740,7 +766,8 @@ private fun sessionRow(s: AgentSessionSummary, earlier: Boolean, c: Ctx, taskTit
         where = s.repo ?: AgentFacts.folderOf(s),
         kind = kind,
         stateWord = word,
-        detail = headlineOf(s).orEmpty(),
+        detail = if (enter == Enter.RESUME && stoppedByRestart(s, c.now)) wasLine(s) else headlineOf(s).orEmpty(),
+        stopped = enter == Enter.RESUME && stoppedByRestart(s, c.now),
         extra = extraOf(s.cwdShown, c.noteOf(s.id), AgentsOverviewBackingViewModel.NO_TRANSCRIPT_NOTE.takeIf { enter == Enter.NONE }, error),
         tabName = c.tabNameOf(s, title),
         ask = askOf(id, enter, own = false, inTab = s.inTab),
@@ -813,6 +840,20 @@ internal fun headlineOf(s: AgentSessionSummary): String? {
         else -> s.lastSaid?.trim()?.takeIf { it.isNotEmpty() }
     }
 }
+
+/** Whether Lunamux stopped under [s] within the last day. */
+private fun stoppedByRestart(s: AgentSessionSummary, now: Long): Boolean =
+    s.state == ENDED && s.endReason == RESTART && now - (s.endedAt ?: s.stateSince) <= STOPPED_WINDOW_MS
+
+/** What a conversation the restart stopped says on its row: the state it was in, then the last thing it said. */
+private fun wasLine(s: AgentSessionSummary): String = extraOf(
+    when (s.endedFrom) {
+        WORKING -> "was working"
+        NEEDS_YOU -> "was waiting for you"
+        else -> "was done"
+    },
+    headlineOf(s),
+)
 
 /** A task's progress block as the row and the panel's bar show it; null without a count. */
 internal fun progressOf(blocks: List<TaskPanelBlock>): Progress? {

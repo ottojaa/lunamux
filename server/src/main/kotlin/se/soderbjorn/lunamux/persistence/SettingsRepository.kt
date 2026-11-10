@@ -128,7 +128,23 @@ class SettingsRepository(
             "agent_sessions ADD COLUMN last_said TEXT",
             "agent_sessions ADD COLUMN task_id TEXT",
             "agent_sessions ADD COLUMN background INTEGER NOT NULL DEFAULT 0",
+            "agent_sessions ADD COLUMN end_reason TEXT",
+            "agent_sessions ADD COLUMN ended_from TEXT",
+            "agent_sessions ADD COLUMN host TEXT",
         ).forEach { change -> runCatching { driver.execute(null, "ALTER TABLE $change", 0) } }
+        // The view names its columns, so an older file's view lacks the ones added above: make it
+        // again. New columns go last, so an older build that reads this file by position still can.
+        runCatching {
+            driver.execute(null, "DROP VIEW IF EXISTS agent_session_row", 0)
+            driver.execute(
+                null,
+                "CREATE VIEW agent_session_row AS SELECT id, agent, agent_session_id, source, leaf_id, terminal_session_id, " +
+                    "cwd, repo, branch, worktree_path, title, first_prompt, transcript_path, links, state, state_since, " +
+                    "now_line, question, last_screen, created_at, ended_at, repo_root, last_said, task_id, background, " +
+                    "end_reason, ended_from, host FROM agent_sessions",
+                0,
+            )
+        }.onFailure { log.warn("Could not rebuild the agent_session_row view", it) }
         // A finished turn used to be stored as `idle`; it is `done` now. Nothing else wrote `idle`.
         runCatching {
             driver.execute(null, "UPDATE agent_sessions SET state = 'done' WHERE state = 'idle'", 0)
@@ -414,7 +430,7 @@ class SettingsRepository(
             r.repo, r.branch, r.worktreePath, r.title, r.firstPrompt, r.transcriptPath,
             r.links.joinToString(","), r.state, r.stateSince, r.nowLine, r.question,
             r.lastScreen, r.createdAt, r.endedAt, r.repoRoot, r.id, r.lastSaid, r.taskId,
-            if (r.background) 1L else 0L,
+            if (r.background) 1L else 0L, r.endReason, r.endedFrom, r.host,
         )
     }
 
@@ -459,11 +475,12 @@ class SettingsRepository(
         links: String, state: String, stateSince: Long, nowLine: String?, question: String?,
         lastScreen: String?, createdAt: Long, endedAt: Long?, repoRoot: String?,
         lastSaid: String?, taskId: String?, background: Long,
+        endReason: String? = null, endedFrom: String? = null, host: String? = null,
     ) = AgentSessionRecord(
         id, agent, agentSessionId, source, leafId, terminalSessionId, cwd, repo, branch,
         worktreePath, title, firstPrompt, transcriptPath,
         links.split(',').filter { it.isNotEmpty() }, state, stateSince, nowLine, question,
-        lastScreen, createdAt, endedAt, repoRoot, lastSaid, taskId, background != 0L,
+        lastScreen, createdAt, endedAt, repoRoot, lastSaid, taskId, background != 0L, endReason, endedFrom, host,
     )
 
     /**

@@ -517,4 +517,31 @@ class AgentSessionTrackerTest {
         t.onSessionDestroyed("s1", "bye")
         assertNull(t.summaries.value.single().lastActivityAt)
     }
+
+    @Test
+    fun aRecordSaysWhyItEndedAndWhatItWasDoing() {
+        val t = tracker()
+        t.onHook(pane("s1", agent = "claude"), event("UserPromptSubmit", "a-1", "prompt" to "go"))
+        t.onHook(pane("s2", agent = "claude"), event("UserPromptSubmit", "a-2", "prompt" to "go"))
+        t.onHook(pane("s2", agent = "claude"), event("Stop", "a-2", "last_assistant_message" to "All done."))
+        t.onHook(pane("s3", agent = "claude"), event("UserPromptSubmit", "a-3", "prompt" to "go"))
+        t.onHook(pane("s3", agent = "claude"), event("SessionEnd", "a-3"))
+        t.onHook(pane("s4", agent = "claude"), event("UserPromptSubmit", "a-4", "prompt" to "go"))
+        t.onSessionDestroyed("s4", null)
+        // Lunamux stops: what is still open was cut off by it.
+        t.endAll(listOf(pane("s1"), pane("s2")))
+        fun ended(conversation: String) = t.summaries.value.single { it.conversationId == conversation }.let { it.endReason to it.endedFrom }
+        assertEquals("restart" to "working", ended("a-1"))
+        assertEquals("restart" to "done", ended("a-2"))
+        assertEquals("exit" to "working", ended("a-3"))
+        assertEquals("closed" to "working", ended("a-4"))
+        // A record a run left open (a crash) is found at the next start and counts as cut off too.
+        val crashed = tracker()
+        crashed.onHook(pane("s5", agent = "claude"), event("UserPromptSubmit", "a-5", "prompt" to "go"))
+        val after = tracker()
+        assertEquals("restart" to "working", after.summaries.value.single { it.conversationId == "a-5" }.let { it.endReason to it.endedFrom })
+        // Resumed, it is open again and no longer ended by anything.
+        after.onHook(pane("s6", agent = "claude"), event("SessionStart", "a-5", "source" to "resume"))
+        assertEquals(null, after.summaries.value.single { it.conversationId == "a-5" }.endReason)
+    }
 }
