@@ -65,7 +65,8 @@ Every row has one line that says where it is, and the task panel's header shows 
 |---|---|
 | needs you | the question, in quotes |
 | working | the task's status line; else the plan's step in hand; else what the conversation says it is doing (`set_status`); else its tool call in words |
-| done, closed | the last thing it said |
+| done | the last thing it said |
+| closed | nothing: a closed row is its title, its folder, how it ended and when. A task's status line, which an agent wrote, still shows. |
 
 A tool call is said **in words, never as the raw command**, and only when it has something specific
 to say; a call that has none (a command with no description, a tool with no argument) leaves the
@@ -95,9 +96,10 @@ open. A row with nothing to add has no extra line.
 
 A conversation's record says why it ended: Lunamux stopped under it (`restart`), the agent exited,
 its pane went, or another conversation took the pane. Between NOW and EARLIER, **STOPPED BY THE
-RESTART** lists the conversations Lunamux cut off in the last day that can be resumed, each with the
-state it was in ("was working", "was waiting for you", "was done") and the last thing it said, and
-with the name of its tab when the tab is still there. ↵ on one asks to resume it as on any closed
+RESTART** lists the conversations Lunamux cut off in the last day that can be resumed, drawn as any
+closed row. A closed row never leads with a tab's name: the tab has usually moved on to other work.
+A closed conversation in which nothing was said, or whose transcript is gone, is not listed and not
+found by search. ↵ on one asks to resume it as on any closed
 row; **⇧↵** resumes all of them at once, each in its own tab when that tab still sits at an idle
 shell, else in a new one.
 

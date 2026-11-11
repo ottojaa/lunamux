@@ -53,7 +53,7 @@ object AgentSessionSearch {
         }
         return (hits + viaTask)
             .mapNotNull { hit ->
-                val rec = (tracker?.cached(hit.record.id) ?: hit.record).takeUnless { it.background || it.nothingSaid() } ?: return@mapNotNull null
+                val rec = (tracker?.cached(hit.record.id) ?: hit.record).takeUnless { it.background || it.nothingSaid() || it.transcriptMissing() } ?: return@mapNotNull null
                 val taskTitle = tasks?.taskIdOf(rec)?.let(tasks::titleOf)
                 val found = bestField(rec, taskTitle, hit.transcriptWindow, hit.screenWindow, q) ?: return@mapNotNull null
                 Triple(rec, found, taskTitle)

@@ -424,9 +424,9 @@ class AgentsOverviewTest {
         assertEquals("~/work/proj/.worktrees/fix", vm.state.now.first { it.id == "a" }.extra, "a worktree or subfolder is said")
         assertNull(vm.state.now.first { it.id == "bg" }.tabName, "a background tab is not named")
         sessions(session("a", state = "ended", endedAt = now - 1), session("b", title = "two"))
-        assertNull(vm.state.recent.first { it.id == "a" }.tabName, "a closed conversation that would not resume in its tab is not named by it")
+        assertNull(vm.state.recent.first { it.id == "a" }.tabName, "a closed conversation is not named by its tab, which has usually moved on")
         sessions(session("a", state = "ended", endedAt = now - 1).copy(inTab = true), session("b", title = "two"))
-        assertEquals("one", vm.state.recent.first { it.id == "a" }.tabName, "a closed conversation keeps its tab's name while it would resume there")
+        assertNull(vm.state.recent.first { it.id == "a" }.tabName, "not even when it would resume there")
         sessions(session("a"), session("b", title = "two"), session("bg", state = "needs_you", background = true))
         assertNull(vm.state.now.first { it.id == "b" }.tabName, "a tab named as the title adds nothing")
         windowState.updateConfig(WindowConfig(tabs = listOf(TabConfig("tab-1", "Tab 3", panes = listOf(pane("leaf-a")))), activeTabId = "tab-1"))
@@ -455,7 +455,7 @@ class AgentsOverviewTest {
             session("e", state = "ended", endedAt = now - minute, lastSaid = "Pushed to the branch."),
         )
         assertEquals("All 14 tests pass.", detail("d"), "a done row says the last thing it said")
-        assertEquals("Pushed to the branch.", detail("e"), "and so does a closed one")
+        assertEquals("", detail("e"), "a closed one says its title only")
         assertEquals(1, vm.state.doneCount)
     }
 
@@ -561,9 +561,8 @@ class AgentsOverviewTest {
         )
         vm.open()
         assertEquals(listOf("a", "b"), vm.state.stopped.map { it.id }, "only what a restart cut off in the last day, and can be resumed")
-        assertEquals("was working · Running the migration.", vm.state.stopped.first().detail)
-        assertEquals("was done", vm.state.stopped.last().detail)
-        assertEquals(setOf("closed", "old", "gone"), vm.state.recent.map { it.id }.toSet(), "the rest stay in EARLIER")
+        assertEquals(listOf("", ""), vm.state.stopped.map { it.detail }, "a stopped row says its title only; the peek shows where it was")
+        assertEquals(setOf("closed", "old"), vm.state.recent.map { it.id }.toSet(), "the rest stay in EARLIER, but for the one whose transcript is gone, which is not listed")
         assertEquals(listOf("live", "a", "b"), vm.state.rows.take(3).map { it.id }, "the section sits between NOW and EARLIER")
         assertTrue(vm.state.footer.any { it.key == "⇧↵" && it.label == "resume all 2" })
         runNow { vm.resumeStopped() }

@@ -520,10 +520,12 @@ internal fun buildOverview(inputs: OverviewInputs, ui: OverviewUi, now: Long): S
             matchRow(base, m, s, c, unit?.mainId)
         }
 
-    // Singles are conversations of no task; a background one shows only while it waits.
+    // Singles are conversations of no task; a background one shows only while it waits. A closed
+    // one in which nothing was said, or whose transcript is gone, is not listed: there is nothing
+    // to read in it and nothing to resume.
     val claimed = units.flatMap { u -> u.sessions.map { it.id } }.toSet()
     val singles = sessions.filter {
-        it.id !in claimed && !(it.nothingSaid && !AgentFacts.isLive(it)) && (!it.background || (it.state == NEEDS_YOU && AgentFacts.isLive(it)))
+        it.id !in claimed && !((it.nothingSaid || it.noTranscript) && !AgentFacts.isLive(it)) && (!it.background || (it.state == NEEDS_YOU && AgentFacts.isLive(it)))
     }
     val nowSingles = singles.filter { AgentFacts.isLive(it) }
     // Grouped by repo, the groups and the rows in each in the order their work began, so no row moves when a state flips.
@@ -717,7 +719,7 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
         ?: t.status?.trim()?.takeIf { it.isNotEmpty() }
         ?: currentStepOf(blocks)
         ?: working.sortedByDescending { it.lastActivityAt ?: it.stateSince }.firstNotNullOfOrNull(::headlineOf)
-        ?: (main ?: u.sessions.maxByOrNull(AgentFacts::activityOf))?.let(::headlineOf)
+        ?: (main ?: u.sessions.maxByOrNull(AgentFacts::activityOf))?.takeIf(AgentFacts::isLive)?.let(::headlineOf)
         ?: ""
     val target = u.target
     val single = u.sessions.singleOrNull()
@@ -732,7 +734,7 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
         where = where,
         kind = kind,
         stateWord = word,
-        detail = cutOff?.let(::wasLine) ?: detail,
+        detail = detail,
         stopped = cutOff != null,
         extra = extraOf(
             folderNote(target, where), c.noteOf(target?.id),
@@ -780,7 +782,7 @@ private fun sessionRow(s: AgentSessionSummary, earlier: Boolean, c: Ctx, taskTit
         where = s.repo ?: AgentFacts.folderOf(s),
         kind = kind,
         stateWord = word,
-        detail = if (enter == Enter.RESUME && stoppedByRestart(s, c.now)) wasLine(s) else headlineOf(s).orEmpty(),
+        detail = if (live) headlineOf(s).orEmpty() else "",
         stopped = enter == Enter.RESUME && stoppedByRestart(s, c.now),
         extra = extraOf(folderNote(s, s.repo ?: AgentFacts.folderOf(s)), c.noteOf(s.id), AgentsOverviewBackingViewModel.NO_TRANSCRIPT_NOTE.takeIf { enter == Enter.NONE }, error),
         tabName = c.tabNameOf(s, title),
@@ -863,16 +865,6 @@ private fun folderNote(s: AgentSessionSummary?, where: String?): String? =
 private fun stoppedByRestart(s: AgentSessionSummary, now: Long): Boolean =
     s.state == ENDED && s.endReason == RESTART && now - (s.endedAt ?: s.stateSince) <= STOPPED_WINDOW_MS
 
-/** What a conversation the restart stopped says on its row: the state it was in, then the last thing it said. */
-private fun wasLine(s: AgentSessionSummary): String = extraOf(
-    when (s.endedFrom) {
-        WORKING -> "was working"
-        NEEDS_YOU -> "was waiting for you"
-        else -> "was done"
-    },
-    headlineOf(s),
-)
-
 /** The steps of a task's plan, when an agent wrote them. */
 internal fun stepsOf(blocks: List<TaskPanelBlock>): List<TaskStep> =
     blocks.firstNotNullOfOrNull { it.content as? TaskBlockContent.Steps }?.items.orEmpty()
@@ -897,12 +889,12 @@ internal fun currentStepOf(blocks: List<TaskPanelBlock>): String? =
 private val DEFAULT_TAB_NAME = Regex("^Tab \\d+$")
 
 /**
- * The name the person gave the listed tab [s] runs in, or ran in when the tab is still there and
- * it would resume there (or a restart stopped it); null for a default name, a background tab, or
- * one that only repeats [title].
+ * The name the person gave the listed tab [s] runs in; null for a default name, a background tab,
+ * one that only repeats [title], and for a closed conversation: its tab has usually moved on to
+ * other work, so the name would be about something else.
  */
 private fun Ctx.tabNameOf(s: AgentSessionSummary?, title: String): String? {
-    if (s == null || !(AgentFacts.isLive(s) || s.inTab || stoppedByRestart(s, now))) return null
+    if (s == null || !AgentFacts.isLive(s)) return null
     val name = layout.spotOf(s)?.takeIf { it.listed }?.tab?.title?.trim() ?: return null
     return name.takeIf { it.isNotEmpty() && !DEFAULT_TAB_NAME.matches(it) && !it.equals(title.trim(), ignoreCase = true) }
 }

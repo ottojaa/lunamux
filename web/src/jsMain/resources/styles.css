@@ -3667,6 +3667,8 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 /* What a closed row or an agent last said, after its name. */
 .ao-said { margin-left: 1.5ch; color: var(--ao-dim); font-weight: 400; }
 .ao-old .ao-said { color: var(--ao-faint); }
+/* A row's tab name, title and line are three things, so the second and third are set apart. */
+.ao-said + .ao-said::before { content: "· "; }
 /* The selected task's conversations: mark, name and words, age. */
 .ao-agents {
     grid-column: 2 / -1;
