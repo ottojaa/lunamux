@@ -460,7 +460,7 @@ internal fun Route.windowRoutes(
                 taskIndex?.state ?: MutableStateFlow(emptyList<AgentTask>()),
             ) { sessions, connected, tasks ->
                 val withTasks = sessions.map {
-                    it.copy(taskId = it.taskId?.takeIf { id -> taskIndex?.titleOf(id) != null }, inTab = it.endedAt != null && agentTracker.find(it.id)?.let { rec -> paneToResumeIn(rec, taskIndex?.openOfMain(rec)) } != null)
+                    it.copy(taskId = it.taskId?.takeIf { id -> taskIndex?.titleOf(id) != null }, inTab = it.endedAt != null && agentTracker.find(it.id)?.let { rec -> paneToResumeIn(rec) } != null)
                 }
                 Triple(withTasks, connected, tasks)
             }.collect { (sessions, connected, tasks) ->
@@ -1152,26 +1152,30 @@ internal suspend fun resumeAgentSession(
         ctx.send(WindowEnvelope.AgentSessionError(recordId, "This conversation has no session id Lunamux can resume."))
         return
     }
-    val pane = if (inTab && command != null) paneToResumeIn(rec, declared) else null
-    if (pane == null || !typeInPane(pane, command!!)) open(folder, rec.title ?: rec.branch ?: java.io.File(recorded).name, command)
+    val pane = if (inTab && command != null) paneToResumeIn(rec) else null
+    val there = pane != null && sameFolder(TerminalSessions.get(pane)?.cwd?.value, folder)
+    val line = if (pane == null || there) command else "cd ${shellQuoted(folder)} && $command"
+    if (pane == null || !typeInPane(pane, line!!)) open(folder, rec.title ?: rec.branch ?: java.io.File(recorded).name, command)
 }
 
+/** [text] as one single-quoted shell word. */
+internal fun shellQuoted(text: String): String = "'" + text.replace("'", "'\\''") + "'"
+
 /**
- * The id of the pane session [rec] ran in, when resuming there is safe: the pane still exists, its
- * shell is in the folder the conversation is picked up from ([startFolderOf]), nothing runs under
- * that shell, and its tab is one the person can see (not an unlisted background tab). The pane is
- * found by its layout leaf, which survives a restart. The terminal session id the record stored
- * does not (ids are handed out again at every start, so an old one can name another pane), so a
- * record with no leaf has no pane to resume in.
+ * The id of the pane session [rec] ran in, when resuming there is safe: the pane still exists,
+ * nothing runs under its shell, and its tab is one the person can see (not an unlisted background
+ * tab). The shell may be in another folder; the resume goes there first. The pane is found by its
+ * layout leaf, which survives a restart. The terminal session id the record stored does not (ids
+ * are handed out again at every start, so an old one can name another pane), so a record with no
+ * leaf has no pane to resume in.
  */
-internal fun paneToResumeIn(rec: AgentSessionRecord, open: TaskOpen? = null): String? {
+internal fun paneToResumeIn(rec: AgentSessionRecord): String? {
     val id = rec.leafId?.let(WindowState::sessionIdOfLeaf) ?: return null
     // A pane in a background tab nobody lists cannot be shown, so typing there would run the agent out of sight.
     val tab = WindowState.config.value.worlds.asSequence().flatMap { it.tabs }
         .firstOrNull { t -> t.panes.any { it.leaf.sessionId == id } }
     if (tab != null && !tab.isListed) return null
-    val session = TerminalSessions.get(id) ?: return null
-    return id.takeIf { sameFolder(session.cwd.value, startFolderOf(rec, open)) && session.isIdleShell() }
+    return id.takeIf { TerminalSessions.get(id)?.isIdleShell() == true }
 }
 
 /**

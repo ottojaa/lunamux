@@ -897,11 +897,12 @@ internal fun currentStepOf(blocks: List<TaskPanelBlock>): String? =
 private val DEFAULT_TAB_NAME = Regex("^Tab \\d+$")
 
 /**
- * The name the person gave the listed tab [s] runs in (or ran in, when a restart stopped it and the
- * tab is still there); null for a default name, a background tab, or one that only repeats [title].
+ * The name the person gave the listed tab [s] runs in, or ran in when the tab is still there and
+ * it would resume there (or a restart stopped it); null for a default name, a background tab, or
+ * one that only repeats [title].
  */
 private fun Ctx.tabNameOf(s: AgentSessionSummary?, title: String): String? {
-    if (s == null || !(AgentFacts.isLive(s) || stoppedByRestart(s, now))) return null
+    if (s == null || !(AgentFacts.isLive(s) || s.inTab || stoppedByRestart(s, now))) return null
     val name = layout.spotOf(s)?.takeIf { it.listed }?.tab?.title?.trim() ?: return null
     return name.takeIf { it.isNotEmpty() && !DEFAULT_TAB_NAME.matches(it) && !it.equals(title.trim(), ignoreCase = true) }
 }

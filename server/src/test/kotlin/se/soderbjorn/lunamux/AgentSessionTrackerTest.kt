@@ -182,6 +182,18 @@ class AgentSessionTrackerTest {
     // Records fed by hooks
 
     @Test
+    fun `a start records the folder claude runs in, not the one the pane's shell was last seen in`() {
+        val t = tracker()
+        t.onHook(pane(), event("SessionStart", "a-1", "cwd" to "/work/other"))
+        assertEquals("/work/other", t.find("r1")?.cwd)
+        t.onHook(pane(), event("PreToolUse", "a-1", "cwd" to "/work/other/sub"))
+        assertEquals("/work/other", t.find("r1")?.cwd, "where the agent wanders later is not where it is resumed")
+        t.onHook(pane(), event("SessionEnd", "a-1"))
+        t.onHook(pane(), event("SessionStart", "a-1", "cwd" to "/work/third"))
+        assertEquals("/work/third", t.find("r1")?.cwd, "a resume elsewhere moves it")
+    }
+
+    @Test
     fun `hook events drive state, tool line, prompt and question`() {
         val t = tracker()
         val p = pane(title = "Refactor tracker")

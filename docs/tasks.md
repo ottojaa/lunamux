@@ -99,7 +99,7 @@ RESTART** lists the conversations Lunamux cut off in the last day that can be re
 state it was in ("was working", "was waiting for you", "was done") and the last thing it said, and
 with the name of its tab when the tab is still there. ↵ on one asks to resume it as on any closed
 row; **⇧↵** resumes all of them at once, each in its own tab when that tab still sits at an idle
-shell in the same folder, else in a new one.
+shell, else in a new one.
 
 ### Where ↵ goes
 
@@ -113,8 +113,9 @@ restart and a resume keep. The main conversation is the one that made the task, 
 3. **It is live in a hidden tab:** the tab is shown as in 1, whether it asks or works, and hides
    again when the person leaves it.
 4. **It is closed:** ask "conversation closed / Resume it in a new tab?" and resume on a second ↵.
-   When its own pane is still open at an idle shell in the same folder, the question is "Resume it in
-   its tab?" and the resume types into that pane. The command is the task file's `open` action when there
+   When its own pane is still open at an idle shell, the question is "Resume it in its tab?" and the
+   resume types into that pane, after a `cd` to the conversation's folder when the shell is elsewhere.
+   Such a row keeps its tab's name. The folder is the one `claude` said it started in. The command is the task file's `open` action when there
    is one and the conversation is a Claude one that ran in the action's folder (a command that does
    not name the conversation gets `--resume <id>` after its program word, and only when it is one
    plain `claude` line with no chaining and no `--resume`, `-r`, `--continue`, `-c` or

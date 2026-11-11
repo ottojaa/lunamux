@@ -59,11 +59,18 @@ class ResumeInPaneTest {
         assertEquals(true, found != null && TerminalSessions.get(found) === session)
     }
 
-    /** A pane whose shell has moved to another folder, or that is gone, is not offered. */
+    /** A pane whose shell has moved to another folder is still offered; a pane that is gone is not. */
     @Test
-    fun aPaneInAnotherFolderOrNoPaneIsNotOffered() = withPane { leafId, _ ->
-        assertNull(paneToResumeIn(recordIn(leafId, cwd = File(folder, "elsewhere"))))
+    fun aPaneInAnotherFolderIsOfferedAndNoPaneIsNot() = withPane { leafId, _ ->
+        assertEquals(WindowState.sessionIdOfLeaf(leafId), paneToResumeIn(recordIn(leafId, cwd = File(folder, "elsewhere"))))
         assertNull(paneToResumeIn(recordIn("no-such-leaf")))
+    }
+
+    /** A folder is typed as one shell word, whatever it holds. */
+    @Test
+    fun aFolderIsQuotedForTheShell() {
+        assertEquals("'/a b/c'", shellQuoted("/a b/c"))
+        assertEquals("'/it'\\''s'", shellQuoted("/it's"))
     }
 
     /** A pane with a program running under its shell is not offered until that program ends. */

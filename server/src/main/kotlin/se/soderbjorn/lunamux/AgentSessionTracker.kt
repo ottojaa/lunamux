@@ -304,12 +304,16 @@ class AgentSessionTracker(
     /** Fold one Claude Code hook event into the records; [pid] is the `claude` that ran the hook, when it said. */
     fun onHook(pane: PaneSnapshot?, event: JsonObject, pid: Long? = null) {
         if (pane == null) return
-        val known = synchronized(lock) { openFor(pane.terminalSessionId)?.agentSessionId }
-        if (known == null || known != event.str("session_id")) warmGit(pane.cwd)
-        applyHook(pane, event, pid)
+        // A start says which folder `claude` runs in. The pane's own folder is the shell's as last
+        // polled, which is another folder after `cd there && claude` typed as one line.
+        val startedIn = event.str("cwd")?.takeIf { it.isNotBlank() && event.str("hook_event_name") == "SessionStart" }
+        val at = if (startedIn != null) pane.copy(cwd = startedIn) else pane
+        val known = synchronized(lock) { openFor(at.terminalSessionId)?.agentSessionId }
+        if (startedIn != null || known == null || known != event.str("session_id")) warmGit(at.cwd)
+        applyHook(at, event, pid, startedIn)
     }
 
-    private fun applyHook(pane: PaneSnapshot, event: JsonObject, pid: Long?) = synchronized(lock) {
+    private fun applyHook(pane: PaneSnapshot, event: JsonObject, pid: Long?, startedIn: String? = null) = synchronized(lock) {
         val name = event.str("hook_event_name") ?: return@synchronized
         val agentId = event.str("session_id")
         val transcript = event.str("transcript_path")
@@ -328,7 +332,13 @@ class AgentSessionTracker(
             )
         }
         when (name) {
-            "SessionStart" -> {}
+            "SessionStart" -> if (startedIn != null && startedIn != rec.cwd) {
+                val git = gitCache[startedIn]?.second ?: GitInfo()
+                rec = rec.copy(
+                    cwd = startedIn, repo = git.repo, branch = git.branch, worktreePath = git.worktreePath,
+                    repoRoot = git.repoRoot, links = ticketKeys(git.branch),
+                )
+            }
             "UserPromptSubmit" -> {
                 toolInFlight.remove(rec.id)
                 statuses.remove(rec.id)
