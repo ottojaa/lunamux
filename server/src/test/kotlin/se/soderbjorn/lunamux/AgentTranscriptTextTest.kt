@@ -100,6 +100,7 @@ class AgentTranscriptTextTest {
                 line("assistant", "08:12:00", "Here is the plan."),
                 line("user", "08:20:00", "[Request interrupted by user]"),
                 line("user", "08:30:00", "helper noise", ""","isSidechain":true"""),
+                line("user", "08:40:00", "This session is being continued from a previous conversation", ""","isCompactSummary":true"""),
                 line("user", "09:00:00", "stop the tunnel"),
             ).joinToString("\n"),
         )

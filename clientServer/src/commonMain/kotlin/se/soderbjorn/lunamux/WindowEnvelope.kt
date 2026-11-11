@@ -295,8 +295,6 @@ sealed class WindowEnvelope {
         val branch: String? = null,
         /** The name of the folder the conversation last worked in, which may not be the one it started in. */
         val folder: String? = null,
-        /** Commits made on [branch] in that folder since the conversation started, whoever made them. */
-        val commits: Int? = null,
     ) : WindowEnvelope()
 }
 

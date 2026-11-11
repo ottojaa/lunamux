@@ -266,7 +266,7 @@ class TaskPanelTest {
     }
 
     @Test
-    fun besideTheMainConversationItFollowsTheSettingAndElsewhereOnlyCmdIAsksForIt() {
+    fun oneSwitchShowsThePanelInEveryTabThatHasAnAgent() {
         layout(listed = listOf("main"), other = listOf("plain"))
         windowState.updateAgentSessions(listOf(main(), session("plain", taskId = null).copy(background = false)), true)
         windowState.updateAgentTasks(listOf(task()))
@@ -276,13 +276,14 @@ class TaskPanelTest {
         vm.setOpen(true)
 
         windowState.updateConfig(windowState.config.value!!.copy(activeTabId = "tab-2"))
-        assertFalse(vm.state.visible, "a tab without the main conversation shows no panel by itself")
-        vm.toggleInActiveTab()
-        assertTrue(vm.state.visible, "⌘I opens it in any tab")
+        assertTrue(vm.state.visible, "a tab with an agent and no task shows the panel too, with no asking")
         assertFalse(vm.state.beside)
-        assertTrue(vm.state.setup != null, "with no task there it says how to start one")
-        vm.toggleInActiveTab()
-        assertFalse(vm.state.visible)
+        assertTrue(vm.state.setup != null, "with no task there it says how agents write here")
+        vm.toggle()
+        assertFalse(vm.state.visible, "the one switch hides it everywhere")
+        vm.toggle()
+        windowState.updateAgentSessions(listOf(main()), true)
+        assertFalse(vm.state.visible, "a tab with no agent has nothing to show")
     }
 
     @Test
@@ -314,7 +315,6 @@ class TaskPanelTest {
     fun aSessionWithNoTaskShowsWhatWasAskedAndTheWorkLeftInItsFolder() {
         layout(listed = listOf("solo"))
         windowState.updateAgentSessions(listOf(session("solo", state = "done", taskId = null).copy(background = false, lastSaid = "The tunnel is stopped.")), true)
-        vm.toggleInActiveTab()
         val before = vm.state
         assertEquals("", before.head?.headline, "what it last said is in the terminal beside the panel, not in the header")
         assertEquals(TaskPanelViewModel.STATE_IDLE, before.head?.stateWord, "a turn that ended is idle, not done")
@@ -327,14 +327,14 @@ class TaskPanelTest {
             WindowEnvelope.AgentStory(
                 "solo",
                 turns = listOf(AgentTurn(now, "stop the tunnel", 30_000, reply = "stopped it"), AgentTurn(now - 3 * 24 * 60 * minute, "try it over frp", 31 * minute)),
-                uncommitted = 3, unpushed = 1, branch = "spike/remote", folder = "tunnel-repo", commits = 2,
+                uncommitted = 3, unpushed = 1, branch = "spike/remote", folder = "tunnel-repo",
             ),
         )
         val story = vm.state.story!!
         assertEquals(listOf("stop the tunnel" to "<1m", "try it over frp" to "31m"), story.turns.shown.map { it.prompt to it.took })
         assertEquals(5, story.turns.shown.first().time.length, "a turn from today shows its clock time")
         assertFalse(':' in story.turns.shown.last().time, "an older one shows its day")
-        assertEquals(listOf("on spike/remote", "2 commits since it started", "3 uncommitted changes", "1 unpushed commit"), story.work)
+        assertEquals(listOf("on spike/remote", "3 uncommitted changes", "1 unpushed commit"), story.work)
         assertEquals("stopped it" to "", story.turns.shown.first().reply to story.turns.shown.last().reply, "each ask shows the first line of its answer")
         assertEquals("tunnel-repo", story.folder, "the folder is where the conversation worked, as the server read it")
         assertTrue(vm.state.head!!.meta.startsWith("tunnel-repo"))
@@ -349,7 +349,6 @@ class TaskPanelTest {
         fun sec(key: String, body: String, at: Long) = se.soderbjorn.lunamux.PanelSection(key, key.uppercase(), body, at)
         val first = session("solo", state = "done", taskId = null).copy(background = false, sections = listOf(sec("recap", "old", now - 9 * minute), sec("open", "pick a name", now - 8 * minute)))
         windowState.updateAgentSessions(listOf(first), true)
-        vm.toggleInActiveTab()
         assertEquals(listOf("recap" to "old", "open" to "pick a name"), vm.state.sections.map { it.key to it.body }, "no task is needed")
         val closed = first.copy(state = "ended", endedAt = now)
         windowState.updateAgentSessions(listOf(closed), true)

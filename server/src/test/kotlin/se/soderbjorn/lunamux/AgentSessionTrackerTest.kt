@@ -537,6 +537,12 @@ class AgentSessionTrackerTest {
         assertEquals("restart" to "done", ended("a-2"))
         assertEquals("exit" to "working", ended("a-3"))
         assertEquals("closed" to "working", ended("a-4"))
+        // The hook's own reason is kept when it says something: /clear and leaving at the prompt.
+        listOf("s5" to "clear", "s6" to "prompt_input_exit", "s7" to "resume", "s8" to "other").forEach { (paneId, reason) ->
+            t.onHook(pane(paneId, agent = "claude"), event("UserPromptSubmit", "c-$reason", "prompt" to "go"))
+            t.onHook(pane(paneId, agent = "claude"), event("SessionEnd", "c-$reason", "reason" to reason))
+        }
+        assertEquals(listOf("cleared", "quit", "replaced", "exit"), listOf("clear", "prompt_input_exit", "resume", "other").map { ended("c-$it").first })
         // A record a run left open (a crash) is found at the next start and counts as cut off too.
         val crashed = tracker()
         crashed.onHook(pane("s5", agent = "claude"), event("UserPromptSubmit", "a-5", "prompt" to "go"))

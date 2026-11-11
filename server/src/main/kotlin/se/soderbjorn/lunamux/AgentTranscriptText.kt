@@ -134,6 +134,8 @@ object AgentTranscriptText {
                     if ((obj["isSidechain"] as? JsonPrimitive)?.booleanOrNull == true) continue
                     obj.str("cwd")?.takeIf { it.isNotBlank() }?.let { cwd = it }
                     if ((obj["isMeta"] as? JsonPrimitive)?.booleanOrNull == true) continue
+                    // The summary Claude Code writes when it compacts is filed as a user message; the person did not ask it.
+                    if ((obj["isCompactSummary"] as? JsonPrimitive)?.booleanOrNull == true) continue
                     val time = obj.str("timestamp")?.let(::epoch) ?: continue
                     if (began0 == null) began0 = time
                     val said = textOf((obj["message"] as? JsonObject)?.get("content")).trim()

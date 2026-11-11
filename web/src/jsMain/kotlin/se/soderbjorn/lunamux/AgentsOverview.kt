@@ -461,6 +461,11 @@ private fun buildMoreLine(hidden: Int): HTMLElement {
 internal fun buildPeek(peek: Peek): HTMLElement {
     val box = div("ao-peek")
     box.addEventListener("click", { e: Event -> e.stopPropagation() })
+    // What its agent wrote for the side panel comes first: for closed work this is its recap.
+    peek.sections.forEach { s ->
+        box.appendChild(div("ao-peek-title").also { it.textContent = s.heading.uppercase() })
+        box.appendChild(buildSectionBody(s.body).also { it.classList.add("ao-peek-section") })
+    }
     val closedAge = peek.closedSinceMillis?.let { AgentFacts.ageText(it, kotlin.js.Date.now().toLong()) } ?: "now"
     box.appendChild(div("ao-peek-title").also {
         it.textContent = if (peek.live) "LIVE SCREEN · ${peek.title}".uppercase() else "SAVED SCROLLBACK · CLOSED $closedAge".uppercase()

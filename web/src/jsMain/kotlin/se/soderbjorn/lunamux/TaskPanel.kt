@@ -103,10 +103,10 @@ internal fun registerTaskPanelHotkey() {
     ) { toggleTaskPanel() }
 }
 
-/** Show or hide the column in the active tab. Called for ⌘I and ×. */
+/** Show or hide the column, in every tab that has an agent; the choice is saved. Called for ⌘I and ×. */
 private fun toggleTaskPanel() {
     val current = taskPanel.state
-    if (current.beside) setTaskPanelOpen(!current.open) else taskPanel.toggleInActiveTab()
+    setTaskPanelOpen(!current.open)
 }
 
 /** Applies the stored open setting, then draws the view model's state. Called once at boot after the shell is mounted. */
@@ -233,6 +233,8 @@ internal fun buildSectionBody(body: String): HTMLElement {
     for (raw in body.lines()) {
         val line = raw.trim()
         val bullet = line.startsWith("- ") || line.startsWith("* ")
+        // A numbered line is a line of its own, not more of the paragraph before it.
+        if (NUMBERED.containsMatchIn(line)) para = null
         when {
             line.isEmpty() -> { list = null; para = null }
             bullet -> {
@@ -250,6 +252,8 @@ internal fun buildSectionBody(body: String): HTMLElement {
     }
     return root
 }
+
+private val NUMBERED = Regex("""^\\d+[.)]\\s""")
 
 private val INLINE = Regex("""\*\*(.+?)\*\*|`([^`]+)`""")
 

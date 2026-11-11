@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import se.soderbjorn.lunamux.AgentSessionMatch
+import se.soderbjorn.lunamux.PanelSection
 import se.soderbjorn.lunamux.AgentSessionSummary
 import se.soderbjorn.lunamux.AgentSessionText
 import se.soderbjorn.lunamux.AgentTask
@@ -183,6 +184,8 @@ class AgentsOverviewBackingViewModel(
         val lines: List<String>,
         val loading: Boolean,
         val emptyText: String?,
+        /** What the conversation's agent wrote for the side panel, shown first: for a closed row this is where its recap is read. */
+        val sections: List<PanelSection> = emptyList(),
     )
 
     data class Confirm(val rowId: String, val title: String, val warnings: List<String>, val cancelFocused: Boolean)
@@ -559,6 +562,7 @@ internal fun buildOverview(inputs: OverviewInputs, ui: OverviewUi, now: Long): S
             title = session?.let(AgentFacts::titleOf) ?: selectedRow.title,
             closedSinceMillis = if (selectedRow.isLive) null else session?.let(AgentFacts::activityOf) ?: selectedRow.sinceMillis,
             said = inspectionOf(selectedRow.recordId)?.takeIf { it.live == selectedRow.isLive },
+            sections = session?.sections.orEmpty(),
         )
     } else null
 
@@ -607,11 +611,13 @@ private fun sinceOf(s: AgentSessionSummary): Long =
 /**
  * How a closed conversation ended, as the state word of its row: a fact the hooks report, so a
  * conversation the person ended on purpose ("cleared", "quit") is told from one that was interrupted
- * ("cut off", "tab closed"). "closed" when the record does not say.
+ * ("cut off", "tab closed"). "ended" when the hook gave no reason worth a word, "closed" when the
+ * record has none.
  */
 internal fun endedWord(s: AgentSessionSummary?): String = when (s?.endReason) {
     "cleared" -> "cleared"
-    "exit" -> "quit"
+    "quit" -> "quit"
+    "exit" -> "ended"
     RESTART -> "cut off"
     "closed" -> "tab closed"
     "replaced" -> "replaced"
@@ -935,8 +941,12 @@ private fun closeWarnings(s: AgentSessionSummary, inspection: WindowEnvelope.Age
  * The screen popover for one session, shared by the overview and the task panel: [said] is the
  * server's answer for it (null while it loads), already checked to be live or saved to match [live].
  */
-internal fun peekOf(live: Boolean, title: String, closedSinceMillis: Long?, said: WindowEnvelope.AgentSessionInspection?) =
+internal fun peekOf(
+    live: Boolean, title: String, closedSinceMillis: Long?, said: WindowEnvelope.AgentSessionInspection?,
+    sections: List<PanelSection> = emptyList(),
+) =
     AgentsOverviewBackingViewModel.Peek(
+        sections = sections,
         live = live,
         title = title,
         closedSinceMillis = closedSinceMillis,

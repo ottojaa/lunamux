@@ -568,4 +568,14 @@ class AgentsOverviewTest {
         )
         assertFalse(vm.state.open)
     }
+
+    @Test
+    fun aClosedRowSaysHowItEndedAsTheHookReportedIt() {
+        fun word(reason: String?) = endedWord(session("x", state = "ended", endedAt = now).copy(endReason = reason))
+        assertEquals(
+            listOf("cleared", "quit", "ended", "cut off", "tab closed", "replaced", "closed"),
+            listOf("cleared", "quit", "exit", "restart", "closed", "replaced", null).map(::word),
+            "only a reason the hook gave gets its own word",
+        )
+    }
 }

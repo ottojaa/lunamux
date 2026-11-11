@@ -161,8 +161,10 @@ then the confirmation, then the peek, then the overlay.
   EARLIER a month after the server first saw it. The server keeps the ended conversations of the
   last month, at most 300, and pushes them to every window; older ones stay in the database but are
   hidden, also from a search. A closed row's state word says how it ended, as the hooks reported
-  it: **cleared** (`/clear`), **quit**, **cut off** (the restart), **tab closed**, **replaced**, or
-  "closed" on an older record. So work the person ended is told from work that was interrupted.
+  it: **cleared** (`/clear`), **quit** (the person left at the prompt), **cut off** (the restart), **tab
+  closed**, **replaced** (another conversation took its place), "ended" when the hook gave no reason
+  worth a word, or "closed" on an older record. The list holds the newest 300 closed conversations,
+  so in a busy week it reaches back less than a month; search reaches the whole month. So work the person ended is told from work that was interrupted.
 - **The footer counts the same thing.** Under the Claude usage each world shows **▲ N waiting** and,
   beside the spinner, the number working, background agents included. The rows' "needs you" always
   add up to the footer's. Known gap: a conversation in no task that is the main conversation of two
@@ -226,12 +228,15 @@ been confirmed against a real session, so a resumed Codex session may show as a 
 
 ## Searching sessions
 
-The search box looks through every session ever hosted, however old. A session matches on its own
+The search box looks through every session of the last month; older ones stay in the database and are not shown. A session matches on its own
 title, its **task's title**, its first prompt, its branch and links, its conversation or its last
 screen, ranked in that order. A match through the task reads "in task title" on the selected row. A
 search shows one row per task: the better match stands for the task and the second line says where
 ("in transcript of Reviewer"). ↵ and → open the session that matched. Search covers closed sessions
-and never background ones, and is never cut by the EARLIER window.
+and never background ones, and is not cut by the 300-row list, only by the month.
+
+**→ peek** on a row shows, before the screen lines, the sections the conversation's agent wrote for
+the side panel. For a closed row this is where its recap is read before resuming.
 
 ## Grouping sessions from an agent
 
@@ -316,12 +321,11 @@ file on the server and is never taken from the browser.
 
 ## The task panel
 
-A 320px column on the right of the window showing what a task's agents wrote about it. It shows by
-itself in the tab where the task's main conversation is live. ⌘I opens it in any other tab too,
-including a lone session or a plain terminal; there it holds for that tab only and is not kept across
-a restart. It shows the task of the focused session, else of the main conversation in the tab. The
-header reads "<title> · ⌘I hides" with a × at the end; ⌘I and the × both hide it, and beside a main
-conversation the choice is kept with the other UI settings. The header says where the work is: the
+A 320px column on the right of the window showing what a task's agents wrote about it. One switch
+shows or hides it in every tab that has a live agent (⌘I or the ×); the choice is kept with the other
+UI settings, so what the agents wrote is there when the person comes back to a tab. A tab with no
+agent has no panel. It shows the task of the focused session, else of the main conversation in the tab. The
+header reads "<title> · ⌘I hides" with a × at the end; The header says where the work is: the
 tab's name (the title, when the tab has none), the title in full under it, the repo and when it
 started, then the state (mark, word, age) and the headline, which are the overview row's own. The shortcut is listed in the
 Keyboard-shortcuts sidebar and can be rebound there (off macOS the default is Ctrl+I, which a terminal
@@ -356,7 +360,7 @@ The panel and the overview are separate: nothing in a section feeds a row.
 In the tab of **a session that has no task** the panel shows, under any sections, what Lunamux sees
 by itself: **You asked** (each thing the person asked in that conversation, its time or day, how
 long the turn took and the first line of what came back, read from the transcript) and **Changed**
-(the branch, commits made on it since the conversation started, uncommitted changes and unpushed
+(the branch, uncommitted changes and unpushed
 commits, in the folder the conversation last worked in). When no agent wrote a section, one faint
 line says how they can.
 

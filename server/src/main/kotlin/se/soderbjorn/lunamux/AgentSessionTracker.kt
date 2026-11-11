@@ -369,8 +369,15 @@ class AgentSessionTracker(
             }
             "SessionEnd" -> {
                 // A helper's end leaves the pane's screen to its own conversation.
-                // The hook says why: "clear" is /clear, anything else is the person or the agent quitting.
-                end(rec, if (isHelper) null else pane.screenText(), if (event.str("reason") == "clear") END_CLEARED else END_EXIT)
+                // The hook says why, and only what it says is kept: /clear, the person leaving at
+                // the prompt, another conversation resumed in its place; anything else is just an end.
+                val why = when (event.str("reason")) {
+                    "clear" -> END_CLEARED
+                    "prompt_input_exit" -> END_QUIT
+                    "resume" -> END_REPLACED
+                    else -> END_EXIT
+                }
+                end(rec, if (isHelper) null else pane.screenText(), why)
                 if (!isHelper) awaitScreenClear.add(pane.terminalSessionId)
                 publish()
                 return@synchronized
@@ -723,6 +730,7 @@ class AgentSessionTracker(
         const val END_RESTART = "restart"
         const val END_EXIT = "exit"
         const val END_CLEARED = "cleared"
+        const val END_QUIT = "quit"
         const val END_CLOSED = "closed"
         const val END_REPLACED = "replaced"
 

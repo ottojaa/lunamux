@@ -176,7 +176,6 @@ class TaskPanelViewModel(
     /** The person's choices: shown beside a main conversation, tabs asked for elsewhere, lists opened in full per task. */
     private data class Ui(
         val open: Boolean = true,
-        val askedTabs: Set<String> = emptySet(),
         val expanded: Set<Pair<String, Section>> = emptySet(),
     )
 
@@ -198,12 +197,6 @@ class TaskPanelViewModel(
     fun setOpen(open: Boolean) = ui.update { it.copy(open = open) }
 
     fun toggle() = ui.update { it.copy(open = !it.open) }
-
-    /** ⌘I and × in a tab with no main conversation: shows or hides the panel in the active tab only. */
-    fun toggleInActiveTab() {
-        val tab = windowState.config.value?.effectiveActiveTabId ?: return
-        ui.update { it.copy(askedTabs = if (tab in it.askedTabs) it.askedTabs - tab else it.askedTabs + tab) }
-    }
 
     /** Opens a list of the shown task (or session) in full, in place; the block's "+ N more". */
     fun showMore(section: Section) {
@@ -288,7 +281,9 @@ class TaskPanelViewModel(
             ?: tasks.filter { mainIn(it) != null }.minByOrNull { it.startedAtMillis ?: Long.MAX_VALUE }
             ?: here.firstNotNullOfOrNull { it.taskId?.let(tasksById::get) }
         val beside = task != null && mainIn(task) != null
-        val visible = if (beside) ui.open else activeTab in ui.askedTabs
+        // One switch for every tab: the panel shows wherever an agent is live, so what the agents
+        // wrote is there when the person comes back to a tab, without asking for it tab by tab.
+        val visible = ui.open && here.isNotEmpty()
         if (task == null) {
             val session = focused ?: here.firstOrNull()
             val story = session?.let { storyOf(it, windowState.agentStory.value, now, ui) }
@@ -336,11 +331,9 @@ class TaskPanelViewModel(
             val took = t.tookMillis?.let { AgentFacts.ageText(0, it) }?.let { if (it == "now") "<1m" else it }
             TurnRow(if (' ' in clock) clock.substringBeforeLast(' ') else clock, t.prompt, took.orEmpty(), t.reply.orEmpty())
         }
-        val commits = known?.commits ?: 0
         val uncommitted = known?.uncommitted ?: 0
         val unpushed = known?.unpushed ?: 0
         val changed = listOfNotNull(
-            "$commits ${if (commits == 1) "commit" else "commits"} since it started".takeIf { commits > 0 },
             "$uncommitted uncommitted ${if (uncommitted == 1) "change" else "changes"}".takeIf { uncommitted > 0 },
             "$unpushed unpushed ${if (unpushed == 1) "commit" else "commits"}".takeIf { unpushed > 0 },
         )

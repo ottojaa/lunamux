@@ -100,12 +100,11 @@ object AgentSessionSearch {
     /** What the person asked in one conversation and the work left in its folder, for the panel of a session with no task. */
     fun story(recordId: String, tracker: AgentSessionTracker?): WindowEnvelope.AgentStory? {
         val rec = tracker?.find(recordId) ?: return null
-        val read = rec.transcriptPath?.let { AgentTranscriptText.story(File(it)) } ?: TranscriptStory()
+        val read = rec.transcriptPath?.let(::storyOf) ?: TranscriptStory()
         // The transcript knows where the conversation went on to work; the record only where it started.
         val dir = listOfNotNull(read.cwd, rec.cwd).firstOrNull { it.isNotBlank() && File(it).isDirectory }
         val folder = dir?.let { Path.of(it) }
         val git = readGitInfo(dir)
-        val since = read.startedAt ?: rec.createdAt
         return WindowEnvelope.AgentStory(
             recordId = recordId,
             turns = read.turns,
@@ -113,10 +112,24 @@ object AgentSessionSearch {
             unpushed = folder?.let(GitCatalog::unpushedCount),
             branch = git.branch,
             folder = git.repo ?: dir?.trimEnd('/')?.substringAfterLast('/')?.takeIf { it.isNotBlank() },
-            commits = folder?.takeIf { git.repo != null }?.let {
-                GitCatalog.runGit(it, "rev-list", "--count", "--since=${since / 1000}", "HEAD")?.trim()?.toIntOrNull()
-            },
         )
+    }
+
+    /** One transcript's story as last read, with the file's size and time: a transcript can be tens of megabytes, and every window asks. */
+    private class ReadStory(val size: Long, val modified: Long, val story: TranscriptStory)
+
+    private val stories = java.util.concurrent.ConcurrentHashMap<String, ReadStory>()
+
+    /** [AgentTranscriptText.story] of the file at [path], read again only when the file has changed. */
+    private fun storyOf(path: String): TranscriptStory {
+        val file = File(path)
+        val size = file.length()
+        val modified = file.lastModified()
+        stories[path]?.takeIf { it.size == size && it.modified == modified }?.let { return it.story }
+        return AgentTranscriptText.story(file).also {
+            if (stories.size > 64) stories.clear()
+            stories[path] = ReadStory(size, modified, it)
+        }
     }
 
     /** The last segment of the record's working folder, as the overview names the folder; null when it has none. */
