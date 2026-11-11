@@ -245,4 +245,20 @@ class McpPanelToolsTest {
         assertTrue("No open agent conversation" in refusal(call("set_status", """{"text":"x","sessionId":"s-nobody"}""")))
         assertTrue(isError(call("set_status", """{"text":"x"}""", caller = "s-status", scope = McpScope.READ)), "a read token cannot write it")
     }
+
+    @Test
+    fun `set_panel_section keeps a conversation's sections in order, replaces by key and needs no task`() {
+        val pane = PaneSnapshot("s-sec", leafId = "leaf-sec", cwd = "/work", programTitle = null, agent = "claude", state = "working")
+        tracker.onHook(pane, buildJsonObject { put("hook_event_name", "UserPromptSubmit"); put("session_id", "a-sec"); put("prompt", "go") })
+        fun sections() = tracker.summaries.value.single { it.conversationId == "a-sec" }.sections
+        call("set_panel_section", """{"key":"recap","heading":"Where we are","body":"Built **A**.\n\n- next: B"}""", caller = "s-sec")
+        call("set_panel_section", """{"key":"open","heading":"Waiting on you","body":"Pick a name."}""", caller = "s-sec")
+        call("set_panel_section", """{"key":"recap","heading":"Where we are","body":"Built A and B."}""", caller = "s-sec")
+        assertEquals(listOf("recap" to "Built A and B.", "open" to "Pick a name."), sections().map { it.key to it.body }, "a key written again is replaced where it stands")
+        assertTrue(sections().all { it.writtenAtMillis > 0 }, "each says when it was written")
+        assertTrue("limit" in refusal(call("set_panel_section", """{"key":"long","heading":"h","body":"${"x".repeat(1201)}"}""", caller = "s-sec")))
+        assertTrue("No open agent conversation" in refusal(call("set_panel_section", """{"key":"k","heading":"h","body":"b","sessionId":"s-nobody"}""")))
+        call("remove_panel_section", """{"key":"open"}""", caller = "s-sec")
+        assertEquals(listOf("recap"), sections().map { it.key })
+    }
 }

@@ -32,6 +32,7 @@ import kotlinx.serialization.json.put
 import org.w3c.dom.HTMLElement
 import org.w3c.dom.events.Event
 import org.w3c.dom.events.KeyboardEvent
+import se.soderbjorn.lunamux.PanelSection
 import se.soderbjorn.lunamux.client.viewmodel.AgentFacts
 import se.soderbjorn.lunamux.client.viewmodel.TaskPanelViewModel
 import se.soderbjorn.lunamux.client.viewmodel.TaskPanelViewModel.AgentLine
@@ -60,7 +61,6 @@ internal class PanelParts {
     val root = (document.createElement("aside") as HTMLElement).also { it.className = "task-panel" }
     val title = span("tp-title")
     val about = div("tp-about")
-    val meta = div("tp-meta")
     val state = div("tp-state")
     val status = div("tp-status")
     val scroll = div("tp-scroll")
@@ -78,7 +78,7 @@ internal class PanelParts {
         side.appendChild(close)
         side.appendChild(span("tp-hint", "⌘I"))
         val main = div("tp-main")
-        listOf(title, about, meta, state, status).forEach { main.appendChild(it) }
+        listOf(title, about, state, status).forEach { main.appendChild(it) }
         head.appendChild(main)
         head.appendChild(side)
         root.appendChild(head)
@@ -169,6 +169,7 @@ private fun renderTaskPanel(state: TaskPanelViewModel.State) {
     }
     if (!p.root.isConnected) (document.querySelector(".${AppFrameClassNames.BODY}") as? HTMLElement)?.appendChild(p.root) ?: return
     renderHead(p, state)
+    val written = state.sections.map { sectionBlock(p, it) }
     val story = state.story
     if (story?.key != lastStoryKey) {
         lastStoryKey = story?.key
@@ -179,12 +180,14 @@ private fun renderTaskPanel(state: TaskPanelViewModel.State) {
         // A session with no task: what Lunamux sees by itself, then how to get more.
         val seen = listOfNotNull(
             story?.takeIf { it.turns.total > 0 }?.let { p.block("You asked") to turnLines(it.turns) },
-            story?.takeIf { it.work.isNotEmpty() }?.let { p.block("Work in its folder") to (listOf<TpLine>(TpTitle("Work in its folder")) + it.work.map(::TpWork)) },
+            story?.takeIf { it.work.isNotEmpty() }?.let { p.block("Changed") to (listOf<TpLine>(TpTitle("Changed")) + it.work.map(::TpWork)) },
         )
         seen.forEach { (el, lines) -> syncChildren(el, lines, TpLine::key) { buildLine(it) } }
         val setupEl = p.blocks.getOrPut("setup") { div("tp-setup-host").also { it.setAttribute("data-block", "setup") } }
         syncChildren(setupEl, listOf(setup), { "setup" }) { buildSetup(it) }
-        syncChildren(p.scroll, seen.map { it.first } + setupEl, { it.getAttribute("data-block")!! }) { it }
+        // The line saying how agents write here is for a panel no agent has written to.
+        val hint = listOf(setupEl).filter { written.isEmpty() || !setup.compact }
+        syncChildren(p.scroll, written + seen.map { it.first } + hint, { it.getAttribute("data-block")!! }) { it }
         return
     }
     // A block with nothing in it is left out: an empty heading tells the person nothing.
@@ -195,7 +198,73 @@ private fun renderTaskPanel(state: TaskPanelViewModel.State) {
         (p.block("Links") to linkLines(state.links)).takeIf { state.links.total > 0 },
     )
     wanted.forEach { (el, lines) -> syncChildren(el, lines, TpLine::key) { buildLine(it) } }
-    syncChildren(p.scroll, wanted.map { it.first }, { it.getAttribute("data-block")!! }) { it }
+    syncChildren(p.scroll, written + wanted.map { it.first }, { it.getAttribute("data-block")!! }) { it }
+}
+
+/**
+ * The block of one agent-written section: its heading with the age of the writing at the right,
+ * then the body. The element is kept per key and its content rebuilt only when the section was
+ * written again.
+ */
+private fun sectionBlock(p: PanelParts, section: PanelSection): HTMLElement {
+    val el = p.block("section:${section.key}")
+    val stamp = "${section.writtenAtMillis}/${section.heading}"
+    if (el.getAttribute("data-stamp") != stamp) {
+        el.setAttribute("data-stamp", stamp)
+        el.textContent = ""
+        val top = div("tp-block-title tp-section-top")
+        top.appendChild(span("tp-section-heading", section.heading))
+        top.appendChild(ageSpan("tp-agent-age", section.writtenAtMillis))
+        el.appendChild(top)
+        el.appendChild(buildSectionBody(section.body))
+    }
+    return el
+}
+
+/**
+ * A section's body in the simple formatting agents may use: blank lines part paragraphs, lines
+ * starting "- " or "* " make a list, `**bold**` and backticked code are set as such. Everything is
+ * put in as text nodes, so whatever an agent writes is shown and never run.
+ */
+internal fun buildSectionBody(body: String): HTMLElement {
+    val root = div("tp-section-body")
+    var list: HTMLElement? = null
+    var para: HTMLElement? = null
+    for (raw in body.lines()) {
+        val line = raw.trim()
+        val bullet = line.startsWith("- ") || line.startsWith("* ")
+        when {
+            line.isEmpty() -> { list = null; para = null }
+            bullet -> {
+                para = null
+                val host = list ?: (document.createElement("ul") as HTMLElement).also { root.appendChild(it); list = it }
+                host.appendChild((document.createElement("li") as HTMLElement).also { appendInline(it, line.drop(2).trim()) })
+            }
+            else -> {
+                list = null
+                val host = para ?: (document.createElement("p") as HTMLElement).also { root.appendChild(it); para = it }
+                if (host.childNodes.length > 0) host.appendChild(document.createTextNode(" "))
+                appendInline(host, line)
+            }
+        }
+    }
+    return root
+}
+
+private val INLINE = Regex("""\*\*(.+?)\*\*|`([^`]+)`""")
+
+/** Appends [text] to [host], with `**bold**` as <b> and backticked runs as <code>. */
+private fun appendInline(host: HTMLElement, text: String) {
+    var at = 0
+    for (m in INLINE.findAll(text)) {
+        if (m.range.first > at) host.appendChild(document.createTextNode(text.substring(at, m.range.first)))
+        val bold = m.groups[1]?.value
+        val el = document.createElement(if (bold != null) "b" else "code") as HTMLElement
+        el.textContent = bold ?: m.groups[2]!!.value
+        host.appendChild(el)
+        at = m.range.last + 1
+    }
+    if (at < text.length) host.appendChild(document.createTextNode(text.substring(at)))
 }
 
 /** The story key the server was last asked about, so one state asks once. */
@@ -211,19 +280,18 @@ private fun show(el: HTMLElement, text: String?) {
 }
 
 /**
- * The header: the name, the title under it when the tab's name led, where and since when, then the
- * state (mark, word, age) and the headline. The state line is rebuilt only when its words change,
+ * The header: the name, the title under it when the tab's name led, then one line of facts (state
+ * mark, word and age, where, since when) and, when an agent set one, its status. The state line is rebuilt only when its words change,
  * so a working glyph keeps turning.
  */
 private fun renderHead(p: PanelParts, state: TaskPanelViewModel.State) {
     val head = state.head
     show(p.title, head?.name ?: state.title)
     show(p.about, head?.about)
-    show(p.meta, head?.meta)
     show(p.status, head?.headline)
-    // Whose words the headline is, drawn as a small label over it (see `.tp-status` in styles.css).
+    // That the line is the agent's own status, drawn as a small label over it (see `.tp-status` in styles.css).
     p.status.setAttribute("data-label", head?.headlineLabel.orEmpty())
-    val stateKey = head?.let { "${it.state}/${it.stateWord}/${it.sinceMillis}" }.orEmpty()
+    val stateKey = head?.let { "${it.state}/${it.stateWord}/${it.sinceMillis}/${it.meta}" }.orEmpty()
     if (p.state.getAttribute("data-key") != stateKey) {
         p.state.setAttribute("data-key", stateKey)
         p.state.textContent = ""
@@ -238,6 +306,8 @@ private fun renderHead(p: PanelParts, state: TaskPanelViewModel.State) {
             p.state.appendChild(mark)
             p.state.appendChild(span("tp-state-word", head.stateWord))
             p.state.appendChild(ageSpan("tp-agent-age", head.sinceMillis))
+            // Where and since when, on the same line: the header's facts read as one sentence.
+            if (head.meta.isNotEmpty()) p.state.appendChild(span("tp-meta", "· ${head.meta}"))
         }
     }
     p.state.style.display = if (head == null) "none" else ""
@@ -272,9 +342,13 @@ private fun buildLine(line: TpLine): HTMLElement = when (line) {
     is TpWork -> div("tp-muted").also { it.textContent = line.text }
     is TpTurn -> div("tp-tl").also {
         it.appendChild(span("tp-tl-age", line.turn.time))
+        val both = div("tp-turn")
         val text = span("tp-tl-text", line.turn.prompt)
         if (line.turn.took.isNotEmpty()) text.appendChild(span("tp-tl-took", " · ${line.turn.took}"))
-        it.appendChild(text)
+        both.appendChild(text)
+        // What came back, so a short prompt ("go") still says what the turn was.
+        if (line.turn.reply.isNotEmpty()) both.appendChild(div("tp-turn-reply").also { r -> r.textContent = "→ ${line.turn.reply}" })
+        it.appendChild(both)
     }
     is TpActivity -> div("tp-tl").also {
         it.appendChild(span("tp-tl-age", line.item.time))

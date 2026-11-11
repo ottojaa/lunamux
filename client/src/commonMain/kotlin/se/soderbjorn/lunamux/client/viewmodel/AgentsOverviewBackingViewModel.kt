@@ -93,7 +93,7 @@ private const val TASK_PREFIX = "task:"
 private const val OPEN_WORK_RANK = 2
 private const val EARLIER_LIMIT = 5
 private const val RECENT_MS = 3L * 24 * 60 * 60_000L
-private const val WINDOW_MS = 14L * 24 * 60 * 60_000L
+private const val WINDOW_MS = 31L * 24 * 60 * 60_000L
 private const val MIN_QUERY = 2
 private const val RESTART = "restart"
 private const val STOPPED_WINDOW_MS = 24L * 60 * 60_000L
@@ -507,6 +507,8 @@ internal fun buildOverview(inputs: OverviewInputs, ui: OverviewUi, now: Long): S
     val answer = inputs.matches?.takeIf { matchMode && it.query == query }
     val matchRows = answer?.matches.orEmpty()
         .map { m -> m to (byKey[m.summary.id] ?: byKey[m.summary.conversationId] ?: m.summary) }
+        // Closed work older than a month is hidden everywhere, also from a search.
+        .filter { (_, s) -> s.state != ENDED || now - sinceOf(s) <= WINDOW_MS }
         .map { (m, s) -> Triple(m, s, s.taskId?.let(unitsById::get) ?: unitBySession[s.id]) }
         .distinctBy { (_, s, unit) -> unit?.task?.id ?: s.taskId ?: s.conversationId }
         .map { (m, s, unit) ->
@@ -602,6 +604,20 @@ internal fun buildOverview(inputs: OverviewInputs, ui: OverviewUi, now: Long): S
 private fun sinceOf(s: AgentSessionSummary): Long =
     if (s.state == ENDED || s.state == AgentFacts.DONE) AgentFacts.activityOf(s) else s.stateSince
 
+/**
+ * How a closed conversation ended, as the state word of its row: a fact the hooks report, so a
+ * conversation the person ended on purpose ("cleared", "quit") is told from one that was interrupted
+ * ("cut off", "tab closed"). "closed" when the record does not say.
+ */
+internal fun endedWord(s: AgentSessionSummary?): String = when (s?.endReason) {
+    "cleared" -> "cleared"
+    "exit" -> "quit"
+    RESTART -> "cut off"
+    "closed" -> "tab closed"
+    "replaced" -> "replaced"
+    else -> AgentsOverviewBackingViewModel.STATE_FINISHED
+}
+
 private fun rankOf(state: String) = when (state) {
     NEEDS_YOU -> 0
     WORKING -> 1
@@ -686,7 +702,7 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
         waiting != null -> Kind.NEEDS_YOU to AgentsOverviewBackingViewModel.STATE_NEEDS_YOU
         working.any { it.id == u.mainId } || (u.mainId == null && working.size == 1) -> Kind.WORKING to AgentsOverviewBackingViewModel.STATE_WORKING
         working.isNotEmpty() -> Kind.WORKING to AgentsOverviewBackingViewModel.agentsWorkingText(working.size)
-        !u.inNow -> Kind.FINISHED to AgentsOverviewBackingViewModel.STATE_FINISHED
+        !u.inNow -> Kind.FINISHED to endedWord(u.target ?: u.sessions.maxByOrNull(AgentFacts::activityOf))
         else -> Kind.DONE to AgentsOverviewBackingViewModel.STATE_DONE
     }
     val blocks = c.inputs.panels[t.id].orEmpty()
@@ -748,7 +764,7 @@ private fun sessionRow(s: AgentSessionSummary, earlier: Boolean, c: Ctx, taskTit
     val (kind, word) = when {
         needs -> Kind.NEEDS_YOU to AgentsOverviewBackingViewModel.STATE_NEEDS_YOU
         works -> Kind.WORKING to AgentsOverviewBackingViewModel.STATE_WORKING
-        earlier -> Kind.FINISHED to AgentsOverviewBackingViewModel.STATE_FINISHED
+        earlier -> Kind.FINISHED to endedWord(s)
         else -> Kind.DONE to AgentsOverviewBackingViewModel.STATE_DONE
     }
     return Row(

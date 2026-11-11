@@ -258,7 +258,7 @@ private fun itemsOf(state: AgentsOverviewBackingViewModel.State): List<Item> {
         add(state.stopped)
     }
     if (state.recent.isNotEmpty()) { out += Heading("EARLIER · LAST FEW DAYS"); add(state.recent) }
-    if (state.fortnight.isNotEmpty()) { out += Heading("EARLIER · LAST TWO WEEKS"); add(state.fortnight) }
+    if (state.fortnight.isNotEmpty()) { out += Heading("EARLIER · LAST MONTH"); add(state.fortnight) }
     if (state.earlierHidden > 0) out += More(state.earlierHidden)
     return out
 }
@@ -286,7 +286,7 @@ private fun renderTally(state: AgentsOverviewBackingViewModel.State) {
     val parts = listOfNotNull(
         ("ao-sw-need" to "◆ ${AgentsOverviewBackingViewModel.needYouText(state.needYouCount)}").takeIf { state.needYouCount > 0 },
         ("ao-sw-work" to "${state.workingCount} working").takeIf { state.workingCount > 0 },
-        ("ao-sw-done" to "✓ ${state.doneCount} done").takeIf { state.doneCount > 0 },
+        ("ao-sw-done" to "${state.doneCount} done").takeIf { state.doneCount > 0 },
     )
     syncChildren(tallyElement ?: return, parts, { it.second }) { (cls, text) -> span(cls, text) }
 }
@@ -340,12 +340,11 @@ private fun fillDetail(host: HTMLElement, row: Row) {
     if (row.matchInSnippet) host.appendChild(highlighted(row.detail, row.matchStart, row.matchLength)) else host.textContent = row.detail
 }
 
-/** The mark that opens a row: the turning glyph while it works, ◆ when it needs the person, ✓ when done. */
+/** The mark that opens a row: the turning glyph while it works, ◆ when it needs the person, nothing otherwise (the state word says done). */
 private fun stateMark(state: String): HTMLElement = when (state) {
     AgentFacts.WORKING -> span("ao-m").also { it.appendChild(spinner()) }
     AgentFacts.NEEDS_YOU -> span("ao-m ao-m-need", "◆")
-    AgentFacts.ENDED -> span("ao-m")
-    else -> span("ao-m ao-m-done", "✓")
+    else -> span("ao-m")
 }
 
 /**

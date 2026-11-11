@@ -21,6 +21,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import se.soderbjorn.lunamux.AgentSessionTracker
+import se.soderbjorn.lunamux.PanelSectionLimits
 import se.soderbjorn.lunamux.TaskBlockContent
 import se.soderbjorn.lunamux.TaskException
 import se.soderbjorn.lunamux.TaskLink
@@ -144,7 +145,7 @@ internal fun panelBlockJson(b: TaskPanelBlock): JsonObject = buildJsonObject {
     put("writtenAt", Instant.ofEpochMilli(b.writtenAtMillis).toString())
 }
 
-/** Register `set_status`, `set_task_panel`, `upsert_task_block`, `remove_task_block` and `get_task_panel`. */
+/** Register `set_status`, `set_panel_section`, `remove_panel_section`, `set_task_panel`, `upsert_task_block`, `remove_task_block` and `get_task_panel`. */
 fun registerMcpPanelTools(store: TaskPanelStore, tracker: AgentSessionTracker) {
     val blockSchema = schemaObject(
         "id" to schemaString(
@@ -215,6 +216,56 @@ fun registerMcpPanelTools(store: TaskPanelStore, tracker: AgentSessionTracker) {
         val conversation = (args["conversationId"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
         val kept = taskCall { tracker.setStatus(pane, conversation, text) }
         McpToolResult.json(buildJsonObject { put("status", kept) })
+    }
+
+    val sessionIdSchema = schemaString("Your pane: \$LUNAMUX_SESSION_ID from your environment. Defaults to the caller's.")
+    val conversationIdSchema = schemaString(
+        "Your own conversation id (\$CLAUDE_CODE_SESSION_ID). Pass it when you are an agent started inside another " +
+            "conversation's pane, or the section lands on that conversation.",
+    )
+
+    writeTool(
+        name = "set_panel_section",
+        description = "Write a section of the side panel beside your tab: a heading and a short body the person reads when " +
+            "they come back to this work. What the sections are is up to you and the person's instructions (a recap of " +
+            "where the work stands, what is waiting on them, decisions made). Writing a key again replaces that section " +
+            "where it stands; a new key is added below the others. The body is plain text with simple formatting: blank " +
+            "lines between paragraphs, lines starting \"- \" for a list, **bold** and `code`. Limits: " +
+            "${PanelSectionLimits.MAX_SECTIONS} sections per conversation, ${PanelSectionLimits.BODY_MAX} characters a body. " +
+            "The section stays with your conversation: it comes back when the conversation is resumed and shows when it " +
+            "was written. No task is needed.",
+        inputSchema = schemaObject(
+            "key" to schemaString("Your name for the section, 1-${PanelSectionLimits.KEY_MAX} characters, for example \"recap\"."),
+            "heading" to schemaString("The heading shown above it, one line of up to ${PanelSectionLimits.HEADING_MAX} characters."),
+            "body" to schemaString("The text, up to ${PanelSectionLimits.BODY_MAX} characters."),
+            "sessionId" to sessionIdSchema,
+            "conversationId" to conversationIdSchema,
+            required = listOf("key", "heading", "body"),
+        ),
+    ) { ctx, args ->
+        val pane = args.optString("sessionId")?.takeIf { it.isNotBlank() } ?: ctx.callerSessionId
+        val conversation = args.optString("conversationId")?.takeIf { it.isNotBlank() }
+        val kept = taskCall { tracker.setSection(pane, conversation, args.requireString("key"), args.requireString("heading"), args.requireString("body")) }
+        McpToolResult.json(buildJsonObject {
+            put("key", kept.key)
+            put("writtenAt", Instant.ofEpochMilli(kept.writtenAtMillis).toString())
+        })
+    }
+
+    writeTool(
+        name = "remove_panel_section",
+        description = "Take one of your sections out of the side panel (see set_panel_section).",
+        inputSchema = schemaObject(
+            "key" to schemaString("The section's key."),
+            "sessionId" to sessionIdSchema,
+            "conversationId" to conversationIdSchema,
+            required = listOf("key"),
+        ),
+    ) { ctx, args ->
+        val pane = args.optString("sessionId")?.takeIf { it.isNotBlank() } ?: ctx.callerSessionId
+        val conversation = args.optString("conversationId")?.takeIf { it.isNotBlank() }
+        val removed = taskCall { tracker.removeSection(pane, conversation, args.requireString("key")) }
+        McpToolResult.json(buildJsonObject { put("removed", removed) })
     }
 
     writeTool(

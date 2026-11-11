@@ -86,7 +86,7 @@ class TaskPanelTest {
         assertEquals("Waiting on review", head.headline, "the headline is the overview row's")
         assertEquals("one" to "Release", head.name to head.about, "the tab's name leads, the title follows")
         assertEquals(AgentFacts.WORKING to "working", head.state to head.stateWord)
-        assertEquals(TaskPanelViewModel.LABEL_NOW, head.headlineLabel, "the headline says whose words it is")
+        assertEquals(TaskPanelViewModel.LABEL_STATUS, head.headlineLabel, "the line is marked as the agent's own status")
         assertTrue(head.meta.startsWith("proj"))
         assertNull(s.setup)
     }
@@ -307,7 +307,7 @@ class TaskPanelTest {
         assertEquals(2, plan.earlierDone, "all but the last finished step fold into one line")
         assertEquals(listOf("step 3", "step 4", "step 5"), plan.steps.map { it.text })
         assertNull(plan.current, "the list shows the step in hand")
-        assertEquals("step 4", vm.state.head?.headline, "with no status, the step in hand is the headline")
+        assertEquals("", vm.state.head?.headline, "the header shows a status only when an agent set one; the step in hand is in the plan")
     }
 
     @Test
@@ -316,9 +316,8 @@ class TaskPanelTest {
         windowState.updateAgentSessions(listOf(session("solo", state = "done", taskId = null).copy(background = false, lastSaid = "The tunnel is stopped.")), true)
         vm.toggleInActiveTab()
         val before = vm.state
-        assertEquals("The tunnel is stopped.", before.head?.headline)
+        assertEquals("", before.head?.headline, "what it last said is in the terminal beside the panel, not in the header")
         assertEquals(TaskPanelViewModel.STATE_IDLE, before.head?.stateWord, "a turn that ended is idle, not done")
-        assertEquals(TaskPanelViewModel.LABEL_LAST_SAID, before.head?.headlineLabel)
         assertTrue(before.setup!!.compact, "having no task is the usual case: one line says how to get one")
         assertEquals("solo", before.story?.recordId)
         assertEquals(0, before.story?.turns?.total, "nothing is shown until the server has answered")
@@ -327,17 +326,33 @@ class TaskPanelTest {
         windowState.updateAgentStory(
             WindowEnvelope.AgentStory(
                 "solo",
-                turns = listOf(AgentTurn(now, "stop the tunnel", 30_000), AgentTurn(now - 3 * 24 * 60 * minute, "try it over frp", 31 * minute)),
-                uncommitted = 3, unpushed = 1, branch = "spike/remote",
+                turns = listOf(AgentTurn(now, "stop the tunnel", 30_000, reply = "stopped it"), AgentTurn(now - 3 * 24 * 60 * minute, "try it over frp", 31 * minute)),
+                uncommitted = 3, unpushed = 1, branch = "spike/remote", folder = "tunnel-repo", commits = 2,
             ),
         )
         val story = vm.state.story!!
         assertEquals(listOf("stop the tunnel" to "<1m", "try it over frp" to "31m"), story.turns.shown.map { it.prompt to it.took })
         assertEquals(5, story.turns.shown.first().time.length, "a turn from today shows its clock time")
         assertFalse(':' in story.turns.shown.last().time, "an older one shows its day")
-        assertEquals(listOf("3 uncommitted changes on spike/remote", "1 unpushed commit"), story.work)
+        assertEquals(listOf("on spike/remote", "2 commits since it started", "3 uncommitted changes", "1 unpushed commit"), story.work)
+        assertEquals("stopped it" to "", story.turns.shown.first().reply to story.turns.shown.last().reply, "each ask shows the first line of its answer")
+        assertEquals("tunnel-repo", story.folder, "the folder is where the conversation worked, as the server read it")
+        assertTrue(vm.state.head!!.meta.startsWith("tunnel-repo"))
         assertNotNull(vm.state.setup, "and it still says how to get a plan, links and activity")
         windowState.updateAgentStory(WindowEnvelope.AgentStory("other", turns = listOf(AgentTurn(now, "not mine"))))
         assertEquals(0, vm.state.story!!.turns.total, "an answer about another conversation is not shown")
+    }
+
+    @Test
+    fun thePanelShowsTheSectionsOfEveryLiveConversationInTheTabNewestPerKey() {
+        layout(listed = listOf("solo", "other"))
+        fun sec(key: String, body: String, at: Long) = se.soderbjorn.lunamux.PanelSection(key, key.uppercase(), body, at)
+        val first = session("solo", state = "done", taskId = null).copy(background = false, sections = listOf(sec("recap", "old", now - 9 * minute), sec("open", "pick a name", now - 8 * minute)))
+        windowState.updateAgentSessions(listOf(first), true)
+        vm.toggleInActiveTab()
+        assertEquals(listOf("recap" to "old", "open" to "pick a name"), vm.state.sections.map { it.key to it.body }, "no task is needed")
+        val closed = first.copy(state = "ended", endedAt = now)
+        windowState.updateAgentSessions(listOf(closed), true)
+        assertTrue(vm.state.sections.isEmpty(), "a closed conversation's sections leave the tab's panel")
     }
 }

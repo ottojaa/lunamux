@@ -139,6 +139,9 @@ class AgentSessionTracker(
      */
     private val statuses = HashMap<String, String>()
 
+    /** The side-panel sections agents wrote, by conversation; saved, so they survive a restart and a resume. */
+    private val sections = PanelSectionStore(repo, clock)
+
     private val _summaries = MutableStateFlow<List<AgentSessionSummary>>(emptyList())
 
     /** The rows to show clients, republished after every change. */
@@ -366,7 +369,8 @@ class AgentSessionTracker(
             }
             "SessionEnd" -> {
                 // A helper's end leaves the pane's screen to its own conversation.
-                end(rec, if (isHelper) null else pane.screenText(), END_EXIT)
+                // The hook says why: "clear" is /clear, anything else is the person or the agent quitting.
+                end(rec, if (isHelper) null else pane.screenText(), if (event.str("reason") == "clear") END_CLEARED else END_EXIT)
                 if (!isHelper) awaitScreenClear.add(pane.terminalSessionId)
                 publish()
                 return@synchronized
@@ -452,14 +456,36 @@ class AgentSessionTracker(
      * [STATUS_MAX], or null when it was cleared; throws when no open conversation is found.
      */
     fun setStatus(terminalSessionId: String?, conversationId: String?, text: String): String? = synchronized(lock) {
-        val rec = conversationId?.let { id -> openRecords().firstOrNull { it.conversationId == id } }
-            ?: terminalSessionId?.takeIf { conversationId == null }?.let(::openFor)
-            ?: throw TaskException("No open agent conversation found. Pass your own \$LUNAMUX_SESSION_ID as sessionId, or your conversation id.")
+        val rec = conversationOf(terminalSessionId, conversationId)
         val clean = text.replace(Regex("\\s*[\\r\\n]+\\s*"), " ").trim().take(STATUS_MAX).trim().ifEmpty { null }
         if (clean == null) statuses.remove(rec.id) else statuses[rec.id] = clean
         publish()
         clean
     }
+
+    /**
+     * Writes section [key] of the side panel for an open conversation, found as [setStatus] finds
+     * it. Called for the `set_panel_section` tool.
+     *
+     * @return the section as kept.
+     * @throws TaskException when no open conversation is found or a limit is passed.
+     */
+    fun setSection(terminalSessionId: String?, conversationId: String?, key: String, heading: String, body: String): PanelSection = synchronized(lock) {
+        val kept = sections.set(conversationOf(terminalSessionId, conversationId).conversationId, key, heading, body)
+        publish()
+        kept
+    }
+
+    /** Takes section [key] of an open conversation's side panel away; false when it has none. Called for `remove_panel_section`. */
+    fun removeSection(terminalSessionId: String?, conversationId: String?, key: String): Boolean = synchronized(lock) {
+        sections.remove(conversationOf(terminalSessionId, conversationId).conversationId, key).also { if (it) publish() }
+    }
+
+    /** The open conversation named by [conversationId], else the one of pane [terminalSessionId]; throws when there is none. */
+    private fun conversationOf(terminalSessionId: String?, conversationId: String?): AgentSessionRecord =
+        conversationId?.let { id -> openRecords().firstOrNull { it.conversationId == id } }
+            ?: terminalSessionId?.takeIf { conversationId == null }?.let(::openFor)
+            ?: throw TaskException("No open agent conversation found. Pass your own \$LUNAMUX_SESSION_ID as sessionId, or your conversation id.")
 
     /** Promise a task to the next agent session that opens in a pane. */
     fun setPendingTask(leafId: String, taskId: String?) = synchronized(lock) {
@@ -675,7 +701,7 @@ class AgentSessionTracker(
      * several records; its summary is the open record's, else the newest one's.
      */
     private fun publish() {
-        _summaries.value = conversationRecords().map { it.toSummary().copy(lastActivityAt = lastActivity[it.id], status = statuses[it.id]) }
+        _summaries.value = conversationRecords().map { it.toSummary().copy(lastActivityAt = lastActivity[it.id], status = statuses[it.id], sections = sections.of(it.conversationId)) }
     }
 
     /** One record per conversation: the open one (the newest if several), else the newest ended. */
@@ -696,6 +722,7 @@ class AgentSessionTracker(
         /** Why a record ended: Lunamux stopped under it, the agent exited, its pane went, or another conversation took the pane. */
         const val END_RESTART = "restart"
         const val END_EXIT = "exit"
+        const val END_CLEARED = "cleared"
         const val END_CLOSED = "closed"
         const val END_REPLACED = "replaced"
 
@@ -798,18 +825,21 @@ private const val FIRST_PROMPT_MAX = 160
 /** The first line of what the user first asked a session, cut for a status cell. */
 internal fun firstPromptLine(prompt: String): String? =
     prompt.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }?.take(FIRST_PROMPT_MAX)
-private const val LAST_SAID_MAX = 160
+private const val LAST_SAID_MAX = 240
 
 /**
  * The part of an assistant reply worth showing as "what it last said": the first line of the last
- * paragraph, cut to [LAST_SAID_MAX] characters.
+ * paragraph, cut to [LAST_SAID_MAX] characters at the end of a word, with "…" when it was cut.
  */
 internal fun lastSaidOf(message: String): String {
     val paragraphs = message.trim().split("\n\n").asReversed()
     val line = paragraphs.firstNotNullOfOrNull { p ->
         p.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() && !AgentSessionText.isFenceLine(it) }
     }
-    return (line ?: "").take(LAST_SAID_MAX)
+    val text = line ?: ""
+    if (text.length <= LAST_SAID_MAX) return text
+    val head = text.take(LAST_SAID_MAX)
+    return head.substring(0, head.lastIndexOf(' ').takeIf { it > LAST_SAID_MAX / 2 } ?: head.length).trimEnd() + "…"
 }
 
 private const val SCREEN_LINES = 200

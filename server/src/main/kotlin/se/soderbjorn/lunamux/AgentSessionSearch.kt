@@ -100,13 +100,22 @@ object AgentSessionSearch {
     /** What the person asked in one conversation and the work left in its folder, for the panel of a session with no task. */
     fun story(recordId: String, tracker: AgentSessionTracker?): WindowEnvelope.AgentStory? {
         val rec = tracker?.find(recordId) ?: return null
-        val folder = rec.cwd?.takeIf { it.isNotBlank() && File(it).isDirectory }?.let { Path.of(it) }
+        val read = rec.transcriptPath?.let { AgentTranscriptText.story(File(it)) } ?: TranscriptStory()
+        // The transcript knows where the conversation went on to work; the record only where it started.
+        val dir = listOfNotNull(read.cwd, rec.cwd).firstOrNull { it.isNotBlank() && File(it).isDirectory }
+        val folder = dir?.let { Path.of(it) }
+        val git = readGitInfo(dir)
+        val since = read.startedAt ?: rec.createdAt
         return WindowEnvelope.AgentStory(
             recordId = recordId,
-            turns = rec.transcriptPath?.let { AgentTranscriptText.turns(File(it)) }.orEmpty(),
+            turns = read.turns,
             uncommitted = folder?.let(GitCatalog::uncommittedCount),
             unpushed = folder?.let(GitCatalog::unpushedCount),
-            branch = folder?.let { GitCatalog.runGit(it, "branch", "--show-current")?.trim()?.takeIf(String::isNotEmpty) },
+            branch = git.branch,
+            folder = git.repo ?: dir?.trimEnd('/')?.substringAfterLast('/')?.takeIf { it.isNotBlank() },
+            commits = folder?.takeIf { git.repo != null }?.let {
+                GitCatalog.runGit(it, "rev-list", "--count", "--since=${since / 1000}", "HEAD")?.trim()?.toIntOrNull()
+            },
         )
     }
 

@@ -3908,7 +3908,20 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 /* Under the name: the task's title in full, dim; where and since when, fainter; the state (mark, word,
    age); then the headline, the one line the agents overview shows for this work too. */
 .tp-about { color: var(--ao-dim); overflow-wrap: anywhere; }
-.tp-meta { margin-top: 2px; color: var(--ao-faint); font-size: 11px; }
+.tp-meta { color: var(--ao-faint); font-size: 11px; font-weight: 400; min-width: 0; overflow-wrap: anywhere; }
+/* A section an agent wrote (set_panel_section): its heading with the age of the writing, then the body. */
+.tp-section-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.tp-section-top .tp-agent-age { letter-spacing: 0; text-transform: none; font-weight: 400; }
+.tp-section-body { color: var(--ao-text); user-select: text; -webkit-user-select: text; }
+.tp-section-body p { margin: 0 0 8px; }
+.tp-section-body ul { margin: 0 0 8px; padding-left: 2ch; list-style: none; }
+.tp-section-body li { position: relative; margin-bottom: 2px; }
+.tp-section-body li::before { content: "-"; position: absolute; left: -2ch; color: var(--ao-dim); }
+.tp-section-body > :last-child { margin-bottom: 0; }
+.tp-section-body b { font-weight: 600; }
+.tp-section-body code { font-family: inherit; color: var(--ao-accent); }
+.tp-turn { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.tp-turn-reply { color: var(--ao-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tp-state { display: flex; align-items: center; gap: 6px; margin-top: 8px; line-height: 20px; color: var(--ao-done); }
 .tp-state.tp-state-working { color: var(--ao-accent); }
 .tp-state.tp-state-needs_you { color: var(--ao-warn); background: none; }
@@ -3919,7 +3932,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 /* Whose words the headline is ("asks", "now", "last said"), as a small label over it. */
 .tp-status[data-label]:not([data-label=""])::before { content: attr(data-label); display: block; color: var(--ao-dim); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; line-height: 16px; }
 .tp-state.tp-state-done { color: var(--ao-muted); }
-.tp-state .tp-agent-age::before { content: "· "; }
+.tp-state { flex-wrap: wrap; row-gap: 0; }
 .tp-setup-compact { color: var(--ao-faint); font-size: 12px; }
 .tp-setup { display: flex; flex-direction: column; gap: 12px; padding: 14px var(--tp-pad); overflow-wrap: anywhere; }
 .tp-setup-prompt { padding: 10px 12px; border: 1px solid var(--ao-line); border-radius: 6px; user-select: text; -webkit-user-select: text; }

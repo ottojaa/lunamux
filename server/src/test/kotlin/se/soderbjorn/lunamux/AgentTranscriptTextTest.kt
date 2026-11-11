@@ -106,6 +106,7 @@ class AgentTranscriptTextTest {
         val turns = AgentTranscriptText.turns(file)
         assertEquals(listOf("stop the tunnel", "Spike: remote access"), turns.map { it.prompt })
         assertEquals(listOf(null, 20 * 60_000L), turns.map { it.tookMillis }, "the last prompt has no answer yet; the first ran to the interrupt")
+        assertEquals(listOf(null, "Here is the plan."), turns.map { it.reply }, "a turn's answer is the last thing the agent wrote in it")
         assertEquals(emptyList(), AgentTranscriptText.turns(File("/nonexistent/x.jsonl")))
     }
 }

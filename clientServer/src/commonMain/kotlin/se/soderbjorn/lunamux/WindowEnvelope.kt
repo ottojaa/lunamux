@@ -293,12 +293,22 @@ sealed class WindowEnvelope {
         val uncommitted: Int? = null,
         val unpushed: Int? = null,
         val branch: String? = null,
+        /** The name of the folder the conversation last worked in, which may not be the one it started in. */
+        val folder: String? = null,
+        /** Commits made on [branch] in that folder since the conversation started, whoever made them. */
+        val commits: Int? = null,
     ) : WindowEnvelope()
 }
 
 /** One thing the person asked a conversation: when, its first line, and how long the agent then worked (null while it still does). */
 @Serializable
-data class AgentTurn(val atMillis: Long, val prompt: String, val tookMillis: Long? = null)
+data class AgentTurn(
+    val atMillis: Long,
+    val prompt: String,
+    val tookMillis: Long? = null,
+    /** The first line of the last thing the agent wrote in answer, null while nothing has been. */
+    val reply: String? = null,
+)
 
 /**
  * One row of the agents overview: a run of Claude Code, Codex or Gemini in a pane, as the server's
@@ -334,13 +344,34 @@ data class AgentSessionSummary(
     val noTranscript: Boolean = false,
     /** A closed conversation in which no prompt was ever submitted: nothing to find or resume. */
     val nothingSaid: Boolean = false,
-    /** Why a closed conversation ended: `restart` when Lunamux stopped under it, else `exit`, `closed` or `replaced`; null on older records. */
+    /** Why a closed conversation ended: `restart` when Lunamux stopped under it, else `exit`, `cleared` (/clear), `closed` or `replaced`; null on older records. */
     val endReason: String? = null,
     /** The state a closed conversation was in when it ended. */
     val endedFrom: String? = null,
     /** What the conversation says it is doing this turn, in its own words (the `set_status` tool). */
     val status: String? = null,
+    /** The sections this conversation wrote for the side panel (the `set_panel_section` tool), in the order first written. */
+    val sections: List<PanelSection> = emptyList(),
 )
+
+/**
+ * One section an agent wrote for the side panel: a [heading] and a [body] in simple formatting
+ * (paragraphs, "- " bullet lists, `**bold**`, backticked code). [key] is the writer's name for it;
+ * writing the same key again replaces it. Lunamux gives no section a meaning of its own.
+ * Written through `set_panel_section`, kept by the server's `PanelSectionStore` with the
+ * conversation that wrote it, and drawn by the task panel.
+ */
+@Serializable
+data class PanelSection(val key: String, val heading: String, val body: String, val writtenAtMillis: Long)
+
+/** The limits `set_panel_section` enforces, so a panel stays something a person reads at a glance. */
+object PanelSectionLimits {
+    /** The most sections one conversation may have. */
+    const val MAX_SECTIONS = 6
+    const val KEY_MAX = 40
+    const val HEADING_MAX = 60
+    const val BODY_MAX = 1200
+}
 
 /**
  * One search result in [WindowEnvelope.AgentSessionMatches]: a session and where the query was

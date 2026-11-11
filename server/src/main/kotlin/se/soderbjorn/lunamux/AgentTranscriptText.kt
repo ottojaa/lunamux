@@ -33,6 +33,9 @@ data class TranscriptInfo(
     val endedAt: Long?,
 )
 
+/** What [AgentTranscriptText.story] reads: the turns newest first, the folder last worked in and when the conversation began. */
+data class TranscriptStory(val turns: List<AgentTurn> = emptyList(), val cwd: String? = null, val startedAt: Long? = null)
+
 /** Extracts searchable text and session facts from Claude Code transcripts. */
 object AgentTranscriptText {
     /** The most text kept per transcript; when there is more, the end is kept. */
@@ -102,15 +105,25 @@ object AgentTranscriptText {
      * prompt when nothing has answered it yet). Lines Claude Code writes on the person's behalf
      * (commands, reminders, an interrupt marker) are not prompts.
      */
-    fun turns(file: File): List<AgentTurn> {
-        if (!file.isFile) return emptyList()
+    fun turns(file: File): List<AgentTurn> = story(file).turns
+
+    /**
+     * [turns], each with the first line of the last thing the agent wrote in answer, together with
+     * the folder the conversation last worked in and when it began. Read in one pass for the side
+     * panel of a session (see [AgentSessionSearch.story]).
+     */
+    fun story(file: File): TranscriptStory {
+        if (!file.isFile) return TranscriptStory()
         val out = ArrayList<AgentTurn>()
         var at: Long? = null
         var prompt = ""
         var last: Long? = null
+        var reply: String? = null
+        var cwd: String? = null
+        var began0: Long? = null
         fun close() {
             val began = at ?: return
-            out += AgentTurn(began, prompt, last?.takeIf { it > began }?.let { it - began })
+            out += AgentTurn(began, prompt, last?.takeIf { it > began }?.let { it - began }, reply)
         }
         try {
             file.bufferedReader().useLines { lines ->
@@ -119,24 +132,32 @@ object AgentTranscriptText {
                     val type = obj.str("type")
                     if (type != "user" && type != "assistant") continue
                     if ((obj["isSidechain"] as? JsonPrimitive)?.booleanOrNull == true) continue
+                    obj.str("cwd")?.takeIf { it.isNotBlank() }?.let { cwd = it }
                     if ((obj["isMeta"] as? JsonPrimitive)?.booleanOrNull == true) continue
                     val time = obj.str("timestamp")?.let(::epoch) ?: continue
-                    val said = if (type == "user") textOf((obj["message"] as? JsonObject)?.get("content")).trim() else ""
+                    if (began0 == null) began0 = time
+                    val said = textOf((obj["message"] as? JsonObject)?.get("content")).trim()
                     if (type == "user" && said.isNotEmpty() && !said.startsWith("<") && !said.startsWith("[Request interrupted")) {
                         close()
                         at = time
                         prompt = said.lineSequence().first { it.isNotBlank() }.trim().take(TURN_PROMPT_MAX)
                         last = null
+                        reply = null
                     } else if (at != null) {
                         last = time
+                        // The last text of the turn is its answer; what came before it is the agent thinking aloud.
+                        if (type == "assistant" && said.isNotEmpty()) {
+                            said.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() && !AgentSessionText.isFenceLine(it) }
+                                ?.let { reply = it.take(TURN_PROMPT_MAX) }
+                        }
                     }
                 }
             }
         } catch (_: java.io.IOException) {
-            return emptyList()
+            return TranscriptStory()
         }
         close()
-        return out.takeLast(TURNS_MAX).asReversed()
+        return TranscriptStory(out.takeLast(TURNS_MAX).asReversed(), cwd, began0)
     }
 
     private const val TURNS_MAX = 30

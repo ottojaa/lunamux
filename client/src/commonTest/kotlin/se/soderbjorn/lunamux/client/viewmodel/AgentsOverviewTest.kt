@@ -173,7 +173,7 @@ class AgentsOverviewTest {
             session("a"),
             session("yesterday", state = "ended", endedAt = now - day),
             session("lastWeek", state = "ended", endedAt = now - 7 * day),
-            session("ancient", state = "ended", endedAt = now - 30 * day),
+            session("ancient", state = "ended", endedAt = now - 40 * day),
         )
         vm.open()
         assertEquals(listOf("a"), vm.state.now.map { it.id })

@@ -219,8 +219,9 @@ class AgentSessionTrackerTest {
         stopped(t, "Done.\n\nShall I also update the docs?")
         var row = t.summaries.value.single()
         assertEquals(listOf("done", null, "Shall I also update the docs?"), listOf(row.state, row.question, row.lastSaid), "a closing question is not a prompt to answer")
-        stopped(t, "x".repeat(400))
-        assertEquals(160, t.summaries.value.single().lastSaid!!.length)
+        stopped(t, "word ".repeat(100))
+        val cut = t.summaries.value.single().lastSaid!!
+        assertTrue(cut.length <= 241 && cut.endsWith("word…"), "a long line is cut at the end of a word and says so: $cut")
 
         for (type in listOf("auth_success", "idle_prompt")) {
             t.onHook(pane(), event("Notification", "a-1", "notification_type" to type, "message" to "Signed in"))

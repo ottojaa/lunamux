@@ -35,7 +35,7 @@ data class AgentSessionRecord(
     val lastSaid: String? = null,
     val taskId: String? = null,
     val background: Boolean = false,
-    /** Why the record ended: `restart` (Lunamux stopped under it), `exit`, `closed` (its pane went) or `replaced`; null while open and on older rows. */
+    /** Why the record ended: `restart` (Lunamux stopped under it), `exit`, `cleared` (/clear), `closed` (its pane went) or `replaced`; null while open and on older rows. */
     val endReason: String? = null,
     /** The state it was in when it ended. */
     val endedFrom: String? = null,
