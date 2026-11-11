@@ -437,7 +437,7 @@ class AgentSessionTrackerTest {
         assertNotNull(t.find("e300"), "still in the database")
 
         val day = 24L * 60 * 60 * 1000
-        now += 15 * day
+        now += 32 * day
         t.onHook(pane(), event("SessionStart", "a-1"))
         t.onHook(pane(), event("SessionEnd", "a-1"))
         assertEquals(listOf(now), t.summaries.value.map { it.endedAt })

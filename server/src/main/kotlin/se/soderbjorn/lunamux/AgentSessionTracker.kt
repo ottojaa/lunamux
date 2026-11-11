@@ -734,7 +734,7 @@ class AgentSessionTracker(
          * two weeks. The edge is inclusive here; the client lists no more than this, so a row it
          * shows is never missing from the server.
          */
-        const val HISTORY_WINDOW_MS = 14L * 24 * 60 * 60 * 1000
+        const val HISTORY_WINDOW_MS = 31L * 24 * 60 * 60 * 1000
 
         /**
          * Most ended records held in memory. [publish] sends every record held on each change, so

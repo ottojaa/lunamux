@@ -19,7 +19,7 @@ out of sight) is counted in the row's state word and listed under the row while 
 shown in the task panel.
 
 A live row leads with a **state mark** (the spinner while it works, **◆** when it needs the person,
-**✓** when done) and the **name of its tab** when the person named the tab; the title then follows
+nothing when done: the state word says so) and the **name of its tab** when the person named the tab; the title then follows
 on a line of its own as the description. A tab nobody named ("Tab 3"), a hidden tab, or one whose
 name only repeats the title leaves the title to lead. On the same first line, at the right: the
 plan's **progress** (a bar and "13/14", from the task's progress block or its plan's steps), one
@@ -28,7 +28,7 @@ bright for working and needs-you rows, mid-grey for done ones and dim for closed
 
 NOW is **grouped by repo** (the task's repo, else the folder the conversation runs in, home as
 `~`). Groups and the rows in each stand in the order their work began, so no row moves when a state
-changes. The search line ends in a tally: "◆ 1 needs you · 2 working · ✓ 2 done".
+changes. The search line ends in a tally: "◆ 1 needs you · 2 working · 2 done".
 
 A **closed row** in EARLIER is one line: the title, the last thing the conversation said, where it
 ran, "closed" and the age. Progress and folder are hidden when the panel is narrower than 700px. A
@@ -149,18 +149,20 @@ then the confirmation, then the peek, then the overlay.
   whose main conversation is closed stays in NOW while a background agent of it is live or its status
   says a question waits; otherwise it goes to EARLIER, as does a conversation that has ended, at
   once. A conversation that needs the person stays in NOW wherever it runs, so a question is never
-  hidden by the "+ N more" cut or the fourteen-day window.
+  hidden by the "+ N more" cut or the one-month window.
 - **NOW keeps its order**: the order work started, ascending, ties by id. State never moves a row,
   and the overlay opens with the first row that needs the person selected. A task's start is stamped
   the first time the server sees it, so the order survives a restart.
-- **EARLIER is newest first** in two bands, **LAST FEW DAYS** (under three days) and **LAST TWO
-  WEEKS** (up to fourteen), and shows the newest five rows, then **+ N more** (a click, or ↓ on the
+- **EARLIER is newest first** in two bands, **LAST FEW DAYS** (under three days) and **LAST
+  MONTH** (up to thirty-one), and shows the newest five rows, then **+ N more** (a click, or ↓ on the
   last row, shows the rest). An empty band has no heading. A task's age is its newest conversation's.
-  Both edges count the older side as inside (exactly three days is the first band, exactly fourteen
+  Both edges count the older side as inside (exactly three days is the first band, exactly thirty-one
   still listed). A task with no conversation (only an `open` action) is aged by its start and leaves
-  EARLIER fourteen days after the server first saw it. The server keeps the ended conversations of the
-  last fourteen days, at most 300, and pushes them to every window; older ones stay in the database
-  for search.
+  EARLIER a month after the server first saw it. The server keeps the ended conversations of the
+  last month, at most 300, and pushes them to every window; older ones stay in the database but are
+  hidden, also from a search. A closed row's state word says how it ended, as the hooks reported
+  it: **cleared** (`/clear`), **quit**, **cut off** (the restart), **tab closed**, **replaced**, or
+  "closed" on an older record. So work the person ended is told from work that was interrupted.
 - **The footer counts the same thing.** Under the Claude usage each world shows **▲ N waiting** and,
   beside the spinner, the number working, background agents included. The rows' "needs you" always
   add up to the footer's. Known gap: a conversation in no task that is the main conversation of two
@@ -342,14 +344,27 @@ Four blocks, in this order, each headed by its name alone:
    characters), its label as a link (accent colour, ↗, underlined on hover) and its time. Links
    without a time come after the dated ones and show none. Pressing one opens it.
 
-In the tab of **a session that has no task** the panel shows what Lunamux sees by itself: the same
-header, then **You asked** (each thing the person asked in that conversation, its time or day, and
-how long the turn took, read from the transcript) and **Work in its folder** (uncommitted changes
-and unpushed commits), then one faint line saying how to ask the agent for a task.
+**Sections agents write.** Above everything else the panel shows the sections the agents in the tab
+wrote with `set_panel_section`: a heading, when it was written, and a short body in simple formatting
+(paragraphs, "- " lists, `**bold**`, backticked code). No task is needed. Lunamux gives no section a
+meaning; a recap is a section an agent keeps up to date. A section is kept with the conversation that
+wrote it: it comes back when that conversation is resumed, a fresh conversation starts with none, and
+the panel shows the sections of every conversation live in the tab (the same key from two of them
+shows once, the newest). The limits are six sections a conversation and 1,200 characters a body.
+The panel and the overview are separate: nothing in a section feeds a row.
 
-In the header the state of a conversation whose turn has ended reads "idle" (the overview's row
-says "done"), with its age after a dot, and the headline has a small label saying whose words it
-is: "asks", "now" or "last said". A block with nothing in it is not drawn.
+In the tab of **a session that has no task** the panel shows, under any sections, what Lunamux sees
+by itself: **You asked** (each thing the person asked in that conversation, its time or day, how
+long the turn took and the first line of what came back, read from the transcript) and **Changed**
+(the branch, commits made on it since the conversation started, uncommitted changes and unpushed
+commits, in the folder the conversation last worked in). When no agent wrote a section, one faint
+line says how they can.
+
+The header holds facts: the name, then one line with the state and its age, the folder and since
+when. A conversation whose turn has ended reads "idle" (the overview's row says "done"). Under it
+comes a status only when an agent set one (the task's status, or `set_status`), labelled "status".
+What the agent last said is not shown; the terminal beside the panel shows it. A block with nothing
+in it is not drawn.
 
 Every list shows five entries, then **+ N more**, which opens the rest in place, and then **show
 less**, which folds it again; the panel scrolls.
@@ -359,6 +374,8 @@ ends. Only the types below exist; any other is refused.
 | Tool | Arguments | What it does |
 | --- | --- | --- |
 | `set_status` | `text`, optional `sessionId`, `conversationId` | Says in one line what a conversation is doing this turn (120 characters; empty clears it). It shows as its headline while it works and goes with the next prompt. An agent started inside another conversation's pane passes its own `conversationId`. |
+| `set_panel_section` | `key`, `heading`, `body`, optional `sessionId`, `conversationId` | Writes a section of the side panel for the caller's conversation, replacing the one with the same key. No task needed. |
+| `remove_panel_section` | `key`, optional `sessionId`, `conversationId` | Takes one of the caller's sections away. |
 | `set_task_panel` | `taskId`, `blocks`, optional `by` | Replaces all of the task's blocks in the order given. Nothing changes if any block breaks a rule. |
 | `upsert_task_block` | `taskId`, `block`, optional `by` | Replaces the block with that id where it stands, or adds it at the end. |
 | `remove_task_block` | `taskId`, `id` | Removes one block. |
