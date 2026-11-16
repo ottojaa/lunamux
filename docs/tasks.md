@@ -28,18 +28,22 @@ bright for working and needs-you rows, mid-grey for done ones and dim for closed
 
 NOW is **grouped by repo** (the task's repo, else the folder the conversation runs in, home as
 `~`). Groups and the rows in each stand in the order their work began, so no row moves when a state
-changes. The search line ends in a tally: "◆ 1 needs you · 2 working · 2 done".
+changes. A task's group is its own repo, else its main conversation's, else the one all its
+conversations share: a task whose agents run in worktrees or folders of their own still sits under
+the repo its main conversation works in. The search line ends in a tally: "◆ 1 needs you · 2 working ·
+◐ 2 waiting · 2 done".
 
 A **closed row** in EARLIER is one line: the title, the last thing the conversation said, where it
 ran, "closed" and the age. Progress and folder are hidden when the panel is narrower than 700px. A
-conversation is **working**, **needs you** or **done**; Lunamux never guesses from the last words of
-a reply that the agent is asking.
+conversation is **working**, **needs you**, **waiting** or **done**; Lunamux never guesses from the
+last words of a reply that the agent is asking.
 
 | Word | When |
 |---|---|
 | **needs you** (yellow) | a conversation waits for the person; "2 need you" for more |
 | **working** (cyan, with the spinner) | the conversation itself works (for a task: its main conversation) |
 | **1 agent working** / **N agents working** | the task's main conversation waits on its agents |
+| **waiting** (calm blue, ◐) | a conversation sits at its prompt while something it started goes on: a background shell it left running, or what it said it waits for with `set_status` and `keep` (a review, CI). "N waiting" for a task with more. Nothing for the person to do |
 | **done** (muted green) | the row is in NOW and nothing works or waits |
 | **closed** (dim) | the row is in EARLIER and nothing works or waits |
 
@@ -49,7 +53,17 @@ once, and only while its conversation has a pane in a window. A reply that merel
 is done, and so is a conversation just resumed and sitting at its prompt. A task can keep a question
 visible while its main conversation is closed through `set_task_status` with `questionWaits: true`:
 the row then stays in NOW with the status as its detail, reads **done**, and is not counted as
-waiting.
+waiting. A conversation at its prompt whose kept line (`set_status` with `keep` and `needsYou`) says
+it waits on the person ("merge go") is **needs you** too, with that line as its headline, and counts
+as one.
+
+**Waiting** is told from idle by what is still going on. Claude Code's background shells are read
+from the process tree: every shell still running directly under a `claude` that sits at its prompt
+(Claude Code starts each with its shell snapshot, which marks it) was started in the background. A
+conversation whose process is not known is read from its screen's footer ("1 shell"). A conversation
+that works or asks is never waiting: its own turn's shells do not count. The age beside a waiting
+row is how long it has waited: since its kept line was written (the same words written again keep
+their time), else since its oldest shell began.
 
 The spinner is the app's working mark: four braille frames, drawn by CSS alone, so a row that is
 redrawn keeps its frame and every spinner on screen shows the same one. With reduced motion it is a
@@ -63,8 +77,9 @@ Every row has one line that says where it is, and the task panel's header shows 
 
 | State | The headline |
 |---|---|
-| needs you | the question, in quotes |
+| needs you | the question, in quotes; for a kept line that waits on the person, that line |
 | working | the task's status line; else the plan's step in hand; else what the conversation says it is doing (`set_status`); else its tool call in words |
+| waiting | what it waits for: its kept line (`set_status` with `keep`), else "1 background shell running" |
 | done | the last thing it said |
 | closed | nothing: a closed row is its title, its folder, how it ended and when. A task's status line, which an agent wrote, still shows. |
 
@@ -168,7 +183,7 @@ then the confirmation, then the peek, then the overlay.
   closed**, **replaced** (another conversation took its place), "ended" when the hook gave no reason
   worth a word, or "closed" on an older record. The list holds the newest 300 closed conversations,
   so in a busy week it reaches back less than a month; search reaches the whole month. So work the person ended is told from work that was interrupted.
-- **The footer counts the same thing.** Under the Claude usage each world shows **▲ N waiting** and,
+- **The footer counts the same thing.** Under the Claude usage each world shows **▲ N need you** and,
   beside the spinner, the number working, background agents included. The rows' "needs you" always
   add up to the footer's. Known gap: a conversation in no task that is the main conversation of two
   tasks is in both rows, so both read **needs you** while the footer counts it once.
@@ -341,9 +356,10 @@ Four blocks, in this order, each headed by its name alone:
    steps" but for the last, the one in hand bright with the spinner, the rest dim; the count then
    comes from the steps. A plan with every step done is one line, "Plan · 15 of 15 done".
 2. **Background agents**: the task's live agents but for the main conversation. Each line has its
-   state mark (the spinner, ◆ when it waits, ○ when idle), its title with its age at the right and,
-   as a quieter second line that never wraps, what it is doing: its own status (`set_status`), else
-   its tool call in words, else the plain state word. Lines can be reached with Tab and pressed; on
+   state mark (the spinner, ◆ when it needs the person, ◐ in calm blue when it waits on something
+   it started, ○ when idle), its title with its age at the right (for a waiting one, how long it has
+   waited) and, as a quieter second line that never wraps, what it is doing: its own status
+   (`set_status`), what it waits for, else its tool call in words, else the plain state word. Lines can be reached with Tab and pressed; on
    hover or focus a line shows what ↵ does.
 3. **Activity**: under a heading for each day ("Today", "Yesterday", "Mon 9 Nov"), one line per
    item with its time at the left; a long item wraps under itself. Newest first.
@@ -368,8 +384,10 @@ commits, in the folder the conversation last worked in). When no agent wrote a s
 line says how they can.
 
 The header holds facts: the name, then one line with the state and its age, the folder and since
-when. A conversation whose turn has ended reads "idle" (the overview's row says "done"). Under it
-comes a status only when an agent set one (the task's status, or `set_status`), labelled "status".
+when. A conversation whose turn has ended reads "idle" (the overview's row says "done"), or
+"waiting" with ◐ while something it started goes on. Under it comes a status only when an agent set
+one (the task's status, or `set_status`; for a waiting conversation, what it waits for), labelled
+"status".
 What the agent last said is not shown; the terminal beside the panel shows it. A block with nothing
 in it is not drawn.
 
@@ -380,7 +398,7 @@ ends. Only the types below exist; any other is refused.
 
 | Tool | Arguments | What it does |
 | --- | --- | --- |
-| `set_status` | `text`, optional `sessionId`, `conversationId` | Says in one line what a conversation is doing this turn (120 characters; empty clears it). It shows as its headline while it works and goes with the next prompt. An agent started inside another conversation's pane passes its own `conversationId`. |
+| `set_status` | `text`, optional `sessionId`, `conversationId`, `keep`, `needsYou` | Says in one line what a conversation is doing this turn (120 characters; empty clears it). It shows as its headline while it works and goes with the next prompt. An agent started inside another conversation's pane passes its own `conversationId`. With `keep: true` it says instead what the conversation waits for once its turn has ended ("in review · round 2"): the row reads **waiting** with that line, it outlives the next prompt, and it goes only when cleared (empty text with `keep: true`) or when the conversation ends. `needsYou: true` (only with `keep`) makes it **needs you**. A task's lead writes it for one of the task's conversations by passing that conversation's `sessionId`. |
 | `set_panel_section` | `key`, `heading`, `body`, optional `sessionId`, `conversationId` | Writes a section of the side panel for the caller's conversation, replacing the one with the same key. No task needed. |
 | `remove_panel_section` | `key`, optional `sessionId`, `conversationId` | Takes one of the caller's sections away. |
 | `set_task_panel` | `taskId`, `blocks`, optional `by` | Replaces all of the task's blocks in the order given. Nothing changes if any block breaks a rule. |

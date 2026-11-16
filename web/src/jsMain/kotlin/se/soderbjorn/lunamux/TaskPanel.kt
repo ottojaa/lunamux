@@ -3,7 +3,7 @@
  * task's main conversation. Its header says where the work is: the tab's name, the task's title in
  * full, where and since when, then the state and the headline the agents overview shows too. Under
  * it come four blocks: Plan (the step in hand and the bar), Background agents (the task's live
- * sessions: working, waiting on the person or idle), Activity (newest first, under day headings)
+ * sessions: working, needing the person, waiting on something they started, or idle), Activity (newest first, under day headings)
  * and Links. A list shows its first five entries and a "+ N more" line that opens the rest in
  * place. With no block to show it says how to set the panel up.
  *
@@ -301,13 +301,7 @@ private fun renderHead(p: PanelParts, state: TaskPanelViewModel.State) {
         p.state.textContent = ""
         p.state.className = "tp-state tp-state-${head?.state.orEmpty()}"
         if (head != null) {
-            val mark = div("tp-glyph")
-            when (head.state) {
-                AgentFacts.NEEDS_YOU -> mark.textContent = "◆"
-                AgentFacts.WORKING -> mark.appendChild(spinner())
-                else -> mark.textContent = "○"
-            }
-            p.state.appendChild(mark)
+            p.state.appendChild(stateGlyph(head.state))
             p.state.appendChild(span("tp-state-word", head.stateWord))
             p.state.appendChild(ageSpan("tp-agent-age", head.sinceMillis))
             // Where and since when, on the same line: the header's facts read as one sentence.
@@ -391,20 +385,33 @@ private fun buildMore(line: TpMore): HTMLElement {
 }
 
 /**
- * One agent: the state mark (spinner while it works, ◆ while it waits, ○ while idle), its title
+ * The mark of a state, the same in the header and on every agent: the spinner while it works, ◆
+ * while it needs the person, ◐ while it waits at its prompt on something it started, ○ while idle.
+ * Colour comes from the `tp-state-*` class around it; the glyph alone tells the states apart.
+ *
+ * @param state the state the screens draw ([AgentFacts.shownState]).
+ * @return the mark's element.
+ */
+private fun stateGlyph(state: String): HTMLElement {
+    val mark = div("tp-glyph")
+    when (state) {
+        AgentFacts.NEEDS_YOU -> mark.textContent = "◆"
+        AgentFacts.WORKING -> mark.appendChild(spinner())
+        AgentFacts.WAITING -> mark.textContent = "◐"
+        else -> mark.textContent = "○"
+    }
+    return mark
+}
+
+/**
+ * One agent: the state mark (see [stateGlyph]), its title
  * (two lines at most) with its age, and under it one activity line that never wraps, so the row is
  * as tall whatever the agent does.
  */
 @OptIn(DelicateCoroutinesApi::class)
 internal fun buildAgent(line: AgentLine): HTMLElement {
     val row = div("tp-agent tp-state-${line.state}")
-    val mark = div("tp-glyph")
-    when (line.state) {
-        AgentFacts.NEEDS_YOU -> mark.textContent = "◆"
-        AgentFacts.WORKING -> mark.appendChild(spinner())
-        else -> mark.textContent = "○"
-    }
-    row.appendChild(mark)
+    row.appendChild(stateGlyph(line.state))
     val text = div("tp-agent-text")
     val top = div("tp-agent-top")
     top.appendChild(span("tp-agent-title", line.title))

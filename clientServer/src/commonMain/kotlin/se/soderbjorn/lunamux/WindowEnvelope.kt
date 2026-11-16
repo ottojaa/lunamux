@@ -350,6 +350,23 @@ data class AgentSessionSummary(
     val status: String? = null,
     /** The sections this conversation wrote for the side panel (the `set_panel_section` tool), in the order first written. */
     val sections: List<PanelSection> = emptyList(),
+    /**
+     * What the conversation waits for once its turn has ended (a review, CI, the person), written
+     * with `set_status` and `keep: true` by the conversation itself or by its task's lead. Unlike
+     * [status] it outlives the turn: it stays until its writer clears it or the conversation ends.
+     */
+    val waitingFor: String? = null,
+    /** Whether [waitingFor] is the person: the row then asks for them as a question does. */
+    val waitingForYou: Boolean = false,
+    /** When [waitingFor] was written with its current text. */
+    val waitingSince: Long? = null,
+    /**
+     * Background shells the conversation left running while it sits at its prompt (Claude Code's
+     * `run_in_background`), read from the process tree. 0 while it works or has none.
+     */
+    val backgroundShells: Int = 0,
+    /** When the oldest of [backgroundShells] began, when known. */
+    val backgroundSince: Long? = null,
 )
 
 /**

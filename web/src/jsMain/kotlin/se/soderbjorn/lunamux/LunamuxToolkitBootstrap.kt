@@ -33,6 +33,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.w3c.dom.HTMLElement
 import se.soderbjorn.lunamux.client.viewmodel.AgentFacts
+import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel
 import se.soderbjorn.lunamux.client.viewmodel.Layout
 import se.soderbjorn.lunula.core.argbToCss
 import se.soderbjorn.lunula.web.confirmClosePane
@@ -994,10 +995,10 @@ private fun computeAgentStatusRows(): List<StatusLine> {
     return out
 }
 
-/** Fills a line's count element: "▲ M waiting" in the attention colour, then the spinner and "N working". */
+/** Fills a line's count element: "▲ M need you" in the attention colour, then the spinner and "N working". */
 private fun appendWorldStatusCounts(host: HTMLElement, working: Int, waiting: Int) {
     if (waiting > 0) {
-        val a = span("world-status-waiting", "\u25B2 $waiting waiting")
+        val a = span("world-status-waiting", "\u25B2 ${AgentsOverviewBackingViewModel.needYouText(waiting)}")
         host.appendChild(a)
         startPulse(a, WORLD_WAITING_PULSE_PERIOD_MS, WORLD_WAITING_PULSE_FLOOR)
     }

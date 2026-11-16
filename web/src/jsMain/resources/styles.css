@@ -3540,7 +3540,8 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
    headline under that line; a closed row is the one line. Brightness and colour follow the state: a
    working or needs-you row (`.ao-live`) has a bright name, a done row (`.ao-done`) a mid-grey one,
    and a closed one (`.ao-old`) in EARLIER is dim all over. The accent is for working, amber for
-   "needs you", a muted green for done; the accent also marks the selected row, red a failed open.
+   "needs you", a calm blue for waiting on something the agent started (a background shell, a
+   review, CI: nothing to do for the person), a muted green for done; the accent also marks the selected row, red a failed open.
    Every other text is a shade of the theme's text colour. Lifted above the pane modals so it opens
    over whatever is on screen. The colours below follow the active theme and fall back to the dark
    teal defaults. */
@@ -3557,6 +3558,9 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
        the accent, and done then reads like working. The text colour is mixed in so it stays
        readable on a light theme. */
     --ao-done: color-mix(in srgb, #5fd08f 80%, var(--ao-text));
+    /* Waiting on something the agent started: a fixed calm blue for the same reason, so it reads
+       apart from working (the accent) and from "needs you" (amber) in every theme. */
+    --ao-wait: color-mix(in srgb, #6ea8ff 78%, var(--ao-text));
     --ao-accent: var(--t-accent, #5fd4d0);
     --ao-warn: var(--t-warn, #f2c14e);
     --ao-error: var(--t-danger, #ff7b72);
@@ -3682,9 +3686,12 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-agents > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .ao-agents > .ao-m { overflow: visible; }
 .ao-agent-name { color: var(--ao-text); }
+/* Above the task's conversations that run in hidden tabs: they are set apart from the main one. */
+.ao-agents-cap { grid-column: 1 / -1; margin-top: 2px; font-size: 11px; letter-spacing: 0.06em; color: var(--ao-dim); }
 
 .ao-m { color: var(--ao-accent); user-select: none; }
 .ao-m-need { color: var(--ao-warn); }
+.ao-m-wait { color: var(--ao-wait); }
 .ao-m-done { color: var(--ao-done); }
 .ao-row > .ao-m { overflow: visible; }
 /* Brightness by state: live rows bright, done rows mid-grey, EARLIER rows dim. */
@@ -3697,6 +3704,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-sw { color: var(--ao-dim); }
 .ao-sw-work { color: var(--ao-accent); font-weight: 600; }
 .ao-sw-need { color: var(--ao-warn); font-weight: 600; }
+.ao-sw-wait { color: var(--ao-wait); font-weight: 600; }
 .ao-sw-done { color: var(--ao-done); }
 .ao-age { text-align: right; color: var(--ao-dim); }
 .ao-n-error { color: var(--ao-error); }
@@ -3928,6 +3936,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-state { display: flex; align-items: center; gap: 6px; margin-top: 8px; line-height: 20px; color: var(--ao-done); }
 .tp-state.tp-state-working { color: var(--ao-accent); }
 .tp-state.tp-state-needs_you { color: var(--ao-warn); background: none; }
+.tp-state.tp-state-waiting { color: var(--ao-wait); }
 .tp-state.tp-state-ended { color: var(--ao-dim); }
 .tp-state .tp-glyph { color: inherit; }
 .tp-state-word { font-weight: 600; }
@@ -3964,6 +3973,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-glyph { flex: none; width: 2ch; height: 20px; display: flex; align-items: center; justify-content: center; overflow: visible; color: var(--ao-dim); }
 .tp-state-working .tp-glyph { color: var(--ao-accent); }
 .tp-state-needs_you .tp-glyph { color: var(--ao-warn); }
+.tp-state-waiting .tp-glyph { color: var(--ao-wait); }
 .tp-agent-text { flex: 1; min-width: 0; }
 .tp-agent-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; line-height: 20px; }
 /* A row's height never depends on what the agent is doing: the title runs to two lines and then ends in

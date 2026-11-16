@@ -4,7 +4,7 @@
  * typing two or more characters swaps both for search results.
  *
  * A live row leads with a state mark (the turning glyph while it works, ◆ when it needs the person,
- * ✓ when done) and the name of its tab, with the plan's progress, a state word and the age on the
+ * ◐ while it waits at its prompt on something it started, nothing when done) and the name of its tab, with the plan's progress, a state word and the age on the
  * right. Under them come its description and its headline: the question, what it is doing, or the
  * last thing it said. NOW is grouped by repo. What a restart cut off has a section of its own, with
  * ⇧↵ to resume all of it. A closed row is one line: its title, the last thing
@@ -281,11 +281,12 @@ private fun renderList(state: AgentsOverviewBackingViewModel.State) {
     }
 }
 
-/** The counts at the end of the search line: who needs the person, who works, who is done. Zero counts are left out. */
+/** The counts at the end of the search line: who needs the person, who works, who waits on something, who is done. Zero counts are left out. */
 private fun renderTally(state: AgentsOverviewBackingViewModel.State) {
     val parts = listOfNotNull(
         ("ao-sw-need" to "◆ ${AgentsOverviewBackingViewModel.needYouText(state.needYouCount)}").takeIf { state.needYouCount > 0 },
         ("ao-sw-work" to "${state.workingCount} working").takeIf { state.workingCount > 0 },
+        ("ao-sw-wait" to "◐ ${state.onHoldCount} waiting").takeIf { state.onHoldCount > 0 },
         ("ao-sw-done" to "${state.doneCount} done").takeIf { state.doneCount > 0 },
     )
     syncChildren(tallyElement ?: return, parts, { it.second }) { (cls, text) -> span(cls, text) }
@@ -310,7 +311,7 @@ private fun highlighted(text: String, start: Int, length: Int): org.w3c.dom.Docu
 }
 
 /**
- * One row. Its class says how bright it is: `ao-live` while it works or needs the person, `ao-done`
+ * One row. Its class says how bright it is: `ao-live` while it works, waits or needs the person, `ao-done`
  * when done in NOW, `ao-old` when closed in EARLIER. A closed row is one line ([buildClosedCells]);
  * any other has its description and headline under the first line.
  */
@@ -318,7 +319,7 @@ private fun buildRow(item: RowItem): HTMLElement {
     val row = item.row
     val brightness = when {
         row.finished -> "ao-old"
-        row.working || row.needsYou -> "ao-live"
+        row.working || row.needsYou || row.onHold -> "ao-live"
         else -> "ao-done"
     }
     val el = div("ao-row $brightness" + if (item.selected) " ao-sel" else "")
@@ -340,11 +341,31 @@ private fun fillDetail(host: HTMLElement, row: Row) {
     if (row.matchInSnippet) host.appendChild(highlighted(row.detail, row.matchStart, row.matchLength)) else host.textContent = row.detail
 }
 
-/** The mark that opens a row: the turning glyph while it works, ◆ when it needs the person, nothing otherwise (the state word says done). */
+/**
+ * The mark that opens a row: the turning glyph while it works, ◆ when it needs the person, ◐ while it
+ * waits at its prompt on something it started, nothing otherwise (the state word says done).
+ */
 private fun stateMark(state: String): HTMLElement = when (state) {
     AgentFacts.WORKING -> span("ao-m").also { it.appendChild(spinner()) }
     AgentFacts.NEEDS_YOU -> span("ao-m ao-m-need", "◆")
+    AgentFacts.WAITING -> span("ao-m ao-m-wait", "◐")
     else -> span("ao-m")
+}
+
+/** The state a row's mark shows. */
+private fun markOf(row: Row): String = when {
+    row.needsYou -> AgentFacts.NEEDS_YOU
+    row.working -> AgentFacts.WORKING
+    row.onHold -> AgentFacts.WAITING
+    else -> AgentFacts.DONE
+}
+
+/** The class of a row's state word, which gives it its colour. */
+private fun wordClassOf(row: Row): String = when {
+    row.needsYou -> "ao-sw-need"
+    row.working -> "ao-sw-work"
+    row.onHold -> "ao-sw-wait"
+    else -> "ao-sw-done"
 }
 
 /**
@@ -353,7 +374,7 @@ private fun stateMark(state: String): HTMLElement = when (state) {
  * and the headline. A row outside a repo group shows where it runs in place of an absent progress.
  */
 private fun buildLiveCells(el: HTMLElement, row: Row, grouped: Boolean) {
-    el.appendChild(stateMark(if (row.needsYou) AgentFacts.NEEDS_YOU else if (row.working) AgentFacts.WORKING else AgentFacts.DONE))
+    el.appendChild(stateMark(markOf(row)))
     val name = span("ao-t")
     if (row.tabName != null) name.textContent = row.tabName else fillTitle(name, row)
     el.appendChild(name)
@@ -366,7 +387,7 @@ private fun buildLiveCells(el: HTMLElement, row: Row, grouped: Boolean) {
             it.appendChild(span("ao-count", progress.count))
         } else span("ao-w", if (grouped) "" else row.where ?: ""),
     )
-    el.appendChild(span("ao-sw " + if (row.needsYou) "ao-sw-need" else if (row.working) "ao-sw-work" else "ao-sw-done", row.stateWord))
+    el.appendChild(span("ao-sw " + wordClassOf(row), row.stateWord))
     el.appendChild(ageSpan("ao-age", row.sinceMillis))
     if (row.tabName != null) el.appendChild(div("ao-about").also { fillTitle(it, row) })
     if (row.detail.isNotEmpty()) el.appendChild(div("ao-n").also { fillDetail(it, row) })
@@ -388,10 +409,18 @@ private fun buildClosedCells(el: HTMLElement, row: Row) {
     el.appendChild(ageSpan("ao-age", row.sinceMillis))
 }
 
-/** The conversations of the selected task, one line each: its mark, its name with what it says after it, and its age. */
+/**
+ * The conversations of the selected task, one line each: its mark, its name with what it says after
+ * it, and its age. The ones in hidden tabs come last, under a caption that says they run in the
+ * background, so they are not taken for conversations the person can see in a tab.
+ */
 private fun buildAgents(row: Row): HTMLElement {
     val box = div("ao-agents")
-    row.agents.forEach { agent ->
+    row.agents.forEachIndexed { i, agent ->
+        if (agent.background && (i == 0 || !row.agents[i - 1].background)) {
+            val hidden = row.agents.count { it.background }
+            box.appendChild(div("ao-agents-cap").also { it.textContent = "in the background · $hidden" })
+        }
         box.appendChild(stateMark(agent.state))
         val text = span("ao-agent")
         text.appendChild(span("ao-agent-name", agent.title))

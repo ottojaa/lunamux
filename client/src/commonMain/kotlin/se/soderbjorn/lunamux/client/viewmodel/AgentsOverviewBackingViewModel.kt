@@ -123,13 +123,28 @@ class AgentsOverviewBackingViewModel(
     /** What ↵ does on a row. */
     enum class Enter { JUMP, SHOW_WAITING, OPEN, RESUME, NONE }
 
-    enum class Kind { NEEDS_YOU, WORKING, DONE, FINISHED }
+    /**
+     * How a row reads: it needs the person, works, waits at its prompt on something it started
+     * ([WAITING]: a background shell, a review, CI), rests in NOW, or is closed.
+     */
+    enum class Kind { NEEDS_YOU, WORKING, WAITING, DONE, FINISHED }
 
     /** How far a task's plan is: [fraction] 0 to 1 for the bar, [count] as "13/14". */
     data class Progress(val fraction: Double, val count: String)
 
-    /** One conversation of a task, listed under its row while the row is selected. */
-    data class Agent(val recordId: String, val title: String, val doing: String, val state: String, val sinceMillis: Long)
+    /**
+     * One conversation of a task, listed under its row while the row is selected. [state] is the
+     * one the screens draw ([AgentFacts.shownState]), [sinceMillis] how long it has been in it, and
+     * [background] whether it runs in a hidden tab (the view sets those apart from the main one).
+     */
+    data class Agent(
+        val recordId: String,
+        val title: String,
+        val doing: String,
+        val state: String,
+        val sinceMillis: Long,
+        val background: Boolean = false,
+    )
 
     data class FooterKey(val key: String, val label: String)
 
@@ -171,6 +186,8 @@ class AgentsOverviewBackingViewModel(
     ) {
         val needsYou: Boolean get() = kind == Kind.NEEDS_YOU
         val working: Boolean get() = kind == Kind.WORKING
+        /** At its prompt while something it started goes on: "waiting", in a calm colour. */
+        val onHold: Boolean get() = kind == Kind.WAITING
         val finished: Boolean get() = kind == Kind.FINISHED
         val matchInTitle: Boolean get() = matchLength > 0 && snippet == null
         val matchInSnippet: Boolean get() = matchLength > 0 && snippet != null
@@ -205,6 +222,8 @@ class AgentsOverviewBackingViewModel(
         val earlierHidden: Int = 0,
         val needYouCount: Int = 0,
         val workingCount: Int = 0,
+        /** Conversations at their prompt while something they started goes on ([AgentFacts.isWaitingOnSomething]). */
+        val onHoldCount: Int = 0,
         val doneCount: Int = 0,
         val selectedId: String? = null,
         val peek: Peek? = null,
@@ -458,6 +477,7 @@ class AgentsOverviewBackingViewModel(
         const val SHOW_WAITING_HINT = "open · a tab until you leave it"
         const val STATE_NEEDS_YOU = "needs you"
         const val STATE_WORKING = "working"
+        const val STATE_WAITING = "waiting"
         const val STATE_DONE = "done"
         const val STATE_FINISHED = "closed"
         const val MAIN_AGENT_TITLE = "Main conversation"
@@ -467,6 +487,9 @@ class AgentsOverviewBackingViewModel(
 
         /** The state word of a task whose main conversation waits on [n] of its agents. */
         fun agentsWorkingText(n: Int): String = if (n == 1) "1 agent working" else "$n agents working"
+
+        /** The state word of a task [n] of whose conversations wait at their prompt on something they started. */
+        fun waitingText(n: Int): String = if (n == 1) STATE_WAITING else "$n $STATE_WAITING"
     }
 }
 
@@ -595,6 +618,7 @@ internal fun buildOverview(inputs: OverviewInputs, ui: OverviewUi, now: Long): S
         earlierHidden = earlierAll.size - earlierShown.size,
         needYouCount = tally.waiting,
         workingCount = tally.working,
+        onHoldCount = tally.onHold,
         doneCount = nowRows.count { it.kind == Kind.DONE },
         selectedId = selectedId,
         peek = peek,
@@ -704,12 +728,15 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
     val id = "$TASK_PREFIX${t.id}"
     val working = u.sessions.filter(AgentFacts::isWorking)
     val waitingAll = u.sessions.filter(AgentFacts::isWaiting)
-    val waiting = waitingAll.minByOrNull { it.stateSince }
+    val waiting = waitingAll.minByOrNull(AgentFacts::shownSince)
+    // Conversations at their prompt while a shell, a review or CI they started goes on: not idle, and not asking.
+    val onHold = u.sessions.filter(AgentFacts::isWaitingOnSomething).sortedBy(AgentFacts::shownSince)
     val (kind, word) = when {
         waitingAll.size >= 2 -> Kind.NEEDS_YOU to AgentsOverviewBackingViewModel.needYouText(waitingAll.size)
         waiting != null -> Kind.NEEDS_YOU to AgentsOverviewBackingViewModel.STATE_NEEDS_YOU
         working.any { it.id == u.mainId } || (u.mainId == null && working.size == 1) -> Kind.WORKING to AgentsOverviewBackingViewModel.STATE_WORKING
         working.isNotEmpty() -> Kind.WORKING to AgentsOverviewBackingViewModel.agentsWorkingText(working.size)
+        onHold.isNotEmpty() && u.inNow -> Kind.WAITING to AgentsOverviewBackingViewModel.waitingText(onHold.size)
         !u.inNow -> Kind.FINISHED to endedWord(u.target ?: u.sessions.maxByOrNull(AgentFacts::activityOf))
         else -> Kind.DONE to AgentsOverviewBackingViewModel.STATE_DONE
     }
@@ -719,13 +746,13 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
         ?: t.status?.trim()?.takeIf { it.isNotEmpty() }
         ?: currentStepOf(blocks)
         ?: working.sortedByDescending { it.lastActivityAt ?: it.stateSince }.firstNotNullOfOrNull(::headlineOf)
+        ?: onHold.firstNotNullOfOrNull(::headlineOf)
         ?: (main ?: u.sessions.maxByOrNull(AgentFacts::activityOf))?.takeIf(AgentFacts::isLive)?.let(::headlineOf)
         ?: ""
     val target = u.target
     val single = u.sessions.singleOrNull()
-    val repo = t.repo ?: u.sessions.takeIf { s -> s.isNotEmpty() && s.none { it.repo == null } }?.map { it.repo }?.distinct()?.singleOrNull()
     val error = c.errorOf(id)
-    val where = repo ?: u.sessions.map(AgentFacts::folderOf).distinct().singleOrNull()
+    val where = whereOf(t, u.sessions, main)
     val cutOff = target?.takeIf { !u.inNow && u.enter == Enter.RESUME && stoppedByRestart(it, c.now) }
     return Row(
         id = id,
@@ -743,11 +770,24 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
         ),
         tabName = c.tabNameOf(main?.takeIf(AgentFacts::isLive) ?: target, t.title),
         progress = progressOf(blocks),
-        agents = u.sessions.filter(AgentFacts::isLive).takeIf { it.size > 1 || it.any { s -> s.id != u.mainId } }.orEmpty().sortedBy { it.id != u.mainId }.map { s ->
-            Agent(s.id, if (s.id == u.mainId) AgentsOverviewBackingViewModel.MAIN_AGENT_TITLE else AgentFacts.titleOf(s), headlineOf(s).orEmpty(), s.state, s.stateSince)
-        },
+        // The main conversation first, then the ones in tabs the person sees, then the hidden ones.
+        agents = u.sessions.filter(AgentFacts::isLive).takeIf { it.size > 1 || it.any { s -> s.id != u.mainId } }.orEmpty()
+            .sortedWith(compareBy({ it.id != u.mainId }, { it.id != u.mainId && it.background }))
+            .map { s ->
+                Agent(
+                    s.id, if (s.id == u.mainId) AgentsOverviewBackingViewModel.MAIN_AGENT_TITLE else AgentFacts.titleOf(s),
+                    headlineOf(s).orEmpty(), AgentFacts.shownState(s), AgentFacts.shownSince(s),
+                    background = s.id != u.mainId && s.background,
+                )
+            },
         ask = askOf(id, u.enter, own = if (target != null) target.id == u.mainId else u.resumeId != null, inTab = target?.inTab == true),
-        sinceMillis = if (!u.inNow) u.recency else u.since,
+        sinceMillis = when {
+            !u.inNow -> u.recency
+            // A wait is aged from when it began, which no session state change marks.
+            kind == Kind.NEEDS_YOU && waiting != null -> AgentFacts.shownSince(waiting)
+            kind == Kind.WAITING -> AgentFacts.shownSince(onHold.first())
+            else -> u.since
+        },
         enter = u.enter,
         recordId = target?.id ?: u.resumeId.takeIf { u.enter == Enter.RESUME },
         isLive = target != null && AgentFacts.isLive(target),
@@ -772,6 +812,7 @@ private fun sessionRow(s: AgentSessionSummary, earlier: Boolean, c: Ctx, taskTit
     val (kind, word) = when {
         needs -> Kind.NEEDS_YOU to AgentsOverviewBackingViewModel.STATE_NEEDS_YOU
         works -> Kind.WORKING to AgentsOverviewBackingViewModel.STATE_WORKING
+        AgentFacts.isWaitingOnSomething(s) -> Kind.WAITING to AgentsOverviewBackingViewModel.STATE_WAITING
         earlier -> Kind.FINISHED to endedWord(s)
         else -> Kind.DONE to AgentsOverviewBackingViewModel.STATE_DONE
     }
@@ -787,7 +828,7 @@ private fun sessionRow(s: AgentSessionSummary, earlier: Boolean, c: Ctx, taskTit
         extra = extraOf(folderNote(s, s.repo ?: AgentFacts.folderOf(s)), c.noteOf(s.id), AgentsOverviewBackingViewModel.NO_TRANSCRIPT_NOTE.takeIf { enter == Enter.NONE }, error),
         tabName = c.tabNameOf(s, title),
         ask = askOf(id, enter, own = false, inTab = s.inTab),
-        sinceMillis = sinceOf(s),
+        sinceMillis = AgentFacts.waitOf(s)?.sinceMillis ?: sinceOf(s),
         enter = enter,
         recordId = s.id,
         isLive = live,
@@ -850,12 +891,32 @@ private fun fieldLabel(field: String): String = when (field) {
  */
 internal fun headlineOf(s: AgentSessionSummary): String? {
     val now = s.nowLine?.trim()?.takeIf { it.isNotEmpty() }
+    // At its prompt while something it started goes on, or waiting on the person by its writer's word: what for.
+    AgentFacts.waitOf(s)?.let { return it.text }
     return when (s.state) {
         NEEDS_YOU -> (AgentSessionText.previewOf(s.question) ?: now)?.let(::quoted)
         WORKING -> s.status?.trim()?.takeIf { it.isNotEmpty() } ?: now
         else -> s.lastSaid?.trim()?.takeIf { it.isNotEmpty() }
     }
 }
+
+/**
+ * Where a task's row stands in NOW, the name its group is headed with: the task's own repo, else
+ * the repo of its main conversation, else the one repo all its conversations share, else the same
+ * for folders. The main conversation decides before a shared one is looked for, since a task's
+ * agents often run in worktrees or folders of their own while the main one sits where the work is.
+ *
+ * @param t the task.
+ * @param sessions its conversations.
+ * @param main its main conversation, when it has one.
+ * @return the repo or folder name, or null when nothing names one.
+ */
+private fun whereOf(t: AgentTask, sessions: List<AgentSessionSummary>, main: AgentSessionSummary?): String? =
+    t.repo
+        ?: main?.repo
+        ?: sessions.mapNotNull { it.repo }.distinct().singleOrNull()
+        ?: main?.let(AgentFacts::folderOf)
+        ?: sessions.mapNotNull(AgentFacts::folderOf).distinct().singleOrNull()
 
 /** [s]'s folder for the selected row, when it says more than the repo or folder name [where] the row already sits under (a worktree, a subfolder). */
 private fun folderNote(s: AgentSessionSummary?, where: String?): String? =

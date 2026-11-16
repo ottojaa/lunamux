@@ -77,8 +77,9 @@ class TaskPanelViewModel(
 
     /**
      * One row of the agents block: the session's [title], then one fixed [doing] line that is always
-     * there ("working", "needs you" or "idle" when the agent has nothing better to say), so a row's
-     * height never depends on what the agent is doing.
+     * there ("working", "needs you", what it waits for, or "idle" when the agent has nothing better
+     * to say), so a row's height never depends on what the agent is doing. [state] is the one the
+     * screens draw ([AgentFacts.shownState]) and [sinceMillis] how long it has been in it.
      */
     data class AgentLine(
         val title: String,
@@ -264,6 +265,7 @@ class TaskPanelViewModel(
                 state = when {
                     row.needsYou -> AgentFacts.NEEDS_YOU
                     row.working -> AgentFacts.WORKING
+                    row.onHold -> AgentFacts.WAITING
                     row.finished -> AgentFacts.ENDED
                     else -> AgentFacts.DONE
                 },
@@ -291,7 +293,8 @@ class TaskPanelViewModel(
                 open = ui.open,
                 visible = visible,
                 title = session?.let(AgentFacts::titleOf) ?: NO_SESSION_TITLE,
-                head = session?.let { headOf(it.conversationId, AgentFacts.startedOf(it), it.status, story?.folder) },
+                // What it waits for at its prompt says more than the line of the turn that started it.
+                head = session?.let { headOf(it.conversationId, AgentFacts.startedOf(it), AgentFacts.waitOf(it)?.text ?: it.status, story?.folder) },
                 story = story,
                 sections = sections,
                 setup = if (session != null) Setup(SETUP_SESSION, SETUP_NEW_TASK_PROMPT, compact = true)
@@ -366,15 +369,17 @@ class TaskPanelViewModel(
                     else -> MemberAction.SHOW
                 }
                 val said = s.status?.trim()?.takeIf { it.isNotEmpty() && AgentFacts.isWorking(s) } ?: AgentFacts.lineOf(s)
+                val state = AgentFacts.shownState(s)
                 AgentLine(
                     title = AgentFacts.titleOf(s),
-                    doing = when {
-                        AgentFacts.isWaiting(s) -> said ?: "needs you"
-                        AgentFacts.isWorking(s) -> said ?: "working"
+                    doing = when (state) {
+                        AgentFacts.NEEDS_YOU -> said ?: "needs you"
+                        AgentFacts.WORKING -> said ?: "working"
+                        AgentFacts.WAITING -> said ?: AgentFacts.WAITING
                         else -> "idle"
                     },
-                    state = s.state,
-                    sinceMillis = s.stateSince,
+                    state = state,
+                    sinceMillis = AgentFacts.shownSince(s),
                     action = action,
                     recordId = s.id,
                     hint = when (action) {

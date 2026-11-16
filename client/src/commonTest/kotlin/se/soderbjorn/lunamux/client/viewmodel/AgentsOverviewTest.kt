@@ -109,6 +109,87 @@ class AgentsOverviewTest {
     }
 
     @Test
+    fun aConversationAtItsPromptWithABackgroundShellReadsWaitingNotDone() {
+        layout(listed = listOf("a", "b"))
+        sessions(
+            session("a", state = "done").copy(backgroundShells = 1, backgroundSince = now - 12 * minute),
+            session("b", state = "done"),
+        )
+        vm.open()
+        val a = vm.state.now.first { it.id == "a" }
+        assertEquals(AgentsOverviewBackingViewModel.Kind.WAITING to "waiting", a.kind to a.stateWord)
+        assertEquals("1 background shell running", a.detail)
+        assertEquals(now - 12 * minute, a.sinceMillis, "aged from when the shell began")
+        assertEquals("done", vm.state.now.first { it.id == "b" }.stateWord, "nothing going on is still done")
+        assertEquals(1 to 1, vm.state.onHoldCount to vm.state.doneCount)
+        assertEquals(0, vm.state.needYouCount)
+    }
+
+    @Test
+    fun aTaskWhoseRunsWaitOnTheirReviewsReadsWaitingWithEachRunsLineAndAge() {
+        layout(listed = listOf("main"), background = listOf("r1", "r2"))
+        sessions(
+            session("main", state = "done", taskId = "g1").copy(backgroundShells = 1, backgroundSince = now - 3 * minute),
+            session("r1", state = "done", taskId = "g1", background = true)
+                .copy(waitingFor = "in review · round 1", waitingSince = now - 12 * minute),
+            session("r2", state = "done", taskId = "g1", background = true)
+                .copy(waitingFor = "in review · round 1", waitingSince = now - 5 * minute),
+        )
+        windowState.updateAgentTasks(listOf(task("main")))
+        vm.open()
+        val row = vm.state.now.single()
+        assertEquals(AgentsOverviewBackingViewModel.Kind.WAITING to "3 waiting", row.kind to row.stateWord)
+        assertEquals(now - 12 * minute, row.sinceMillis, "the longest wait")
+        assertEquals("in review · round 1", row.detail)
+        assertEquals(
+            listOf(
+                Triple("Main conversation", AgentFacts.WAITING, false),
+                Triple("session r1", AgentFacts.WAITING, true),
+                Triple("session r2", AgentFacts.WAITING, true),
+            ),
+            row.agents.map { Triple(it.title, it.state, it.background) },
+        )
+        assertEquals(listOf(now - 3 * minute, now - 12 * minute, now - 5 * minute), row.agents.map { it.sinceMillis })
+        assertEquals(listOf("1 background shell running", "in review · round 1", "in review · round 1"), row.agents.map { it.doing })
+    }
+
+    @Test
+    fun aKeptLineThatWaitsOnThePersonCountsAsNeedsYou() {
+        layout(listed = listOf("main"), background = listOf("r1"))
+        sessions(
+            session("main", state = "done", taskId = "g1"),
+            session("r1", state = "done", taskId = "g1", background = true).copy(waitingFor = "merge go", waitingForYou = true),
+        )
+        windowState.updateAgentTasks(listOf(task("main")))
+        vm.open()
+        val row = vm.state.now.single()
+        assertEquals("needs you" to "merge go", row.stateWord to row.detail)
+        assertEquals(1 to 0, vm.state.needYouCount to vm.state.onHoldCount)
+        assertEquals(AgentFacts.NEEDS_YOU, row.agents.single { it.title == "session r1" }.state)
+    }
+
+    @Test
+    fun aKeptLineGivesWayWhileItsConversationWorks() {
+        layout(listed = listOf("a"))
+        sessions(session("a", nowLine = "Fixing the findings").copy(waitingFor = "in review · round 1"))
+        vm.open()
+        val a = vm.state.now.single()
+        assertEquals("working" to "Fixing the findings", a.stateWord to a.detail)
+    }
+
+    @Test
+    fun aTaskWhoseAgentsRunElsewhereIsGroupedUnderItsMainConversationsRepo() {
+        layout(listed = listOf("main"), background = listOf("r1"))
+        sessions(
+            session("main", state = "done", taskId = "g1", repo = "upright"),
+            session("r1", state = "done", taskId = "g1", background = true).copy(repo = null, cwd = "/flow/runs/r1"),
+        )
+        windowState.updateAgentTasks(listOf(task("main").copy(repo = null)))
+        vm.open()
+        assertEquals("upright", vm.state.now.single().where)
+    }
+
+    @Test
     fun theRowThatNeedsYouIsSelectedAndShowsTheQuestion() {
         layout(listed = listOf("a", "b"))
         sessions(

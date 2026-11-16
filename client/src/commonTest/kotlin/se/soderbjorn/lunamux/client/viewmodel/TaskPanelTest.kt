@@ -92,6 +92,19 @@ class TaskPanelTest {
     }
 
     @Test
+    fun anAgentWaitingOnItsReviewSaysSoWithTheTimeSinceItBegan() {
+        layout(listed = listOf("main"), background = listOf("w1", "w2"))
+        fill(
+            session("w1", state = "done").copy(waitingFor = "in review · round 1", waitingSince = now - 12 * minute),
+            session("w2", state = "done"),
+        )
+        val agents = vm.state.agents.shown.associateBy { it.title }
+        val w1 = agents.getValue("session w1")
+        assertEquals(Triple(AgentFacts.WAITING, "in review · round 1", now - 12 * minute), Triple(w1.state, w1.doing, w1.sinceMillis))
+        assertEquals(AgentFacts.DONE to "idle", agents.getValue("session w2").let { it.state to it.doing }, "an agent with nothing going on is idle")
+    }
+
+    @Test
     fun everyRowKeepsItsTitleAndOneActivityLine() {
         layout(listed = listOf("main"), background = listOf("w1", "w2", "w3", "w4", "w5"))
         fill(

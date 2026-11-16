@@ -610,4 +610,91 @@ class AgentSessionTrackerTest {
         assertNull(status("helper"))
         assertTrue(runCatching { t.setStatus("nowhere", null, "x") }.isFailure)
     }
+
+    @Test
+    fun aKeptStatusOutlivesTheTurnAndGoesOnlyWhenClearedOrEnded() {
+        val t = tracker()
+        val p = pane("s1", agent = "claude")
+        t.onHook(p, event("UserPromptSubmit", "run", "prompt" to "build it"), pid = 100)
+        fun row() = t.summaries.value.single { it.conversationId == "run" }
+        t.setStatus("s1", null, "in review · round 1", keep = true)
+        t.onHook(p, event("Stop", "run"), pid = 100)
+        assertEquals(Triple("in review · round 1", false, 1_000L), Triple(row().waitingFor, row().waitingForYou, row().waitingSince))
+        now = 5_000L
+        t.setStatus("s1", null, "in review · round 1", keep = true)
+        assertEquals(1_000L, row().waitingSince, "the same words keep their time, so the age is the time spent waiting")
+        t.onHook(p, event("UserPromptSubmit", "run", "prompt" to "fix the findings"), pid = 100)
+        assertEquals("in review · round 1", row().waitingFor, "a prompt does not clear it")
+        t.setStatus("s1", null, "in review · round 2", keep = true, needsYou = true)
+        assertEquals(Triple("in review · round 2", true, 5_000L), Triple(row().waitingFor, row().waitingForYou, row().waitingSince))
+        t.setStatus("s1", null, " ", keep = true)
+        assertNull(row().waitingFor, "its writer clears it")
+        t.setStatus("s1", null, "CI on #482", keep = true)
+        t.onHook(p, event("SessionEnd", "run", "reason" to "other"), pid = 100)
+        assertNull(row().waitingFor, "it goes with the conversation")
+    }
+
+    @Test
+    fun shellsLeftRunningAtThePromptAreCountedWhileItRestsThere() {
+        var running = BackgroundShells(1, 500L)
+        val t = AgentSessionTracker(
+            repo, gitInfo = { GitInfo() }, clock = { now }, newId = { "r${++nextId}" },
+            shellsUnder = { pid -> if (pid == 100L) running else BackgroundShells.NONE },
+        ).also { it.start() }
+        val p = pane("s1", agent = "claude", state = "working")
+        fun row() = t.summaries.value.single { it.conversationId == "run" }
+        t.onHook(p, event("UserPromptSubmit", "run", "prompt" to "start the review"), pid = 100)
+        t.onPoll(listOf(p))
+        assertEquals(0, row().backgroundShells, "a shell of a turn that works is not background work")
+        t.onHook(p, event("Stop", "run"), pid = 100)
+        t.onPoll(listOf(pane("s1", agent = "claude")))
+        assertEquals(1 to 500L, row().backgroundShells to row().backgroundSince)
+        running = BackgroundShells.NONE
+        t.onPoll(listOf(pane("s1", agent = "claude")))
+        assertEquals(0, row().backgroundShells, "the shell has finished")
+    }
+
+    @Test
+    fun withoutItsProcessTheFooterSaysHowManyShellsRun() {
+        val t = tracker()
+        val footer = "❯\n────\n  ⏵⏵ auto mode on · 2 shells · esc to interrupt · ← 11 agents"
+        t.onHook(pane("s1", agent = "claude"), event("UserPromptSubmit", "run", "prompt" to "go"))
+        t.onHook(pane("s1", agent = "claude"), event("Stop", "run"))
+        fun row() = t.summaries.value.single { it.conversationId == "run" }
+        t.onPoll(listOf(pane("s1", agent = "claude", screen = footer)))
+        assertEquals(2 to 1_000L, row().backgroundShells to row().backgroundSince)
+        now = 4_000L
+        t.onPoll(listOf(pane("s1", agent = "claude", screen = footer)))
+        assertEquals(1_000L, row().backgroundSince, "counted from the first poll that saw it")
+        t.onPoll(listOf(pane("s1", agent = "claude", screen = "❯\n  ⏵⏵ auto mode on")))
+        assertEquals(0, row().backgroundShells)
+    }
+
+    @Test
+    fun theFooterCountIsReadFromTheLastLinesOnly() {
+        assertEquals(1, footerShellsOf("x\n  ⏵⏵ auto mode on · 1 shell · esc to interrupt\n\n"))
+        assertEquals(3, footerShellsOf("x\n  3 background shells"))
+        assertEquals(0, footerShellsOf("I started 4 shells for you\n❯\n  ⏵⏵ auto mode on · ← 11 agents"))
+        assertEquals(0, footerShellsOf(null))
+    }
+
+    @Test
+    fun aClaudeShellUnderTheProcessIsFoundWithItsStartTime() {
+        val marker = "sleep 30; true # $CLAUDE_SHELL_MARK" + "test.sh"
+        val parent = ProcessBuilder("/bin/sh", "-c", "/bin/sh -c '$marker' & sleep 30 & wait").start()
+        try {
+            val deadline = System.currentTimeMillis() + 5_000
+            var found = backgroundShellsOf(parent.pid())
+            while (found.count == 0 && System.currentTimeMillis() < deadline) {
+                Thread.sleep(50)
+                found = backgroundShellsOf(parent.pid())
+            }
+            assertEquals(1, found.count, "only the shell that carries the mark counts, not the plain sleep beside it")
+            assertNotNull(found.since)
+        } finally {
+            parent.descendants().forEach { it.destroyForcibly() }
+            parent.destroyForcibly()
+        }
+        assertEquals(BackgroundShells.NONE, backgroundShellsOf(Long.MAX_VALUE / 2))
+    }
 }

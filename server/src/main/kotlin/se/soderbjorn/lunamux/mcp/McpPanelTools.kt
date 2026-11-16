@@ -200,7 +200,15 @@ fun registerMcpPanelTools(store: TaskPanelStore, tracker: AgentSessionTracker) {
             "failed resume on a copy of the data\"). It shows as your line in the agents overview and in the task panel " +
             "while you work, in place of the name of your last tool call, and it goes when the person next prompts you. " +
             "Call it when you start a distinct piece of work, not on every step. Line breaks become spaces and the text " +
-            "is cut at 120 characters. An empty text clears it. A task's own one-line status is set_task_status.",
+            "is cut at 120 characters. An empty text clears it. A task's own one-line status is set_task_status.\n\n" +
+            "With keep: true it says instead what the conversation waits for once its turn has ended, for example " +
+            "\"in review · round 2\" or \"CI on #482\". The row then reads \"waiting\" in a calm colour instead of idle, " +
+            "with this line and the time since it was written (do not put a time in the text). It is not cleared by the " +
+            "next prompt: clear it with an empty text and keep: true, or it goes when the conversation ends. Pass " +
+            "needsYou: true when what it waits for is the person (\"merge go\"): the row then asks for them " +
+            "like a question does. A task's lead may write it for another conversation of the task by passing that " +
+            "conversation's sessionId. A conversation that left a background shell running at its prompt reads " +
+            "\"waiting\" by itself; this line says what for.",
         inputSchema = schemaObject(
             "text" to schemaString("The status line; empty clears it."),
             "sessionId" to schemaString("Your pane: \$LUNAMUX_SESSION_ID from your environment. Defaults to the caller's."),
@@ -208,14 +216,19 @@ fun registerMcpPanelTools(store: TaskPanelStore, tracker: AgentSessionTracker) {
                 "Your own conversation id (\$CLAUDE_CODE_SESSION_ID). Pass it when you are an agent started inside another " +
                     "conversation's pane, or the status lands on that conversation.",
             ),
+            "keep" to schemaBool("True: what the conversation waits for after its turn; it stays until cleared. Default false: this turn only."),
+            "needsYou" to schemaBool("With keep: true, whether what it waits for is the person. Default false."),
             required = listOf("text"),
         ),
     ) { ctx, args ->
         val text = (args["text"] as? JsonPrimitive)?.contentOrNull ?: throw McpArgumentException("'text' must be a string")
         val pane = (args["sessionId"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() } ?: ctx.callerSessionId
         val conversation = (args["conversationId"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
-        val kept = taskCall { tracker.setStatus(pane, conversation, text) }
-        McpToolResult.json(buildJsonObject { put("status", kept) })
+        val keep = args.optBool("keep") == true
+        val needsYou = args.optBool("needsYou") == true
+        if (needsYou && !keep) throw McpArgumentException("'needsYou' goes with 'keep: true': a line for this turn only cannot wait for the person.")
+        val written = taskCall { tracker.setStatus(pane, conversation, text, keep = keep, needsYou = needsYou) }
+        McpToolResult.json(buildJsonObject { put("status", written); put("keep", keep) })
     }
 
     val sessionIdSchema = schemaString("Your pane: \$LUNAMUX_SESSION_ID from your environment. Defaults to the caller's.")
