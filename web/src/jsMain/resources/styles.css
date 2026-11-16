@@ -4022,6 +4022,8 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
    longest kind ("decision", 8 characters at 11px) and never wraps; the label runs to two lines
    and then ends in an ellipsis; the kind and the time stay level with its first line. */
 .tp-link-row { display: grid; grid-template-columns: 7.5ch minmax(0, 1fr) auto; gap: 0 10px; align-items: start; padding-top: 4px; padding-bottom: 4px; }
+/* No link in the list has a kind of its own: no kind column, the words start at the edge. */
+.tp-link-row.tp-link-row-plain { grid-template-columns: minmax(0, 1fr) auto; }
 .tp-kind { color: var(--ao-dim); font-size: 11px; line-height: 17.4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tp-link-title { color: var(--ao-accent); }
 .tp-link-row:hover .tp-link-title, .tp-link-row:focus-visible .tp-link-title { text-decoration: underline; }

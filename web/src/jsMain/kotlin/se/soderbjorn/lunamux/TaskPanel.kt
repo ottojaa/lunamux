@@ -154,7 +154,8 @@ private data class TpMuted(val text: String) : TpLine { override val key get() =
 private data class TpAgent(val line: AgentLine) : TpLine { override val key get() = "a:${line.recordId}" }
 private data class TpMore(val section: Section, val more: Int) : TpLine { override val key get() = "more:${more > 0}" }
 private data class TpProgress(val view: TaskPanelViewModel.ProgressView) : TpLine { override val key get() = "progress" }
-private data class TpLink(val index: Int, val link: LinkRow) : TpLine { override val key get() = "l:$index" }
+/** One link; [kinds] says whether any link in the list has a kind of its own, so the kind column is drawn. */
+private data class TpLink(val index: Int, val link: LinkRow, val kinds: Boolean) : TpLine { override val key get() = "l:$index:$kinds" }
 private data class TpActivity(val index: Int, val item: TaskPanelViewModel.ActivityRow) : TpLine { override val key get() = "t:$index" }
 private data class TpTurn(val index: Int, val turn: TaskPanelViewModel.TurnRow) : TpLine { override val key get() = "u:$index" }
 private data class TpWork(val text: String) : TpLine { override val key get() = "w:$text" }
@@ -321,7 +322,7 @@ private fun progressLines(progress: TaskPanelViewModel.ProgressView): List<TpLin
     else listOf(TpTitle("Plan"), TpProgress(progress))
 
 private fun linkLines(block: TaskPanelViewModel.Block<LinkRow>): List<TpLine> = listOf<TpLine>(TpTitle("Links")) +
-    block.shown.mapIndexed { i, l -> TpLink(i, l) } +
+    block.shown.any { it.kind != TaskLink.DEFAULT_KIND }.let { kinds -> block.shown.mapIndexed { i, l -> TpLink(i, l, kinds) } } +
     listOfNotNull(moreLine(Section.LINKS, block))
 
 /** The activity entries, each day's under a heading of its own. */
@@ -335,7 +336,7 @@ private fun buildLine(line: TpLine): HTMLElement = when (line) {
     is TpAgent -> buildAgent(line.line)
     is TpMore -> buildMore(line)
     is TpProgress -> buildProgress(line.view)
-    is TpLink -> buildLink(line.link)
+    is TpLink -> buildLink(line.link, line.kinds)
     is TpDay -> div("tp-day").also { it.textContent = line.day }
     is TpWork -> div("tp-muted").also { it.textContent = line.text }
     is TpTurn -> div("tp-tl").also {
@@ -494,11 +495,16 @@ private fun buildStep(state: String, text: String): HTMLElement {
 /**
  * A link row: its kind, its words in the accent colour with ↗ (underlined on hover) and its clock
  * time. The address passes [TaskPanelViewModel.linkTarget] when the row is pressed.
+ *
+ * @param link the link.
+ * @param kinds whether any link in the list has a kind of its own: without one the kind column is
+ *   left out, so the words start at the block's edge instead of after an empty column.
+ * @return the row.
  */
-private fun buildLink(link: LinkRow): HTMLElement {
-    val row = div("tp-link-row")
+private fun buildLink(link: LinkRow, kinds: Boolean): HTMLElement {
+    val row = div("tp-link-row" + if (kinds) "" else " tp-link-row-plain")
     // The default kind says nothing; only a kind the writer chose is worth its column.
-    row.appendChild(span("tp-kind", link.kind.takeIf { it != TaskLink.DEFAULT_KIND }.orEmpty()))
+    if (kinds) row.appendChild(span("tp-kind", link.kind.takeIf { it != TaskLink.DEFAULT_KIND }.orEmpty()))
     row.appendChild(span("tp-link-title", link.title).also { it.appendChild(span("tp-link-arrow", " ↗")) })
     row.appendChild(span("tp-link-time", link.time))
     row.setAttribute("role", "link")

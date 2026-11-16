@@ -367,7 +367,8 @@ Four blocks, in this order, each headed by its name alone:
    item with its time at the left; a long item wraps under itself. Newest first.
 4. **Links**: newest first, each with the writer's kind word when one was given (up to 8
    characters), its label as a link (accent colour, ↗, underlined on hover) and its time. Links
-   without a time come after the dated ones and show none. Pressing one opens it.
+   without a time come after the dated ones and show none. When no link in the list has a kind,
+   the kind column is left out and the labels start at the block's edge. Pressing one opens it.
 
 **Sections agents write.** Above everything else the panel shows the sections the agents in the tab
 wrote with `set_panel_section`: a heading, when it was written, and a short body in simple formatting
