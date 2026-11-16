@@ -265,6 +265,7 @@ class TaskPanelViewModel(
                 state = when {
                     row.needsYou -> AgentFacts.NEEDS_YOU
                     row.working -> AgentFacts.WORKING
+                    row.paused -> AgentFacts.PAUSED
                     row.onHold -> AgentFacts.WAITING
                     row.finished -> AgentFacts.ENDED
                     else -> AgentFacts.DONE

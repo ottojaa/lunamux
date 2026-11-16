@@ -92,6 +92,16 @@ class TaskPanelTest {
     }
 
     @Test
+    fun aPausedTaskHeadsItsPanelAsPausedWithTheReason() {
+        layout(listed = listOf("main"), background = listOf("w1"))
+        windowState.updateAgentSessions(listOf(main().copy(state = "done"), session("w1", state = "done")), true)
+        windowState.updateAgentTasks(listOf(task("Paused by the owner: laptop congested").copy(pausedAtMillis = now - 52 * minute)))
+        val head = vm.state.head!!
+        assertEquals(Triple(AgentFacts.PAUSED, "paused", now - 52 * minute), Triple(head.state, head.stateWord, head.sinceMillis))
+        assertEquals("Paused by the owner: laptop congested", head.headline)
+    }
+
+    @Test
     fun anAgentWaitingOnItsReviewSaysSoWithTheTimeSinceItBegan() {
         layout(listed = listOf("main"), background = listOf("w1", "w2"))
         fill(

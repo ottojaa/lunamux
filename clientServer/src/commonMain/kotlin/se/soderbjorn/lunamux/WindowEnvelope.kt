@@ -568,4 +568,12 @@ data class AgentTask(
     val statusAtMillis: Long? = null,
     val questionWaits: Boolean = false,
     val startedAtMillis: Long? = null,
-)
+    /**
+     * When the work was paused on purpose (`set_task_status` with `paused`); null while it is not.
+     * A paused task reads "paused" rather than idle, and stays among the live rows.
+     */
+    val pausedAtMillis: Long? = null,
+) {
+    /** Whether the work is paused on purpose; see [pausedAtMillis]. */
+    val paused: Boolean get() = pausedAtMillis != null
+}

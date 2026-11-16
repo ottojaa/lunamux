@@ -31,11 +31,11 @@ NOW is **grouped by repo** (the task's repo, else the folder the conversation ru
 changes. A task's group is its own repo, else its main conversation's, else the one all its
 conversations share: a task whose agents run in worktrees or folders of their own still sits under
 the repo its main conversation works in. The search line ends in a tally: "◆ 1 needs you · 2 working ·
-◐ 2 waiting · 2 done".
+◐ 2 waiting · ‖ 1 paused · 2 done".
 
 A **closed row** in EARLIER is one line: the title, the last thing the conversation said, where it
 ran, "closed" and the age. Progress and folder are hidden when the panel is narrower than 700px. A
-conversation is **working**, **needs you**, **waiting** or **done**; Lunamux never guesses from the
+conversation is **working**, **needs you**, **waiting** or **done**, and a task can be **paused**; Lunamux never guesses from the
 last words of a reply that the agent is asking.
 
 | Word | When |
@@ -44,6 +44,7 @@ last words of a reply that the agent is asking.
 | **working** (cyan, with the spinner) | the conversation itself works (for a task: its main conversation) |
 | **1 agent working** / **N agents working** | the task's main conversation waits on its agents |
 | **waiting** (calm blue, ◐) | a conversation sits at its prompt while something it started goes on: a background shell it left running, or what it said it waits for with `set_status` and `keep` (a review, CI). "N waiting" for a task with more. Nothing for the person to do |
+| **paused** (muted, ‖) | a task whose work was stopped on purpose (`set_task_status` with `paused: true`): the status says why, the age counts from when the pause began, and the row stays in NOW even with its main conversation closed. A conversation that works or asks still says so; the pause only explains why nothing does |
 | **done** (muted green) | the row is in NOW and nothing works or waits |
 | **closed** (dim) | the row is in EARLIER and nothing works or waits |
 
@@ -272,8 +273,8 @@ Seven MCP tools are registered. All but `list_tasks` change tasks and need a `re
 | `remove_from_task` | `sessionIds` | Takes sessions out, so each is a task of its own again. Returns where each one ended up. |
 | `rename_task` | `taskId`, `title` | Renames a task made through the tools. A file's task is named by its file, so renaming it is refused. |
 | `set_task_lead` | `taskId`, exactly one of `sessionId` or `conversationId` | Names the conversation that speaks for the task. A `sessionId` (the pane's `$LUNAMUX_SESSION_ID`) becomes the conversation running in it now; a `conversationId` is the agent's own id, which a closed conversation still has. `create_task` already names the conversation of the session that made the task. Returns `taskId` and `mainConversation`. |
-| `set_task_status` | `taskId`, `text`, `questionWaits?` | Sets the one-line status; empty clears it. Newlines become spaces, the ends are trimmed, at most 120 characters. `questionWaits: true` keeps the row among the live ones while its main conversation is closed; each call sets it afresh, and it survives a restart. |
-| `list_tasks` | none | Lists every task, including one nothing is in yet, with its sessions and their states, `mainConversation` (`{conversationId, sessionId?}`, the `sessionId` missing while it is closed), status, `questionWaits` and start. |
+| `set_task_status` | `taskId`, `text`, `questionWaits?`, `paused?` | Sets the one-line status; empty clears it. Newlines become spaces, the ends are trimmed, at most 120 characters. `questionWaits: true` keeps the row among the live ones while its main conversation is closed; each call sets it afresh, and it survives a restart. `paused: true` says the work was stopped on purpose: the row reads **paused** with the status as the reason. Each call sets it afresh too (an empty text does not clear it), a repeated pause keeps the time it began, and it survives a restart. |
+| `list_tasks` | none | Lists every task, including one nothing is in yet, with its sessions and their states, `mainConversation` (`{conversationId, sessionId?}`, the `sessionId` missing while it is closed), status, `questionWaits`, `paused` and start. |
 
 `sessionIds` are terminal session ids: the `$LUNAMUX_SESSION_ID` of the pane a session runs in. An
 agent's own is in its environment, and `list_sessions` shows the others. `create_window` and
@@ -390,7 +391,7 @@ line says how they can.
 
 The header holds facts: the name, then one line with the state and its age, the folder and since
 when. A conversation whose turn has ended reads "idle" (the overview's row says "done"), or
-"waiting" with ◐ while something it started goes on. Under it comes a status only when an agent set
+"waiting" with ◐ while something it started goes on, or "paused" with ‖ for a paused task. Under it comes a status only when an agent set
 one (the task's status, or `set_status`; for a waiting conversation, what it waits for), labelled
 "status".
 What the agent last said is not shown; the terminal beside the panel shows it. A block with nothing

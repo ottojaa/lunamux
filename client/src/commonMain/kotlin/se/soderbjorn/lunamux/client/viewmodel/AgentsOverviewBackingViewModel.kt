@@ -124,10 +124,11 @@ class AgentsOverviewBackingViewModel(
     enum class Enter { JUMP, SHOW_WAITING, OPEN, RESUME, NONE }
 
     /**
-     * How a row reads: it needs the person, works, waits at its prompt on something it started
-     * ([WAITING]: a background shell, a review, CI), rests in NOW, or is closed.
+     * How a row reads: it needs the person, works, is paused on purpose ([PAUSED]: a task whose
+     * status says so), waits at its prompt on something it started ([WAITING]: a background shell,
+     * a review, CI), rests in NOW, or is closed.
      */
-    enum class Kind { NEEDS_YOU, WORKING, WAITING, DONE, FINISHED }
+    enum class Kind { NEEDS_YOU, WORKING, PAUSED, WAITING, DONE, FINISHED }
 
     /** How far a task's plan is: [fraction] 0 to 1 for the bar, [count] as "13/14". */
     data class Progress(val fraction: Double, val count: String)
@@ -188,6 +189,8 @@ class AgentsOverviewBackingViewModel(
         val working: Boolean get() = kind == Kind.WORKING
         /** At its prompt while something it started goes on: "waiting", in a calm colour. */
         val onHold: Boolean get() = kind == Kind.WAITING
+        /** A task whose work was stopped on purpose: "paused", quiet, until its status says otherwise. */
+        val paused: Boolean get() = kind == Kind.PAUSED
         val finished: Boolean get() = kind == Kind.FINISHED
         /** The search hit is in the name of the tab the row leads with, [tabName]. */
         val matchInTab: Boolean get() = matchLength > 0 && this.field == "tab" && tabName != null
@@ -226,6 +229,8 @@ class AgentsOverviewBackingViewModel(
         val workingCount: Int = 0,
         /** Conversations at their prompt while something they started goes on ([AgentFacts.isWaitingOnSomething]). */
         val onHoldCount: Int = 0,
+        /** Tasks in NOW paused on purpose ([AgentTask.paused]). */
+        val pausedCount: Int = 0,
         val doneCount: Int = 0,
         val selectedId: String? = null,
         val peek: Peek? = null,
@@ -480,6 +485,7 @@ class AgentsOverviewBackingViewModel(
         const val STATE_NEEDS_YOU = "needs you"
         const val STATE_WORKING = "working"
         const val STATE_WAITING = "waiting"
+        const val STATE_PAUSED = "paused"
         const val STATE_DONE = "done"
         const val STATE_FINISHED = "closed"
         const val MAIN_AGENT_TITLE = "Main conversation"
@@ -621,6 +627,7 @@ internal fun buildOverview(inputs: OverviewInputs, ui: OverviewUi, now: Long): S
         needYouCount = tally.waiting,
         workingCount = tally.working,
         onHoldCount = tally.onHold,
+        pausedCount = nowRows.count { it.kind == Kind.PAUSED },
         doneCount = nowRows.count { it.kind == Kind.DONE },
         selectedId = selectedId,
         peek = peek,
@@ -665,7 +672,8 @@ private fun unitOf(t: AgentTask, byKey: Map<String, AgentSessionSummary>, hosted
     val sessions = hosted.sortedWith(compareBy({ AgentFacts.startedOf(it) }, { it.id })) + listOfNotNull(own)
     val mainLive = main != null && AgentFacts.isLive(main)
     val questionWaits = t.questionWaits && !mainLive && t.mainConversation != null
-    if (sessions.isEmpty() && !t.hasOpen && !questionWaits) return null
+    // Paused work is unfinished: its row stays in view like a waiting question's.
+    if (sessions.isEmpty() && !t.hasOpen && !questionWaits && !t.paused) return null
     val rank = when {
         sessions.any { it.state == NEEDS_YOU } -> 0
         sessions.any { it.state == WORKING } -> 1
@@ -681,7 +689,7 @@ private fun unitOf(t: AgentTask, byKey: Map<String, AgentSessionSummary>, hosted
     val recency = sessions.maxOfOrNull { maxOf(it.stateSince, AgentFacts.activityOf(it)) } ?: t.startedAtMillis ?: 0L
     val resumeId = t.mainConversation.takeIf { main == null }
     val (enter, target) = enterOf(t, main, mainLive, sessions, open, resumeId)
-    return TaskUnit(t, sessions, since, recency, open.isNotEmpty() || mainLive || questionWaits, started, enter, target, main?.id, resumeId)
+    return TaskUnit(t, sessions, since, recency, open.isNotEmpty() || mainLive || questionWaits || t.paused, started, enter, target, main?.id, resumeId)
 }
 
 /** Decides what ↵ does on a task's row and which of its conversations that targets. */
@@ -738,6 +746,8 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
         waiting != null -> Kind.NEEDS_YOU to AgentsOverviewBackingViewModel.STATE_NEEDS_YOU
         working.any { it.id == u.mainId } || (u.mainId == null && working.size == 1) -> Kind.WORKING to AgentsOverviewBackingViewModel.STATE_WORKING
         working.isNotEmpty() -> Kind.WORKING to AgentsOverviewBackingViewModel.agentsWorkingText(working.size)
+        // What the sessions do says what is true; the pause says why nothing does.
+        t.paused -> Kind.PAUSED to AgentsOverviewBackingViewModel.STATE_PAUSED
         onHold.isNotEmpty() && u.inNow -> Kind.WAITING to AgentsOverviewBackingViewModel.waitingText(onHold.size)
         !u.inNow -> Kind.FINISHED to endedWord(u.target ?: u.sessions.maxByOrNull(AgentFacts::activityOf))
         else -> Kind.DONE to AgentsOverviewBackingViewModel.STATE_DONE
@@ -788,6 +798,7 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
             // A wait is aged from when it began, which no session state change marks.
             kind == Kind.NEEDS_YOU && waiting != null -> AgentFacts.shownSince(waiting)
             kind == Kind.WAITING -> AgentFacts.shownSince(onHold.first())
+            kind == Kind.PAUSED -> t.pausedAtMillis ?: u.since
             else -> u.since
         },
         enter = u.enter,

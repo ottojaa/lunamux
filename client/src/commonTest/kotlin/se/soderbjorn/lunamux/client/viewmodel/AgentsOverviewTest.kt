@@ -456,6 +456,31 @@ class AgentsOverviewTest {
     }
 
     @Test
+    fun aPausedTaskSaysSoWithItsReasonStaysInNowAndGivesWayToWorkThatRuns() {
+        layout(listed = listOf("main"), background = listOf("r3"))
+        val pausedAt = now - 52 * minute
+        sessions(session("main", taskId = "g1", state = "done"), session("r3", taskId = "g1", state = "done", background = true))
+        windowState.updateAgentTasks(listOf(task("main", status = "Paused by the owner: laptop congested").copy(pausedAtMillis = pausedAt)))
+        vm.open()
+        val row = taskRow()
+        assertEquals(AgentsOverviewBackingViewModel.Kind.PAUSED to "paused", row.kind to row.stateWord)
+        assertEquals("Paused by the owner: laptop congested", row.detail)
+        assertEquals(pausedAt, row.sinceMillis, "aged from when the pause began")
+        assertEquals(1, vm.state.pausedCount)
+        assertEquals(0, vm.state.doneCount, "paused is not done")
+
+        // Closed, it stays among the live rows: the work is not over.
+        sessions(session("main", taskId = "g1", state = "ended", endedAt = now - minute))
+        assertTrue(vm.state.now.any { it.id == "task:g1" && it.paused })
+
+        // A conversation at work says what is true, whatever the flag says.
+        sessions(session("main", taskId = "g1", state = "working"))
+        assertEquals(AgentsOverviewBackingViewModel.Kind.WORKING, taskRow().kind)
+        sessions(session("main", taskId = "g1", state = "needs_you", question = "Resume run 3?"))
+        assertEquals(AgentsOverviewBackingViewModel.Kind.NEEDS_YOU, taskRow().kind)
+    }
+
+    @Test
     fun aTaskWhoseMainConversationIsOnlyAStoredIdResumesThatIdAndOneWithNothingStartsItsOpenCommand() = runNow {
         layout(listed = listOf("a"))
         sessions(session("a", state = "done"))

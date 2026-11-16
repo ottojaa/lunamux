@@ -40,6 +40,7 @@ data class TaskListing(
     val ownSessionId: String? = null,
     val status: String? = null,
     val questionWaits: Boolean = false,
+    val paused: Boolean = false,
 )
 
 /** Decides each session's task and carries the operations that change it. */
@@ -145,16 +146,19 @@ class TaskIndex(
     /**
      * Set or clear a task's one-line status. [questionWaits] goes with it (a later call that omits it
      * takes it back): the overview keeps a closed main conversation's row in view while it is set.
+     * [paused] is set afresh by each call too, but not cleared by an empty text: the work can be
+     * paused with nothing to say. A pause keeps the time it began while calls repeat it.
      */
-    fun setStatus(taskId: String, text: String, questionWaits: Boolean = false): String? {
+    fun setStatus(taskId: String, text: String, questionWaits: Boolean = false, paused: Boolean = false): String? {
         requireTask(taskId)
         val clean = text.replace(Regex("\\s*[\\r\\n]+\\s*"), " ").trim().take(STATUS_MAX).trim().ifEmpty { null }
         synchronized(lock) {
             val now = clock()
             ensureStarted(taskId)
-            repo.setTaskStatus(taskId, clean, now, questionWaits)
+            val pausedAt = if (paused) tasks[taskId]?.pausedAt ?: now else null
+            repo.setTaskStatus(taskId, clean, now, questionWaits, pausedAt)
             tasks = tasks + (taskId to tasks.getValue(taskId).copy(
-                status = clean, statusAt = clean?.let { now }, questionWaits = clean != null && questionWaits,
+                status = clean, statusAt = clean?.let { now }, questionWaits = clean != null && questionWaits, pausedAt = pausedAt,
             ))
         }
         recompute()
@@ -239,7 +243,7 @@ class TaskIndex(
             }
         fun listing(id: String, title: String, source: String): TaskListing {
             val row = synchronized(lock) { tasks[id] }
-            return TaskListing(id, title, source, sessionsOf(id), mainConversationOf(id), ownSessionOf(id), row?.status, row?.questionWaits == true)
+            return TaskListing(id, title, source, sessionsOf(id), mainConversationOf(id), ownSessionOf(id), row?.status, row?.questionWaits == true, row?.pausedAt != null)
         }
         val fileIds = files.value.map { it.id }.toSet()
         val agentMade = synchronized(lock) { agentMade() }.filter { it.id !in fileIds }
@@ -389,6 +393,7 @@ class TaskIndex(
                     status = m?.status,
                     statusAtMillis = m?.statusAt,
                     questionWaits = m?.questionWaits == true && m.status != null,
+                    pausedAtMillis = m?.pausedAt,
                     startedAtMillis = m?.startedAt ?: firstSeen,
                 )
             }

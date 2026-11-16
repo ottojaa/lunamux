@@ -387,7 +387,8 @@ private fun buildMore(line: TpMore): HTMLElement {
 
 /**
  * The mark of a state, the same in the header and on every agent: the spinner while it works, ◆
- * while it needs the person, ◐ while it waits at its prompt on something it started, ○ while idle.
+ * while it needs the person, ◐ while it waits at its prompt on something it started, ‖ while its
+ * task is paused, ○ while idle.
  * Colour comes from the `tp-state-*` class around it; the glyph alone tells the states apart.
  *
  * @param state the state the screens draw ([AgentFacts.shownState]).
@@ -399,6 +400,7 @@ private fun stateGlyph(state: String): HTMLElement {
         AgentFacts.NEEDS_YOU -> mark.textContent = "◆"
         AgentFacts.WORKING -> mark.appendChild(spinner())
         AgentFacts.WAITING -> mark.textContent = "◐"
+        AgentFacts.PAUSED -> mark.textContent = "‖"
         else -> mark.textContent = "○"
     }
     return mark

@@ -281,12 +281,13 @@ private fun renderList(state: AgentsOverviewBackingViewModel.State) {
     }
 }
 
-/** The counts at the end of the search line: who needs the person, who works, who waits on something, who is done. Zero counts are left out. */
+/** The counts at the end of the search line: who needs the person, who works, who waits on something, which tasks are paused, who is done. Zero counts are left out. */
 private fun renderTally(state: AgentsOverviewBackingViewModel.State) {
     val parts = listOfNotNull(
         ("ao-sw-need" to "◆ ${AgentsOverviewBackingViewModel.needYouText(state.needYouCount)}").takeIf { state.needYouCount > 0 },
         ("ao-sw-work" to "${state.workingCount} working").takeIf { state.workingCount > 0 },
         ("ao-sw-wait" to "◐ ${state.onHoldCount} waiting").takeIf { state.onHoldCount > 0 },
+        ("ao-sw-paused" to "‖ ${state.pausedCount} paused").takeIf { state.pausedCount > 0 },
         ("ao-sw-done" to "${state.doneCount} done").takeIf { state.doneCount > 0 },
     )
     syncChildren(tallyElement ?: return, parts, { it.second }) { (cls, text) -> span(cls, text) }
@@ -349,12 +350,14 @@ private fun fillDetail(host: HTMLElement, row: Row) {
 
 /**
  * The mark that opens a row: the turning glyph while it works, ◆ when it needs the person, ◐ while it
- * waits at its prompt on something it started, nothing otherwise (the state word says done).
+ * waits at its prompt on something it started, ‖ while its task is paused, nothing otherwise (the
+ * state word says done).
  */
 private fun stateMark(state: String): HTMLElement = when (state) {
     AgentFacts.WORKING -> span("ao-m").also { it.appendChild(spinner()) }
     AgentFacts.NEEDS_YOU -> span("ao-m ao-m-need", "◆")
     AgentFacts.WAITING -> span("ao-m ao-m-wait", "◐")
+    AgentFacts.PAUSED -> span("ao-m ao-m-paused", "‖")
     else -> span("ao-m")
 }
 
@@ -362,6 +365,7 @@ private fun stateMark(state: String): HTMLElement = when (state) {
 private fun markOf(row: Row): String = when {
     row.needsYou -> AgentFacts.NEEDS_YOU
     row.working -> AgentFacts.WORKING
+    row.paused -> AgentFacts.PAUSED
     row.onHold -> AgentFacts.WAITING
     else -> AgentFacts.DONE
 }
@@ -370,6 +374,7 @@ private fun markOf(row: Row): String = when {
 private fun wordClassOf(row: Row): String = when {
     row.needsYou -> "ao-sw-need"
     row.working -> "ao-sw-work"
+    row.paused -> "ao-sw-paused"
     row.onHold -> "ao-sw-wait"
     else -> "ao-sw-done"
 }

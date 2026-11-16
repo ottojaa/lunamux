@@ -39,6 +39,12 @@ object AgentFacts {
     const val WAITING = "waiting"
 
     /**
+     * Not a session state but a task's: its work was stopped on purpose (see [se.soderbjorn.lunamux.AgentTask.paused]).
+     * It reads "paused", quiet, so it is told from idle work nobody stopped.
+     */
+    const val PAUSED = "paused"
+
+    /**
      * What a conversation at its prompt waits for: [text] says what, [sinceMillis] how long it has,
      * and [onYou] whether it is the person (then it counts as "needs you").
      */

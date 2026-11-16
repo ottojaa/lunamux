@@ -3561,6 +3561,9 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     /* Waiting on something the agent started: a fixed calm blue for the same reason, so it reads
        apart from working (the accent) and from "needs you" (amber) in every theme. */
     --ao-wait: color-mix(in srgb, #6ea8ff 78%, var(--ao-text));
+    /* Paused on purpose: quiet, in the theme's own muted text, so it reads as stopped rather than
+       as done (green) or waiting (blue). */
+    --ao-paused: var(--ao-muted);
     --ao-accent: var(--t-accent, #5fd4d0);
     --ao-warn: var(--t-warn, #f2c14e);
     --ao-error: var(--t-danger, #ff7b72);
@@ -3692,6 +3695,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-m { color: var(--ao-accent); user-select: none; }
 .ao-m-need { color: var(--ao-warn); }
 .ao-m-wait { color: var(--ao-wait); }
+.ao-m-paused { color: var(--ao-paused); }
 .ao-m-done { color: var(--ao-done); }
 .ao-row > .ao-m { overflow: visible; }
 /* Brightness by state: live rows bright, done rows mid-grey, EARLIER rows dim. */
@@ -3705,6 +3709,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-sw-work { color: var(--ao-accent); font-weight: 600; }
 .ao-sw-need { color: var(--ao-warn); font-weight: 600; }
 .ao-sw-wait { color: var(--ao-wait); font-weight: 600; }
+.ao-sw-paused { color: var(--ao-paused); font-weight: 600; }
 .ao-sw-done { color: var(--ao-done); }
 .ao-age { text-align: right; color: var(--ao-dim); }
 .ao-n-error { color: var(--ao-error); }
@@ -3937,6 +3942,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-state.tp-state-working { color: var(--ao-accent); }
 .tp-state.tp-state-needs_you { color: var(--ao-warn); background: none; }
 .tp-state.tp-state-waiting { color: var(--ao-wait); }
+.tp-state.tp-state-paused { color: var(--ao-paused); }
 .tp-state.tp-state-ended { color: var(--ao-dim); }
 .tp-state .tp-glyph { color: inherit; }
 .tp-state-word { font-weight: 600; }
@@ -3974,6 +3980,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-state-working .tp-glyph { color: var(--ao-accent); }
 .tp-state-needs_you .tp-glyph { color: var(--ao-warn); }
 .tp-state-waiting .tp-glyph { color: var(--ao-wait); }
+.tp-state-paused .tp-glyph { color: var(--ao-paused); }
 .tp-agent-text { flex: 1; min-width: 0; }
 .tp-agent-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; line-height: 20px; }
 /* A row's height never depends on what the agent is doing: the title runs to two lines and then ends in

@@ -177,11 +177,15 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
             "characters. An empty text clears the status. Pass questionWaits: true when a question waits " +
             "for the person: the task's row then stays among the live ones even while its main " +
             "conversation is closed, and resuming that conversation asks it. Each call sets the flag " +
-            "afresh, so repeat it in a later status while the question still waits.",
+            "afresh, so repeat it in a later status while the question still waits. Pass paused: true " +
+            "while the work is stopped on purpose (the person paused it, or it waits for a go): the row " +
+            "reads \"paused\" with your text as the reason, and stays among the live ones. It too is " +
+            "set afresh by each call, an empty text included, and keeps the time the pause began.",
         inputSchema = schemaObject(
             "taskId" to schemaString("The task."),
             "text" to schemaString("The status line; empty clears it."),
             "questionWaits" to schemaBool("True while a question waits for the person. Default false; an empty text clears it."),
+            "paused" to schemaBool("True while the work is paused on purpose. Default false."),
             required = listOf("taskId", "text"),
         ),
     ) { _, args ->
@@ -189,11 +193,13 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
         val text = (args["text"] as? JsonPrimitive)?.contentOrNull
             ?: throw McpArgumentException("'text' must be a string")
         val questionWaits = args.optBool("questionWaits") == true
-        val stored = taskCall { taskIndex.setStatus(taskId, text, questionWaits) }
+        val paused = args.optBool("paused") == true
+        val stored = taskCall { taskIndex.setStatus(taskId, text, questionWaits, paused) }
         McpToolResult.json(buildJsonObject {
             put("taskId", taskId)
             put("status", stored)
             put("questionWaits", stored != null && questionWaits)
+            put("paused", paused)
         })
     }
 
@@ -216,6 +222,7 @@ fun registerMcpTaskTools(taskIndex: TaskIndex) {
                     putSpokesperson(t)
                     put("status", t.status)
                     put("questionWaits", t.questionWaits)
+                    put("paused", t.paused)
                     put("sessions", buildJsonArray {
                         for (m in t.sessions) add(buildJsonObject {
                             put("sessionId", m.sessionId)
