@@ -31,31 +31,46 @@ object AgentSessionSearch {
 
     /** Rank of each matched field: lower is better. */
     private val TIER = mapOf(
-        "title" to 0, "task" to 1, "prompt" to 2, "branch" to 3, "links" to 3, "transcript" to 4, "screen" to 4,
+        "title" to 0, "tab" to 0, "task" to 1, "prompt" to 2, "branch" to 3, "links" to 3, "transcript" to 4, "screen" to 4,
     )
 
-    /** Find and rank the sessions that contain [query]. */
+    /**
+     * Find and rank the sessions that contain [query]. Called by `WindowRoutes` for
+     * [WindowCommand.SearchAgentSessions].
+     *
+     * @param repo the stored sessions and their search text.
+     * @param tracker the live sessions; null when only stored ones are searched.
+     * @param query what the person typed; under [MIN_QUERY] characters finds nothing.
+     * @param tasks the tasks, so a session is found by its task's title.
+     * @param tabNames the name the person gave the listed tab each conversation runs in, by terminal
+     *   session id ([WindowState.listedTabNames]): the overview leads a row with it, so it is found by it.
+     * @return the matches, best first, at most [MAX_MATCHES].
+     */
     fun search(
         repo: SettingsRepository,
         tracker: AgentSessionTracker?,
         query: String,
         tasks: TaskIndex? = null,
+        tabNames: Map<String, String> = emptyMap(),
     ): List<AgentSessionMatch> {
         val q = query.trim()
         if (q.length < MIN_QUERY) return emptyList()
         val hits = repo.searchAgentSessions(q)
         val matchingTasks = tasks?.taskIdsTitled(q).orEmpty()
         val seen = hits.mapTo(HashSet()) { it.record.id }
+        val live = tracker?.snapshot().orEmpty().filter { !it.background }
         val viaTask = if (tasks == null || matchingTasks.isEmpty()) emptyList() else {
             val stored = repo.loadAgentSessionsOfTasks(matchingTasks)
-            val live = tracker?.snapshot().orEmpty().filter { tasks.taskIdOf(it) in matchingTasks && !it.background }
-            (stored + live).distinctBy { it.id }.filter { seen.add(it.id) }.map { AgentSessionHit(it, null, null) }
+            (stored + live.filter { tasks.taskIdOf(it) in matchingTasks }).distinctBy { it.id }
+                .filter { seen.add(it.id) }.map { AgentSessionHit(it, null, null) }
         }
-        return (hits + viaTask)
+        val viaTab = live.filter { tabNameOf(it, tabNames)?.contains(q, ignoreCase = true) == true && seen.add(it.id) }
+            .map { AgentSessionHit(it, null, null) }
+        return (hits + viaTask + viaTab)
             .mapNotNull { hit ->
                 val rec = (tracker?.cached(hit.record.id) ?: hit.record).takeUnless { it.background || it.nothingSaid() || it.transcriptMissing() } ?: return@mapNotNull null
                 val taskTitle = tasks?.taskIdOf(rec)?.let(tasks::titleOf)
-                val found = bestField(rec, taskTitle, hit.transcriptWindow, hit.screenWindow, q) ?: return@mapNotNull null
+                val found = bestField(rec, tabNameOf(rec, tabNames), taskTitle, hit.transcriptWindow, hit.screenWindow, q) ?: return@mapNotNull null
                 Triple(rec, found, taskTitle)
             }
             .sortedWith(
@@ -136,15 +151,23 @@ object AgentSessionSearch {
     private fun folderName(rec: AgentSessionRecord): String? =
         rec.cwd?.trimEnd('/')?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
 
+    /** The name of the listed tab an open conversation runs in; a closed one's tab has moved on to other work. */
+    private fun tabNameOf(rec: AgentSessionRecord, tabNames: Map<String, String>): String? =
+        rec.terminalSessionId?.takeIf { rec.state != "ended" }?.let(tabNames::get)
+
     /** One match inside a record: its field, the text to show and where the query sits in it. */
     private class Found(val field: String, val snippet: String?, val start: Int, val length: Int)
 
     private fun bestField(
-        rec: AgentSessionRecord, taskTitle: String?, transcript: String?, screen: String?, q: String,
+        rec: AgentSessionRecord, tabName: String?, taskTitle: String?, transcript: String?, screen: String?, q: String,
     ): Found? {
         rec.title?.takeIf { AgentSessionText.isMeaningfulTitle(it, rec.branch, rec.repo, folderName(rec)) }?.let { t ->
             val at = t.indexOf(q, ignoreCase = true)
             if (at >= 0) return Found("title", null, at, q.length)
+        }
+        tabName?.let { t ->
+            val at = t.indexOf(q, ignoreCase = true)
+            if (at >= 0) return Found("tab", null, at, q.length)
         }
         taskTitle?.let { t ->
             val at = t.indexOf(q, ignoreCase = true)

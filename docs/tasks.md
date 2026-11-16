@@ -249,8 +249,10 @@ been confirmed against a real session, so a resumed Codex session may show as a 
 ## Searching sessions
 
 The search box looks through every session of the last month; older ones stay in the database and are not shown. A session matches on its own
-title, its **task's title**, its first prompt, its branch and links, its conversation or its last
-screen, ranked in that order. A match through the task reads "in task title" on the selected row. A
+title or the **name of the tab** it runs in, its **task's title**, its first prompt, its branch and
+links, its conversation or its last screen, ranked in that order. A tab name counts only while the
+conversation is open and the person named the tab ("Tab 3" says nothing); the match is marked in the
+name the row leads with. A match through the task reads "in task title" on the selected row. A
 search shows one row per task: the better match stands for the task and the second line says where
 ("in transcript of Reviewer"). ↵ and → open the session that matched. Search covers closed sessions
 and never background ones, and is not cut by the 300-row list, only by the month.

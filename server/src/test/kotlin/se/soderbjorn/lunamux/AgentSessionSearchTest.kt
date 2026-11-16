@@ -271,4 +271,27 @@ class AgentSessionSearchTest {
         hooked("running", "working", null)
         assertEquals(setOf("said", "running"), search("demandbase").map { it.summary.id }.toSet())
     }
+
+    @Test
+    fun `an open conversation is found by the name of the tab it runs in, ranked with titles`() {
+        var now = 1_000L
+        val tracker = AgentSessionTracker(repo, gitInfo = { GitInfo(repo = "upright", branch = "main", worktreePath = null) }, clock = { now })
+            .also { it.start() }
+        fun pane(id: String) = PaneSnapshot(id, leafId = "leaf-$id", cwd = "/work", programTitle = "✳ Slack thread $id",
+            agent = "claude", state = "working", alive = true, background = false, screenText = { "" })
+        tracker.onPoll(listOf(pane("s1"), pane("s2")))
+        save("prompt", prompt = "draft Sanni's request reply", at = 500)
+        val tabs = mapOf("s1" to "Sanni's request", "s2" to "Lunamux fixes")
+
+        val ranked = AgentSessionSearch.search(repo, tracker, "sanni's request", tabNames = tabs)
+        assertEquals(listOf("tab", "prompt"), ranked.map { it.field })
+        assertEquals("leaf-s1", ranked[0].summary.leafId)
+        assertEquals(0 to "sanni's request".length, ranked[0].start to ranked[0].length)
+        assertNull(ranked[0].snippet)
+
+        // Once it is closed its tab has moved on to other work, and the name no longer finds it.
+        now = 2_000
+        tracker.onPoll(listOf(pane("s2")))
+        assertEquals(listOf("prompt"), AgentSessionSearch.search(repo, tracker, "sanni's request", tabNames = tabs).map { it.field })
+    }
 }

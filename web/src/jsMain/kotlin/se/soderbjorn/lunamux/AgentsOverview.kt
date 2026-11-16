@@ -336,6 +336,12 @@ private fun fillTitle(host: HTMLElement, row: Row) {
     if (row.matchInTitle) host.appendChild(highlighted(row.title, row.matchStart, row.matchLength)) else host.textContent = row.title
 }
 
+/** The name the row leads with into [host]: its tab's name when it has one, with the search match marked in it, else its title. */
+private fun fillName(host: HTMLElement, row: Row) {
+    val tab = row.tabName ?: return fillTitle(host, row)
+    if (row.matchInTab) host.appendChild(highlighted(tab, row.matchStart, row.matchLength)) else host.textContent = tab
+}
+
 /** [row]'s headline (or search snippet) into [host]. */
 private fun fillDetail(host: HTMLElement, row: Row) {
     if (row.matchInSnippet) host.appendChild(highlighted(row.detail, row.matchStart, row.matchLength)) else host.textContent = row.detail
@@ -376,7 +382,7 @@ private fun wordClassOf(row: Row): String = when {
 private fun buildLiveCells(el: HTMLElement, row: Row, grouped: Boolean) {
     el.appendChild(stateMark(markOf(row)))
     val name = span("ao-t")
-    if (row.tabName != null) name.textContent = row.tabName else fillTitle(name, row)
+    fillName(name, row)
     el.appendChild(name)
     val progress = row.progress
     el.appendChild(
@@ -400,7 +406,7 @@ private fun buildLiveCells(el: HTMLElement, row: Row, grouped: Boolean) {
 private fun buildClosedCells(el: HTMLElement, row: Row) {
     el.appendChild(stateMark(AgentFacts.ENDED))
     val name = span("ao-t")
-    name.appendChild(span("ao-t-name").also { if (row.tabName != null) it.textContent = row.tabName else fillTitle(it, row) })
+    name.appendChild(span("ao-t-name").also { fillName(it, row) })
     if (row.tabName != null) name.appendChild(span("ao-said").also { fillTitle(it, row) })
     if (row.detail.isNotEmpty()) name.appendChild(span("ao-said").also { fillDetail(it, row) })
     el.appendChild(name)

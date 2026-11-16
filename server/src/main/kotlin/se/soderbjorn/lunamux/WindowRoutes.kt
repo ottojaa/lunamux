@@ -820,7 +820,7 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
             // Off the socket's loop: the query reads SQLite and may run git for resume notes.
             runCatching {
                 val matches = withContext(Dispatchers.IO) {
-                    AgentSessionSearch.search(ctx.settingsRepo, ctx.agentTracker, cmd.query, ctx.taskIndex)
+                    AgentSessionSearch.search(ctx.settingsRepo, ctx.agentTracker, cmd.query, ctx.taskIndex, WindowState.listedTabNames())
                 }
                 ctx.send(WindowEnvelope.AgentSessionMatches(cmd.query, matches))
             }.onFailure {

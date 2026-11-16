@@ -189,7 +189,9 @@ class AgentsOverviewBackingViewModel(
         /** At its prompt while something it started goes on: "waiting", in a calm colour. */
         val onHold: Boolean get() = kind == Kind.WAITING
         val finished: Boolean get() = kind == Kind.FINISHED
-        val matchInTitle: Boolean get() = matchLength > 0 && snippet == null
+        /** The search hit is in the name of the tab the row leads with, [tabName]. */
+        val matchInTab: Boolean get() = matchLength > 0 && this.field == "tab" && tabName != null
+        val matchInTitle: Boolean get() = matchLength > 0 && snippet == null && !matchInTab
         val matchInSnippet: Boolean get() = matchLength > 0 && snippet != null
     }
 
@@ -240,7 +242,7 @@ class AgentsOverviewBackingViewModel(
         val emptyText: String
             get() = when {
                 matchMode && searching -> "Searching…"
-                matchMode -> "Nothing matches “${query.trim()}”. Search covers titles, first prompts, branches, links and transcripts."
+                matchMode -> "Nothing matches “${query.trim()}”. Search covers titles, tab names, first prompts, branches, links and transcripts."
                 else -> "No agent sessions yet"
             }
     }
@@ -851,6 +853,9 @@ private fun matchRow(base: Row, m: AgentSessionMatch, s: AgentSessionSummary, c:
     val inTitle = when (m.field) {
         "task" -> true
         "title" -> sessionTitle == base.title
+        // The row leads with the tab's name; without one the name repeated the title, which shows instead.
+        // A task row may lead with another conversation's tab, so the hit must be in the name shown.
+        "tab" -> (base.tabName ?: base.title).regionMatches(m.start, c.ui.query.trim(), 0, m.length, ignoreCase = true)
         else -> false
     }
     val snippet = when {
@@ -859,7 +864,7 @@ private fun matchRow(base: Row, m: AgentSessionMatch, s: AgentSessionSummary, c:
         else -> m.snippet
     }
     val highlight = titleCurrent && (inTitle || snippet != null)
-    val place = "in ${fieldLabel(m.field)}" + if (sessionTitle != base.title && m.field != "task") " of $sessionTitle" else ""
+    val place = "in ${fieldLabel(m.field)}" + if (sessionTitle != base.title && m.field != "task" && m.field != "tab") " of $sessionTitle" else ""
     return base.copy(
         detail = snippet ?: base.detail,
         extra = extraOf(
@@ -879,6 +884,7 @@ private fun matchRow(base: Row, m: AgentSessionMatch, s: AgentSessionSummary, c:
 
 private fun fieldLabel(field: String): String = when (field) {
     "task" -> "task title"
+    "tab" -> "tab name"
     "prompt" -> "first prompt"
     "screen" -> "last screen"
     else -> field

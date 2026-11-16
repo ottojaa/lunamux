@@ -492,6 +492,33 @@ class AgentsOverviewTest {
     }
 
     @Test
+    fun aHitInTheTabsNameIsMarkedInTheNameTheRowLeadsWith() {
+        layout(listed = listOf("a"), second = listOf("b"))
+        val a = session("a", title = "Upright Slack thread")
+        val b = session("b", title = "two")
+        sessions(a, b)
+        vm.open()
+        vm.setQuery("ne")
+        windowState.updateAgentMatches(
+            WindowEnvelope.AgentSessionMatches("ne", listOf(AgentSessionMatch(summary = a, field = "tab", start = 1, length = 2))),
+        )
+        val row = vm.state.matches.single()
+        assertEquals("one", row.tabName)
+        assertTrue(row.matchInTab && !row.matchInTitle, "the mark is in the tab's name, not the title")
+        assertEquals("ne", row.tabName!!.substring(row.matchStart, row.matchStart + row.matchLength))
+        assertContains(row.extra, "in tab name")
+
+        // A tab named as the title is not led with; the title shows, and the mark is in it.
+        vm.setQuery("tw")
+        windowState.updateAgentMatches(
+            WindowEnvelope.AgentSessionMatches("tw", listOf(AgentSessionMatch(summary = b, field = "tab", start = 0, length = 2))),
+        )
+        val same = vm.state.matches.single()
+        assertNull(same.tabName)
+        assertTrue(same.matchInTitle)
+    }
+
+    @Test
     fun aRowLeadsWithItsTabsNameUnlessTheTabIsUnnamedHiddenOrSaysTheTitleAlready() {
         layout(listed = listOf("a"), second = listOf("b"), background = listOf("bg"))
         sessions(session("a"), session("b", title = "two"), session("bg", state = "needs_you", background = true))

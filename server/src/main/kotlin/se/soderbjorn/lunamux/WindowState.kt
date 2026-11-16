@@ -672,6 +672,27 @@ object WindowState {
         allTabs(_config.value).any { it.id == tabId && it.isBackground }
     }
 
+    /**
+     * The name the person gave each listed tab, by the terminal session id of every pane in it, in
+     * every world. A default name ("Tab 3") and a background tab out of sight say nothing and are
+     * left out. Called by `WindowRoutes` for the agents overview's search, which finds a
+     * conversation by the name of the tab it runs in.
+     *
+     * @return terminal session id to tab name.
+     * @see AgentSessionSearch.search
+     */
+    fun listedTabNames(): Map<String, String> = synchronized(this) {
+        buildMap {
+            for (tab in allTabs(_config.value)) {
+                val name = tab.title.trim().takeIf { tab.isListed && it.isNotEmpty() && !DEFAULT_TAB_NAME.matches(it) } ?: continue
+                for (pane in tab.panes) put(pane.leaf.sessionId, name)
+            }
+        }
+    }
+
+    /** "Tab 3": the name a tab gets until the person names it. */
+    private val DEFAULT_TAB_NAME = Regex("^Tab \\d+$")
+
     /** Whether the pane showing terminal session [sessionId] sits in a background tab. */
     fun isBackgroundSession(sessionId: String): Boolean = synchronized(this) {
         allTabs(_config.value).any { tab -> tab.isBackground && tab.panes.any { it.leaf.sessionId == sessionId } }
