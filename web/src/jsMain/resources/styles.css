@@ -370,9 +370,9 @@ body.appearance-light .terminal-inner .xterm-viewport {
     padding-left: 14px;
     box-sizing: border-box;
 }
-/* Muted separator between the working and waiting halves. */
-.world-status-bar .world-status-sep {
-    opacity: 0.4;
+/* The two halves are set apart by space alone: the spinner opens the second. */
+.world-status-bar .world-status-waiting + .world-status-working {
+    margin-left: 1.5ch;
 }
 /* Working: the theme's accent (`--t-warn`'s sibling `--t-accent`), a calm slow
    breathe — an ambient "live" signal that doesn't demand action.

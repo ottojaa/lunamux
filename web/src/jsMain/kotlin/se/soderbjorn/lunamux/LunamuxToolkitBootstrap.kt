@@ -975,24 +975,47 @@ private fun buildSidebarFooter(): HTMLElement {
 internal data class StatusLine(val name: String?, val accent: String?, val working: Int, val waiting: Int)
 
 /**
- * The footer's lines: the total of every conversation waiting for the person and every one
- * working, then, when there is more than one world, one line for each world that has any. The
- * numbers come from [AgentFacts.tally], the function the overview's counts use.
+ * The footer's lines, from the counts [AgentFacts.tally] gives (the function the overview's counts
+ * use). Called by [updateWorldStatusFooter] on every push.
+ *
+ * @return the lines of [agentStatusLines] for the layout and conversations now.
  */
 private fun computeAgentStatusRows(): List<StatusLine> {
     val cfg = latestWindowConfig
     val tally = AgentFacts.tally(lunamuxClient.windowState.agentSessions.value, Layout(cfg))
-    val total = tally.total
-    if (total.waiting == 0 && total.working == 0) return emptyList()
-    val several = cfg != null && cfg.worlds.size >= 2
-    val out = mutableListOf(StatusLine(if (several) "All worlds" else null, null, total.working, total.waiting))
-    if (cfg == null || !several) return out
-    for (world in cfg.worlds) {
-        val c = tally.byWorld[world.id] ?: continue
-        val accent = runCatching { argbToCss(resolvedThemeForWorld(world.themeSelection).accent) }.getOrNull() ?: "#4f8cf7"
-        out.add(StatusLine(world.name, accent, c.working, c.waiting))
+    val worlds = cfg?.worlds.orEmpty().map { world ->
+        WorldCounts(world.name, tally.byWorld[world.id]) {
+            runCatching { argbToCss(resolvedThemeForWorld(world.themeSelection).accent) }.getOrNull() ?: "#4f8cf7"
+        }
     }
-    return out
+    return agentStatusLines(tally.total, worlds)
+}
+
+/**
+ * One world's counts for [agentStatusLines]: its [name], its [counts] (null when nothing of it
+ * works or waits) and its accent colour, read only when its line is drawn.
+ */
+internal class WorldCounts(val name: String, val counts: AgentFacts.Counts?, val accent: () -> String)
+
+/**
+ * The footer's lines, saying each thing once. Nothing works or waits: no line. With one world, or
+ * when only one of several worlds has anything going on, one line: unnamed for a lone world, else
+ * that world's name and dot, so the person still sees where. Only when two or more worlds have
+ * something going on does an "All worlds" total come first, then one line per world that has any.
+ *
+ * @param total the counts across every world.
+ * @param worlds the layout's worlds in order; empty without worlds.
+ * @return the lines to draw.
+ */
+internal fun agentStatusLines(total: AgentFacts.Counts, worlds: List<WorldCounts>): List<StatusLine> {
+    if (total.waiting == 0 && total.working == 0) return emptyList()
+    val busy = worlds.filter { it.counts != null && (it.counts.waiting > 0 || it.counts.working > 0) }
+    val lines = busy.map { StatusLine(it.name, it.accent(), it.counts!!.working, it.counts.waiting) }
+    return when {
+        worlds.size < 2 -> listOf(StatusLine(null, null, total.working, total.waiting))
+        lines.size == 1 -> lines
+        else -> listOf(StatusLine("All worlds", null, total.working, total.waiting)) + lines
+    }
 }
 
 /** Fills a line's count element: "▲ M need you" in the attention colour, then the spinner and "N working". */
@@ -1003,7 +1026,7 @@ private fun appendWorldStatusCounts(host: HTMLElement, working: Int, waiting: In
         startPulse(a, WORLD_WAITING_PULSE_PERIOD_MS, WORLD_WAITING_PULSE_FLOOR)
     }
     if (working > 0) {
-        if (waiting > 0) host.appendChild(span("world-status-sep", " \u2022 "))
+        // No bullet between the halves: the spinner already opens the second, and a bullet beside it read as two dots.
         val w = span("world-status-working")
         w.appendChild(spinner())
         w.appendChild(document.createTextNode(" $working working"))

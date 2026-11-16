@@ -183,8 +183,10 @@ then the confirmation, then the peek, then the overlay.
   closed**, **replaced** (another conversation took its place), "ended" when the hook gave no reason
   worth a word, or "closed" on an older record. The list holds the newest 300 closed conversations,
   so in a busy week it reaches back less than a month; search reaches the whole month. So work the person ended is told from work that was interrupted.
-- **The footer counts the same thing.** Under the Claude usage each world shows **▲ N need you** and,
-  beside the spinner, the number working, background agents included. The rows' "needs you" always
+- **The footer counts the same thing.** Under the Claude usage it shows **▲ N need you** and, beside
+  the spinner, the number working, background agents included. Each count shows once: one line when
+  only one world has anything going on (with that world's name and dot when there are several
+  worlds), and an "All worlds" total over one line per world only when two or more are busy. The rows' "needs you" always
   add up to the footer's. Known gap: a conversation in no task that is the main conversation of two
   tasks is in both rows, so both read **needs you** while the footer counts it once.
 
