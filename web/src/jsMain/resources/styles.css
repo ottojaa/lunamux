@@ -3539,7 +3539,9 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
    (state mark, name, progress or folder, state word, age). A live row has its description and its
    headline under that line; a closed row is the one line. Brightness and colour follow the state: a
    working or needs-you row (`.ao-live`) has a bright name, a done row (`.ao-done`) a mid-grey one,
-   the text under either name is mid-grey, and a closed one (`.ao-old`) in EARLIER is dim all over. The accent is for working, amber for
+   and a closed one (`.ao-old`) in EARLIER is dim all over. Under the name, the description is dim and
+   the state line (`.ao-st`) takes a quieted state colour behind a hook, so the three lines read apart
+   even in a theme of one hue. The accent is for working, amber for
    "needs you", a calm blue for waiting on something the agent started (a background shell, a
    review, CI: nothing to do for the person), a muted green for done; the accent also marks the selected row, red a failed open.
    Every other text is a shade of the theme's text colour. Lifted above the pane modals so it opens
@@ -3649,8 +3651,8 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     cursor: pointer;
 }
 .ao-row > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-/* The description is shown whole, wrapping: it is what tells a task apart. The headline runs to two
-   lines, then ends in an ellipsis; a done row's to one. */
+/* The description is shown whole, wrapping: it is what tells a task apart. The headline (a search
+   snippet, or the state line below) runs to two lines, then ends in an ellipsis. */
 .ao-about { grid-column: 2 / -1; min-width: 0; overflow-wrap: anywhere; }
 .ao-n {
     grid-column: 2 / -1;
@@ -3662,10 +3664,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     overflow: hidden;
     overflow-wrap: anywhere;
 }
-/* The words under a name are read, not glanced at: they take the muted text, a step under the name,
-   not the theme's dim, which some themes set near the floor of legibility. Dim is for the short
-   chrome around them (ages, groups, counts); only EARLIER rows recede further (.ao-old below). */
-.ao-about { color: var(--ao-muted); }
+.ao-about { color: var(--ao-dim); }
 .ao-live + .ao-live, .ao-live + .ao-done, .ao-done + .ao-live, .ao-done + .ao-done { margin-top: 4px; }
 /* The pointer's row is a faint tint; only the selected row has the strong fill and the accent bar. */
 .ao-row:hover { background: var(--ao-hover); }
@@ -3677,7 +3676,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-bar-fill { display: block; height: 100%; border-radius: 2px; background: var(--ao-accent); }
 .ao-done .ao-bar-fill { background: var(--ao-done); }
 /* What a closed row or an agent last said, after its name. */
-.ao-said { margin-left: 1.5ch; color: var(--ao-muted); font-weight: 400; }
+.ao-said { margin-left: 1.5ch; color: var(--ao-dim); font-weight: 400; }
 .ao-old .ao-said { color: var(--ao-faint); }
 /* A row's tab name, title and line are three things, so the second and third are set apart. */
 .ao-said + .ao-said::before { content: "· "; }
@@ -3707,8 +3706,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-live .ao-t { color: var(--ao-text); font-weight: 600; }
 .ao-live .ao-w, .ao-live .ao-n { color: var(--ao-muted); }
 .ao-done .ao-t { color: var(--ao-muted); }
-.ao-done .ao-w { color: var(--ao-dim); }
-.ao-done .ao-n { color: var(--ao-muted); -webkit-line-clamp: 1; line-clamp: 1; }
+.ao-done .ao-w, .ao-done .ao-n { color: var(--ao-dim); }
 .ao-row.ao-sel .ao-t { color: var(--ao-accent); font-weight: 600; }
 .ao-live .ao-t, .ao-done .ao-t { font-weight: 600; }
 .ao-sw { color: var(--ao-dim); }
@@ -3719,6 +3717,25 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-sw-done { color: var(--ao-done); }
 .ao-age { text-align: right; color: var(--ao-dim); }
 .ao-n-error { color: var(--ao-error); }
+
+/* The state line: where the row stands, said apart from what the task is. A hook in front and the
+   row's state colour, quieted toward the surface so it never outshouts the name: the accent while
+   it works, amber while it asks, the calm blue while it waits, green for a done task's own status.
+   It wraps to two lines while live; a done row's status is one. */
+.ao-panel { --ao-st-work: color-mix(in srgb, var(--ao-accent) 88%, var(--ao-surface));
+    --ao-st-done: color-mix(in srgb, var(--ao-done) 74%, var(--ao-surface)); }
+.ao-row .ao-st { display: flex; gap: 1ch; overflow: visible; }
+.ao-st-g { flex: none; }
+.ao-st-x { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+.ao-done .ao-st-x { -webkit-line-clamp: 1; line-clamp: 1; }
+.ao-row .ao-st-work { color: var(--ao-st-work); }
+.ao-row .ao-st-need { color: var(--ao-warn); }
+.ao-row .ao-st-wait { color: var(--ao-wait); }
+.ao-row .ao-st-paused { color: var(--ao-paused); }
+.ao-row .ao-st-done { color: var(--ao-st-done); }
+/* A done row's last reply, which the row leaves out, in the selection. */
+.ao-reply-lbl { color: var(--ao-faint); margin-right: 1ch; }
+.ao-reply { color: var(--ao-muted); }
 
 /* The selected row's own block under its lines: its folder and any note, or the question the first enter asks. */
 .ao-focus {

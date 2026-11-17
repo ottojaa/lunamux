@@ -402,7 +402,25 @@ private fun buildLiveCells(el: HTMLElement, row: Row, grouped: Boolean) {
     el.appendChild(span("ao-sw " + wordClassOf(row), row.stateWord))
     el.appendChild(ageSpan("ao-age", row.sinceMillis))
     if (row.tabName != null) el.appendChild(div("ao-about").also { fillTitle(it, row) })
-    if (row.detail.isNotEmpty()) el.appendChild(div("ao-n").also { fillDetail(it, row) })
+    if (row.detail.isNotEmpty()) el.appendChild(if (row.snippet != null) div("ao-n").also { fillDetail(it, row) } else stateLine(row))
+}
+
+/**
+ * [row]'s headline as a state line: a hook and the text, in the colour of where the row stands, so it
+ * reads apart from the description above it. A search snippet is not a state and stays plain.
+ */
+private fun stateLine(row: Row): HTMLElement {
+    val tone = when {
+        row.needsYou -> "need"
+        row.working -> "work"
+        row.onHold -> "wait"
+        row.paused -> "paused"
+        else -> "done"
+    }
+    val line = div("ao-n ao-st ao-st-$tone")
+    line.appendChild(span("ao-st-g", "↳"))
+    line.appendChild(span("ao-st-x").also { fillDetail(it, row) })
+    return line
 }
 
 /**
@@ -444,12 +462,21 @@ private fun buildAgents(row: Row): HTMLElement {
 }
 
 /**
- * What the selected row shows last: the question before a resume or a start, else its extra text
- * (its folder, where a search matched, a failed resume in the error colour).
+ * What the selected row shows last: the question before a resume or a start, else a done row's last
+ * reply ([Row.lastReply]) and its extra text (its folder, where a search matched, a failed resume in
+ * the error colour).
  */
 private fun buildFocus(row: Row, ask: Ask?): HTMLElement? {
     val focus = div("ao-focus")
     if (ask != null) focus.appendChild(buildAsk(ask))
+    // A done row leaves what its conversation last said off the row; the selection shows it.
+    val reply = row.lastReply
+    if (ask == null && reply != null) {
+        focus.appendChild(div("ao-xtra").also {
+            it.appendChild(span("ao-reply-lbl", "last reply"))
+            it.appendChild(span("ao-reply", reply))
+        })
+    }
     if (ask == null && row.extra.isNotEmpty()) {
         val line = div("ao-xtra")
         val error = row.error

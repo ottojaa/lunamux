@@ -14,9 +14,11 @@
  * lists the rest by recency in two bands (three days, two weeks), five rows and a "+ N more" line.
  * Typing two or more characters switches to the server's search, one row per task.
  *
- * Every row has one headline ([AgentsOverviewBackingViewModel.Row.detail]) that says where it is:
- * the question while it needs the person, what it is doing while it works, and the last thing it
- * said once it is done or closed. The task panel shows the same line ([headlineOf]).
+ * A row has one headline ([AgentsOverviewBackingViewModel.Row.detail]) that says where it stands:
+ * the question while it needs the person and what it is doing while it works. Once it is done the
+ * headline is only what an agent set on purpose (the task's status, the plan's step); what the
+ * conversation last said goes to [AgentsOverviewBackingViewModel.Row.lastReply], shown when the row is
+ * selected. The task panel's header shows [headlineOf] as before.
  */
 package se.soderbjorn.lunamux.client.viewmodel
 
@@ -155,7 +157,9 @@ class AgentsOverviewBackingViewModel(
     /**
      * One row of the overview. [tabName] is the name the person gave the tab it runs in (null for
      * an unnamed or closed tab); the row leads with it and [title] follows as the description.
-     * [detail] is the headline (see [headlineOf]), or the snippet of a search hit. [extra] is what
+     * [detail] is the headline (see [headlineOf]), or the snippet of a search hit. A done row's
+     * headline is only what an agent set on purpose (the task's status, the plan's step): what its
+     * conversation last said is [lastReply] instead, which the selection shows. [extra] is what
      * else matters for opening it (its folder, a search hit's place, a resume note, an error).
      * [where] is the repo or folder, which NOW groups by.
      */
@@ -184,6 +188,8 @@ class AgentsOverviewBackingViewModel(
         val snippet: String? = null,
         val matchStart: Int = 0,
         val matchLength: Int = 0,
+        /** What a done row's conversation last came to ([headlineOf]), left off the row and shown when it is selected. */
+        val lastReply: String? = null,
     ) {
         val needsYou: Boolean get() = kind == Kind.NEEDS_YOU
         val working: Boolean get() = kind == Kind.WORKING
@@ -759,8 +765,9 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
         ?: currentStepOf(blocks)
         ?: working.sortedByDescending { it.lastActivityAt ?: it.stateSince }.firstNotNullOfOrNull(::headlineOf)
         ?: onHold.firstNotNullOfOrNull(::headlineOf)
-        ?: (main ?: u.sessions.maxByOrNull(AgentFacts::activityOf))?.takeIf(AgentFacts::isLive)?.let(::headlineOf)
-        ?: ""
+    // What the conversation last said is chat, not a status: a done row leaves it to the selection.
+    val spoken = (main ?: u.sessions.maxByOrNull(AgentFacts::activityOf))?.takeIf(AgentFacts::isLive)?.let(::headlineOf)
+    val headline = detail ?: spoken.takeUnless { kind == Kind.DONE }
     val target = u.target
     val single = u.sessions.singleOrNull()
     val error = c.errorOf(id)
@@ -773,7 +780,8 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
         where = where,
         kind = kind,
         stateWord = word,
-        detail = detail,
+        detail = headline.orEmpty(),
+        lastReply = spoken.takeIf { kind == Kind.DONE && detail == null },
         stopped = cutOff != null,
         extra = extraOf(
             folderNote(target, where), c.noteOf(target?.id),
@@ -836,7 +844,8 @@ private fun sessionRow(s: AgentSessionSummary, earlier: Boolean, c: Ctx, taskTit
         where = s.repo ?: AgentFacts.folderOf(s),
         kind = kind,
         stateWord = word,
-        detail = if (live) headlineOf(s).orEmpty() else "",
+        detail = if (live && kind != Kind.DONE) headlineOf(s).orEmpty() else "",
+        lastReply = headlineOf(s).takeIf { live && kind == Kind.DONE },
         stopped = enter == Enter.RESUME && stoppedByRestart(s, c.now),
         extra = extraOf(folderNote(s, s.repo ?: AgentFacts.folderOf(s)), c.noteOf(s.id), AgentsOverviewBackingViewModel.NO_TRANSCRIPT_NOTE.takeIf { enter == Enter.NONE }, error),
         tabName = c.tabNameOf(s, title),

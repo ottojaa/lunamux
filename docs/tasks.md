@@ -23,10 +23,12 @@ nothing when done: the state word says so) and the **name of its tab** when the 
 on a line of its own as the description, whole and never cut, since it is what tells the task apart. A tab nobody named ("Tab 3"), a hidden tab, or one whose
 name only repeats the title leaves the title to lead. On the same first line, at the right: the
 plan's **progress** (a bar and "13/14", from the task's progress block or its plan's steps), one
-**state word** and the **age**. Under them comes the **headline**, two lines at most (one on a done row). Names are
+**state word** and the **age**. Under them comes the **headline** as a **state line**: a ↳ hook and the
+text in the row's state colour (accent working, amber asking, blue waiting, green done), two lines at
+most, one on a done row. Names are
 bright for working and needs-you rows, mid-grey for done ones and dim for closed ones; the
-description and headline under an open row's name are mid-grey whatever its state, so they stay
-readable in a theme whose dim text is faint.
+description is dim, and the state line's hook and colour set it apart from the description even in
+a theme of one hue.
 
 NOW is **grouped by repo** (the task's repo, else the folder the conversation runs in, home as
 `~`). Groups and the rows in each stand in the order their work began, so no row moves when a state
@@ -76,14 +78,15 @@ the poller's own three-poll hold (about fifteen seconds), with no hook between.
 
 ### The headline
 
-Every row has one line that says where it is, and the task panel's header shows the same line:
+A row has one line that says where it stands. The task panel's header shows the same line, and for a
+done conversation its last reply:
 
 | State | The headline |
 |---|---|
 | needs you | the question, in quotes; for a kept line that waits on the person, that line |
 | working | the task's status line; else the plan's step in hand; else what the conversation says it is doing (`set_status`); else its tool call in words |
 | waiting | what it waits for: its kept line (`set_status` with `keep`), else "1 background shell running" |
-| done | what its last reply came to, as one plain sentence: a closing question when the reply ends on one, else the first sentence it opens with (where an agent states the outcome; its closing lines are mostly an offer or a caveat). Headings, a line that leads into a list and markdown are left out. |
+| done | only what an agent set on purpose: the task's status line, else the plan's step in hand; else nothing, and the row is its name and description. What the reply came to (one plain sentence: a closing question when the reply ends on one, else the first sentence it opens with, markdown left out) shows as **last reply** when the row is selected. |
 | closed | nothing: a closed row is its title, its folder, how it ended and when. A task's status line, which an agent wrote, still shows. |
 
 A tool call is said **in words, never as the raw command**, and only when it has something specific

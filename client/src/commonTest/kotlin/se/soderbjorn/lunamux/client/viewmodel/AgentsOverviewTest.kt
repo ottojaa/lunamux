@@ -587,11 +587,12 @@ class AgentsOverviewTest {
             session("d", state = "done", lastSaid = "All 14 tests pass."),
             session("e", state = "ended", endedAt = now - minute, lastSaid = "Pushed to the branch."),
         )
-        assertEquals("All 14 tests pass.", detail("d"), "a done row says the last thing it said")
+        assertEquals("", detail("d"), "a done row leaves its chat off the row")
+        assertEquals("All 14 tests pass.", vm.state.rows.first { it.id == "d" }.lastReply, "and its selection says the last thing it said")
         assertEquals("", detail("e"), "a closed one says its title only")
         assertEquals(1, vm.state.doneCount)
         sessions(session("d", state = "done", lastSaid = "The write-up is at `notes.md`. Its sections:"))
-        assertEquals("The write-up is at notes.md.", detail("d"), "a line an older server kept reads as one plain sentence")
+        assertEquals("The write-up is at notes.md.", vm.state.rows.first { it.id == "d" }.lastReply, "a line an older server kept reads as one plain sentence")
     }
 
     @Test
@@ -617,6 +618,19 @@ class AgentsOverviewTest {
         )
         windowState.updateAgentTasks(listOf(task("main", status = "Final build ready")))
         assertEquals("Final build ready", vm.state.now.single().detail, "the task's own status comes first")
+    }
+
+    @Test
+    fun aDoneTaskKeepsOnlyTheStatusAnAgentSetAndLeavesItsChatToTheSelection() {
+        layout(listed = listOf("main"))
+        sessions(session("main", state = "done", taskId = "g1", lastSaid = "I can update the reply and show you the text before posting."))
+        windowState.updateAgentTasks(listOf(task("main")))
+        vm.open()
+        var row = vm.state.now.single()
+        assertEquals(listOf("", "I can update the reply and show you the text before posting."), listOf(row.detail, row.lastReply), "no status: the row is its name and description")
+        windowState.updateAgentTasks(listOf(task("main", status = "Merged to master; deploying.")))
+        row = vm.state.now.single()
+        assertEquals(listOf("Merged to master; deploying.", null), listOf(row.detail, row.lastReply), "a status an agent set is the headline")
     }
 
     @Test
