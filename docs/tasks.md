@@ -21,9 +21,18 @@ out of sight) is counted in the row's state word and listed under the row while 
 shown in the task panel.
 
 A live row leads with a **state mark** (the spinner while it works, **◆** when it needs the person,
-nothing when done: the state word says so) and the **name of its tab** when the person named the tab; the title then follows
-on a line of its own as the description, whole and never cut, since it is what tells the task apart. A tab nobody named ("Tab 3"), a hidden tab, or one whose
-name only repeats the title leaves the title to lead. On the same first line, at the right: the
+nothing when done: the state word says so) and the **name of its tab** when the person named the tab.
+A tab nobody named ("Tab 3"), a hidden tab, or one whose name only repeats the title leaves the title
+to lead. Under it, on a line of its own, whole and never cut, comes the **description**: what the work
+is and where it stands, since that is what tells the task apart. It is the newest **recap** Claude Code
+wrote into the speaking conversation's transcript (it writes one when the person comes back to a
+conversation), kept to its first two sentences, without its "Next…" and "Please…" sentences (the state
+line says what the row waits on), its "Goal:" lead and its note on turning recaps off. Lunamux calls no
+model for it: it reads the line already on disk, from the last 4 MB of the transcript and then only
+what the file gains. Until a conversation has a recap (a new one, Codex, recaps turned off), a row led
+by its tab's name has its title as the description, and one led by its title has none. A recap can lag
+the conversation by a few turns while the person is in it, since Claude Code writes one only after
+they were away. A search hit in the title shows the title in its place. On the same first line, at the right: the
 plan's **progress** (a bar and "13/14", from the task's progress block or its plan's steps), one
 **state word** and the **age**. Under them comes the **headline** as a **state line**: a ↳ hook and the
 text in the row's state colour (accent working, amber asking, blue waiting, green done), two lines at

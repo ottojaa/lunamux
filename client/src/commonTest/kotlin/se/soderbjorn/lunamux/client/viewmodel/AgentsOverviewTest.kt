@@ -634,6 +634,24 @@ class AgentsOverviewTest {
     }
 
     @Test
+    fun aRowIsDescribedByItsSpeakersRecapWhileItIsOpen() {
+        layout(listed = listOf("main", "solo"))
+        val recap = "Moving exports to Gotenberg. Run 1 is booting."
+        sessions(
+            session("main", taskId = "g1").copy(recap = recap),
+            session("helper", taskId = "g1").copy(recap = "A reviewer's own recap."),
+            session("solo").copy(recap = "Freeing up memory. Swap is down to 1.25 GB."),
+            session("gone", state = "ended", endedAt = now - minute).copy(recap = "Stale."),
+        )
+        windowState.updateAgentTasks(listOf(task("main")))
+        vm.open()
+        val rows = vm.state.now.associateBy { it.id }
+        assertEquals(recap, rows.getValue("task:g1").recap, "a task is described by the conversation that speaks for it")
+        assertEquals("Freeing up memory. Swap is down to 1.25 GB.", rows.getValue("solo").recap)
+        assertEquals(null, (vm.state.now + vm.state.earlier).firstOrNull { it.id == "gone" }?.recap, "a closed conversation has no description")
+    }
+
+    @Test
     fun nowIsGroupedByRepoWithoutMovingRowsInsideAGroup() {
         layout(listed = listOf("a", "b", "c"))
         sessions(

@@ -381,9 +381,9 @@ private fun wordClassOf(row: Row): String = when {
 
 /**
  * A live or done row: the mark, the tab's name (or the title when the tab has none), the plan's
- * progress, the state word and the age; then the title as a description when the tab's name led,
- * whole on lines of its own since it is what tells the task apart, and the headline. A row outside a
- * repo group shows where it runs in place of an absent progress.
+ * progress, the state word and the age; then the description, whole on lines of its own since it is
+ * what tells the task apart, and the headline. A row outside a repo group shows where it runs in
+ * place of an absent progress.
  */
 private fun buildLiveCells(el: HTMLElement, row: Row, grouped: Boolean) {
     el.appendChild(stateMark(markOf(row)))
@@ -401,8 +401,22 @@ private fun buildLiveCells(el: HTMLElement, row: Row, grouped: Boolean) {
     )
     el.appendChild(span("ao-sw " + wordClassOf(row), row.stateWord))
     el.appendChild(ageSpan("ao-age", row.sinceMillis))
-    if (row.tabName != null) el.appendChild(div("ao-about").also { fillTitle(it, row) })
+    descriptionOf(row)?.let(el::appendChild)
     if (row.detail.isNotEmpty()) el.appendChild(if (row.snippet != null) div("ao-n").also { fillDetail(it, row) } else stateLine(row))
+}
+
+/**
+ * What a live or done row says it is, under its name: the conversation's recap ([Row.recap]), what
+ * the work is and where it stands; without one, the title when the tab's name led. A search hit in
+ * the title shows the title, so the match can be seen.
+ */
+private fun descriptionOf(row: Row): HTMLElement? {
+    val titleShown = row.tabName == null
+    return when {
+        row.recap != null && !(row.matchInTitle && !titleShown) -> div("ao-about").also { it.textContent = row.recap }
+        !titleShown -> div("ao-about").also { fillTitle(it, row) }
+        else -> null
+    }
 }
 
 /**

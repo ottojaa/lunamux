@@ -156,7 +156,10 @@ class AgentsOverviewBackingViewModel(
 
     /**
      * One row of the overview. [tabName] is the name the person gave the tab it runs in (null for
-     * an unnamed or closed tab); the row leads with it and [title] follows as the description.
+     * an unnamed or closed tab); the row leads with it, else with [title]. [recap] is what the work
+     * is and where it stands, from the recap Claude Code wrote into the speaking conversation's
+     * transcript; it is the row's description, and without one a row led by its tab's name has
+     * [title] as the description.
      * [detail] is the headline (see [headlineOf]), or the snippet of a search hit. A done row's
      * headline is only what an agent set on purpose (the task's status, the plan's step): what its
      * conversation last said is [lastReply] instead, which the selection shows. [extra] is what
@@ -190,6 +193,8 @@ class AgentsOverviewBackingViewModel(
         val matchLength: Int = 0,
         /** What a done row's conversation last came to ([headlineOf]), left off the row and shown when it is selected. */
         val lastReply: String? = null,
+        /** The speaking conversation's newest recap ([AgentSessionSummary.recap]); null while it has none or is closed. */
+        val recap: String? = null,
     ) {
         val needsYou: Boolean get() = kind == Kind.NEEDS_YOU
         val working: Boolean get() = kind == Kind.WORKING
@@ -766,7 +771,8 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
         ?: working.sortedByDescending { it.lastActivityAt ?: it.stateSince }.firstNotNullOfOrNull(::headlineOf)
         ?: onHold.firstNotNullOfOrNull(::headlineOf)
     // What the conversation last said is chat, not a status: a done row leaves it to the selection.
-    val spoken = (main ?: u.sessions.maxByOrNull(AgentFacts::activityOf))?.takeIf(AgentFacts::isLive)?.let(::headlineOf)
+    val speaker = (main ?: u.sessions.maxByOrNull(AgentFacts::activityOf))?.takeIf(AgentFacts::isLive)
+    val spoken = speaker?.let(::headlineOf)
     val headline = detail ?: spoken.takeUnless { kind == Kind.DONE }
     val target = u.target
     val single = u.sessions.singleOrNull()
@@ -782,6 +788,7 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
         stateWord = word,
         detail = headline.orEmpty(),
         lastReply = spoken.takeIf { kind == Kind.DONE && detail == null },
+        recap = speaker?.recap,
         stopped = cutOff != null,
         extra = extraOf(
             folderNote(target, where), c.noteOf(target?.id),
@@ -846,6 +853,7 @@ private fun sessionRow(s: AgentSessionSummary, earlier: Boolean, c: Ctx, taskTit
         stateWord = word,
         detail = if (live && kind != Kind.DONE) headlineOf(s).orEmpty() else "",
         lastReply = headlineOf(s).takeIf { live && kind == Kind.DONE },
+        recap = s.recap.takeIf { live },
         stopped = enter == Enter.RESUME && stoppedByRestart(s, c.now),
         extra = extraOf(folderNote(s, s.repo ?: AgentFacts.folderOf(s)), c.noteOf(s.id), AgentsOverviewBackingViewModel.NO_TRANSCRIPT_NOTE.takeIf { enter == Enter.NONE }, error),
         tabName = c.tabNameOf(s, title),

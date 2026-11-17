@@ -109,4 +109,27 @@ class AgentSessionTextTest {
         assertTrue(long.length <= AgentSessionText.SAID_CHARS + 1 && long.endsWith("word…"), long)
         assertEquals(long, said(long), "reading a kept line again changes nothing")
     }
+
+    @Test
+    fun `a recap keeps what the work is and where it stands, whole`() {
+        fun recap(text: String?) = AgentSessionText.recapOf(text)
+        assertEquals(
+            "Upshot's three exports are moving to Gotenberg, and run 1 is stuck because Docker Desktop is off.",
+            recap("Upshot's three exports are moving to Gotenberg, and run 1 is stuck because Docker Desktop is off. Please start Docker and tell me, and I'll restart the run."),
+        )
+        assertEquals(
+            "Making the flow robust against stalled reviews. Both fixes are pushed and live: thread watching and stopping servers.",
+            recap("Goal: making the flow robust against stalled reviews. Both fixes are pushed and live: thread watching and stopping servers. Next: watch the next run. (disable recaps in /config)"),
+            "the Goal lead, the Next sentence and the closing note go",
+        )
+        assertEquals(
+            "You asked for a fixer. It's built and pushed, with your requests landed.",
+            recap("You asked for a fixer. It's built and pushed, with your requests landed. Nothing is waiting on you, so just use it. (turn off recaps in /config)"),
+            "two sentences at most, never cut inside one",
+        )
+        assertEquals("The PR #10181 swap to oxlint is green in CI.", recap("The PR `#10181` swap to oxlint is green in CI."))
+        assertNull(recap("Next: test it on your phone."))
+        assertNull(recap("  "))
+        assertNull(recap(null))
+    }
 }

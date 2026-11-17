@@ -99,6 +99,52 @@ object AgentSessionText {
     private fun firstSentence(line: String): String =
         SENTENCE_END.findAll(line).firstOrNull { it.range.first >= SENTENCE_MIN }?.let { line.substring(0, it.range.last + 1) } ?: line
 
+    /**
+     * What a Claude Code recap says the conversation is and where it stands, as a row's description.
+     * Claude Code writes a recap into the transcript when the person comes back to a conversation
+     * ("Goal: … Next: …"). The row keeps what and where: the "Next" and "Please" sentences go, since
+     * the row's state line already says what it waits on, and so do a "Goal:" lead and the "(turn off
+     * recaps in /config)" note. At most [RECAP_SENTENCES] sentences stay, whole: a description is
+     * never cut mid-sentence.
+     *
+     * Called by the server's transcript reader ([se.soderbjorn.lunamux.TranscriptRecaps]) on each
+     * recap it finds.
+     *
+     * @param recap the recap's text as Claude Code wrote it; null or blank says nothing.
+     * @return the description, or null when nothing is left.
+     */
+    fun recapOf(recap: String?): String? {
+        val text = plain(RECAP_NOTE.replace(recap?.trim().orEmpty(), "")).replace(SPACES, " ").trim()
+        val body = GOAL_LEAD.find(text)?.let { text.substring(it.range.last + 1).replaceFirstChar(Char::uppercaseChar) } ?: text
+        val kept = sentencesOf(body).filterNot { NOT_RECAP.containsMatchIn(it) }.take(RECAP_SENTENCES)
+        return kept.joinToString(" ").takeIf { it.isNotBlank() }
+    }
+
+    /** The most sentences [recapOf] keeps: what the work is, and where it stands. */
+    const val RECAP_SENTENCES = 2
+
+    /** The note Claude Code ends a recap with, on how to turn recaps off. */
+    private val RECAP_NOTE = Regex("""\s*\((?:turn off|disable) recaps in /config\)\s*$""", RegexOption.IGNORE_CASE)
+
+    /** A recap's "Goal:" lead, which the description reads without. */
+    private val GOAL_LEAD = Regex("""^goal:\s*""", RegexOption.IGNORE_CASE)
+
+    /** The sentences of a recap that say what comes next or ask for something, not where it stands. */
+    private val NOT_RECAP = Regex("""^(next\b|please\b)""", RegexOption.IGNORE_CASE)
+
+    /** [text] split into sentences, each with its stop; see [SENTENCE_END] and [SENTENCE_MIN]. */
+    private fun sentencesOf(text: String): List<String> {
+        val out = ArrayList<String>()
+        var start = 0
+        for (end in SENTENCE_END.findAll(text)) {
+            if (end.range.first - start < SENTENCE_MIN) continue
+            out += text.substring(start, end.range.last + 1).trim()
+            start = end.range.last + 1
+        }
+        text.substring(start).trim().takeIf { it.isNotEmpty() }?.let { out += it }
+        return out
+    }
+
     /** A title made from the first words of a prompt. */
     fun titleFromPrompt(prompt: String?): String? {
         val line = previewOf(prompt) ?: return null

@@ -330,6 +330,11 @@ data class AgentSessionSummary(
     val leafId: String? = null,
     val endedAt: Long? = null,
     val lastSaid: String? = null,
+    /**
+     * What the conversation is and where it stands, from the newest recap Claude Code wrote into its
+     * transcript ([AgentSessionText.recapOf]); null while it has written none, and on a closed one.
+     */
+    val recap: String? = null,
     val lastActivityAt: Long? = null,
     val firstPrompt: String? = null,
     val taskId: String? = null,

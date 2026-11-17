@@ -107,6 +107,9 @@ class AgentSessionTracker(
      */
     private val tailReads = ConcurrentHashMap<String, TailRead>()
 
+    /** The newest Claude Code recap of each open conversation's transcript, the row's description. */
+    private val recaps = TranscriptRecaps()
+
     /**
      * Git facts per folder, filled by [warmGit] before the lock is taken so a slow repository never
      * holds up closing panes; [open] only reads it.
@@ -178,7 +181,21 @@ class AgentSessionTracker(
             panes.filter { it.alive && it.agent != null && it.state != null && openFor(it.terminalSessionId) == null }
         }
         toOpen.forEach { warmGit(it.cwd) }
+        refreshRecaps()
         applyPoll(panes, interruptsOfHookFed(), shellsOfIdle())
+    }
+
+    /**
+     * Read the recaps the open Claude conversations' transcripts gained since the last poll, outside
+     * the lock; [applyPoll] then publishes them. A closed row is one line with no description, so
+     * closed conversations are not read.
+     */
+    private fun refreshRecaps() {
+        val paths = synchronized(lock) {
+            openRecords().filter { it.agent == CLAUDE }.mapNotNullTo(HashSet()) { it.transcriptPath }
+        }
+        recaps.keepOnly(paths)
+        paths.forEach { runCatching { recaps.refresh(it) } }
     }
 
     /**
@@ -806,6 +823,7 @@ class AgentSessionTracker(
             val wait = kept[it.id]
             val bg = shells[it.id]
             it.toSummary().copy(
+                recap = recaps.known(it.transcriptPath?.takeIf { _ -> it.state != ENDED }),
                 lastActivityAt = lastActivity[it.id], status = statuses[it.id], sections = sections.of(it.conversationId),
                 waitingFor = wait?.text, waitingForYou = wait?.needsYou == true, waitingSince = wait?.since,
                 backgroundShells = bg?.count ?: 0, backgroundSince = bg?.since,
