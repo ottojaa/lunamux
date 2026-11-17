@@ -225,15 +225,15 @@ class AgentSessionTrackerTest {
     @Test
     fun `stop means done and keeps what was said, and only a permission request asks for you`() {
         val t = tracker()
-        t.onHook(pane(), event("Stop", "a-1", "last_assistant_message" to "Long intro.\n\nThree runs are ready.\nSecond line."))
-        assertEquals("Three runs are ready.", t.summaries.value.single().lastSaid)
+        t.onHook(pane(), event("Stop", "a-1", "last_assistant_message" to "## Result\n\nThree runs are **ready**. Each has its own PR.\n\nI can merge them next."))
+        assertEquals("Three runs are ready.", t.summaries.value.single().lastSaid, "the outcome it opens with, not the offer it ends on")
 
         stopped(t, "Done.\n\nShall I also update the docs?")
         var row = t.summaries.value.single()
         assertEquals(listOf("done", null, "Shall I also update the docs?"), listOf(row.state, row.question, row.lastSaid), "a closing question is not a prompt to answer")
         stopped(t, "word ".repeat(100))
         val cut = t.summaries.value.single().lastSaid!!
-        assertTrue(cut.length <= 241 && cut.endsWith("word…"), "a long line is cut at the end of a word and says so: $cut")
+        assertTrue(cut.length <= AgentSessionText.SAID_CHARS + 1 && cut.endsWith("word…"), "a long line is cut at the end of a word and says so: $cut")
 
         for (type in listOf("auth_success", "idle_prompt")) {
             t.onHook(pane(), event("Notification", "a-1", "notification_type" to type, "message" to "Signed in"))

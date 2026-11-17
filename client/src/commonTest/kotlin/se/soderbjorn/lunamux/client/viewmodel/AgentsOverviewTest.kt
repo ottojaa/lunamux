@@ -590,6 +590,8 @@ class AgentsOverviewTest {
         assertEquals("All 14 tests pass.", detail("d"), "a done row says the last thing it said")
         assertEquals("", detail("e"), "a closed one says its title only")
         assertEquals(1, vm.state.doneCount)
+        sessions(session("d", state = "done", lastSaid = "The write-up is at `notes.md`. Its sections:"))
+        assertEquals("The write-up is at notes.md.", detail("d"), "a line an older server kept reads as one plain sentence")
     }
 
     @Test

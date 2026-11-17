@@ -990,22 +990,11 @@ private const val FIRST_PROMPT_MAX = 160
 /** The first line of what the user first asked a session, cut for a status cell. */
 internal fun firstPromptLine(prompt: String): String? =
     prompt.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }?.take(FIRST_PROMPT_MAX)
-private const val LAST_SAID_MAX = 240
-
 /**
- * The part of an assistant reply worth showing as "what it last said": the first line of the last
- * paragraph, cut to [LAST_SAID_MAX] characters at the end of a word, with "…" when it was cut.
+ * What a finished reply comes to, kept as the session's "last said": [AgentSessionText.saidOf] of the
+ * whole reply, empty when nothing in it is worth showing. Called when a turn ends (the Stop hook).
  */
-internal fun lastSaidOf(message: String): String {
-    val paragraphs = message.trim().split("\n\n").asReversed()
-    val line = paragraphs.firstNotNullOfOrNull { p ->
-        p.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() && !AgentSessionText.isFenceLine(it) }
-    }
-    val text = line ?: ""
-    if (text.length <= LAST_SAID_MAX) return text
-    val head = text.take(LAST_SAID_MAX)
-    return head.substring(0, head.lastIndexOf(' ').takeIf { it > LAST_SAID_MAX / 2 } ?: head.length).trimEnd() + "…"
-}
+internal fun lastSaidOf(message: String): String = AgentSessionText.saidOf(message).orEmpty()
 
 private const val SCREEN_LINES = 200
 private val TICKET_KEY = Regex("""\b[A-Z][A-Z0-9]+-\d+\b""")

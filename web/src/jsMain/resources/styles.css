@@ -3649,7 +3649,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     cursor: pointer;
 }
 .ao-row > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-/* The description and the headline run to two lines, then end in an ellipsis. */
+/* The description and the headline run to two lines, then end in an ellipsis; a done row's headline to one. */
 .ao-about, .ao-n {
     grid-column: 2 / -1;
     min-width: 0;
@@ -3706,7 +3706,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-live .ao-w, .ao-live .ao-n { color: var(--ao-muted); }
 .ao-done .ao-t { color: var(--ao-muted); }
 .ao-done .ao-w { color: var(--ao-dim); }
-.ao-done .ao-n { color: var(--ao-muted); }
+.ao-done .ao-n { color: var(--ao-muted); -webkit-line-clamp: 1; line-clamp: 1; }
 .ao-row.ao-sel .ao-t { color: var(--ao-accent); font-weight: 600; }
 .ao-live .ao-t, .ao-done .ao-t { font-weight: 600; }
 .ao-sw { color: var(--ao-dim); }

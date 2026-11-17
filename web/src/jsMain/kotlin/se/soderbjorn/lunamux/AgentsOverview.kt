@@ -314,7 +314,7 @@ private fun highlighted(text: String, start: Int, length: Int): org.w3c.dom.Docu
 /**
  * One row. Its class says how bright it is: `ao-live` while it works, waits or needs the person, `ao-done`
  * when done in NOW, `ao-old` when closed in EARLIER. A closed row is one line ([buildClosedCells]);
- * any other has its description and headline under the first line.
+ * any other has its headline under the first line, and a live one led by its tab's name the title as well.
  */
 private fun buildRow(item: RowItem): HTMLElement {
     val row = item.row
@@ -381,13 +381,19 @@ private fun wordClassOf(row: Row): String = when {
 
 /**
  * A live or done row: the mark, the tab's name (or the title when the tab has none), the plan's
- * progress, the state word and the age; then the title as a description when the tab's name led,
- * and the headline. A row outside a repo group shows where it runs in place of an absent progress.
+ * progress, the state word and the age; then the headline. A row outside a repo group shows where it
+ * runs in place of an absent progress. When the tab's name led, a live row gives the title a line of
+ * its own as a description; a done row sets it after the name, as a closed row does, so a finished
+ * task takes two lines and the work that runs stands out.
  */
 private fun buildLiveCells(el: HTMLElement, row: Row, grouped: Boolean) {
     el.appendChild(stateMark(markOf(row)))
     val name = span("ao-t")
-    fillName(name, row)
+    val active = row.working || row.needsYou || row.onHold
+    if (active || row.tabName == null) fillName(name, row) else {
+        name.appendChild(span("ao-t-name").also { fillName(it, row) })
+        name.appendChild(span("ao-said").also { fillTitle(it, row) })
+    }
     el.appendChild(name)
     val progress = row.progress
     el.appendChild(
@@ -400,7 +406,7 @@ private fun buildLiveCells(el: HTMLElement, row: Row, grouped: Boolean) {
     )
     el.appendChild(span("ao-sw " + wordClassOf(row), row.stateWord))
     el.appendChild(ageSpan("ao-age", row.sinceMillis))
-    if (row.tabName != null) el.appendChild(div("ao-about").also { fillTitle(it, row) })
+    if (active && row.tabName != null) el.appendChild(div("ao-about").also { fillTitle(it, row) })
     if (row.detail.isNotEmpty()) el.appendChild(div("ao-n").also { fillDetail(it, row) })
 }
 

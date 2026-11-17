@@ -91,4 +91,22 @@ class AgentSessionTextTest {
         assertTrue(ok("~/.zshrc loads slowly"))
         assertTrue(ok("~5 minutes to first byte"))
     }
+
+    @Test
+    fun `a reply comes to the outcome it opens with, or the question it ends on`() {
+        fun said(reply: String?) = AgentSessionText.saidOf(reply)
+        assertEquals("Both are done.", said("## Result\n\nBoth are **done**. The tests pass.\n\nI can update the reply and show you the text before posting."))
+        assertEquals("Want me to go ahead?", said("Fixed the parser.\n\nWant me to go ahead?"))
+        assertEquals("The write-up is at notes.md.", said("The write-up is at `notes.md`. Its sections:\n\n- one\n- two"))
+        assertEquals("Merged and deployed.", said("**What changed:**\n\n- Merged and deployed.\n- Docs updated."), "a line that leads into a list is passed over")
+        assertEquals("Notes: the two worth acting on were the staff gate and the cache", said("**Notes:** the two worth acting on were the staff gate and the cache"))
+        assertEquals("4. Tell me how it went, then decide", said("**4. Tell me how it went,** then decide"), "a number before a stop does not end a sentence")
+        assertEquals("Use e.g. the cache.", said("Use e.g. the cache."))
+        assertNull(said("```"))
+        assertNull(said("  "))
+        assertNull(said(null))
+        val long = said("word ".repeat(100))!!
+        assertTrue(long.length <= AgentSessionText.SAID_CHARS + 1 && long.endsWith("word…"), long)
+        assertEquals(long, said(long), "reading a kept line again changes nothing")
+    }
 }

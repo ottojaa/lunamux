@@ -60,6 +60,45 @@ object AgentSessionText {
             ?.map(::plain)
             ?.firstOrNull { it.isNotEmpty() }
 
+    /**
+     * What a finished reply comes to, as one plain sentence for a row's headline. A reply that ends on
+     * a question gives that question, since the agent waits on the answer; any other gives the first
+     * sentence it opens with, where an agent states the outcome (its closing lines are mostly an offer
+     * or a caveat). Headings, fences, rules and a line that only leads into a list (it ends in ":") are
+     * passed over, markdown is read as text, and a long sentence is cut at a word with "…".
+     *
+     * Called by the server when a turn ends, on the whole reply, and by the overview's view model on
+     * the line a server kept, so a line an older build kept reads the same way. The second pass changes
+     * nothing a first pass made.
+     *
+     * @param reply the agent's reply, or a line kept from one; null or blank says nothing.
+     * @return the sentence, at most [SAID_CHARS] characters and the ellipsis; null when nothing is worth showing.
+     * @see previewOf
+     */
+    fun saidOf(reply: String?): String? {
+        val lines = reply?.lines()?.map { it.trim() }.orEmpty()
+        val shown = lines.filterNot { it.isEmpty() || isFenceLine(it) || RULE.matches(it) || HEADING.containsMatchIn(it) }
+            .map(::plain).filter { it.isNotEmpty() }
+        val last = shown.lastOrNull() ?: return null
+        val said = if (last.endsWith("?")) last else shown.map(::firstSentence).firstOrNull { !it.endsWith(":") } ?: firstSentence(last)
+        if (said.length <= SAID_CHARS) return said
+        val head = said.take(SAID_CHARS)
+        return head.substring(0, head.lastIndexOf(' ').takeIf { it > SAID_CHARS / 2 } ?: head.length).trimEnd(' ', ',', ';', ':') + "…"
+    }
+
+    /** The most characters [saidOf] keeps, before the ellipsis: about one line of an overview row. */
+    const val SAID_CHARS = 160
+
+    /** Where a sentence ends: its stop, then space and the capital or digit the next one starts with. */
+    private val SENTENCE_END = Regex("""[.!?](?=\s+["'(\[]?[A-Z0-9])""")
+
+    /** The fewest characters a first sentence has, so "e.g. A" or a numbered "4. Tell" is not taken for one. */
+    private const val SENTENCE_MIN = 10
+
+    /** The first sentence of [line], with its stop; the whole line when it is one sentence. */
+    private fun firstSentence(line: String): String =
+        SENTENCE_END.findAll(line).firstOrNull { it.range.first >= SENTENCE_MIN }?.let { line.substring(0, it.range.last + 1) } ?: line
+
     /** A title made from the first words of a prompt. */
     fun titleFromPrompt(prompt: String?): String? {
         val line = previewOf(prompt) ?: return null
