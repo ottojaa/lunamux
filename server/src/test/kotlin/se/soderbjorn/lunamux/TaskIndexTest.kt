@@ -206,6 +206,22 @@ class TaskIndexTest {
         assertEquals(id, index.taskIdOf(tracker.snapshot().single()))
     }
     @Test
+    fun `a manager that starts its next task from the same conversation speaks for that one only`() {
+        session("m")
+        session("run")
+        val first = index.createTask("Rebuild the views", listOf("m", "run"))
+        tracker.onSessionDestroyed("run", null)
+        val next = index.createTask("Assessments never load", listOf("m"))
+
+        val byId = index.state.value.associateBy { it.id }
+        assertEquals("a-m", byId.getValue(next).mainConversation)
+        assertNull(byId.getValue(first).mainConversation, "the finished task no longer has a live speaker, so it leaves NOW")
+        assertEquals(listOf(null, "a-m"), listOf(first, next).map(index::mainConversationOf), "list_tasks says the same")
+        assertEquals("m", index.ownSessionOf(next))
+        assertNull(index.ownSessionOf(first))
+    }
+
+    @Test
     fun `a helper claude started in a task's pane joins the task, shows beside the conversation, and never speaks for the task`() {
         val p = pane("s1", agent = "claude")
         tracker.onHook(p, event("SessionStart", "a-main"))
