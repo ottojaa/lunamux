@@ -5,7 +5,9 @@ belong to. A task is one piece of work: a release, a refactor split over branche
 conversation is one Claude or Codex dialogue. It keeps its row when it is resumed with
 `claude --resume` and when Lunamux restarts, because the row is the conversation, not the pane it
 runs in. A task has one **main conversation**, the one that speaks for it, and that conversation's
-row stands for the whole task.
+row stands for the whole task. A conversation speaks for one task at a time, the one it is in: a
+manager that starts its next task from the same conversation stops speaking for the one before, which
+then leaves NOW once nothing else of it is live.
 
 A session is in a task when it carries the task's id, and nothing else decides it. Agents put
 sessions in tasks through the MCP tools below. A **task file** is optional: it gives a task a title
@@ -128,9 +130,7 @@ shell, else in a new one.
 
 ↵ goes to the main conversation by its **conversation id**, the agent's own session id, which a
 restart and a resume keep. The main conversation is the one that made the task, or the one named with
-`set_task_lead`. A conversation speaks for one task at a time, the one it is in: a manager that starts
-its next task from the same conversation stops speaking for the one before, which then leaves NOW once
-nothing else of it is live. The first of these applies:
+`set_task_lead`. The first of these applies:
 
 1. **A conversation of the task waits and the main one does not:** the oldest waiting one is
    reached. In a tab of the strip ↵ jumps to its pane; in a hidden tab the tab is shown (below).
