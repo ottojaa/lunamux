@@ -24,7 +24,9 @@ on a line of its own as the description. A tab nobody named ("Tab 3"), a hidden 
 name only repeats the title leaves the title to lead. On the same first line, at the right: the
 plan's **progress** (a bar and "13/14", from the task's progress block or its plan's steps), one
 **state word** and the **age**. Under them comes the **headline**, two lines at most. Names are
-bright for working and needs-you rows, mid-grey for done ones and dim for closed ones.
+bright for working and needs-you rows, mid-grey for done ones and dim for closed ones; the
+description and headline under an open row's name are mid-grey whatever its state, so they stay
+readable in a theme whose dim text is faint.
 
 NOW is **grouped by repo** (the task's repo, else the folder the conversation runs in, home as
 `~`). Groups and the rows in each stand in the order their work began, so no row moves when a state

@@ -3539,7 +3539,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
    (state mark, name, progress or folder, state word, age). A live row has its description and its
    headline under that line; a closed row is the one line. Brightness and colour follow the state: a
    working or needs-you row (`.ao-live`) has a bright name, a done row (`.ao-done`) a mid-grey one,
-   and a closed one (`.ao-old`) in EARLIER is dim all over. The accent is for working, amber for
+   the text under either name is mid-grey, and a closed one (`.ao-old`) in EARLIER is dim all over. The accent is for working, amber for
    "needs you", a calm blue for waiting on something the agent started (a background shell, a
    review, CI: nothing to do for the person), a muted green for done; the accent also marks the selected row, red a failed open.
    Every other text is a shade of the theme's text colour. Lifted above the pane modals so it opens
@@ -3660,7 +3660,10 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     overflow: hidden;
     overflow-wrap: anywhere;
 }
-.ao-about { color: var(--ao-dim); }
+/* The words under a name are read, not glanced at: they take the muted text, a step under the name,
+   not the theme's dim, which some themes set near the floor of legibility. Dim is for the short
+   chrome around them (ages, groups, counts); only EARLIER rows recede further (.ao-old below). */
+.ao-about { color: var(--ao-muted); }
 .ao-live + .ao-live, .ao-live + .ao-done, .ao-done + .ao-live, .ao-done + .ao-done { margin-top: 4px; }
 /* The pointer's row is a faint tint; only the selected row has the strong fill and the accent bar. */
 .ao-row:hover { background: var(--ao-hover); }
@@ -3672,7 +3675,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-bar-fill { display: block; height: 100%; border-radius: 2px; background: var(--ao-accent); }
 .ao-done .ao-bar-fill { background: var(--ao-done); }
 /* What a closed row or an agent last said, after its name. */
-.ao-said { margin-left: 1.5ch; color: var(--ao-dim); font-weight: 400; }
+.ao-said { margin-left: 1.5ch; color: var(--ao-muted); font-weight: 400; }
 .ao-old .ao-said { color: var(--ao-faint); }
 /* A row's tab name, title and line are three things, so the second and third are set apart. */
 .ao-said + .ao-said::before { content: "· "; }
@@ -3698,11 +3701,12 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .ao-m-paused { color: var(--ao-paused); }
 .ao-m-done { color: var(--ao-done); }
 .ao-row > .ao-m { overflow: visible; }
-/* Brightness by state: live rows bright, done rows mid-grey, EARLIER rows dim. */
+/* Brightness by state: live names bright, done names mid-grey, EARLIER rows dim. */
 .ao-live .ao-t { color: var(--ao-text); font-weight: 600; }
 .ao-live .ao-w, .ao-live .ao-n { color: var(--ao-muted); }
 .ao-done .ao-t { color: var(--ao-muted); }
-.ao-done .ao-w, .ao-done .ao-n { color: var(--ao-dim); }
+.ao-done .ao-w { color: var(--ao-dim); }
+.ao-done .ao-n { color: var(--ao-muted); }
 .ao-row.ao-sel .ao-t { color: var(--ao-accent); font-weight: 600; }
 .ao-live .ao-t, .ao-done .ao-t { font-weight: 600; }
 .ao-sw { color: var(--ao-dim); }
