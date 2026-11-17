@@ -20,8 +20,7 @@ shown in the task panel.
 
 A live row leads with a **state mark** (the spinner while it works, **◆** when it needs the person,
 nothing when done: the state word says so) and the **name of its tab** when the person named the tab; the title then follows
-on a line of its own as the description while the row works, waits or needs the person, and after the
-name on the first line once it is done, so a done row takes two lines. A tab nobody named ("Tab 3"), a hidden tab, or one whose
+on a line of its own as the description, whole and never cut, since it is what tells the task apart. A tab nobody named ("Tab 3"), a hidden tab, or one whose
 name only repeats the title leaves the title to lead. On the same first line, at the right: the
 plan's **progress** (a bar and "13/14", from the task's progress block or its plan's steps), one
 **state word** and the **age**. Under them comes the **headline**, two lines at most (one on a done row). Names are

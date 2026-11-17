@@ -3649,8 +3649,10 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     cursor: pointer;
 }
 .ao-row > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-/* The description and the headline run to two lines, then end in an ellipsis; a done row's headline to one. */
-.ao-about, .ao-n {
+/* The description is shown whole, wrapping: it is what tells a task apart. The headline runs to two
+   lines, then ends in an ellipsis; a done row's to one. */
+.ao-about { grid-column: 2 / -1; min-width: 0; overflow-wrap: anywhere; }
+.ao-n {
     grid-column: 2 / -1;
     min-width: 0;
     display: -webkit-box;
