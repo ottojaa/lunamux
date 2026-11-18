@@ -196,6 +196,12 @@ class AgentsOverviewBackingViewModel(
         val lastReply: String? = null,
         /** The speaking conversation's newest recap ([AgentSessionSummary.recap]); null while it has none or is closed. */
         val recap: String? = null,
+        /**
+         * Whether [detail] was said on purpose: a question for the person, or a status an agent set
+         * (the task's, the plan's step, a conversation's own, a wait its writer named). False for
+         * what Lunamux reads off the screen: a tool call, background shells, a last reply.
+         */
+        val detailSet: Boolean = false,
     ) {
         val needsYou: Boolean get() = kind == Kind.NEEDS_YOU
         val working: Boolean get() = kind == Kind.WORKING
@@ -208,7 +214,29 @@ class AgentsOverviewBackingViewModel(
         val matchInTab: Boolean get() = matchLength > 0 && this.field == "tab" && tabName != null
         val matchInTitle: Boolean get() = matchLength > 0 && snippet == null && !matchInTab
         val matchInSnippet: Boolean get() = matchLength > 0 && snippet != null
+
+        /**
+         * The one line a live or done row shows under its name, so a row is never more than two
+         * lines: a search hit's snippet, or the title when the hit is in it; else the question while
+         * it needs the person; else a status said on purpose ([detailSet]); else the recap; else the
+         * title when the tab's name led; else what Lunamux read off the screen. What it leaves out is
+         * a key away: the recap heads the peek.
+         */
+        val under: Under
+            get() = when {
+                snippet != null -> Under.SNIPPET
+                matchInTitle && tabName != null -> Under.TITLE
+                needsYou && detail.isNotEmpty() -> Under.QUESTION
+                detailSet && detail.isNotEmpty() -> Under.STATUS
+                recap != null -> Under.RECAP
+                tabName != null -> Under.TITLE
+                detail.isNotEmpty() -> Under.STATUS
+                else -> Under.NONE
+            }
     }
+
+    /** What [Row.under] shows: which of the row's texts, or none. */
+    enum class Under { SNIPPET, QUESTION, STATUS, RECAP, TITLE, NONE }
 
     /** The selected row's screen: live while its pane exists, else what was saved. */
     data class Peek(
@@ -536,7 +564,27 @@ private class TaskUnit(
     val target: AgentSessionSummary?,
     val mainId: String?,
     val resumeId: String?,
-)
+) {
+    /**
+     * Whether the task's status is a question waiting for the person ([AgentTask.questionWaits]) that
+     * none of its conversations already asks, while its main conversation is open and not working
+     * (at its prompt, perhaps with a shell running): its row then needs the person. A working main
+     * conversation has moved on past the question; a closed one counts once it is resumed and asks.
+     */
+    fun asks(): Boolean = inNow && task.questionWaits && !task.status.isNullOrBlank() &&
+        sessions.none(AgentFacts::isWaiting) &&
+        sessions.any { it.id == mainId && AgentFacts.isLive(it) && !AgentFacts.isWorking(it) }
+}
+
+/**
+ * Whether [s]'s headline ([headlineOf]) was said on purpose: a question, a status it set while it
+ * works, or the wait its writer named. Not a tool call, background shells or a last reply.
+ */
+private fun saidOnPurpose(s: AgentSessionSummary): Boolean = when {
+    AgentFacts.isWaiting(s) -> true
+    s.state == WORKING -> !s.status.isNullOrBlank()
+    else -> AgentFacts.waitOf(s) != null && !s.waitingFor.isNullOrBlank()
+}
 
 /** The rows, selection, peek, confirmation and footer for [inputs] and the person's choices [ui] at time [now]. */
 internal fun buildOverview(inputs: OverviewInputs, ui: OverviewUi, now: Long): State {
@@ -626,6 +674,9 @@ internal fun buildOverview(inputs: OverviewInputs, ui: OverviewUi, now: Long): S
         selectedRow?.takeIf { it.id == m.rowId && it.enter == m.enter && it.recordId == m.recordId }?.ask
     }
     val tally = AgentFacts.tally(sessions, inputs.layout).total
+    // A task asking by its status needs the person, though no conversation of it is counted as asking.
+    val asking = units.filter { it.asks() }
+    val askingOnHold = asking.count { u -> u.sessions.any { it.id == u.mainId && AgentFacts.isWaitingOnSomething(it) } }
     return State(
         open = ui.open,
         query = ui.query,
@@ -638,9 +689,9 @@ internal fun buildOverview(inputs: OverviewInputs, ui: OverviewUi, now: Long): S
         recent = if (matchMode) emptyList() else recent,
         fortnight = if (matchMode) emptyList() else fortnight,
         earlierHidden = earlierAll.size - earlierShown.size,
-        needYouCount = tally.waiting,
+        needYouCount = tally.waiting + asking.size,
         workingCount = tally.working,
-        onHoldCount = tally.onHold,
+        onHoldCount = tally.onHold - askingOnHold,
         pausedCount = nowRows.count { it.kind == Kind.PAUSED },
         doneCount = nowRows.count { it.kind == Kind.DONE },
         selectedId = selectedId,
@@ -755,9 +806,10 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
     val waiting = waitingAll.minByOrNull(AgentFacts::shownSince)
     // Conversations at their prompt while a shell, a review or CI they started goes on: not idle, and not asking.
     val onHold = u.sessions.filter(AgentFacts::isWaitingOnSomething).sortedBy(AgentFacts::shownSince)
+    val asks = u.asks()
     val (kind, word) = when {
         waitingAll.size >= 2 -> Kind.NEEDS_YOU to AgentsOverviewBackingViewModel.needYouText(waitingAll.size)
-        waiting != null -> Kind.NEEDS_YOU to AgentsOverviewBackingViewModel.STATE_NEEDS_YOU
+        waiting != null || asks -> Kind.NEEDS_YOU to AgentsOverviewBackingViewModel.STATE_NEEDS_YOU
         working.any { it.id == u.mainId } || (u.mainId == null && working.size == 1) -> Kind.WORKING to AgentsOverviewBackingViewModel.STATE_WORKING
         working.isNotEmpty() -> Kind.WORKING to AgentsOverviewBackingViewModel.agentsWorkingText(working.size)
         // What the sessions do says what is true; the pause says why nothing does.
@@ -768,11 +820,12 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
     }
     val blocks = c.inputs.panels[t.id].orEmpty()
     val main = u.sessions.firstOrNull { it.id == u.mainId }
-    val detail = waiting?.let(::headlineOf)
-        ?: t.status?.trim()?.takeIf { it.isNotEmpty() }
-        ?: currentStepOf(blocks)
-        ?: working.sortedByDescending { it.lastActivityAt ?: it.stateSince }.firstNotNullOfOrNull(::headlineOf)
-        ?: onHold.firstNotNullOfOrNull(::headlineOf)
+    // The headline, and whether it was said on purpose (Row.detailSet).
+    val said = waiting?.let(::headlineOf)?.let { it to true }
+        ?: (t.status?.trim()?.takeIf { it.isNotEmpty() } ?: currentStepOf(blocks))?.let { it to true }
+        ?: working.sortedByDescending { it.lastActivityAt ?: it.stateSince }.firstNotNullOfOrNull { s -> headlineOf(s)?.let { it to saidOnPurpose(s) } }
+        ?: onHold.firstNotNullOfOrNull { s -> headlineOf(s)?.let { it to saidOnPurpose(s) } }
+    val detail = said?.first
     // What the conversation last said is chat, not a status: a done row leaves it to the selection.
     val speaker = (main ?: u.sessions.maxByOrNull(AgentFacts::activityOf))?.takeIf(AgentFacts::isLive)
     val spoken = speaker?.let(::headlineOf)
@@ -790,6 +843,7 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
         kind = kind,
         stateWord = word,
         detail = headline.orEmpty(),
+        detailSet = said?.second == true,
         lastReply = spoken.takeIf { kind == Kind.DONE && detail == null },
         recap = speaker?.recap,
         stopped = cutOff != null,
@@ -815,6 +869,7 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
             !u.inNow -> u.recency
             // A wait is aged from when it began, which no session state change marks.
             kind == Kind.NEEDS_YOU && waiting != null -> AgentFacts.shownSince(waiting)
+            asks -> t.statusAtMillis ?: u.since
             kind == Kind.WAITING -> AgentFacts.shownSince(onHold.first())
             kind == Kind.PAUSED -> t.pausedAtMillis ?: u.since
             else -> u.since
@@ -855,6 +910,7 @@ private fun sessionRow(s: AgentSessionSummary, earlier: Boolean, c: Ctx, taskTit
         kind = kind,
         stateWord = word,
         detail = if (live && kind != Kind.DONE) headlineOf(s).orEmpty() else "",
+        detailSet = saidOnPurpose(s),
         lastReply = headlineOf(s).takeIf { live && kind == Kind.DONE },
         recap = s.recap.takeIf { live },
         stopped = enter == Enter.RESUME && stoppedByRestart(s, c.now),

@@ -32,6 +32,7 @@ import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Ask
 import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Confirm
 import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Peek
 import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Row
+import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Under
 import se.soderbjorn.lunula.web.hotkey.Hotkey
 import se.soderbjorn.lunula.web.hotkey.HotkeyActionSpec
 import se.soderbjorn.lunula.web.hotkey.HotkeyBindings
@@ -328,7 +329,8 @@ private fun buildRow(item: RowItem): HTMLElement {
     if (row.finished) buildClosedCells(el, row) else buildLiveCells(el, row, item.grouped)
     if (item.selected && row.agents.isNotEmpty()) el.appendChild(buildAgents(row))
     if (item.selected) buildFocus(row, item.ask)?.let { el.appendChild(it) }
-    item.peek?.let { el.appendChild(buildPeek(it)) }
+    // The recap the row's one line left out heads its peek.
+    item.peek?.let { el.appendChild(buildPeek(it, row.recap.takeIf { row.under != Under.RECAP })) }
     return el
 }
 
@@ -381,9 +383,8 @@ private fun wordClassOf(row: Row): String = when {
 
 /**
  * A live or done row: the mark, the tab's name (or the title when the tab has none), the plan's
- * progress, the state word and the age; then the description, whole on lines of its own since it is
- * what tells the task apart, and the headline. A row outside a repo group shows where it runs in
- * place of an absent progress.
+ * progress, the state word and the age; then at most one line under it ([lineUnder]). A row outside
+ * a repo group shows where it runs in place of an absent progress.
  */
 private fun buildLiveCells(el: HTMLElement, row: Row, grouped: Boolean) {
     el.appendChild(stateMark(markOf(row)))
@@ -401,27 +402,24 @@ private fun buildLiveCells(el: HTMLElement, row: Row, grouped: Boolean) {
     )
     el.appendChild(span("ao-sw " + wordClassOf(row), row.stateWord))
     el.appendChild(ageSpan("ao-age", row.sinceMillis))
-    descriptionOf(row)?.let(el::appendChild)
-    if (row.detail.isNotEmpty()) el.appendChild(if (row.snippet != null) div("ao-n").also { fillDetail(it, row) } else stateLine(row))
+    lineUnder(row)?.let(el::appendChild)
 }
 
 /**
- * What a live or done row says it is, under its name: the conversation's recap ([Row.recap]), what
- * the work is and where it stands; without one, the title when the tab's name led. A search hit in
- * the title shows the title, so the match can be seen.
+ * The one line under a live or done row's name, the one [Row.under] picks: a search snippet, the
+ * question (the one line said in full colour), a status, the recap or the title.
  */
-private fun descriptionOf(row: Row): HTMLElement? {
-    val titleShown = row.tabName == null
-    return when {
-        row.recap != null && !(row.matchInTitle && !titleShown) -> div("ao-about").also { it.textContent = row.recap }
-        !titleShown -> div("ao-about").also { fillTitle(it, row) }
-        else -> null
-    }
+private fun lineUnder(row: Row): HTMLElement? = when (row.under) {
+    Under.SNIPPET -> div("ao-n").also { fillDetail(it, row) }
+    Under.QUESTION, Under.STATUS -> stateLine(row)
+    Under.RECAP -> div("ao-about").also { it.textContent = row.recap }
+    Under.TITLE -> div("ao-about").also { fillTitle(it, row) }
+    Under.NONE -> null
 }
 
 /**
- * [row]'s headline as a state line: a hook and the text, in the colour of where the row stands, so it
- * reads apart from the description above it. A search snippet is not a state and stays plain.
+ * [row]'s headline as a state line: a hook in the colour of where the row stands, then the text,
+ * dim unless it is a question for the person, which is said in full amber.
  */
 private fun stateLine(row: Row): HTMLElement {
     val tone = when {
@@ -455,20 +453,19 @@ private fun buildClosedCells(el: HTMLElement, row: Row) {
 
 /**
  * The conversations of the selected task, one line each: its mark, its name with what it says after
- * it, and its age. The ones in hidden tabs come last, under a caption that says they run in the
- * background, so they are not taken for conversations the person can see in a tab.
+ * it, and its age. The ones in hidden tabs come last, dimmed and marked as such, so they are not
+ * taken for conversations the person can see in a tab. When they all say the same thing, it is left
+ * out: the marks already say it.
  */
 private fun buildAgents(row: Row): HTMLElement {
     val box = div("ao-agents")
-    row.agents.forEachIndexed { i, agent ->
-        if (agent.background && (i == 0 || !row.agents[i - 1].background)) {
-            val hidden = row.agents.count { it.background }
-            box.appendChild(div("ao-agents-cap").also { it.textContent = "in the background · $hidden" })
-        }
+    val same = row.agents.size > 1 && row.agents.all { it.doing == row.agents.first().doing }
+    row.agents.forEach { agent ->
         box.appendChild(stateMark(agent.state))
-        val text = span("ao-agent")
+        val text = span("ao-agent" + if (agent.background) " ao-agent-bg" else "")
         text.appendChild(span("ao-agent-name", agent.title))
-        if (agent.doing.isNotEmpty()) text.appendChild(span("ao-said", agent.doing))
+        if (agent.doing.isNotEmpty() && !same) text.appendChild(span("ao-said", agent.doing))
+        if (agent.background) text.appendChild(span("ao-said", "· hidden tab"))
         box.appendChild(text)
         box.appendChild(ageSpan("ao-age", agent.sinceMillis))
     }
@@ -539,10 +536,21 @@ private fun buildMoreLine(hidden: Int): HTMLElement {
     return el
 }
 
-/** The popover under the selected row (and over the task panel): a heading and the last lines of the session's screen. */
-internal fun buildPeek(peek: Peek): HTMLElement {
+/**
+ * The popover under the selected row (and over the task panel): a heading and the last lines of the
+ * session's screen.
+ *
+ * @param peek what to show.
+ * @param recap the conversation's recap, shown first when the row's own line left it out.
+ * @return the popover.
+ */
+internal fun buildPeek(peek: Peek, recap: String? = null): HTMLElement {
     val box = div("ao-peek")
     box.addEventListener("click", { e: Event -> e.stopPropagation() })
+    if (recap != null) {
+        box.appendChild(div("ao-peek-title").also { it.textContent = "RECAP" })
+        box.appendChild(div("ao-peek-section ao-peek-recap").also { it.textContent = recap })
+    }
     // What its agent wrote for the side panel comes first: for closed work this is its recap.
     peek.sections.forEach { s ->
         box.appendChild(div("ao-peek-title").also { it.textContent = s.heading.uppercase() })

@@ -652,6 +652,48 @@ class AgentsOverviewTest {
     }
 
     @Test
+    fun aRowShowsOneLineUnderItsNameTheMostTellingOneItHas() {
+        layout(listed = listOf("ask", "set", "tool", "plain"))
+        sessions(
+            session("ask", state = AgentFacts.NEEDS_YOU, question = "Deploy now?").copy(recap = "Shipping the fix. It is built."),
+            session("set").copy(status = "Running the migration", recap = "Moving the data. Half is copied."),
+            session("tool", nowLine = "Bash(ls)").copy(recap = "Moving exports. Run 1 boots."),
+            session("plain", nowLine = "Bash(ls)"),
+        )
+        vm.open()
+        val rows = vm.state.now.associateBy { it.id }
+        assertEquals(AgentsOverviewBackingViewModel.Under.QUESTION, rows.getValue("ask").under, "a question outranks everything")
+        assertEquals(AgentsOverviewBackingViewModel.Under.STATUS, rows.getValue("set").under, "a status said on purpose is fresher than the recap")
+        assertEquals(AgentsOverviewBackingViewModel.Under.RECAP, rows.getValue("tool").under, "a tool call read off the screen gives way to the recap")
+        assertFalse(rows.getValue("tool").detailSet)
+        assertEquals(AgentsOverviewBackingViewModel.Under.TITLE, rows.getValue("plain").under, "without a recap the title says what the work is, under the tab's name")
+    }
+
+    @Test
+    fun aTaskWhoseStatusAsksNeedsThePersonWhileItsConversationWaitsOnAShell() {
+        layout(listed = listOf("main"))
+        sessions(session("main", state = "done", taskId = "g1").copy(backgroundShells = 1, backgroundSince = now - 12 * minute))
+        val asking = task("main", status = "Go for the production deploys?").copy(questionWaits = true, statusAtMillis = now - 5 * minute)
+        windowState.updateAgentTasks(listOf(asking))
+        vm.open()
+        val row = vm.state.now.single()
+        assertEquals(AgentsOverviewBackingViewModel.Kind.NEEDS_YOU, row.kind)
+        assertEquals(AgentsOverviewBackingViewModel.Under.QUESTION, row.under)
+        assertEquals("Go for the production deploys?", row.detail)
+        assertEquals(now - 5 * minute, row.sinceMillis, "it has waited since the question was put")
+        assertEquals(1 to 0, vm.state.needYouCount to vm.state.onHoldCount, "counted as asking, not as waiting")
+
+        windowState.updateAgentTasks(listOf(asking.copy(questionWaits = false)))
+        val plain = vm.state.now.single()
+        assertEquals(AgentsOverviewBackingViewModel.Kind.WAITING, plain.kind, "a status that is not flagged as a question stays a status")
+        assertEquals(AgentsOverviewBackingViewModel.Under.STATUS, plain.under)
+
+        sessions(session("main", taskId = "g1"))
+        windowState.updateAgentTasks(listOf(asking))
+        assertEquals(AgentsOverviewBackingViewModel.Kind.WORKING, vm.state.now.single().kind, "once its conversation works again, the work has moved past the question")
+    }
+
+    @Test
     fun nowIsGroupedByRepoWithoutMovingRowsInsideAGroup() {
         layout(listed = listOf("a", "b", "c"))
         sessions(

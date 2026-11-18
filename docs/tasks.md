@@ -17,29 +17,42 @@ and, if wanted, an `open` action. It lists no sessions, and Lunamux only ever re
 
 One row per conversation. A conversation in no task is a row of its own. A task's main conversation
 carries the task's row; its other agents are not rows. A **background agent** (one working in a tab
-out of sight) is counted in the row's state word and listed under the row while it is selected, and
-shown in the task panel.
+out of sight) is counted in the row's state word and listed under the row while it is selected
+(dimmed and marked "hidden tab"; what each says is left out when they all say the same), and shown in
+the task panel.
 
 A live row leads with a **state mark** (the spinner while it works, **◆** when it needs the person,
 nothing when done: the state word says so) and the **name of its tab** when the person named the tab.
 A tab nobody named ("Tab 3"), a hidden tab, or one whose name only repeats the title leaves the title
-to lead. Under it, on a line of its own, whole and never cut, comes the **description**: what the work
-is and where it stands, since that is what tells the task apart. It is the newest **recap** Claude Code
-wrote into the speaking conversation's transcript (it writes one when the person comes back to a
-conversation), kept to its first two sentences, without its "Next…" and "Please…" sentences (the state
-line says what the row waits on), its "Goal:" lead and its note on turning recaps off. Lunamux calls no
-model for it: it reads the line already on disk, from the last 4 MB of the transcript and then only
-what the file gains. Until a conversation has a recap (a new one, Codex, recaps turned off), a row led
-by its tab's name has its title as the description, and one led by its title has none. A recap can lag
-the conversation by a few turns while the person is in it, since Claude Code writes one only after
-they were away. A search hit in the title shows the title in its place. On the same first line, at the right: the
-plan's **progress** (a bar and "13/14", from the task's progress block or its plan's steps), one
-**state word** and the **age**. Under them comes the **headline** as a **state line**: a ↳ hook and the
-text in the row's state colour (accent working, amber asking, blue waiting, green done), two lines at
-most, one on a done row. Names are
-bright for working and needs-you rows, mid-grey for done ones and dim for closed ones; the
-description is dim, and the state line's hook and colour set it apart from the description even in
-a theme of one hue.
+to lead. On the same line, at the right: the plan's **progress** (a grey bar and "13/14", from the
+task's progress block or its plan's steps), one **state word** and the **age**.
+
+Under the name comes **one line**, never more, so a row reads at a glance. It is the most telling
+thing the row has, in this order:
+
+1. **The question**, while the row needs the person: in full amber behind a ↳ hook, two lines at most.
+   It is the one loud line in the list.
+2. **A status said on purpose**: the task's status line, the plan's step in hand, a conversation's own
+   status, or the wait its writer named. Dim, one line, behind a ↳ hook in the row's state colour.
+3. **The recap**: what the work is and where it stands, in the conversation's own words. It is the
+   newest recap Claude Code wrote into the speaking conversation's transcript (it writes one when the
+   person comes back to a conversation), kept to its first two sentences, without its "Next…" and
+   "Please…" sentences, its "Goal:" lead and its note on turning recaps off. Lunamux calls no model for
+   it: it reads the line already on disk, from the last 4 MB of the transcript and then only what the
+   file gains. A recap can lag the conversation by a few turns while the person is in it, since Claude
+   Code writes one only after they were away. Dim, two lines at most.
+4. **The title**, when the tab's name led.
+5. **What Lunamux read off the screen**: a tool call, background shells. Dim, one line.
+
+A search hit shows its snippet instead, or the title when the hit is in it. A recap the line left out
+heads the row's **peek** (→), so it is a key away. A task whose status is flagged as a question
+(`questionWaits`) needs the person while its main conversation sits open at its prompt, even with a
+shell of its own still running.
+
+Colour is spent on state only, and loud only where the person is wanted. Names are bright for working
+and needs-you rows, mid-grey for done ones and dim for closed ones; a selected row keeps its name's
+colour, since its fill and the bar at its edge mark it. "Needs you" is the only bold state word;
+"waiting", which asks nothing of the person, is the quietest. Tasks stand apart by space, not colour.
 
 NOW is **grouped by repo** (the task's repo, else the folder the conversation runs in, home as
 `~`). Groups and the rows in each stand in the order their work began, so no row moves when a state
