@@ -252,7 +252,11 @@ handler on the ⋮ menu's Close row asks ours instead of it for a working tab:
 ## How state is known
 
 Claude Code sessions report through hooks: a permission prompt or elicitation is **needs you**, a
-finished turn is **done**. Claude Code sends no event when a prompt is answered or refused or a turn
+finished turn is **done**. A prompt is always about a tool call in flight, and Claude Code sends its
+notification only once the prompt has shown for a few seconds, so a notification that arrives after
+its call finished or the turn ended (a call approved in that time) is ignored rather than left
+asking. Every state a hook moves a conversation to is logged at debug level, with the event that
+moved it. Claude Code sends no event when a prompt is answered or refused or a turn
 is interrupted, so what really happened ends the wait, in this order and never by a timer:
 
 - The transcript ends in `[Request interrupted by user]` (or `… for tool use` after a refused tool

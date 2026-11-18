@@ -400,6 +400,12 @@ class AgentSessionTracker(
         val isHelper = rec.id in helpers
         val now = clock()
         fun set(state: String, nowLine: String? = rec.nowLine, question: String? = null) {
+            // Every state a hook moves a conversation to is logged: a row in the wrong state is
+            // diagnosed from the order its events arrived in, which nothing else keeps.
+            if (state != rec.state) {
+                log.debug("Agent {} ({}): {} -> {} on {}{}", rec.id, rec.agentSessionId, rec.state, state, name,
+                    event.str("notification_type")?.let { " ($it)" } ?: event.str("tool_name")?.let { " ($it)" } ?: "")
+            }
             rec = rec.copy(
                 state = state,
                 stateSince = if (state != rec.state) now else rec.stateSince,
@@ -441,6 +447,15 @@ class AgentSessionTracker(
                 val message = event.str("message")
                 val type = event.str("notification_type")
                 if (!isPromptNotification(type, message)) return@synchronized
+                // A prompt is always about a tool call in flight: its PreToolUse comes first, and
+                // Claude Code sends the notification only once the prompt has shown for a few
+                // seconds. One that arrives after the call finished or the turn ended (a call
+                // approved in that time, an auto-mode approval) prompts for nothing, and would
+                // otherwise leave the conversation "needs you" until the next prompt.
+                if (!toolInFlight.containsKey(rec.id)) {
+                    log.debug("Agent {} ({}): {} notification with no tool call in flight ignored", rec.id, rec.agentSessionId, type ?: "untyped")
+                    return@synchronized
+                }
                 // The hook text is generic ("Claude needs your permission"). The tool call the prompt
                 // is about arrived with the PreToolUse just before, so say what is being asked instead.
                 set(NEEDS_YOU, nowLine = null, question = pendingQuestionOf(toolInFlight[rec.id], message, type)?.take(QUESTION_MAX))

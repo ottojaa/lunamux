@@ -126,7 +126,9 @@ class AgentSessionTrackerTest {
         t.onHook(pane(), event("Stop", "a-1", "last_assistant_message" to said))
     }
 
-    private fun askPermission(t: AgentSessionTracker, tool: String = "Bash") {
+    /** A permission prompt, as Claude Code sends it: about a call it starts first, unless [started] says one is already in flight. */
+    private fun askPermission(t: AgentSessionTracker, tool: String = "Bash", started: Boolean = false) {
+        if (!started) t.onHook(pane(), toolEvent(tool, "{}"))
         t.onHook(pane(), event("Notification", "a-1", "message" to "Claude needs your permission to use $tool"))
     }
 
@@ -211,7 +213,7 @@ class AgentSessionTrackerTest {
         t.onHook(p, toolEvent("Bash", """{"command":"./gradlew test\nsecond line","description":"Run the server tests"}"""))
         assertEquals("Run the server tests", t.summaries.value.single().nowLine)
 
-        askPermission(t)
+        askPermission(t, started = true)
         row = t.summaries.value.single()
         assertEquals("needs_you", row.state)
         assertEquals("Allow Bash ./gradlew test?", row.question, "a prompt names the actual command, not the hook's generic text")
@@ -239,16 +241,17 @@ class AgentSessionTrackerTest {
             t.onHook(pane(), event("Notification", "a-1", "notification_type" to type, "message" to "Signed in"))
             assertEquals("done", onlyState(t), type)
         }
+        t.onHook(pane(), toolEvent("Bash", """{"command":"ls"}"""))
         t.onHook(pane(), event("Notification", "a-1", "notification_type" to "permission_prompt", "message" to "Claude needs your permission to use Bash"))
         row = t.summaries.value.single()
-        assertEquals(listOf("needs_you", "Claude needs your permission to use Bash"), listOf(row.state, row.question))
+        assertEquals(listOf("needs_you", "Allow Bash ls?"), listOf(row.state, row.question))
     }
 
     @Test
     fun `a prompt names the tool call it is about, or the question put through AskUserQuestion`() {
         val t = tracker()
         t.onHook(pane(), toolEvent("AskUserQuestion", """{"questions":[{"question":"Aurora or Borealis?","header":"Name","options":[]}]}"""))
-        askPermission(t, "it")
+        askPermission(t, "it", started = true)
         assertEquals("Aurora or Borealis?", t.summaries.value.single().question)
 
         t.onHook(pane(), toolEvent("Bash", """{"command":"ls"}"""))
@@ -256,8 +259,23 @@ class AgentSessionTrackerTest {
         assertEquals("Allow Bash ls?", t.summaries.value.single().question)
 
         t.onHook(pane(), event("PostToolUse", "a-1"))
-        askPermission(t, "it")
-        assertEquals("Claude needs your permission to use it", t.summaries.value.single().question, "a finished call is not named")
+        t.onHook(pane(), event("Notification", "a-1", "message" to "Claude needs your permission to use Bash", "notification_type" to "permission_prompt"))
+        assertEquals("working", onlyState(t), "a notification that arrives after its call finished prompts for nothing")
+    }
+
+    @Test
+    fun `a prompt notification that arrives after the turn ended leaves the conversation done`() {
+        val t = tracker()
+        t.onHook(pane(), event("UserPromptSubmit", "a-1", "prompt" to "read the thread"))
+        t.onHook(pane(), toolEvent("mcp__slack__read_thread", """{"url":"https://example.com/t"}"""))
+        t.onHook(pane(), event("PostToolUse", "a-1"))
+        t.onHook(pane(), event("Stop", "a-1", "last_assistant_message" to "Want me to post it?"))
+        // Claude Code sends a permission notification a few seconds after the prompt shows; this
+        // one was for a call already approved and run.
+        t.onHook(pane(), event("Notification", "a-1", "notification_type" to "permission_prompt", "message" to "Claude needs your permission to use Slack"))
+        assertEquals("done", onlyState(t))
+        t.onPoll(listOf(pane(agent = "claude", state = null)))
+        assertEquals("done", onlyState(t))
     }
 
     @Test
@@ -307,6 +325,7 @@ class AgentSessionTrackerTest {
         assertEquals(listOf(id, "done", null, "leaf-s9"), listOf(row.id, row.state, row.question, row.leafId))
         assertNull(row.endedAt)
 
+        t.onHook(pane("s9"), toolEvent("Bash", "{}"))
         t.onHook(pane("s9"), event("Notification", "a-1", "message" to "Claude needs your permission to use Bash"))
         assertEquals("needs_you", onlyState(t), "its next prompt still asks")
     }
