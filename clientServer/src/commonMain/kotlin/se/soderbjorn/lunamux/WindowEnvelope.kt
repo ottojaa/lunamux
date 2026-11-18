@@ -282,6 +282,11 @@ sealed class WindowEnvelope {
         val unpushed: Int? = null,
         val branch: String? = null,
         val resumeNote: String? = null,
+        /**
+         * The same rows as [screen] in the styles the terminal draws them with, for a live pane whose
+         * styles the server holds; empty otherwise, and the peek then shows [screen] plain.
+         */
+        val styled: List<List<ScreenRun>> = emptyList(),
     ) : WindowEnvelope()
 
     /** The answer to [WindowCommand.ReadAgentStory], sent only to the connection that asked. */
@@ -296,6 +301,30 @@ sealed class WindowEnvelope {
         /** The name of the folder the conversation last worked in, which may not be the one it started in. */
         val folder: String? = null,
     ) : WindowEnvelope()
+}
+
+/**
+ * One run of same-styled text on a row of a pane's screen, as the agents overview's peek draws it.
+ * A colour is null for the terminal's default, 0–255 for an entry of its palette, or [RGB] plus a
+ * 24-bit `0xRRGGBB` for a true colour. Sent in [WindowEnvelope.AgentSessionInspection.styled].
+ */
+@Serializable
+data class ScreenRun(
+    val text: String,
+    val fg: Int? = null,
+    val bg: Int? = null,
+    val bold: Boolean = false,
+    val dim: Boolean = false,
+    val italic: Boolean = false,
+    val underline: Boolean = false,
+    val strike: Boolean = false,
+    /** Foreground and background swap, as a terminal draws a cursor or a selected item. */
+    val inverse: Boolean = false,
+) {
+    companion object {
+        /** The flag on [fg] or [bg] that marks a 24-bit colour in the low 24 bits. */
+        const val RGB = 1 shl 24
+    }
 }
 
 /** One thing the person asked a conversation: when, its first line, and how long the agent then worked (null while it still does). */

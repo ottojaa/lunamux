@@ -26,9 +26,6 @@ object AgentSessionSearch {
     /** Characters kept on each side of a match in a snippet. */
     private const val SNIPPET_SIDE = 40
 
-    /** The most lines of screen returned for peek. */
-    private const val PEEK_LINES = 12
-
     /** Rank of each matched field: lower is better. */
     private val TIER = mapOf(
         "title" to 0, "tab" to 0, "task" to 1, "prompt" to 2, "branch" to 3, "links" to 3, "transcript" to 4, "screen" to 4,
@@ -97,13 +94,15 @@ object AgentSessionSearch {
         val rec = tracker?.find(recordId) ?: return null
         val open = rec.state != "ended"
         val snapshot = if (open) rec.terminalSessionId?.let { livePaneSnapshot(it) } else null
-        val screenText = if (snapshot != null) snapshot.screenText() else rec.lastScreen
-        val screen = screenText?.lines()?.filter { it.isNotBlank() }?.takeLast(PEEK_LINES).orEmpty()
+        val rows = snapshot?.screenRows?.invoke()
+        val (screen, styled) = if (rows != null) PeekScreen.styled(rows)
+        else PeekScreen.plain(if (snapshot != null) snapshot.screenText() else rec.lastScreen) to emptyList()
         val folder = rec.cwd?.takeIf { it.isNotBlank() && File(it).isDirectory }?.let { Path.of(it) }
         return WindowEnvelope.AgentSessionInspection(
             recordId = recordId,
             live = snapshot != null,
             screen = screen,
+            styled = styled,
             uncommitted = folder?.let(GitCatalog::uncommittedCount),
             unpushed = folder?.let(GitCatalog::unpushedCount),
             branch = folder?.let { GitCatalog.runGit(it, "branch", "--show-current")?.trim()?.takeIf(String::isNotEmpty) }

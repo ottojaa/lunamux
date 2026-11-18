@@ -555,10 +555,57 @@ internal fun buildPeek(peek: Peek): HTMLElement {
     when {
         peek.loading -> box.appendChild(div("ao-peek-line").also { it.textContent = "…" })
         peek.emptyText != null -> box.appendChild(div("ao-peek-line").also { it.textContent = peek.emptyText })
-        else -> peek.lines.forEach { line -> box.appendChild(div("ao-peek-line").also { it.textContent = line }) }
+        peek.styled.isNotEmpty() -> {
+            val palette = buildTermPalette()
+            peek.styled.forEach { row -> box.appendChild(styledLine(row, palette)) }
+        }
+        // A blank row keeps its height: on an agent's screen it is what separates one item from the next.
+        else -> peek.lines.forEach { line -> box.appendChild(div("ao-peek-line").also { it.textContent = line.ifEmpty { " " } }) }
     }
     return box
 }
+
+/**
+ * One row of a live screen in the terminal's own styles: a span per run with its colours, weight,
+ * slant, dimness and lines. Colours resolve against [palette], the terminal theme's (so a peek reads
+ * like the pane), with a bold run in one of the low eight colours drawn bright as the terminal does.
+ *
+ * @param runs the row's runs ([Peek.styled]); none for a blank row.
+ * @param palette the terminal's resolved colours ([buildTermPalette]).
+ * @return the row's element.
+ */
+private fun styledLine(runs: List<ScreenRun>, palette: TermPalette): HTMLElement {
+    val line = div("ao-peek-line ao-peek-styled")
+    line.style.color = palette.defaultFg
+    if (runs.isEmpty()) line.textContent = " "
+    runs.forEach { run ->
+        val el = span("", run.text)
+        var fg = run.fg?.let { c -> cssColorOf(if (run.bold && c in 0..7) c + 8 else c, palette) }
+        var bg = run.bg?.let { cssColorOf(it, palette) }
+        if (run.inverse) {
+            val swapped = fg ?: palette.defaultFg
+            fg = bg ?: palette.defaultBg
+            bg = swapped
+        }
+        val st = el.style
+        fg?.let { st.color = it }
+        bg?.let { st.backgroundColor = it }
+        if (run.bold) st.fontWeight = "bold"
+        if (run.italic) st.fontStyle = "italic"
+        if (run.dim) st.opacity = "0.5"
+        val lines = listOfNotNull("underline".takeIf { run.underline }, "line-through".takeIf { run.strike })
+        if (lines.isNotEmpty()) st.textDecoration = lines.joinToString(" ")
+        line.appendChild(el)
+    }
+    return line
+}
+
+/** A [ScreenRun] colour as CSS: a true colour as itself, a palette entry from [palette]. */
+private fun cssColorOf(color: Int, palette: TermPalette): String =
+    if (color and ScreenRun.RGB != 0) {
+        val rgb = color and 0xffffff
+        "#" + (rgb or 0x1000000).toString(16).substring(1)
+    } else palette.colors256.getOrElse(color) { palette.defaultFg }
 
 /** The inline "Close “title”?" bar with its warnings; the focused button shows a ring. */
 private fun buildConfirm(confirm: Confirm): HTMLElement {

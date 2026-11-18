@@ -203,12 +203,13 @@ class AgentSessionSearchTest {
         File(dir, "b.txt").writeText("b")
         repo.saveAgentSession(
             AgentSessionRecord(id = "r", agent = "claude", state = "ended", stateSince = 1, createdAt = 1,
-                endedAt = 1, cwd = dir.path, lastScreen = "line one\n\nline two"),
+                endedAt = 1, cwd = dir.path, lastScreen = "line one\n\n\nline two\n\n"),
         )
 
         val i = assertNotNull(inspect("r"))
         assertEquals(false, i.live)
-        assertEquals(listOf("line one", "line two"), i.screen)
+        assertEquals(listOf("line one", "", "line two"), i.screen, "blank rows squeezed to one, none at the end")
+        assertEquals(emptyList(), i.styled, "a saved screen is plain")
         assertEquals(1, i.uncommitted)
         assertNull(i.unpushed, "every commit is unpushed in a repository with no remote, which is not worth a warning")
         assertEquals("trunk", i.branch)

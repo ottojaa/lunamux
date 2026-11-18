@@ -46,6 +46,8 @@ data class PaneSnapshot(
     val alive: Boolean = true,
     val customName: String? = null,
     val background: Boolean = false,
+    /** The screen as styled runs per row, for the overview's peek; null when the session has no styled grid. */
+    val screenRows: () -> List<List<se.soderbjorn.lunamux.pty.StyledRun>>? = { null },
     val screenText: () -> String? = { null },
 )
 
@@ -1180,6 +1182,7 @@ internal fun livePaneSnapshot(id: String, states: Map<String, String?> = emptyMa
         state = states[id],
         alive = session.isProcessAlive(),
         screenText = { session.screenText() },
+        screenRows = { session.screenRows() },
         background = WindowState.isBackgroundSession(id),
     )
 }

@@ -277,6 +277,15 @@ and never background ones, and is not cut by the 300-row list, only by the month
 **→ peek** on a row shows, before the screen lines, the sections the conversation's agent wrote for
 the side panel. For a closed row this is where its recap is read before resuming.
 
+The screen lines are the bottom of the pane's screen, at most 20 rows. Blank rows stay, since on an
+agent's screen they separate one item from the next, but a run of them counts as one, and the window
+opens at the start of an item rather than in the middle of one (unless that item is longer than half
+the window). A live pane's rows come in the styles the terminal draws them with, read from the
+server's own copy of the screen: the theme's colours (true colours as they are), bold, italic, dim,
+underline, strikethrough and inverse. So a reply, a tool call, a dim hint and Claude Code's grey
+suggested prompt read apart as they do in the pane. A closed row's saved screen is kept as text and
+shows plain.
+
 ## Grouping sessions from an agent
 
 Seven MCP tools are registered. All but `list_tasks` change tasks and need a `read+write` token;

@@ -244,6 +244,12 @@ interface TermSession {
     /** The currently rendered viewport as plain text. */
     fun screenText(): String
 
+    /**
+     * The currently rendered viewport as styled runs, one list per row, for the agents overview's
+     * peek; null for a session with no styled grid, whose peek then shows [screenText].
+     */
+    fun screenRows(): List<List<se.soderbjorn.lunamux.pty.StyledRun>>? = null
+
     /** Whether the backing process (or virtual session) is still live. */
     fun isProcessAlive(): Boolean
 }
@@ -896,6 +902,9 @@ class TerminalSession private constructor(
      * @return the visible screen text from the headless [ScreenEmulator].
      */
     override fun screenText(): String = screen.snapshotVisibleText()
+
+    /** The canonical grid's visible rows, in their styles; see [SessionGrid.screenRows]. */
+    override fun screenRows(): List<List<se.soderbjorn.lunamux.pty.StyledRun>> = grid.screenRows()
 
     /**
      * Whether the underlying PTY process is still running. Used by the MCP

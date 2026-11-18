@@ -32,6 +32,7 @@ import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import se.soderbjorn.lunamux.AgentSessionMatch
 import se.soderbjorn.lunamux.PanelSection
+import se.soderbjorn.lunamux.ScreenRun
 import se.soderbjorn.lunamux.AgentSessionSummary
 import se.soderbjorn.lunamux.AgentSessionText
 import se.soderbjorn.lunamux.AgentTask
@@ -219,6 +220,8 @@ class AgentsOverviewBackingViewModel(
         val emptyText: String?,
         /** What the conversation's agent wrote for the side panel, shown first: for a closed row this is where its recap is read. */
         val sections: List<PanelSection> = emptyList(),
+        /** [lines] in the styles the terminal draws them with, when the server sent them (a live pane); else empty. */
+        val styled: List<List<ScreenRun>> = emptyList(),
     )
 
     data class Confirm(val rowId: String, val title: String, val warnings: List<String>, val cancelFocused: Boolean)
@@ -1040,6 +1043,7 @@ internal fun peekOf(
         title = title,
         closedSinceMillis = closedSinceMillis,
         lines = said?.screen.orEmpty(),
+        styled = said?.styled.orEmpty(),
         loading = said == null,
         emptyText = if (said != null && said.screen.isEmpty()) (if (live) "(the screen is empty)" else "(no saved screen)") else null,
     )
