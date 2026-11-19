@@ -404,7 +404,7 @@ started, then the state (mark, word, age) and the headline, which are the overvi
 Keyboard-shortcuts sidebar and can be rebound there (off macOS the default is Ctrl+I, which a terminal
 reads as Tab).
 
-Four blocks, in this order, each headed by its name alone:
+Five blocks, in this order, each headed by its name alone:
 
 1. **Plan**: a bar with "x of y" beside it, then the step in hand. When an agent wrote the plan's
    steps (a `steps` block) they are listed under the bar: the finished ones folded into "N earlier
@@ -416,9 +416,16 @@ Four blocks, in this order, each headed by its name alone:
    waited) and, as a quieter second line that never wraps, what it is doing: its own status
    (`set_status`), what it waits for, else its tool call in words, else the plain state word. Lines can be reached with Tab and pressed; on
    hover or focus a line shows what ↵ does.
-3. **Activity**: under a heading for each day ("Today", "Yesterday", "Mon 9 Nov"), one line per
+3. **Changed**: what Lunamux sees by itself in the git worktrees the task's conversations worked
+   in, closed ones too while their folder is there: one entry per worktree, its folder name with the
+   branch dim after it (said once when they are the same word), then the tracked files changed with
+   their lines, the untracked paths (a new folder counting once) and the unpushed commits, e.g.
+   "4 files changed, +210 −95 · 2 unpushed commits". Conversations in one worktree count once, a
+   clean worktree is left out, the most recently worked-in comes first, at most six. The panel asks
+   the server again whenever one of the task's conversations changes state (`readTaskWork`).
+4. **Activity**: under a heading for each day ("Today", "Yesterday", "Mon 9 Nov"), one line per
    item with its time at the left; a long item wraps under itself. Newest first.
-4. **Links**: newest first, each with the writer's kind word when one was given (up to 8
+5. **Links**: newest first, each with the writer's kind word when one was given (up to 8
    characters), its label as a link (accent colour, ↗, underlined on hover) and its time. Links
    without a time come after the dated ones and show none. When no link in the list has a kind,
    the kind column is left out and the labels start at the block's edge. Pressing one opens it.

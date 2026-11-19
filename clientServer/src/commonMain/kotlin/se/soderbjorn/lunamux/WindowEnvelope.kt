@@ -313,7 +313,36 @@ sealed class WindowEnvelope {
         /** The name of the folder the conversation last worked in, which may not be the one it started in. */
         val folder: String? = null,
     ) : WindowEnvelope()
+
+    /**
+     * The answer to [WindowCommand.ReadTaskWork], sent only to the connection that asked: the git
+     * worktrees the task's conversations worked in that still hold uncommitted or unpushed work,
+     * the most recently worked in first. A clean worktree is left out.
+     */
+    @Serializable
+    @SerialName("taskWork")
+    data class TaskWork(val taskId: String, val worktrees: List<WorktreeWork> = emptyList()) : WindowEnvelope()
 }
+
+/**
+ * The work left in one git worktree, for the task panel's Changed block ([WindowEnvelope.TaskWork]).
+ *
+ * @property name the worktree's folder name.
+ * @property branch its current branch; null when detached.
+ * @property changed tracked files changed, staged or not; [added] and [removed] their lines against the last commit, null when unknown.
+ * @property untracked new paths git does not track, a new folder counting once.
+ * @property unpushed commits on no remote; null when the repository has no remote.
+ */
+@Serializable
+data class WorktreeWork(
+    val name: String,
+    val branch: String? = null,
+    val changed: Int = 0,
+    val added: Int? = null,
+    val removed: Int? = null,
+    val untracked: Int = 0,
+    val unpushed: Int? = null,
+)
 
 /**
  * One run of same-styled text on a row of a pane's screen, as the agents overview's peek draws it.

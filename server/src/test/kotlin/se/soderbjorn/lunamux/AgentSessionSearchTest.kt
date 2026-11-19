@@ -223,6 +223,45 @@ class AgentSessionSearchTest {
     }
 
     @Test
+    fun `a task's work is listed per worktree, the latest first, each once and the clean ones left out`() {
+        val main = File(dbDir, "app").apply { mkdirs() }
+        git(main, "init", "-b", "master")
+        File(main, "a.txt").writeText("a\n")
+        File(main, "src").mkdirs()
+        git(main, "add", ".")
+        git(main, "commit", "-m", "one")
+        val run = File(dbDir, "app-run")
+        git(main, "worktree", "add", "-b", "run-branch", run.path)
+        File(run, "a.txt").writeText("a\nb\n")
+        File(main, "notes.md").writeText("scratch")
+        val clean = File(dbDir, "clean").apply { mkdirs() }
+        git(clean, "init", "-b", "master")
+        File(clean, "x").writeText("x")
+        git(clean, "add", ".")
+        git(clean, "commit", "-m", "x")
+        fun rec(id: String, cwd: File, at: Long, taskId: String = "t1") = repo.saveAgentSession(
+            AgentSessionRecord(id = id, agent = "claude", state = "ended", stateSince = at, createdAt = at, endedAt = at,
+                cwd = cwd.path, taskId = taskId),
+        )
+        rec("manager", main, 1_000)
+        rec("in-src", File(main, "src"), 1_500)
+        rec("runner", run, 2_000)
+        rec("tidy", clean, 3_000)
+        rec("gone", File(dbDir, "removed"), 4_000)
+        rec("elsewhere", run, 5_000, taskId = "t2")
+
+        val work = AgentSessionSearch.taskWork("t1", repo, null)
+        assertEquals("t1", work.taskId)
+        assertEquals(listOf("app-run", "app"), work.worktrees.map { it.name }, "the run's worktree worked in last first; the subfolder is the same worktree; clean and gone ones left out")
+        val (runWork, mainWork) = work.worktrees
+        assertEquals("run-branch", runWork.branch)
+        assertEquals(Triple(1, 1, 0), Triple(runWork.changed, runWork.added, runWork.removed))
+        assertEquals(0, runWork.untracked)
+        assertEquals(1, mainWork.untracked)
+        assertEquals(0, mainWork.changed)
+    }
+
+    @Test
     fun `inspect counts commits that exist on no remote`() {
         val remote = File(dbDir, "remote.git")
         git(dbDir, "init", "--bare", "-b", "trunk", remote.path)

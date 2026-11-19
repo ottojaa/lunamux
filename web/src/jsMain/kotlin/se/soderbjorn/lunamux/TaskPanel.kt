@@ -159,6 +159,11 @@ private data class TpLink(val index: Int, val link: LinkRow, val kinds: Boolean)
 private data class TpActivity(val index: Int, val item: TaskPanelViewModel.ActivityRow) : TpLine { override val key get() = "t:$index" }
 private data class TpTurn(val index: Int, val turn: TaskPanelViewModel.TurnRow) : TpLine { override val key get() = "u:$index" }
 private data class TpWork(val text: String) : TpLine { override val key get() = "w:$text" }
+
+/** One worktree in a task's Changed block: its name and branch, then the work left in it. */
+private data class TpTree(val line: TaskPanelViewModel.WorktreeLine) : TpLine {
+    override val key get() = "t:${line.name}/${line.branch}/${line.work}"
+}
 private data class TpDay(val day: String) : TpLine { override val key get() = "d:$day" }
 
 /** Draws [state] into the column, or takes the column out of the page when the panel is not visible. */
@@ -175,6 +180,11 @@ private fun renderTaskPanel(state: TaskPanelViewModel.State) {
     if (story?.key != lastStoryKey) {
         lastStoryKey = story?.key
         if (story != null) GlobalScope.launch { taskPanel.readStory() }
+    }
+    val work = state.work
+    if (work?.key != lastWorkKey) {
+        lastWorkKey = work?.key
+        if (work != null) GlobalScope.launch { taskPanel.readTaskWork() }
     }
     val setup = state.setup
     if (setup != null) {
@@ -195,6 +205,7 @@ private fun renderTaskPanel(state: TaskPanelViewModel.State) {
     val wanted = listOfNotNull(
         state.progress?.let { p.block("Plan") to progressLines(it) },
         (p.block("Background agents") to agentLines(state.agents)).takeIf { state.agents.total > 0 },
+        work?.worktrees?.takeIf { it.isNotEmpty() }?.let { trees -> p.block("Changed") to (listOf<TpLine>(TpTitle("Changed")) + trees.map(::TpTree)) },
         (p.block("Activity") to activityLines(state.activity)).takeIf { state.activity.total > 0 },
         (p.block("Links") to linkLines(state.links)).takeIf { state.links.total > 0 },
     )
@@ -275,6 +286,9 @@ private fun appendInline(host: HTMLElement, text: String) {
 /** The story key the server was last asked about, so one state asks once. */
 private var lastStoryKey: String? = null
 
+/** The [TaskPanelViewModel.TaskWorkView.key] the server was last asked about, so it is asked once per change. */
+private var lastWorkKey: String? = null
+
 private fun turnLines(block: TaskPanelViewModel.Block<TaskPanelViewModel.TurnRow>): List<TpLine> = listOf<TpLine>(TpTitle("You asked")) +
     block.shown.mapIndexed { i, t -> TpTurn(i, t) } + listOfNotNull(moreLine(Section.TURNS, block))
 
@@ -339,6 +353,13 @@ private fun buildLine(line: TpLine): HTMLElement = when (line) {
     is TpLink -> buildLink(line.link, line.kinds)
     is TpDay -> div("tp-day").also { it.textContent = line.day }
     is TpWork -> div("tp-muted").also { it.textContent = line.text }
+    is TpTree -> div("tp-tree").also { row ->
+        row.appendChild(div("tp-tree-name").also { name ->
+            name.textContent = line.line.name
+            line.line.branch?.let { name.appendChild(span("tp-tree-branch", " on $it")) }
+        })
+        row.appendChild(div("tp-muted").also { it.textContent = line.line.work })
+    }
     is TpTurn -> div("tp-tl").also {
         it.appendChild(span("tp-tl-age", line.turn.time))
         val both = div("tp-turn")

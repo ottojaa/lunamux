@@ -155,6 +155,19 @@ class TaskPanelViewModel(
     data class Story(val key: String, val recordId: String, val turns: Block<TurnRow>, val work: List<String>, val folder: String? = null)
 
     /**
+     * One worktree in a task's Changed block: its folder [name], its [branch] when that is not the
+     * same word, and the [work] in it ("3 files changed, +120 −40 · 2 unpushed commits").
+     */
+    data class WorktreeLine(val name: String, val branch: String?, val work: String)
+
+    /**
+     * A task's Changed block: the work left in the worktrees its conversations worked in. [key] names
+     * the task and the state of each of its conversations, so the view asks again whenever a turn
+     * ends; [worktrees] is empty until the server has answered, and when every worktree is clean.
+     */
+    data class TaskWorkView(val key: String, val taskId: String, val worktrees: List<WorktreeLine>)
+
+    /**
      * How to set the panel up, shown under the header when the panel has no block to show.
      * [compact] is for a session that simply has no task, the usual case: the view then draws
      * [lead] as one faint line and leaves [prompt] out.
@@ -171,6 +184,8 @@ class TaskPanelViewModel(
         val head: Head? = null,
         val setup: Setup? = null,
         val story: Story? = null,
+        /** A task's Changed block; null beside a session with no task, which has [story] instead. */
+        val work: TaskWorkView? = null,
         /** The sections the agents in this tab wrote (`set_panel_section`), drawn above everything else. */
         val sections: List<PanelSection> = emptyList(),
         val agents: Block<AgentLine> = EMPTY_BLOCK,
@@ -190,7 +205,8 @@ class TaskPanelViewModel(
     val stateFlow: Flow<State> = combine(
         combine(windowState.agentTasks, windowState.agentSessions, windowState.config, windowState.taskPanels, ui) { _, _, _, _, _ -> },
         windowState.agentStory,
-    ) { _, _ -> state }
+        windowState.taskWork,
+    ) { _, _, _ -> state }
 
     /** The state right now, for key handlers that must act on what is on screen. */
     val state: State
@@ -235,6 +251,11 @@ class TaskPanelViewModel(
             MemberAction.BACK -> line.tabId?.let { send(WindowCommand.LeaveShownTab(it)) }
             MemberAction.NONE -> Unit
         }
+    }
+
+    /** Asks the server for the work left in the shown task's worktrees; the view calls it when [TaskWorkView.key] changes. */
+    suspend fun readTaskWork() {
+        state.work?.let { send(WindowCommand.ReadTaskWork(it.taskId)) }
     }
 
     /** [url] when a click may open it, else null. */
@@ -315,7 +336,9 @@ class TaskPanelViewModel(
         val links = linkRows(blocks, now)
         val activity = activityRows(blocks, now)
         val head = headOf("task:${task.id}", task.startedAtMillis, task.status)
-        val empty = agents.isEmpty() && progress == null && links.isEmpty() && activity.isEmpty() && sections.isEmpty()
+        val work = workOf(task, sessions, windowState.taskWork.value)
+        val empty = agents.isEmpty() && progress == null && links.isEmpty() && activity.isEmpty() && sections.isEmpty() &&
+            work.worktrees.isEmpty()
         return State(
             open = ui.open,
             visible = visible,
@@ -325,11 +348,26 @@ class TaskPanelViewModel(
             head = head,
             setup = if (empty && head?.headline.isNullOrEmpty()) Setup(SETUP_TASK, SETUP_TASK_PROMPT) else null,
             sections = sections,
+            work = work,
             agents = cut(agents, task.id, Section.AGENTS, ui),
             progress = progress,
             links = cut(links, task.id, Section.LINKS, ui),
             activity = cut(activity, task.id, Section.ACTIVITY, ui),
         )
+    }
+
+    /** [task]'s Changed block from the server's [answer], when it is about this task. */
+    private fun workOf(task: AgentTask, sessions: List<AgentSessionSummary>, answer: WindowEnvelope.TaskWork?): TaskWorkView {
+        val key = task.id + sessions.filter { it.taskId == task.id }.sortedBy { it.id }
+            .joinToString("") { "/${it.id}:${it.state}:${it.stateSince}" }
+        val lines = answer?.takeIf { it.taskId == task.id }?.worktrees.orEmpty().map { w ->
+            WorktreeLine(
+                name = w.name,
+                branch = w.branch?.takeIf { it != w.name },
+                work = AgentFacts.workParts(w.changed, w.added, w.removed, w.untracked, w.unpushed).joinToString(" · "),
+            )
+        }
+        return TaskWorkView(key, task.id, lines)
     }
 
     private fun storyOf(s: AgentSessionSummary, answer: WindowEnvelope.AgentStory?, now: Long, ui: Ui): Story {

@@ -76,6 +76,40 @@ class TaskPanelTest {
     }
 
     @Test
+    fun aTaskShowsTheWorkLeftInEachOfItsWorktreesAndAsksAgainWhenATurnEnds() = runNow {
+        layout(listed = listOf("main"), background = listOf("w1"))
+        fill(session("w1"))
+        val before = vm.state.work!!
+        assertEquals("g1", before.taskId)
+        assertTrue(before.worktrees.isEmpty(), "nothing is shown until the server has answered")
+        vm.readTaskWork()
+        assertEquals(listOf<WindowCommand>(WindowCommand.ReadTaskWork("g1")), sent)
+
+        windowState.updateTaskWork(
+            WindowEnvelope.TaskWork(
+                "g1",
+                listOf(
+                    se.soderbjorn.lunamux.WorktreeWork("plt-1-fix", branch = "plt-1-fix", changed = 4, added = 210, removed = 95, unpushed = 2),
+                    se.soderbjorn.lunamux.WorktreeWork("upright", branch = "master", untracked = 14),
+                ),
+            ),
+        )
+        assertEquals(
+            listOf(
+                TaskPanelViewModel.WorktreeLine("plt-1-fix", null, "4 files changed, +210 −95 · 2 unpushed commits"),
+                TaskPanelViewModel.WorktreeLine("upright", "master", "14 untracked"),
+            ),
+            vm.state.work!!.worktrees,
+            "a branch named as its folder is said once",
+        )
+        windowState.updateTaskWork(WindowEnvelope.TaskWork("other", emptyList()))
+        assertTrue(vm.state.work!!.worktrees.isEmpty(), "an answer about another task is not shown")
+
+        fill(session("w1", state = "done", since = now))
+        assertTrue(vm.state.work!!.key != before.key, "a turn that ends asks again")
+    }
+
+    @Test
     fun theHeaderCarriesTheTaskTitleAndItsStatusLine() {
         layout(listed = listOf("main"), background = listOf("w1"))
         fill(session("w1"), status = "Waiting on review")

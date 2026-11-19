@@ -130,6 +130,50 @@ object AgentSessionSearch {
         )
     }
 
+    /** The most worktrees one task's Changed block lists. */
+    private const val MAX_WORKTREES = 6
+
+    /**
+     * The work left in the git worktrees a task's conversations worked in, for the task panel's
+     * Changed block. Every conversation of the task counts, closed ones too while their folder is
+     * there, since a run's worktree with unpushed commits is what the person most needs to see.
+     * Conversations in the same worktree count once; a clean worktree is left out.
+     *
+     * @param taskId the task.
+     * @param repo the stored records, for the task's closed conversations.
+     * @param tracker the records in memory, for the live ones.
+     * @return the answer, the most recently worked-in worktree first, at most [MAX_WORKTREES].
+     */
+    fun taskWork(taskId: String, repo: SettingsRepository, tracker: AgentSessionTracker?): WindowEnvelope.TaskWork {
+        val records = (tracker?.snapshot().orEmpty().filter { it.taskId == taskId } + repo.loadAgentSessionsOfTasks(listOf(taskId)))
+            .distinctBy { it.id }
+        // Each folder once, with the last time anything happened in it.
+        val lastByFolder = HashMap<String, Long>()
+        for (rec in records) {
+            val dir = (rec.worktreePath ?: rec.cwd)?.takeIf { it.isNotBlank() } ?: continue
+            val at = rec.endedAt ?: rec.stateSince
+            if ((lastByFolder[dir] ?: Long.MIN_VALUE) < at) lastByFolder[dir] = at
+        }
+        val lastByRoot = HashMap<Path, Long>()
+        for ((dir, at) in lastByFolder) {
+            if (!File(dir).isDirectory) continue
+            val root = GitCatalog.getRepoRoot(Path.of(dir)) ?: continue
+            if ((lastByRoot[root] ?: Long.MIN_VALUE) < at) lastByRoot[root] = at
+        }
+        val worktrees = lastByRoot.entries.sortedByDescending { it.value }.asSequence().mapNotNull { (root, _) ->
+            val work = GitCatalog.uncommitted(root) ?: return@mapNotNull null
+            val unpushed = GitCatalog.unpushedCount(root)
+            if (work.changed == 0 && work.untracked == 0 && (unpushed ?: 0) == 0) return@mapNotNull null
+            WorktreeWork(
+                name = root.fileName?.toString() ?: root.toString(),
+                branch = GitCatalog.runGit(root, "branch", "--show-current")?.trim()?.takeIf(String::isNotEmpty),
+                changed = work.changed, added = work.added, removed = work.removed,
+                untracked = work.untracked, unpushed = unpushed,
+            )
+        }.take(MAX_WORKTREES).toList()
+        return WindowEnvelope.TaskWork(taskId, worktrees)
+    }
+
     /** What the person asked in one conversation and the work left in its folder, for the panel of a session with no task. */
     fun story(recordId: String, tracker: AgentSessionTracker?): WindowEnvelope.AgentStory? {
         val rec = tracker?.find(recordId) ?: return null

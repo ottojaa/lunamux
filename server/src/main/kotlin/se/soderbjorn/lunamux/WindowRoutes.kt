@@ -836,6 +836,13 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
                 }?.let { ctx.send(it) }
             }.onFailure { log.warn("Reading the story of agent session {} failed", cmd.recordId, it) }
         }
+        is WindowCommand.ReadTaskWork -> ctx.scope.launch {
+            runCatching {
+                withTimeoutOrNull(INSPECT_TIMEOUT_MS) {
+                    withContext(Dispatchers.IO) { AgentSessionSearch.taskWork(cmd.taskId, ctx.settingsRepo, ctx.agentTracker) }
+                }?.let { ctx.send(it) }
+            }.onFailure { log.warn("Reading the work of task {} failed", cmd.taskId, it) }
+        }
         is WindowCommand.InspectAgentSession -> ctx.scope.launch {
             // A live peek asks again every couple of seconds; while git is still busy on the
             // previous ask for the same row, that ask is enough.

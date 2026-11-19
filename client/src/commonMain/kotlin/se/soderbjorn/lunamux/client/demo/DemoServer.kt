@@ -954,6 +954,7 @@ class DemoServer internal constructor(
             is WindowCommand.SearchAgentSessions,
             is WindowCommand.InspectAgentSession,
             is WindowCommand.ReadAgentStory,
+            is WindowCommand.ReadTaskWork,
             is WindowCommand.OpenTask,
             -> Unit
             is WindowCommand.RefreshUsage -> emit(WindowEnvelope.ClaudeUsage(DemoFixtures.claudeUsage))

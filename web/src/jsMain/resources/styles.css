@@ -3947,6 +3947,10 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 /* A block's heading is its name alone, set like the sidebar's group labels. */
 .tp-block-title { margin-bottom: 8px; color: var(--ao-dim); font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
 .tp-muted { color: var(--ao-dim); }
+/* A worktree in a task's Changed block: its name, the branch dim after it, the work under it. */
+.tp-tree + .tp-tree { margin-top: 6px; }
+.tp-tree-name { color: var(--ao-text); overflow-wrap: anywhere; }
+.tp-tree-branch { color: var(--ao-dim); }
 /* Under the name: the task's title in full, dim; where and since when, fainter; the state (mark, word,
    age); then the headline, the one line the agents overview shows for this work too. */
 .tp-about { color: var(--ao-dim); overflow-wrap: anywhere; }
