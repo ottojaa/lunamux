@@ -4032,6 +4032,9 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-agent-hint { display: none; flex: none; color: var(--ao-dim); white-space: nowrap; }
 .tp-agent-hint b { color: var(--ao-text); font-weight: 600; }
 .tp-agent-active:hover .tp-agent-hint, .tp-agent-active:focus-visible .tp-agent-hint { display: block; }
+/* The agent whose hidden tab is in front for now: an accent edge, and "↵ back" always in view. */
+.tp-agent-back { box-shadow: inset 2px 0 0 var(--ao-accent); }
+.tp-agent-back .tp-agent-hint { display: block; }
 /* An agent that waits on the person: amber mark and amber title, on a faint amber tint. */
 .tp-state-needs_you { background: color-mix(in srgb, var(--ao-warn) 8%, transparent); }
 .tp-state-needs_you.tp-agent-active:hover, .tp-state-needs_you.tp-agent-active:focus-visible { background: color-mix(in srgb, var(--ao-warn) 14%, transparent); }
@@ -4102,3 +4105,10 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     background: var(--dt-window-bg, var(--t-surface, #0c1a1e)); color: var(--t-warn, #f2c14e);
     font: 11px/1.5 var(--dt-font-mono, ui-monospace, Menlo, monospace); white-space: nowrap;
 }
+/* The tag lets clicks through but for its button, which leaves the tab for the one the person came from. */
+.waiting-tab-back {
+    pointer-events: auto; cursor: pointer; padding: 0; border: 0; background: none;
+    color: inherit; font: inherit; font-weight: 600;
+}
+.waiting-tab-back:hover, .waiting-tab-back:focus-visible { text-decoration: underline; outline: none; }
+

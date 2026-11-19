@@ -70,6 +70,9 @@ class TaskPanelViewModel(
 
         /** Show the hidden tab a session runs in, as a marked background tab, and switch to it. */
         SHOW,
+
+        /** Leave the hidden tab shown for the session ([SHOW]): it hides and the person is back where they were. */
+        BACK,
     }
 
     /** The lists of the panel that can open in full. */
@@ -89,6 +92,8 @@ class TaskPanelViewModel(
         val action: MemberAction,
         val recordId: String,
         val hint: String?,
+        /** The tab the session's pane is in, for [MemberAction.BACK]; null when the pane cannot be placed. */
+        val tabId: String? = null,
     )
 
     /** One row of the links block; [kind] is the word the writer sent, [time] a clock time or empty. */
@@ -227,6 +232,7 @@ class TaskPanelViewModel(
                 Layout(windowState.config.value).jumpCommands(session).forEach { send(it) }
             }
             MemberAction.SHOW -> send(WindowCommand.ShowWaitingAgent(line.recordId))
+            MemberAction.BACK -> line.tabId?.let { send(WindowCommand.LeaveShownTab(it)) }
             MemberAction.NONE -> Unit
         }
     }
@@ -357,7 +363,7 @@ class TaskPanelViewModel(
      * The task's live sessions, the waiting ones first, then by start, so a row keeps its place
      * as its session works, idles and works again. The main conversation is left out (the panel
      * sits beside it). A session whose pane the layout cannot place still shows, with nothing to
-     * click; one in a hidden tab offers to show that tab.
+     * click; one in a hidden tab offers to show that tab, and once it is shown, to go back.
      */
     private fun agentLines(task: AgentTask, sessions: List<AgentSessionSummary>, layout: Layout, mainId: String?): List<AgentLine> {
         val lines = sessions.filter { it.taskId == task.id && it.conversationId != mainId && AgentFacts.isLive(it) }
@@ -366,6 +372,8 @@ class TaskPanelViewModel(
                 val spot = layout.spotOf(s)
                 val action = when {
                     spot == null -> MemberAction.NONE
+                    // Shown for now: it is the tab in front, so a second press goes back where the person was.
+                    spot.tab.shownWhileWaiting -> MemberAction.BACK
                     spot.listed -> MemberAction.JUMP
                     else -> MemberAction.SHOW
                 }
@@ -385,9 +393,11 @@ class TaskPanelViewModel(
                     recordId = s.id,
                     hint = when (action) {
                         MemberAction.SHOW -> "↵ show"
+                        MemberAction.BACK -> "↵ back"
                         MemberAction.JUMP -> "↵ open"
                         MemberAction.NONE -> null
                     },
+                    tabId = spot?.tab?.id,
                 )
             }
         return lines.filter { it.state == AgentFacts.NEEDS_YOU } + lines.filter { it.state != AgentFacts.NEEDS_YOU }

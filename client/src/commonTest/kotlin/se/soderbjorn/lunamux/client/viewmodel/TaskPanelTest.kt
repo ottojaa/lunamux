@@ -193,6 +193,25 @@ class TaskPanelTest {
     }
 
     @Test
+    fun anAgentWhoseHiddenTabIsShownOffersToGoBack() = runNow {
+        windowState.updateConfig(
+            WindowConfig(
+                tabs = listOf(
+                    TabConfig("tab-1", "one", panes = listOf(pane("leaf-main"))),
+                    TabConfig("tab-bg", "agents", panes = listOf(pane("leaf-w1")), isBackground = true, shownWhileWaiting = true),
+                ),
+                activeTabId = "tab-bg",
+            ),
+        )
+        fill(session("w1"))
+        val line = vm.state.agents.shown.single()
+        assertEquals(MemberAction.BACK, line.action)
+        assertEquals("↵ back", line.hint)
+        vm.activateMember(line)
+        assertEquals(listOf<WindowCommand>(WindowCommand.LeaveShownTab("tab-bg")), sent, "the tab hides and the person is back where they were")
+    }
+
+    @Test
     fun anAgentThatPausesStaysListedAsIdleInPlaceAndOnlyItsStateChanges() {
         layout(listed = listOf("main"), background = listOf("w1", "w2"))
         fun lineOf(id: String) = vm.state.agents.shown.single { it.recordId == id }

@@ -236,7 +236,10 @@ A background tab stays hidden until the person asks for it: ↵ on the row (or o
 task panel) lists the tab, makes it active and marks it "background agent · hides when you leave".
 This works whether the agent asks or works. The tab before it, and its world, is remembered. One
 rule hides it again: the person leaves the tab (another tab or world), or no agent in it is live
-any more, in which case the remembered tab returns. It does not hide under the person when the
+any more, in which case the remembered tab returns. The way back is offered twice: the tag ends in
+a **← back** button, and the agent's line in the task panel turns to **↵ back** (marked with an
+accent edge, the hint always in view). Either hides the tab and returns the remembered tab and world
+(`leaveShownTab`). It does not hide under the person when the
 agent works on after an answer. A restart forgets this. No tab ever appears by itself.
 
 ## Closing a tab that is working

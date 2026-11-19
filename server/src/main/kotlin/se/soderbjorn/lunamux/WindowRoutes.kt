@@ -867,6 +867,7 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
             val leaf = live?.leafId
             if (leaf != null) WindowState.showWaitingAgent(leaf)
         }
+        is WindowCommand.LeaveShownTab -> WindowState.leaveShownTab(cmd.tabId)
         is WindowCommand.RenameTab -> WindowState.renameTab(cmd.tabId, cmd.title)
         is WindowCommand.MoveTab -> WindowState.moveTab(cmd.tabId, cmd.targetTabId, cmd.before)
         is WindowCommand.SetTabHidden -> WindowState.setTabHidden(cmd.tabId, cmd.hidden)
