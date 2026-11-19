@@ -260,9 +260,41 @@ object GitCatalog {
         return if (result.success) null else (result.stderr.ifBlank { "Failed to create worktree" })
     }
 
-    /** How many files have uncommitted changes (staged, unstaged or untracked). */
-    fun uncommittedCount(cwd: Path): Int? =
-        runGit(cwd, "status", "--porcelain=v1", "-uall")?.lines()?.count { it.isNotBlank() }
+    /**
+     * What is uncommitted in a working tree, for the agents overview and the task panel.
+     *
+     * @property changed tracked files changed, staged or not.
+     * @property added lines added in them, against the last commit; null when git cannot say (no commit yet).
+     * @property removed lines removed in them, likewise.
+     * @property untracked new paths git does not track; a new folder counts once, so a folder of
+     *   build output or notes nobody ignored does not read as a thousand changes.
+     */
+    data class Uncommitted(val changed: Int, val added: Int?, val removed: Int?, val untracked: Int)
+
+    /**
+     * The uncommitted work in the working tree at [cwd]. Called by [AgentSessionSearch.inspect] and
+     * [AgentSessionSearch.story].
+     *
+     * @param cwd a folder inside the working tree.
+     * @return the counts, or null when [cwd] is not in a git working tree.
+     */
+    fun uncommitted(cwd: Path): Uncommitted? {
+        val status = runGit(cwd, "status", "--porcelain=v1")?.lines()?.filter { it.isNotBlank() } ?: return null
+        val untracked = status.count { it.startsWith("??") }
+        val changed = status.size - untracked
+        var added: Int? = 0
+        var removed: Int? = 0
+        if (changed > 0) {
+            val numstat = runGit(cwd, "diff", "HEAD", "--numstat")
+            if (numstat == null) { added = null; removed = null }
+            // A binary file says "-" for both; it has no lines to count.
+            else numstat.lines().map { it.split('\t') }.forEach { cols ->
+                cols.getOrNull(0)?.toIntOrNull()?.let { added = added!! + it }
+                cols.getOrNull(1)?.toIntOrNull()?.let { removed = removed!! + it }
+            }
+        }
+        return Uncommitted(changed, added, removed, untracked)
+    }
 
     /** How many commits on the current branch exist on no remote. */
     fun unpushedCount(cwd: Path): Int? {

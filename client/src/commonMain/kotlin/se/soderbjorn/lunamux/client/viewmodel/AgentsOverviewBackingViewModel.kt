@@ -1075,13 +1075,8 @@ private fun closeWarnings(s: AgentSessionSummary, inspection: WindowEnvelope.Age
     if (s.state == NEEDS_YOU) {
         out += "It is waiting for you" + ((AgentSessionText.previewOf(s.question) ?: s.nowLine?.takeIf { it.isNotBlank() })?.let { ": $it" } ?: ".")
     }
-    val uncommitted = inspection?.uncommitted ?: 0
-    val unpushed = inspection?.unpushed ?: 0
-    if (uncommitted > 0 || unpushed > 0) {
-        val parts = buildList {
-            if (uncommitted > 0) add("$uncommitted uncommitted ${if (uncommitted == 1) "change" else "changes"}")
-            if (unpushed > 0) add("$unpushed unpushed ${if (unpushed == 1) "commit" else "commits"}")
-        }
+    val parts = inspection?.let { AgentFacts.workParts(it.uncommitted, it.added, it.removed, it.untracked, it.unpushed) }.orEmpty()
+    if (parts.isNotEmpty()) {
         out += parts.joinToString(" · ") + inspection?.branch?.let { " on $it" }.orEmpty() + " stay in its folder."
     }
     return out

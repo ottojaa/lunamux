@@ -278,7 +278,13 @@ sealed class WindowEnvelope {
         val recordId: String,
         val live: Boolean,
         val screen: List<String> = emptyList(),
+        /** Tracked files with uncommitted changes, staged or not (untracked paths are [untracked]). */
         val uncommitted: Int? = null,
+        /** Lines added and removed in those files against the last commit; null when unknown. */
+        val added: Int? = null,
+        val removed: Int? = null,
+        /** New paths git does not track, a new folder counting once. */
+        val untracked: Int? = null,
         val unpushed: Int? = null,
         val branch: String? = null,
         val resumeNote: String? = null,
@@ -295,7 +301,13 @@ sealed class WindowEnvelope {
     data class AgentStory(
         val recordId: String,
         val turns: List<AgentTurn> = emptyList(),
+        /** Tracked files with uncommitted changes, staged or not (untracked paths are [untracked]). */
         val uncommitted: Int? = null,
+        /** Lines added and removed in those files against the last commit; null when unknown. */
+        val added: Int? = null,
+        val removed: Int? = null,
+        /** New paths git does not track, a new folder counting once. */
+        val untracked: Int? = null,
         val unpushed: Int? = null,
         val branch: String? = null,
         /** The name of the folder the conversation last worked in, which may not be the one it started in. */

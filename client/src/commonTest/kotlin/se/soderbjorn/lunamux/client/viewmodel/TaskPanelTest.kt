@@ -369,14 +369,14 @@ class TaskPanelTest {
             WindowEnvelope.AgentStory(
                 "solo",
                 turns = listOf(AgentTurn(now, "stop the tunnel", 30_000, reply = "stopped it"), AgentTurn(now - 3 * 24 * 60 * minute, "try it over frp", 31 * minute)),
-                uncommitted = 3, unpushed = 1, branch = "spike/remote", folder = "tunnel-repo",
+                uncommitted = 3, added = 120, removed = 40, untracked = 2, unpushed = 1, branch = "spike/remote", folder = "tunnel-repo",
             ),
         )
         val story = vm.state.story!!
         assertEquals(listOf("stop the tunnel" to "<1m", "try it over frp" to "31m"), story.turns.shown.map { it.prompt to it.took })
         assertEquals(5, story.turns.shown.first().time.length, "a turn from today shows its clock time")
         assertFalse(':' in story.turns.shown.last().time, "an older one shows its day")
-        assertEquals(listOf("on spike/remote", "3 uncommitted changes", "1 unpushed commit"), story.work)
+        assertEquals(listOf("on spike/remote", "3 files changed, +120 −40", "2 untracked", "1 unpushed commit"), story.work)
         assertEquals("stopped it" to "", story.turns.shown.first().reply to story.turns.shown.last().reply, "each ask shows the first line of its answer")
         assertEquals("tunnel-repo", story.folder, "the folder is where the conversation worked, as the server read it")
         assertTrue(vm.state.head!!.meta.startsWith("tunnel-repo"))

@@ -200,7 +200,11 @@ class AgentSessionSearchTest {
         File(dir, "a.txt").writeText("a")
         git(dir, "add", ".")
         git(dir, "commit", "-m", "one")
+        File(dir, "a.txt").writeText("a\nb\nc\n")
         File(dir, "b.txt").writeText("b")
+        // A folder nobody ignored, full of output: one untracked path, not fifty.
+        File(dir, "output").mkdirs()
+        (1..50).forEach { File(dir, "output/$it.json").writeText("{}") }
         repo.saveAgentSession(
             AgentSessionRecord(id = "r", agent = "claude", state = "ended", stateSince = 1, createdAt = 1,
                 endedAt = 1, cwd = dir.path, lastScreen = "line one\n\n\nline two\n\n"),
@@ -210,7 +214,9 @@ class AgentSessionSearchTest {
         assertEquals(false, i.live)
         assertEquals(listOf("line one", "", "line two"), i.screen, "blank rows squeezed to one, none at the end")
         assertEquals(emptyList(), i.styled, "a saved screen is plain")
-        assertEquals(1, i.uncommitted)
+        assertEquals(1, i.uncommitted, "one tracked file changed")
+        assertEquals(3 to 1, i.added to i.removed, "its lines against the last commit")
+        assertEquals(2, i.untracked, "b.txt and the output folder, which counts once")
         assertNull(i.unpushed, "every commit is unpushed in a repository with no remote, which is not worth a warning")
         assertEquals("trunk", i.branch)
         assertNull(i.resumeNote, "the folder exists, so Resume simply runs in it")

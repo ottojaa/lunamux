@@ -435,8 +435,9 @@ The panel and the overview are separate: nothing in a section feeds a row.
 In the tab of **a session that has no task** the panel shows, under any sections, what Lunamux sees
 by itself: **You asked** (each thing the person asked in that conversation, its time or day, how
 long the turn took and the first line of what came back, read from the transcript) and **Changed**
-(the branch, uncommitted changes and unpushed
-commits, in the folder the conversation last worked in). When no agent wrote a section, one faint
+(the branch, then the tracked files changed with their lines against the last commit, "3 files
+changed, +120 −40", the untracked paths, a new folder counting once, and the unpushed commits, in
+the folder the conversation last worked in). The overview's close question says the same. When no agent wrote a section, one faint
 line says how they can.
 
 The header holds facts: the name, then one line with the state and its age, the folder and since

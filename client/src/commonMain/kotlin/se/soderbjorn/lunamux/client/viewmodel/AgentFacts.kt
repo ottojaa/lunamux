@@ -124,6 +124,26 @@ object AgentFacts {
         return if (s.state == NEEDS_YOU) s.question?.trim()?.takeIf { it.isNotEmpty() } ?: now else now
     }
 
+    /**
+     * The work left in a folder, one part each, for the task panel's Changed block and the overview's
+     * close question: "3 files changed, +120 −40", "14 untracked", "1 unpushed commit". A part with
+     * nothing in it is left out, and the lines are left out when the server could not count them.
+     *
+     * @param changed tracked files changed; [added] and [removed] their lines.
+     * @param untracked new paths git does not track.
+     * @param unpushed commits on no remote.
+     * @return the parts, empty when there is no work left.
+     */
+    fun workParts(changed: Int?, added: Int?, removed: Int?, untracked: Int?, unpushed: Int?): List<String> = buildList {
+        val files = changed ?: 0
+        if (files > 0) {
+            val lines = if (added != null && removed != null && added + removed > 0) ", +$added −$removed" else ""
+            add("$files ${if (files == 1) "file" else "files"} changed$lines")
+        }
+        untracked?.takeIf { it > 0 }?.let { add("$it untracked") }
+        unpushed?.takeIf { it > 0 }?.let { add("$it unpushed ${if (it == 1) "commit" else "commits"}") }
+    }
+
     /** "now", "4m", "3h" or "2d". */
     fun ageText(sinceMillis: Long, nowMillis: Long): String {
         val seconds = ((nowMillis - sinceMillis) / 1000).coerceAtLeast(0)

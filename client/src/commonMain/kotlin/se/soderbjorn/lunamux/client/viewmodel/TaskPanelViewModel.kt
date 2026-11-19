@@ -341,12 +341,7 @@ class TaskPanelViewModel(
             val took = t.tookMillis?.let { AgentFacts.ageText(0, it) }?.let { if (it == "now") "<1m" else it }
             TurnRow(if (' ' in clock) clock.substringBeforeLast(' ') else clock, t.prompt, took.orEmpty(), t.reply.orEmpty())
         }
-        val uncommitted = known?.uncommitted ?: 0
-        val unpushed = known?.unpushed ?: 0
-        val changed = listOfNotNull(
-            "$uncommitted uncommitted ${if (uncommitted == 1) "change" else "changes"}".takeIf { uncommitted > 0 },
-            "$unpushed unpushed ${if (unpushed == 1) "commit" else "commits"}".takeIf { unpushed > 0 },
-        )
+        val changed = AgentFacts.workParts(known?.uncommitted, known?.added, known?.removed, known?.untracked, known?.unpushed)
         // The branch is worth its line only when something changed on it.
         val work = if (changed.isEmpty()) emptyList() else listOfNotNull(known?.branch?.let { "on $it" }) + changed
         return Story("${s.id}/${s.state}/${s.stateSince}", s.id, cut(turns, s.id, Section.TURNS, ui), work, known?.folder)

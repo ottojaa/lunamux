@@ -113,12 +113,16 @@ object AgentSessionSearch {
         val (screen, styled) = if (rows != null) PeekScreen.styled(rows)
         else PeekScreen.plain(if (snapshot != null) snapshot.screenText() else rec.lastScreen) to emptyList()
         val folder = rec.cwd?.takeIf { it.isNotBlank() && File(it).isDirectory }?.let { Path.of(it) }
+        val work = folder?.let(GitCatalog::uncommitted)
         return WindowEnvelope.AgentSessionInspection(
             recordId = recordId,
             live = snapshot != null,
             screen = screen,
             styled = styled,
-            uncommitted = folder?.let(GitCatalog::uncommittedCount),
+            uncommitted = work?.changed,
+            added = work?.added,
+            removed = work?.removed,
+            untracked = work?.untracked,
             unpushed = folder?.let(GitCatalog::unpushedCount),
             branch = folder?.let { GitCatalog.runGit(it, "branch", "--show-current")?.trim()?.takeIf(String::isNotEmpty) }
                 ?: rec.branch,
@@ -134,10 +138,14 @@ object AgentSessionSearch {
         val dir = listOfNotNull(read.cwd, rec.cwd).firstOrNull { it.isNotBlank() && File(it).isDirectory }
         val folder = dir?.let { Path.of(it) }
         val git = readGitInfo(dir)
+        val work = folder?.let(GitCatalog::uncommitted)
         return WindowEnvelope.AgentStory(
             recordId = recordId,
             turns = read.turns,
-            uncommitted = folder?.let(GitCatalog::uncommittedCount),
+            uncommitted = work?.changed,
+            added = work?.added,
+            removed = work?.removed,
+            untracked = work?.untracked,
             unpushed = folder?.let(GitCatalog::unpushedCount),
             branch = git.branch,
             folder = git.repo ?: dir?.trimEnd('/')?.substringAfterLast('/')?.takeIf { it.isNotBlank() },
