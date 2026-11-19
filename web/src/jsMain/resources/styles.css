@@ -3936,9 +3936,9 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-main { flex: 1 1 auto; min-width: 0; }
 /* The title wraps onto as many lines as it needs. */
 .tp-title { display: block; white-space: normal; overflow-wrap: anywhere; font-weight: 600; font-size: 13px; line-height: 20px; }
-/* The × with the shortcut under it. The column's height is what keeps a one-line header the same as a two-line one. */
-.tp-side { flex: none; display: flex; flex-direction: column; align-items: flex-end; }
-.tp-hint { padding-right: 6px; white-space: nowrap; color: var(--ao-dim); font-size: 11px; line-height: 14px; }
+/* The shortcut, faint and a size down, just before the ×, both on the title's first line. */
+.tp-side { flex: none; display: flex; align-items: center; height: 20px; }
+.tp-hint { white-space: nowrap; color: var(--ao-faint); font-size: 10px; line-height: 1; letter-spacing: 0.02em; }
 .tp-close { border: 0; border-radius: 4px; background: transparent; color: var(--ao-dim); font: inherit; font-size: 16px; line-height: 1; cursor: pointer; padding: 4px 6px; }
 .tp-close:hover, .tp-close:focus-visible { color: var(--ao-text); background: var(--ao-hover); outline: none; }
 .tp-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 0 16px; }
@@ -3951,10 +3951,13 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-tree + .tp-tree { margin-top: 6px; }
 .tp-tree-name { color: var(--ao-text); overflow-wrap: anywhere; }
 .tp-tree-branch { color: var(--ao-dim); }
-/* Under the name: the task's title in full, dim; where and since when, fainter; the state (mark, word,
-   age); then the headline, the one line the agents overview shows for this work too. */
+/* Under the name: what the work is now, dim; the state (mark, word, age); where and when it started,
+   fainter, with the counts under it; then the headline, the one line the agents overview shows for this work too. */
 .tp-about { color: var(--ao-dim); overflow-wrap: anywhere; }
 .tp-meta { color: var(--ao-faint); font-size: 11px; font-weight: 400; min-width: 0; overflow-wrap: anywhere; }
+/* Where and when it started, then the conversations' counts a shade brighter: two short lines under the state. */
+.tp-meta-line { line-height: 16px; }
+.tp-meta-counts { color: var(--ao-dim); }
 /* A section an agent wrote (set_panel_section): its heading with the age of the writing, then the body. */
 .tp-section-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .tp-section-top .tp-agent-age { letter-spacing: 0; text-transform: none; font-weight: 400; }

@@ -62,6 +62,7 @@ internal class PanelParts {
     val title = span("tp-title")
     val about = div("tp-about")
     val state = div("tp-state")
+    val meta = div("tp-meta tp-meta-line")
     val status = div("tp-status")
     val scroll = div("tp-scroll")
     val blocks = HashMap<String, HTMLElement>()
@@ -74,11 +75,12 @@ internal class PanelParts {
         close.title = "Hide the task panel (⌘I)"
         close.addEventListener("click", { _: Event -> toggleTaskPanel() })
         val head = div("tp-head")
+        // The shortcut sits faint just before the ×, on the title's first line.
         val side = div("tp-side")
-        side.appendChild(close)
         side.appendChild(span("tp-hint", "⌘I"))
+        side.appendChild(close)
         val main = div("tp-main")
-        listOf(title, about, state, status).forEach { main.appendChild(it) }
+        listOf(title, about, state, meta, status).forEach { main.appendChild(it) }
         head.appendChild(main)
         head.appendChild(side)
         root.appendChild(head)
@@ -299,9 +301,9 @@ private fun show(el: HTMLElement, text: String?) {
 }
 
 /**
- * The header: the name, the title under it when the tab's name led, then one line of facts (state
- * mark, word and age, where, since when) and, when an agent set one, its status. The state line is rebuilt only when its words change,
- * so a working glyph keeps turning.
+ * The header: the name, what the work is now under it, the state (mark, verdict, age), then where
+ * and when it started with the conversations' counts under that, and, when an agent set one, its
+ * status. The state line is rebuilt only when its words change, so a working glyph keeps turning.
  */
 private fun renderHead(p: PanelParts, state: TaskPanelViewModel.State) {
     val head = state.head
@@ -310,7 +312,15 @@ private fun renderHead(p: PanelParts, state: TaskPanelViewModel.State) {
     show(p.status, head?.headline)
     // That the line is the agent's own status, drawn as a small label over it (see `.tp-status` in styles.css).
     p.status.setAttribute("data-label", head?.headlineLabel.orEmpty())
-    val stateKey = head?.let { "${it.state}/${it.stateWord}/${it.sinceMillis}/${it.meta}" }.orEmpty()
+    val metaKey = head?.let { "${it.meta}/${it.breakdown}" }.orEmpty()
+    if (p.meta.getAttribute("data-key") != metaKey) {
+        p.meta.setAttribute("data-key", metaKey)
+        p.meta.textContent = ""
+        head?.meta?.takeIf { it.isNotEmpty() }?.let { p.meta.appendChild(div("tp-meta-where").also { d -> d.textContent = it }) }
+        head?.breakdown?.takeIf { it.isNotEmpty() }?.let { p.meta.appendChild(div("tp-meta-counts").also { d -> d.textContent = it }) }
+    }
+    p.meta.style.display = if (p.meta.firstChild == null) "none" else ""
+    val stateKey = head?.let { "${it.state}/${it.stateWord}/${it.sinceMillis}" }.orEmpty()
     if (p.state.getAttribute("data-key") != stateKey) {
         p.state.setAttribute("data-key", stateKey)
         p.state.textContent = ""
@@ -319,8 +329,6 @@ private fun renderHead(p: PanelParts, state: TaskPanelViewModel.State) {
             p.state.appendChild(stateGlyph(head.state))
             p.state.appendChild(span("tp-state-word", head.stateWord))
             p.state.appendChild(ageSpan("tp-agent-age", head.sinceMillis))
-            // Where and since when, on the same line: the header's facts read as one sentence.
-            if (head.meta.isNotEmpty()) p.state.appendChild(span("tp-meta", "· ${head.meta}"))
         }
     }
     p.state.style.display = if (head == null) "none" else ""

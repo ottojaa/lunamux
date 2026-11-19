@@ -103,10 +103,15 @@ class TaskPanelViewModel(
     data class ActivityRow(val day: String, val time: String, val text: String)
 
     /**
-     * The header: [name] is the tab's name (or the title when the tab has none) and [about] the
-     * title under it; [meta] says where and since when; [state] and [stateWord] are the overview
-     * row's. The header holds facts only, but for [headline]: the status an agent set in its own
-     * words (the task's status line, or a conversation's `set_status`), empty when none did. What
+     * The header: [name] is the tab's name (or the title when the tab has none) and [about] what
+     * the work is now under it: for a task, its main conversation's title (the task's own title is
+     * where it began, and can be days stale), else the title when the tab's name led. [meta] says
+     * where and when it started, and [breakdown] how the task's live conversations stand, one count
+     * per state ("1 working · 2 waiting"), empty with fewer than two. [state] is the overview row's
+     * and [stateWord] its verdict in one word, without the row's count: the counts are [breakdown].
+     * The header holds facts only, but for [headline]: the status an agent set in its own words
+     * (the task's status line, or a conversation's `set_status`), empty when none did or when it
+     * is only counts ([AgentFacts.isCountsOnly]), which the state and [breakdown] already say. What
      * the agent last said is not shown: the terminal beside the panel shows it. A conversation
      * whose turn has ended reads "idle" here, since "done" beside a plan reads as the task being done.
      */
@@ -119,6 +124,7 @@ class TaskPanelViewModel(
         val sinceMillis: Long,
         val headline: String,
         val headlineLabel: String = "",
+        val breakdown: String = "",
     )
 
     /**
@@ -283,12 +289,17 @@ class TaskPanelViewModel(
         val rows = buildOverview(
             OverviewInputs(sessions, tasks, layout, null, null, null, panels), OverviewUi(showAllEarlier = true), now,
         ).rows
-        fun headOf(rowId: String, startedAt: Long?, status: String?, folder: String? = null): Head? = rows.firstOrNull { it.id == rowId }?.let { row ->
-            val said = status?.trim().orEmpty()
+        fun headOf(
+            rowId: String, startedAt: Long?, status: String?, folder: String? = null,
+            lead: String? = null, members: List<AgentSessionSummary> = emptyList(),
+        ): Head? = rows.firstOrNull { it.id == rowId }?.let { row ->
+            val said = status?.trim()?.takeUnless(AgentFacts::isCountsOnly).orEmpty()
+            val name = row.tabName ?: row.title
             Head(
-                name = row.tabName ?: row.title,
-                about = row.title.takeIf { row.tabName != null },
-                meta = listOfNotNull(folder ?: row.where, startedAt?.let { "since ${clockOf(it, now, zone())}" }).joinToString(" · "),
+                name = name,
+                about = (lead ?: row.title.takeIf { row.tabName != null })?.takeIf { it != name },
+                meta = listOfNotNull(folder ?: row.where, startedAt?.let { "started ${clockOf(it, now, zone())}" }).joinToString(" · "),
+                breakdown = breakdownOf(members),
                 state = when {
                     row.needsYou -> AgentFacts.NEEDS_YOU
                     row.working -> AgentFacts.WORKING
@@ -297,7 +308,16 @@ class TaskPanelViewModel(
                     row.finished -> AgentFacts.ENDED
                     else -> AgentFacts.DONE
                 },
-                stateWord = if (row.stateWord == AgentsOverviewBackingViewModel.STATE_DONE) STATE_IDLE else row.stateWord,
+                // The verdict alone: the row's "2 waiting" counts only the conversations in that state,
+                // which beside the breakdown reads as the whole task.
+                stateWord = when {
+                    row.needsYou -> AgentsOverviewBackingViewModel.STATE_NEEDS_YOU
+                    row.working -> AgentsOverviewBackingViewModel.STATE_WORKING
+                    row.paused -> AgentsOverviewBackingViewModel.STATE_PAUSED
+                    row.onHold -> AgentsOverviewBackingViewModel.STATE_WAITING
+                    row.finished -> row.stateWord
+                    else -> STATE_IDLE
+                },
                 sinceMillis = row.sinceMillis,
                 headline = said,
                 headlineLabel = if (said.isEmpty()) "" else LABEL_STATUS,
@@ -335,7 +355,11 @@ class TaskPanelViewModel(
         val progress = progressOf(blocks)
         val links = linkRows(blocks, now)
         val activity = activityRows(blocks, now)
-        val head = headOf("task:${task.id}", task.startedAtMillis, task.status)
+        val head = headOf(
+            "task:${task.id}", task.startedAtMillis, task.status,
+            lead = task.mainConversation?.let(byKey::get)?.let(AgentFacts::titleOf),
+            members = sessions.filter { it.taskId == task.id && AgentFacts.isLive(it) },
+        )
         val work = workOf(task, sessions, windowState.taskWork.value)
         val empty = agents.isEmpty() && progress == null && links.isEmpty() && activity.isEmpty() && sections.isEmpty() &&
             work.worktrees.isEmpty()
@@ -398,6 +422,26 @@ class TaskPanelViewModel(
      * sits beside it). A session whose pane the layout cannot place still shows, with nothing to
      * click; one in a hidden tab offers to show that tab, and once it is shown, to go back.
      */
+    /**
+     * How a task's live conversations stand, one count per state, the most urgent first: "1 needs
+     * you · 1 working · 2 waiting · 1 idle". Called by the header for [Head.breakdown], under the
+     * one-word verdict, so the verdict says how the task stands and this says how it came to.
+     *
+     * @param members the task's live conversations.
+     * @return the counts, or "" for fewer than two conversations, where the verdict says it all.
+     */
+    private fun breakdownOf(members: List<AgentSessionSummary>): String {
+        if (members.size < 2) return ""
+        val counts = members.groupingBy(AgentFacts::shownState).eachCount()
+        val done = members.size - listOf(AgentFacts.NEEDS_YOU, AgentFacts.WORKING, AgentFacts.WAITING).sumOf { counts[it] ?: 0 }
+        return listOfNotNull(
+            counts[AgentFacts.NEEDS_YOU]?.let(AgentsOverviewBackingViewModel::needYouText),
+            counts[AgentFacts.WORKING]?.let { "$it ${AgentsOverviewBackingViewModel.STATE_WORKING}" },
+            counts[AgentFacts.WAITING]?.let { "$it ${AgentsOverviewBackingViewModel.STATE_WAITING}" },
+            done.takeIf { it > 0 }?.let { "$it $STATE_IDLE" },
+        ).joinToString(" · ")
+    }
+
     private fun agentLines(task: AgentTask, sessions: List<AgentSessionSummary>, layout: Layout, mainId: String?): List<AgentLine> {
         val lines = sessions.filter { it.taskId == task.id && it.conversationId != mainId && AgentFacts.isLive(it) }
             .sortedWith(compareBy({ AgentFacts.startedOf(it) }, { it.id }))

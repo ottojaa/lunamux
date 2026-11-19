@@ -118,11 +118,41 @@ class TaskPanelTest {
         assertEquals("Release", s.title)
         val head = s.head!!
         assertEquals("Waiting on review", head.headline, "the headline is the overview row's")
-        assertEquals("one" to "Release", head.name to head.about, "the tab's name leads, the title follows")
+        assertEquals("one" to "session main", head.name to head.about, "the tab's name leads, what the main conversation does now follows")
         assertEquals(AgentFacts.WORKING to "working", head.state to head.stateWord)
         assertEquals(TaskPanelViewModel.LABEL_STATUS, head.headlineLabel, "the line is marked as the agent's own status")
-        assertTrue(head.meta.startsWith("proj"))
+        assertTrue(head.meta.startsWith("proj"), head.meta)
+        assertEquals("2 working", head.breakdown)
         assertNull(s.setup)
+    }
+
+    @Test
+    fun theHeaderGivesOneVerdictWithTheCountsUnderItAndLeavesOutAStatusThatOnlyCounts() {
+        layout(listed = listOf("main"), background = listOf("w1", "w2", "w3"))
+        val shell = { id: String -> session(id, state = "done").copy(backgroundShells = 1, backgroundSince = now - 4 * minute) }
+        windowState.updateAgentSessions(
+            listOf(main().copy(state = "done", backgroundShells = 1, backgroundSince = now - 4 * minute), shell("w1"), session("w2"), session("w3", state = "done")),
+            true,
+        )
+        windowState.updateAgentTasks(listOf(task(status = "1 working")))
+        val head = vm.state.head!!
+        assertEquals(AgentFacts.WORKING to "working", head.state to head.stateWord, "one conversation working makes the task working")
+        assertEquals("1 working · 2 waiting · 1 idle", head.breakdown, "the counts go under the verdict, the most urgent first")
+        assertEquals("", head.headline, "a status that only counts says nothing the state does not")
+
+        windowState.updateAgentSessions(listOf(main().copy(state = "done", backgroundShells = 1), shell("w1")), true)
+        assertEquals(AgentFacts.WAITING to "waiting", vm.state.head!!.let { it.state to it.stateWord }, "the verdict drops the row's count")
+        assertEquals("2 waiting", vm.state.head!!.breakdown)
+    }
+
+    @Test
+    fun aStatusIsCountsOnlyWhenEveryPartIsANumberAndAState() {
+        listOf("1 working", "2 waiting, 1 working", "1 run working · 3 idle", "2 need you and 1 done").forEach {
+            assertTrue(AgentFacts.isCountsOnly(it), it)
+        }
+        listOf("Mango deploy running", "3 PRs open", "1 working; deploy to mango next", "", "Waiting on 2 reviews").forEach {
+            assertFalse(AgentFacts.isCountsOnly(it), it)
+        }
     }
 
     @Test

@@ -398,9 +398,10 @@ A 320px column on the right of the window showing what a task's agents wrote abo
 shows or hides it in every tab that has a live agent (⌘I or the ×); the choice is kept with the other
 UI settings, so what the agents wrote is there when the person comes back to a tab. A tab with no
 agent has no panel. It shows the task of the focused session, else of the main conversation in the tab. The
-header reads "<title> · ⌘I hides" with a × at the end; The header says where the work is: the
-tab's name (the title, when the tab has none), the title in full under it, the repo and when it
-started, then the state (mark, word, age) and the headline, which are the overview row's own. The shortcut is listed in the
+header ends with a faint ⌘I just before the ×. The header says where the work is: the tab's name
+(the title, when the tab has none), what the work is now under it (the main conversation's title,
+since the task's own title is where it began), the state (mark, word, age), the repo and when it
+started, and the headline, which is the overview row's own. The shortcut is listed in the
 Keyboard-shortcuts sidebar and can be rebound there (off macOS the default is Ctrl+I, which a terminal
 reads as Tab).
 
@@ -447,11 +448,15 @@ changed, +120 −40", the untracked paths, a new folder counting once, and the u
 the folder the conversation last worked in). The overview's close question says the same. When no agent wrote a section, one faint
 line says how they can.
 
-The header holds facts: the name, then one line with the state and its age, the folder and since
-when. A conversation whose turn has ended reads "idle" (the overview's row says "done"), or
+The header holds facts: the name, then one line with the state and its age, then the folder and
+when it started, with the task's live conversations counted by state under it ("1 working · 2
+waiting") when there are two or more. The state is one word for the whole task, the most urgent
+first (needs you, working, paused, waiting, idle); the counts are left to the line under it. A
+conversation whose turn has ended reads "idle" (the overview's row says "done"), or
 "waiting" with ◐ while something it started goes on, or "paused" with ‖ for a paused task. Under it comes a status only when an agent set
 one (the task's status, or `set_status`; for a waiting conversation, what it waits for), labelled
-"status".
+"status". A status that is only counts of states ("1 working") is left out, here and on the
+overview's row, since the state and the counts already say it.
 What the agent last said is not shown; the terminal beside the panel shows it. A block with nothing
 in it is not drawn.
 

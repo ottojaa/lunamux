@@ -822,7 +822,8 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
     val main = u.sessions.firstOrNull { it.id == u.mainId }
     // The headline, and whether it was said on purpose (Row.detailSet).
     val said = waiting?.let(::headlineOf)?.let { it to true }
-        ?: (t.status?.trim()?.takeIf { it.isNotEmpty() } ?: currentStepOf(blocks))?.let { it to true }
+        // A status that only counts states says what the row's state word does: the plan's step says more.
+        ?: (t.status?.trim()?.takeIf { it.isNotEmpty() && !AgentFacts.isCountsOnly(it) } ?: currentStepOf(blocks))?.let { it to true }
         ?: working.sortedByDescending { it.lastActivityAt ?: it.stateSince }.firstNotNullOfOrNull { s -> headlineOf(s)?.let { it to saidOnPurpose(s) } }
         ?: onHold.firstNotNullOfOrNull { s -> headlineOf(s)?.let { it to saidOnPurpose(s) } }
     val detail = said?.first

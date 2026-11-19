@@ -27,7 +27,7 @@ class PanelLayoutTest {
     }
 
     @Test
-    fun aLongTaskTitleWrapsBesideTheCloseButtonWithTheShortcutUnderIt() {
+    fun aLongTaskTitleWrapsBesideTheCloseButtonWithTheShortcutJustBeforeIt() {
         val p = PanelParts()
         p.title.textContent = "Release"
         val host = mount(p.root, 320)
@@ -42,8 +42,9 @@ class PanelLayoutTest {
         host.remove()
         assertTrue(title.height > 2 * oneLine, "the title cut off instead of wrapping: height ${title.height} against $oneLine for one line")
         assertTrue(title.right <= close.left, "the title runs under the close button")
-        assertTrue(hint.top >= close.bottom - 1, "the shortcut is not under the close button")
-        assertTrue(hint.right <= close.right && close.right - hint.right < 8, "the shortcut is not right-aligned to the close button")
+        assertTrue(hint.right <= close.left + 1 && close.left - hint.right < 8, "the shortcut is not just before the close button")
+        assertTrue(hint.top >= title.top && hint.bottom <= title.top + oneLine + 1, "the shortcut is not on the title's first line")
+        assertTrue(title.right <= hint.left, "the title runs under the shortcut")
         assertTrue(gap in 0.0..8.0, "the headline is not a small gap under the title: $gap px")
     }
 

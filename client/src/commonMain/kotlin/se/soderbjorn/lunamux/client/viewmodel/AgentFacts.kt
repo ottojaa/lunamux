@@ -83,6 +83,26 @@ object AgentFacts {
         return null
     }
 
+    /**
+     * Whether a status line is only counts of states ("1 working", "2 runs working, 1 waiting"),
+     * which say nothing the state word and the counts beside it do not. Called by the task panel's
+     * header and the overview's task row, which leave such a status out and fall back to what else
+     * says where the work stands.
+     *
+     * @param text the status as an agent set it.
+     * @return true when every part of it is a number and a state, with at most one noun between.
+     */
+    fun isCountsOnly(text: String): Boolean {
+        val parts = text.trim().split(COUNT_SEPARATOR).map(String::trim).filter(String::isNotEmpty)
+        return parts.isNotEmpty() && parts.all(COUNT_PART::matches)
+    }
+
+    private val COUNT_SEPARATOR = Regex("""\s*(?:[,·;/]|\band\b)\s*""", RegexOption.IGNORE_CASE)
+    private val COUNT_PART = Regex(
+        """\d+\s+(?:[a-z]+\s+)?(?:working|waiting|idle|done|paused|running|ended|closed|finished|queued|blocked|needs? you)""",
+        RegexOption.IGNORE_CASE,
+    )
+
     /** "1 background shell running", "2 background shells running". */
     fun shellsText(n: Int): String = if (n == 1) "1 background shell running" else "$n background shells running"
 
