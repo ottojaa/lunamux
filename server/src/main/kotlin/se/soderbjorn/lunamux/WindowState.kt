@@ -651,16 +651,44 @@ object WindowState {
                 if (!tab.shownWhileWaiting) continue
                 if (tab.panes.any { it.leaf.id in liveLeafIds }) continue
                 val live = cfg.worlds.first { it.id == world.id }
-                val back = returnTabOf.remove(tab.id)
                 val stillOnIt = live.activeTabId == tab.id && activeWorldIdOf(cfg) == world.id
-                val newView = TabManager.hideWaitingTab(viewOf(live), tab.id, back?.tabId) ?: continue
-                cfg = writeBackWorld(cfg, world.id, newView)
-                val returnWorld = back?.worldId?.takeIf { id -> stillOnIt && id != world.id && cfg.worlds.any { it.id == id } }
-                if (returnWorld != null) cfg = syncLegacyMirror(cfg.copy(activeWorldId = returnWorld))
+                cfg = withShownTabHidden(cfg, world.id, tab.id, backToWorld = stillOnIt) ?: continue
                 changed = true
             }
         }
         if (changed) _config.value = cfg
+    }
+
+    /**
+     * Leave the background tab [tabId] that is shown for its agent: it hides again and the person is
+     * back on the tab and in the world they came from, as when its agent ends. Called for
+     * [WindowCommand.LeaveShownTab], which the task panel's agent row and the tag over the tab send.
+     *
+     * @param tabId the shown tab.
+     * @return false when [tabId] is not a tab shown for its agent; nothing changes then.
+     */
+    fun leaveShownTab(tabId: String): Boolean = synchronized(this) {
+        val cfg = _config.value
+        val world = worldOfTab(cfg, tabId) ?: return@synchronized false
+        if (world.tabs.none { it.id == tabId && it.shownWhileWaiting }) return@synchronized false
+        _config.value = withShownTabHidden(cfg, world.id, tabId, backToWorld = true) ?: return@synchronized false
+        true
+    }
+
+    /**
+     * [cfg] with the shown tab [tabId] of world [worldId] hidden again and the tab the person came
+     * from active in that world; with [backToWorld], the world they came from is active again too.
+     * Forgets where the tab came from either way.
+     *
+     * @return the new layout, or null when the tab could not be hidden.
+     */
+    private fun withShownTabHidden(cfg: WindowConfig, worldId: String, tabId: String, backToWorld: Boolean): WindowConfig? {
+        val live = cfg.worlds.first { it.id == worldId }
+        val back = returnTabOf.remove(tabId)
+        val newView = TabManager.hideWaitingTab(viewOf(live), tabId, back?.tabId) ?: return null
+        val next = writeBackWorld(cfg, worldId, newView)
+        val returnWorld = back?.worldId?.takeIf { id -> backToWorld && id != worldId && next.worlds.any { it.id == id } }
+        return if (returnWorld != null) syncLegacyMirror(next.copy(activeWorldId = returnWorld)) else next
     }
 
     /** The id of the active world of [cfg], falling back to the first one, like [activeWorldId]. */
@@ -671,6 +699,27 @@ object WindowState {
     fun isBackgroundTab(tabId: String): Boolean = synchronized(this) {
         allTabs(_config.value).any { it.id == tabId && it.isBackground }
     }
+
+    /**
+     * The name the person gave each listed tab, by the terminal session id of every pane in it, in
+     * every world. A default name ("Tab 3") and a background tab out of sight say nothing and are
+     * left out. Called by `WindowRoutes` for the agents overview's search, which finds a
+     * conversation by the name of the tab it runs in.
+     *
+     * @return terminal session id to tab name.
+     * @see AgentSessionSearch.search
+     */
+    fun listedTabNames(): Map<String, String> = synchronized(this) {
+        buildMap {
+            for (tab in allTabs(_config.value)) {
+                val name = tab.title.trim().takeIf { tab.isListed && it.isNotEmpty() && !DEFAULT_TAB_NAME.matches(it) } ?: continue
+                for (pane in tab.panes) put(pane.leaf.sessionId, name)
+            }
+        }
+    }
+
+    /** "Tab 3": the name a tab gets until the person names it. */
+    private val DEFAULT_TAB_NAME = Regex("^Tab \\d+$")
 
     /** Whether the pane showing terminal session [sessionId] sits in a background tab. */
     fun isBackgroundSession(sessionId: String): Boolean = synchronized(this) {

@@ -60,7 +60,8 @@ FROM agent_sessions;
 -- person and is set and cleared together with it. started_at is the time the task was first
 -- recorded: its first session's start, else its file's time, else the moment a status or main
 -- conversation was first set; the first stamp wins, so a task's place in the overview never moves.
--- created_at and updated_at are the times an agent made and last renamed the task. Every column
+-- created_at and updated_at are the times an agent made and last renamed the task. paused_at is
+-- when the work was paused on purpose (set_task_status with paused), empty while it is not. Every column
 -- but id can be empty: a task that has only been named has no start yet, and a task file's task has
 -- no creation time.
 CREATE TABLE IF NOT EXISTS tasks (
@@ -72,7 +73,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     question_waits    INTEGER,
     started_at        INTEGER,
     created_at        INTEGER,
-    updated_at        INTEGER
+    updated_at        INTEGER,
+    paused_at         INTEGER
 );
 
 -- The blocks agents write into a task's panel, any task id (an agent-made task or a task file's).
@@ -187,7 +189,7 @@ LIMIT 200;
 
 -- A task has no members of its own: a session belongs to it through agent_sessions.task_id.
 selectTasks:
-SELECT id, title, main_conversation, status, status_at, question_waits, started_at, created_at, updated_at
+SELECT id, title, main_conversation, status, status_at, question_waits, started_at, created_at, updated_at, paused_at
 FROM tasks ORDER BY COALESCE(created_at, started_at), id;
 
 -- A task an agent makes; its id is new. A row that exists is left as it is, never replaced, so
@@ -211,7 +213,7 @@ setTaskMainConversation:
 UPDATE tasks SET main_conversation = ? WHERE id = ?;
 
 setTaskStatus:
-UPDATE tasks SET status = ?, status_at = ?, question_waits = ? WHERE id = ?;
+UPDATE tasks SET status = ?, status_at = ?, question_waits = ?, paused_at = ? WHERE id = ?;
 
 selectTaskPanelBlocks:
 SELECT task_id, block_id, position, kind, title, body, written_by, written_at

@@ -6,6 +6,7 @@
  *
  * @see WindowState.showWaitingAgent
  * @see WindowState.hideSettledWaitingTabs
+ * @see WindowState.leaveShownTab
  */
 package se.soderbjorn.lunamux
 
@@ -44,6 +45,37 @@ class WindowStateWaitingTabTest {
             assertEquals(bg, WindowState.config.value.activeTabId)
         } finally {
             WindowState.closeTab(bg); WindowState.closeTab(visible)
+        }
+    }
+
+    /** Leaving a shown tab on purpose hides it and brings back the tab, and the world, the person came from. */
+    @Test
+    fun leavingAShownTabHidesItAndBringsBackWhereThePersonWas() {
+        val home = WindowState.activeWorldId()!!
+        val visible = WindowState.addTab(worldId = home)
+        val other = WindowState.addWorld("Elsewhere")
+        val otherVisible = WindowState.addTab(worldId = other)
+        val bg = WindowState.addTab(worldId = other, background = true)
+        try {
+            WindowState.setActiveWorld(other)
+            WindowState.setActiveTab(otherVisible)
+            WindowState.setActiveWorld(home)
+            WindowState.setActiveTab(visible)
+            assertFalse(WindowState.leaveShownTab(visible), "a tab that is not shown for an agent is left alone")
+            assertEquals(visible, WindowState.config.value.worlds.first { it.id == home }.activeTabId)
+
+            WindowState.showWaitingAgent(leafOf(bg))
+            assertTrue(WindowState.leaveShownTab(bg))
+            assertFalse(tab(bg).isListed)
+            assertFalse(tab(bg).shownWhileWaiting)
+            assertEquals(home, WindowState.activeWorldId(), "the world they came from comes back")
+            assertEquals(visible, WindowState.config.value.worlds.first { it.id == home }.activeTabId)
+            assertEquals(otherVisible, WindowState.config.value.worlds.first { it.id == other }.activeTabId)
+            assertFalse(WindowState.leaveShownTab(bg), "once hidden, a second press does nothing")
+        } finally {
+            WindowState.closeTab(bg); WindowState.closeTab(otherVisible)
+            WindowState.setActiveWorld(home)
+            WindowState.closeWorld(other); WindowState.closeTab(visible)
         }
     }
 

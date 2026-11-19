@@ -31,12 +31,74 @@ object AgentFacts {
     const val DONE = "done"
     const val ENDED = "ended"
 
+    /**
+     * Not a state the server sends but one the screens draw: the conversation sits at its prompt
+     * while something it started goes on (a background shell, a review, CI). It reads "waiting" in
+     * a calm colour, so it is told from idle on one side and from "needs you" on the other.
+     */
+    const val WAITING = "waiting"
+
+    /**
+     * Not a session state but a task's: its work was stopped on purpose (see [se.soderbjorn.lunamux.AgentTask.paused]).
+     * It reads "paused", quiet, so it is told from idle work nobody stopped.
+     */
+    const val PAUSED = "paused"
+
+    /**
+     * What a conversation at its prompt waits for: [text] says what, [sinceMillis] how long it has,
+     * and [onYou] whether it is the person (then it counts as "needs you").
+     */
+    data class Wait(val text: String, val sinceMillis: Long, val onYou: Boolean)
+
     /** Alive means the server has not ended it; a pane the layout cannot place does not change that. */
     fun isLive(s: AgentSessionSummary): Boolean = s.state != ENDED
 
-    fun isWaiting(s: AgentSessionSummary): Boolean = s.state == NEEDS_YOU
+    /**
+     * Whether the conversation waits for the person: a question on screen, or a line its writer
+     * kept with `needsYou` (see [waitOf]). Every count of "needs you" reads this, so they agree.
+     */
+    fun isWaiting(s: AgentSessionSummary): Boolean = s.state == NEEDS_YOU || waitOf(s)?.onYou == true
 
     fun isWorking(s: AgentSessionSummary): Boolean = s.state == WORKING
+
+    /** Whether the conversation sits at its prompt while something it started goes on, and that is not the person. */
+    fun isWaitingOnSomething(s: AgentSessionSummary): Boolean = waitOf(s)?.onYou == false
+
+    /**
+     * What a conversation at its prompt waits for: the line its writer kept (`set_status` with
+     * `keep`), else the background shells it left running. Null for one that works, asks, has
+     * ended, or rests with nothing going on.
+     *
+     * Called by the overview's rows, the task panel's agents and header, and [isWaiting].
+     *
+     * @param s the session.
+     * @return the wait, or null.
+     */
+    fun waitOf(s: AgentSessionSummary): Wait? {
+        if (s.state != DONE) return null
+        s.waitingFor?.trim()?.takeIf { it.isNotEmpty() }?.let {
+            return Wait(it, s.waitingSince ?: s.stateSince, s.waitingForYou)
+        }
+        if (s.backgroundShells > 0) return Wait(shellsText(s.backgroundShells), s.backgroundSince ?: s.stateSince, onYou = false)
+        return null
+    }
+
+    /** "1 background shell running", "2 background shells running". */
+    fun shellsText(n: Int): String = if (n == 1) "1 background shell running" else "$n background shells running"
+
+    /**
+     * The state a screen draws for [s]: [NEEDS_YOU], [WORKING], [WAITING], or the server's own
+     * word ([DONE], [ENDED]).
+     */
+    fun shownState(s: AgentSessionSummary): String = when {
+        isWaiting(s) -> NEEDS_YOU
+        isWorking(s) -> WORKING
+        isWaitingOnSomething(s) -> WAITING
+        else -> s.state
+    }
+
+    /** How long [s] has been in the state [shownState] gives: a wait counts from when it began. */
+    fun shownSince(s: AgentSessionSummary): Long = waitOf(s)?.sinceMillis ?: s.stateSince
 
     /** When the conversation began its work; falls back to its last state change. */
     fun startedOf(s: AgentSessionSummary): Long = s.startedAt ?: s.stateSince
@@ -55,10 +117,31 @@ object AgentFacts {
     fun folderOf(s: AgentSessionSummary): String? =
         if (s.cwdHome) "~" else s.cwd?.trimEnd('/')?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
 
-    /** The question when the agent asks, else the line it shows while working; blank is null. */
+    /** The question when the agent asks, else what it waits for at its prompt, else the line it shows while working; blank is null. */
     fun lineOf(s: AgentSessionSummary): String? {
         val now = s.nowLine?.trim()?.takeIf { it.isNotEmpty() }
+        waitOf(s)?.let { return it.text }
         return if (s.state == NEEDS_YOU) s.question?.trim()?.takeIf { it.isNotEmpty() } ?: now else now
+    }
+
+    /**
+     * The work left in a folder, one part each, for the task panel's Changed block and the overview's
+     * close question: "3 files changed, +120 −40", "14 untracked", "1 unpushed commit". A part with
+     * nothing in it is left out, and the lines are left out when the server could not count them.
+     *
+     * @param changed tracked files changed; [added] and [removed] their lines.
+     * @param untracked new paths git does not track.
+     * @param unpushed commits on no remote.
+     * @return the parts, empty when there is no work left.
+     */
+    fun workParts(changed: Int?, added: Int?, removed: Int?, untracked: Int?, unpushed: Int?): List<String> = buildList {
+        val files = changed ?: 0
+        if (files > 0) {
+            val lines = if (added != null && removed != null && added + removed > 0) ", +$added −$removed" else ""
+            add("$files ${if (files == 1) "file" else "files"} changed$lines")
+        }
+        untracked?.takeIf { it > 0 }?.let { add("$it untracked") }
+        unpushed?.takeIf { it > 0 }?.let { add("$it unpushed ${if (it == 1) "commit" else "commits"}") }
     }
 
     /** "now", "4m", "3h" or "2d". */
@@ -75,11 +158,15 @@ object AgentFacts {
     /** Waiting and working conversations: all of them, and per world (see [Layout.worldOf]). */
     data class Tally(val total: Counts, val byWorld: Map<String, Counts>)
 
-    data class Counts(val waiting: Int = 0, val working: Int = 0)
+    /**
+     * [waiting] counts the conversations that need the person, [working] the ones at work, and
+     * [onHold] the ones at their prompt while something they started goes on ([isWaitingOnSomething]).
+     */
+    data class Counts(val waiting: Int = 0, val working: Int = 0, val onHold: Int = 0)
 
     /**
-     * Counts the sessions the server says wait or work. A session the layout cannot place counts
-     * under the active world, so the world lines always add up to the total.
+     * Counts the sessions that wait for the person, work, or wait on something else. A session the
+     * layout cannot place counts under the active world, so the world lines always add up to the total.
      */
     fun tally(sessions: List<AgentSessionSummary>, layout: Layout): Tally {
         var total = Counts()
@@ -87,11 +174,13 @@ object AgentFacts {
         for (s in sessions) {
             val w = if (isWaiting(s)) 1 else 0
             val m = if (isWorking(s)) 1 else 0
+            val h = if (isWaitingOnSomething(s)) 1 else 0
+            total = Counts(total.waiting + w, total.working + m, total.onHold + h)
+            // The world lines say who needs the person and who works; a world with neither has no line.
             if (w + m == 0) continue
-            total = Counts(total.waiting + w, total.working + m)
             val world = layout.worldOf(s)
             val prev = byWorld[world] ?: Counts()
-            byWorld[world] = Counts(prev.waiting + w, prev.working + m)
+            byWorld[world] = Counts(prev.waiting + w, prev.working + m, prev.onHold + h)
         }
         return Tally(total, byWorld)
     }

@@ -177,6 +177,26 @@ class McpTaskToolsTest {
     }
 
     @Test
+    fun `a paused task keeps the time its pause began while calls repeat it, an empty text included, and a call without it ends it`() {
+        session("a")
+        val id = create("Access redesign", """["a"]""")
+        now = 7_000
+        val set = call("set_task_status", """{"taskId":"$id","text":"Paused by the owner: laptop congested","paused":true}""")
+        assertEquals("true", str(payload(set), "paused"))
+        assertEquals(7_000L, task(id).pausedAtMillis)
+        assertEquals("true", str(listed(id), "paused"))
+
+        now = 8_000
+        call("set_task_status", """{"taskId":"$id","text":"","paused":true}""")
+        assertEquals(7_000L to null, task(id).pausedAtMillis to task(id).status, "still paused from when it began, with nothing to say")
+        assertEquals(7_000L, repo.loadTasks().single { it.id == id }.pausedAt, "stored, so a restart keeps it")
+
+        call("set_task_status", """{"taskId":"$id","text":"2 working"}""")
+        assertNull(task(id).pausedAtMillis)
+        assertEquals("false", str(listed(id), "paused"))
+    }
+
+    @Test
     fun `a task's windows open in the tab its agents are in, an explicit tab wins, and an unknown task opens nothing`() = withTabs { open ->
         val taskTab = open("Task tab", false)
         val activeTab = open("Active tab", false)

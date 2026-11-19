@@ -126,7 +126,9 @@ class AgentSessionTrackerTest {
         t.onHook(pane(), event("Stop", "a-1", "last_assistant_message" to said))
     }
 
-    private fun askPermission(t: AgentSessionTracker, tool: String = "Bash") {
+    /** A permission prompt, as Claude Code sends it: about a call it starts first, unless [started] says one is already in flight. */
+    private fun askPermission(t: AgentSessionTracker, tool: String = "Bash", started: Boolean = false) {
+        if (!started) t.onHook(pane(), toolEvent(tool, "{}"))
         t.onHook(pane(), event("Notification", "a-1", "message" to "Claude needs your permission to use $tool"))
     }
 
@@ -211,7 +213,7 @@ class AgentSessionTrackerTest {
         t.onHook(p, toolEvent("Bash", """{"command":"./gradlew test\nsecond line","description":"Run the server tests"}"""))
         assertEquals("Run the server tests", t.summaries.value.single().nowLine)
 
-        askPermission(t)
+        askPermission(t, started = true)
         row = t.summaries.value.single()
         assertEquals("needs_you", row.state)
         assertEquals("Allow Bash ./gradlew test?", row.question, "a prompt names the actual command, not the hook's generic text")
@@ -225,30 +227,31 @@ class AgentSessionTrackerTest {
     @Test
     fun `stop means done and keeps what was said, and only a permission request asks for you`() {
         val t = tracker()
-        t.onHook(pane(), event("Stop", "a-1", "last_assistant_message" to "Long intro.\n\nThree runs are ready.\nSecond line."))
-        assertEquals("Three runs are ready.", t.summaries.value.single().lastSaid)
+        t.onHook(pane(), event("Stop", "a-1", "last_assistant_message" to "## Result\n\nThree runs are **ready**. Each has its own PR.\n\nI can merge them next."))
+        assertEquals("Three runs are ready.", t.summaries.value.single().lastSaid, "the outcome it opens with, not the offer it ends on")
 
         stopped(t, "Done.\n\nShall I also update the docs?")
         var row = t.summaries.value.single()
         assertEquals(listOf("done", null, "Shall I also update the docs?"), listOf(row.state, row.question, row.lastSaid), "a closing question is not a prompt to answer")
         stopped(t, "word ".repeat(100))
         val cut = t.summaries.value.single().lastSaid!!
-        assertTrue(cut.length <= 241 && cut.endsWith("word…"), "a long line is cut at the end of a word and says so: $cut")
+        assertTrue(cut.length <= AgentSessionText.SAID_CHARS + 1 && cut.endsWith("word…"), "a long line is cut at the end of a word and says so: $cut")
 
         for (type in listOf("auth_success", "idle_prompt")) {
             t.onHook(pane(), event("Notification", "a-1", "notification_type" to type, "message" to "Signed in"))
             assertEquals("done", onlyState(t), type)
         }
+        t.onHook(pane(), toolEvent("Bash", """{"command":"ls"}"""))
         t.onHook(pane(), event("Notification", "a-1", "notification_type" to "permission_prompt", "message" to "Claude needs your permission to use Bash"))
         row = t.summaries.value.single()
-        assertEquals(listOf("needs_you", "Claude needs your permission to use Bash"), listOf(row.state, row.question))
+        assertEquals(listOf("needs_you", "Allow Bash ls?"), listOf(row.state, row.question))
     }
 
     @Test
     fun `a prompt names the tool call it is about, or the question put through AskUserQuestion`() {
         val t = tracker()
         t.onHook(pane(), toolEvent("AskUserQuestion", """{"questions":[{"question":"Aurora or Borealis?","header":"Name","options":[]}]}"""))
-        askPermission(t, "it")
+        askPermission(t, "it", started = true)
         assertEquals("Aurora or Borealis?", t.summaries.value.single().question)
 
         t.onHook(pane(), toolEvent("Bash", """{"command":"ls"}"""))
@@ -256,8 +259,23 @@ class AgentSessionTrackerTest {
         assertEquals("Allow Bash ls?", t.summaries.value.single().question)
 
         t.onHook(pane(), event("PostToolUse", "a-1"))
-        askPermission(t, "it")
-        assertEquals("Claude needs your permission to use it", t.summaries.value.single().question, "a finished call is not named")
+        t.onHook(pane(), event("Notification", "a-1", "message" to "Claude needs your permission to use Bash", "notification_type" to "permission_prompt"))
+        assertEquals("working", onlyState(t), "a notification that arrives after its call finished prompts for nothing")
+    }
+
+    @Test
+    fun `a prompt notification that arrives after the turn ended leaves the conversation done`() {
+        val t = tracker()
+        t.onHook(pane(), event("UserPromptSubmit", "a-1", "prompt" to "read the thread"))
+        t.onHook(pane(), toolEvent("mcp__slack__read_thread", """{"url":"https://example.com/t"}"""))
+        t.onHook(pane(), event("PostToolUse", "a-1"))
+        t.onHook(pane(), event("Stop", "a-1", "last_assistant_message" to "Want me to post it?"))
+        // Claude Code sends a permission notification a few seconds after the prompt shows; this
+        // one was for a call already approved and run.
+        t.onHook(pane(), event("Notification", "a-1", "notification_type" to "permission_prompt", "message" to "Claude needs your permission to use Slack"))
+        assertEquals("done", onlyState(t))
+        t.onPoll(listOf(pane(agent = "claude", state = null)))
+        assertEquals("done", onlyState(t))
     }
 
     @Test
@@ -307,6 +325,7 @@ class AgentSessionTrackerTest {
         assertEquals(listOf(id, "done", null, "leaf-s9"), listOf(row.id, row.state, row.question, row.leafId))
         assertNull(row.endedAt)
 
+        t.onHook(pane("s9"), toolEvent("Bash", "{}"))
         t.onHook(pane("s9"), event("Notification", "a-1", "message" to "Claude needs your permission to use Bash"))
         assertEquals("needs_you", onlyState(t), "its next prompt still asks")
     }
@@ -609,5 +628,92 @@ class AgentSessionTrackerTest {
         assertNull(t.setStatus("s1", "helper", " "))
         assertNull(status("helper"))
         assertTrue(runCatching { t.setStatus("nowhere", null, "x") }.isFailure)
+    }
+
+    @Test
+    fun aKeptStatusOutlivesTheTurnAndGoesOnlyWhenClearedOrEnded() {
+        val t = tracker()
+        val p = pane("s1", agent = "claude")
+        t.onHook(p, event("UserPromptSubmit", "run", "prompt" to "build it"), pid = 100)
+        fun row() = t.summaries.value.single { it.conversationId == "run" }
+        t.setStatus("s1", null, "in review · round 1", keep = true)
+        t.onHook(p, event("Stop", "run"), pid = 100)
+        assertEquals(Triple("in review · round 1", false, 1_000L), Triple(row().waitingFor, row().waitingForYou, row().waitingSince))
+        now = 5_000L
+        t.setStatus("s1", null, "in review · round 1", keep = true)
+        assertEquals(1_000L, row().waitingSince, "the same words keep their time, so the age is the time spent waiting")
+        t.onHook(p, event("UserPromptSubmit", "run", "prompt" to "fix the findings"), pid = 100)
+        assertEquals("in review · round 1", row().waitingFor, "a prompt does not clear it")
+        t.setStatus("s1", null, "in review · round 2", keep = true, needsYou = true)
+        assertEquals(Triple("in review · round 2", true, 5_000L), Triple(row().waitingFor, row().waitingForYou, row().waitingSince))
+        t.setStatus("s1", null, " ", keep = true)
+        assertNull(row().waitingFor, "its writer clears it")
+        t.setStatus("s1", null, "CI on #482", keep = true)
+        t.onHook(p, event("SessionEnd", "run", "reason" to "other"), pid = 100)
+        assertNull(row().waitingFor, "it goes with the conversation")
+    }
+
+    @Test
+    fun shellsLeftRunningAtThePromptAreCountedWhileItRestsThere() {
+        var running = BackgroundShells(1, 500L)
+        val t = AgentSessionTracker(
+            repo, gitInfo = { GitInfo() }, clock = { now }, newId = { "r${++nextId}" },
+            shellsUnder = { pid -> if (pid == 100L) running else BackgroundShells.NONE },
+        ).also { it.start() }
+        val p = pane("s1", agent = "claude", state = "working")
+        fun row() = t.summaries.value.single { it.conversationId == "run" }
+        t.onHook(p, event("UserPromptSubmit", "run", "prompt" to "start the review"), pid = 100)
+        t.onPoll(listOf(p))
+        assertEquals(0, row().backgroundShells, "a shell of a turn that works is not background work")
+        t.onHook(p, event("Stop", "run"), pid = 100)
+        t.onPoll(listOf(pane("s1", agent = "claude")))
+        assertEquals(1 to 500L, row().backgroundShells to row().backgroundSince)
+        running = BackgroundShells.NONE
+        t.onPoll(listOf(pane("s1", agent = "claude")))
+        assertEquals(0, row().backgroundShells, "the shell has finished")
+    }
+
+    @Test
+    fun withoutItsProcessTheFooterSaysHowManyShellsRun() {
+        val t = tracker()
+        val footer = "❯\n────\n  ⏵⏵ auto mode on · 2 shells · esc to interrupt · ← 11 agents"
+        t.onHook(pane("s1", agent = "claude"), event("UserPromptSubmit", "run", "prompt" to "go"))
+        t.onHook(pane("s1", agent = "claude"), event("Stop", "run"))
+        fun row() = t.summaries.value.single { it.conversationId == "run" }
+        t.onPoll(listOf(pane("s1", agent = "claude", screen = footer)))
+        assertEquals(2 to 1_000L, row().backgroundShells to row().backgroundSince)
+        now = 4_000L
+        t.onPoll(listOf(pane("s1", agent = "claude", screen = footer)))
+        assertEquals(1_000L, row().backgroundSince, "counted from the first poll that saw it")
+        t.onPoll(listOf(pane("s1", agent = "claude", screen = "❯\n  ⏵⏵ auto mode on")))
+        assertEquals(0, row().backgroundShells)
+    }
+
+    @Test
+    fun theFooterCountIsReadFromTheLastLinesOnly() {
+        assertEquals(1, footerShellsOf("x\n  ⏵⏵ auto mode on · 1 shell · esc to interrupt\n\n"))
+        assertEquals(3, footerShellsOf("x\n  3 background shells"))
+        assertEquals(0, footerShellsOf("I started 4 shells for you\n❯\n  ⏵⏵ auto mode on · ← 11 agents"))
+        assertEquals(0, footerShellsOf(null))
+    }
+
+    @Test
+    fun aClaudeShellUnderTheProcessIsFoundWithItsStartTime() {
+        val marker = "sleep 30; true # $CLAUDE_SHELL_MARK" + "test.sh"
+        val parent = ProcessBuilder("/bin/sh", "-c", "/bin/sh -c '$marker' & sleep 30 & wait").start()
+        try {
+            val deadline = System.currentTimeMillis() + 5_000
+            var found = backgroundShellsOf(parent.pid())
+            while (found.count == 0 && System.currentTimeMillis() < deadline) {
+                Thread.sleep(50)
+                found = backgroundShellsOf(parent.pid())
+            }
+            assertEquals(1, found.count, "only the shell that carries the mark counts, not the plain sleep beside it")
+            assertNotNull(found.since)
+        } finally {
+            parent.descendants().forEach { it.destroyForcibly() }
+            parent.destroyForcibly()
+        }
+        assertEquals(BackgroundShells.NONE, backgroundShellsOf(Long.MAX_VALUE / 2))
     }
 }

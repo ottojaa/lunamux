@@ -500,12 +500,14 @@ object McpServer {
                     "A task has one session that speaks for it, the one that made it (set_task_lead " +
                     "names another), and a one-line status the person sees on its row: keep it " +
                     "current with set_task_status when something worth knowing changes " +
-                    "(pass questionWaits: true while a question waits for the person). " +
+                    "(pass questionWaits: true while a question waits for the person, paused: true while " +
+                    "the work is stopped on purpose). " +
                     "Work the person need not watch can run in the background: create_tab, " +
                     "create_window and run_command take background: true, which opens it out of " +
                     "sight (later windows join it by its tabId). Background sessions are still " +
-                    "counted and can still ask for the person; when one asks, its tab shows for " +
-                    "as long as the question waits.",
+                    "counted and can still ask for the person: its task's row in the agents overview " +
+                    "then reads needs you with the question, but its tab stays hidden until the " +
+                    "person opens it from there.",
             )
         }
         return McpHandled(resultResponse(id, result), newSessionId = session.id)

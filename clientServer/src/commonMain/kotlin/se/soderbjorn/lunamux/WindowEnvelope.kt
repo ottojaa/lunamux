@@ -278,10 +278,21 @@ sealed class WindowEnvelope {
         val recordId: String,
         val live: Boolean,
         val screen: List<String> = emptyList(),
+        /** Tracked files with uncommitted changes, staged or not (untracked paths are [untracked]). */
         val uncommitted: Int? = null,
+        /** Lines added and removed in those files against the last commit; null when unknown. */
+        val added: Int? = null,
+        val removed: Int? = null,
+        /** New paths git does not track, a new folder counting once. */
+        val untracked: Int? = null,
         val unpushed: Int? = null,
         val branch: String? = null,
         val resumeNote: String? = null,
+        /**
+         * The same rows as [screen] in the styles the terminal draws them with, for a live pane whose
+         * styles the server holds; empty otherwise, and the peek then shows [screen] plain.
+         */
+        val styled: List<List<ScreenRun>> = emptyList(),
     ) : WindowEnvelope()
 
     /** The answer to [WindowCommand.ReadAgentStory], sent only to the connection that asked. */
@@ -290,12 +301,42 @@ sealed class WindowEnvelope {
     data class AgentStory(
         val recordId: String,
         val turns: List<AgentTurn> = emptyList(),
+        /** Tracked files with uncommitted changes, staged or not (untracked paths are [untracked]). */
         val uncommitted: Int? = null,
+        /** Lines added and removed in those files against the last commit; null when unknown. */
+        val added: Int? = null,
+        val removed: Int? = null,
+        /** New paths git does not track, a new folder counting once. */
+        val untracked: Int? = null,
         val unpushed: Int? = null,
         val branch: String? = null,
         /** The name of the folder the conversation last worked in, which may not be the one it started in. */
         val folder: String? = null,
     ) : WindowEnvelope()
+}
+
+/**
+ * One run of same-styled text on a row of a pane's screen, as the agents overview's peek draws it.
+ * A colour is null for the terminal's default, 0–255 for an entry of its palette, or [RGB] plus a
+ * 24-bit `0xRRGGBB` for a true colour. Sent in [WindowEnvelope.AgentSessionInspection.styled].
+ */
+@Serializable
+data class ScreenRun(
+    val text: String,
+    val fg: Int? = null,
+    val bg: Int? = null,
+    val bold: Boolean = false,
+    val dim: Boolean = false,
+    val italic: Boolean = false,
+    val underline: Boolean = false,
+    val strike: Boolean = false,
+    /** Foreground and background swap, as a terminal draws a cursor or a selected item. */
+    val inverse: Boolean = false,
+) {
+    companion object {
+        /** The flag on [fg] or [bg] that marks a 24-bit colour in the low 24 bits. */
+        const val RGB = 1 shl 24
+    }
 }
 
 /** One thing the person asked a conversation: when, its first line, and how long the agent then worked (null while it still does). */
@@ -330,6 +371,11 @@ data class AgentSessionSummary(
     val leafId: String? = null,
     val endedAt: Long? = null,
     val lastSaid: String? = null,
+    /**
+     * What the conversation is and where it stands, from the newest recap Claude Code wrote into its
+     * transcript ([AgentSessionText.recapOf]); null while it has written none, and on a closed one.
+     */
+    val recap: String? = null,
     val lastActivityAt: Long? = null,
     val firstPrompt: String? = null,
     val taskId: String? = null,
@@ -350,6 +396,23 @@ data class AgentSessionSummary(
     val status: String? = null,
     /** The sections this conversation wrote for the side panel (the `set_panel_section` tool), in the order first written. */
     val sections: List<PanelSection> = emptyList(),
+    /**
+     * What the conversation waits for once its turn has ended (a review, CI, the person), written
+     * with `set_status` and `keep: true` by the conversation itself or by its task's lead. Unlike
+     * [status] it outlives the turn: it stays until its writer clears it or the conversation ends.
+     */
+    val waitingFor: String? = null,
+    /** Whether [waitingFor] is the person: the row then asks for them as a question does. */
+    val waitingForYou: Boolean = false,
+    /** When [waitingFor] was written with its current text. */
+    val waitingSince: Long? = null,
+    /**
+     * Background shells the conversation left running while it sits at its prompt (Claude Code's
+     * `run_in_background`), read from the process tree. 0 while it works or has none.
+     */
+    val backgroundShells: Int = 0,
+    /** When the oldest of [backgroundShells] began, when known. */
+    val backgroundSince: Long? = null,
 )
 
 /**
@@ -551,4 +614,12 @@ data class AgentTask(
     val statusAtMillis: Long? = null,
     val questionWaits: Boolean = false,
     val startedAtMillis: Long? = null,
-)
+    /**
+     * When the work was paused on purpose (`set_task_status` with `paused`); null while it is not.
+     * A paused task reads "paused" rather than idle, and stays among the live rows.
+     */
+    val pausedAtMillis: Long? = null,
+) {
+    /** Whether the work is paused on purpose; see [pausedAtMillis]. */
+    val paused: Boolean get() = pausedAtMillis != null
+}

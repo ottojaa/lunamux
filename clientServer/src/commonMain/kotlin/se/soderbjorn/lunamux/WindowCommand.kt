@@ -331,6 +331,17 @@ sealed class WindowCommand {
     data class ShowWaitingAgent(val recordId: String) : WindowCommand()
 
     /**
+     * Leave a background tab shown for its agent ([ShowWaitingAgent]): it hides again and the person
+     * is back on the tab, and in the world, they came from. Sent by the task panel's agent row and the
+     * tag over the shown tab.
+     *
+     * @param tabId the shown tab; any other tab is left alone.
+     */
+    @Serializable
+    @SerialName("leaveShownTab")
+    data class LeaveShownTab(val tabId: String) : WindowCommand()
+
+    /**
      * Change the display title of a tab in the tab bar.
      *
      * @param tabId the id of the tab to rename

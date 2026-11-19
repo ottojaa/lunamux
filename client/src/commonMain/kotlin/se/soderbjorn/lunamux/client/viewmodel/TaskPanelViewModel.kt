@@ -70,6 +70,9 @@ class TaskPanelViewModel(
 
         /** Show the hidden tab a session runs in, as a marked background tab, and switch to it. */
         SHOW,
+
+        /** Leave the hidden tab shown for the session ([SHOW]): it hides and the person is back where they were. */
+        BACK,
     }
 
     /** The lists of the panel that can open in full. */
@@ -77,8 +80,9 @@ class TaskPanelViewModel(
 
     /**
      * One row of the agents block: the session's [title], then one fixed [doing] line that is always
-     * there ("working", "needs you" or "idle" when the agent has nothing better to say), so a row's
-     * height never depends on what the agent is doing.
+     * there ("working", "needs you", what it waits for, or "idle" when the agent has nothing better
+     * to say), so a row's height never depends on what the agent is doing. [state] is the one the
+     * screens draw ([AgentFacts.shownState]) and [sinceMillis] how long it has been in it.
      */
     data class AgentLine(
         val title: String,
@@ -88,6 +92,8 @@ class TaskPanelViewModel(
         val action: MemberAction,
         val recordId: String,
         val hint: String?,
+        /** The tab the session's pane is in, for [MemberAction.BACK]; null when the pane cannot be placed. */
+        val tabId: String? = null,
     )
 
     /** One row of the links block; [kind] is the word the writer sent, [time] a clock time or empty. */
@@ -226,6 +232,7 @@ class TaskPanelViewModel(
                 Layout(windowState.config.value).jumpCommands(session).forEach { send(it) }
             }
             MemberAction.SHOW -> send(WindowCommand.ShowWaitingAgent(line.recordId))
+            MemberAction.BACK -> line.tabId?.let { send(WindowCommand.LeaveShownTab(it)) }
             MemberAction.NONE -> Unit
         }
     }
@@ -264,6 +271,8 @@ class TaskPanelViewModel(
                 state = when {
                     row.needsYou -> AgentFacts.NEEDS_YOU
                     row.working -> AgentFacts.WORKING
+                    row.paused -> AgentFacts.PAUSED
+                    row.onHold -> AgentFacts.WAITING
                     row.finished -> AgentFacts.ENDED
                     else -> AgentFacts.DONE
                 },
@@ -291,7 +300,8 @@ class TaskPanelViewModel(
                 open = ui.open,
                 visible = visible,
                 title = session?.let(AgentFacts::titleOf) ?: NO_SESSION_TITLE,
-                head = session?.let { headOf(it.conversationId, AgentFacts.startedOf(it), it.status, story?.folder) },
+                // What it waits for at its prompt says more than the line of the turn that started it.
+                head = session?.let { headOf(it.conversationId, AgentFacts.startedOf(it), AgentFacts.waitOf(it)?.text ?: it.status, story?.folder) },
                 story = story,
                 sections = sections,
                 setup = if (session != null) Setup(SETUP_SESSION, SETUP_NEW_TASK_PROMPT, compact = true)
@@ -331,12 +341,7 @@ class TaskPanelViewModel(
             val took = t.tookMillis?.let { AgentFacts.ageText(0, it) }?.let { if (it == "now") "<1m" else it }
             TurnRow(if (' ' in clock) clock.substringBeforeLast(' ') else clock, t.prompt, took.orEmpty(), t.reply.orEmpty())
         }
-        val uncommitted = known?.uncommitted ?: 0
-        val unpushed = known?.unpushed ?: 0
-        val changed = listOfNotNull(
-            "$uncommitted uncommitted ${if (uncommitted == 1) "change" else "changes"}".takeIf { uncommitted > 0 },
-            "$unpushed unpushed ${if (unpushed == 1) "commit" else "commits"}".takeIf { unpushed > 0 },
-        )
+        val changed = AgentFacts.workParts(known?.uncommitted, known?.added, known?.removed, known?.untracked, known?.unpushed)
         // The branch is worth its line only when something changed on it.
         val work = if (changed.isEmpty()) emptyList() else listOfNotNull(known?.branch?.let { "on $it" }) + changed
         return Story("${s.id}/${s.state}/${s.stateSince}", s.id, cut(turns, s.id, Section.TURNS, ui), work, known?.folder)
@@ -353,7 +358,7 @@ class TaskPanelViewModel(
      * The task's live sessions, the waiting ones first, then by start, so a row keeps its place
      * as its session works, idles and works again. The main conversation is left out (the panel
      * sits beside it). A session whose pane the layout cannot place still shows, with nothing to
-     * click; one in a hidden tab offers to show that tab.
+     * click; one in a hidden tab offers to show that tab, and once it is shown, to go back.
      */
     private fun agentLines(task: AgentTask, sessions: List<AgentSessionSummary>, layout: Layout, mainId: String?): List<AgentLine> {
         val lines = sessions.filter { it.taskId == task.id && it.conversationId != mainId && AgentFacts.isLive(it) }
@@ -362,26 +367,32 @@ class TaskPanelViewModel(
                 val spot = layout.spotOf(s)
                 val action = when {
                     spot == null -> MemberAction.NONE
+                    // Shown for now: it is the tab in front, so a second press goes back where the person was.
+                    spot.tab.shownWhileWaiting -> MemberAction.BACK
                     spot.listed -> MemberAction.JUMP
                     else -> MemberAction.SHOW
                 }
                 val said = s.status?.trim()?.takeIf { it.isNotEmpty() && AgentFacts.isWorking(s) } ?: AgentFacts.lineOf(s)
+                val state = AgentFacts.shownState(s)
                 AgentLine(
                     title = AgentFacts.titleOf(s),
-                    doing = when {
-                        AgentFacts.isWaiting(s) -> said ?: "needs you"
-                        AgentFacts.isWorking(s) -> said ?: "working"
+                    doing = when (state) {
+                        AgentFacts.NEEDS_YOU -> said ?: "needs you"
+                        AgentFacts.WORKING -> said ?: "working"
+                        AgentFacts.WAITING -> said ?: AgentFacts.WAITING
                         else -> "idle"
                     },
-                    state = s.state,
-                    sinceMillis = s.stateSince,
+                    state = state,
+                    sinceMillis = AgentFacts.shownSince(s),
                     action = action,
                     recordId = s.id,
                     hint = when (action) {
                         MemberAction.SHOW -> "↵ show"
+                        MemberAction.BACK -> "↵ back"
                         MemberAction.JUMP -> "↵ open"
                         MemberAction.NONE -> null
                     },
+                    tabId = spot?.tab?.id,
                 )
             }
         return lines.filter { it.state == AgentFacts.NEEDS_YOU } + lines.filter { it.state != AgentFacts.NEEDS_YOU }

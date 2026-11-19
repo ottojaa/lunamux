@@ -513,6 +513,7 @@ class DemoServer internal constructor(
             is WindowCommand.SetActiveTab -> publish(config.copy(activeTabId = command.tabId))
             // The demo has no background tabs, so there is no waiting tab to show.
             is WindowCommand.ShowWaitingAgent -> Unit
+            is WindowCommand.LeaveShownTab -> Unit
 
             // --- worlds ---
             is WindowCommand.SetActiveWorld -> {

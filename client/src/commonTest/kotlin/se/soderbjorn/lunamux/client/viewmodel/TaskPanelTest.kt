@@ -92,6 +92,29 @@ class TaskPanelTest {
     }
 
     @Test
+    fun aPausedTaskHeadsItsPanelAsPausedWithTheReason() {
+        layout(listed = listOf("main"), background = listOf("w1"))
+        windowState.updateAgentSessions(listOf(main().copy(state = "done"), session("w1", state = "done")), true)
+        windowState.updateAgentTasks(listOf(task("Paused by the owner: laptop congested").copy(pausedAtMillis = now - 52 * minute)))
+        val head = vm.state.head!!
+        assertEquals(Triple(AgentFacts.PAUSED, "paused", now - 52 * minute), Triple(head.state, head.stateWord, head.sinceMillis))
+        assertEquals("Paused by the owner: laptop congested", head.headline)
+    }
+
+    @Test
+    fun anAgentWaitingOnItsReviewSaysSoWithTheTimeSinceItBegan() {
+        layout(listed = listOf("main"), background = listOf("w1", "w2"))
+        fill(
+            session("w1", state = "done").copy(waitingFor = "in review · round 1", waitingSince = now - 12 * minute),
+            session("w2", state = "done"),
+        )
+        val agents = vm.state.agents.shown.associateBy { it.title }
+        val w1 = agents.getValue("session w1")
+        assertEquals(Triple(AgentFacts.WAITING, "in review · round 1", now - 12 * minute), Triple(w1.state, w1.doing, w1.sinceMillis))
+        assertEquals(AgentFacts.DONE to "idle", agents.getValue("session w2").let { it.state to it.doing }, "an agent with nothing going on is idle")
+    }
+
+    @Test
     fun everyRowKeepsItsTitleAndOneActivityLine() {
         layout(listed = listOf("main"), background = listOf("w1", "w2", "w3", "w4", "w5"))
         fill(
@@ -167,6 +190,25 @@ class TaskPanelTest {
         sent.clear()
         vm.activateMember(byId.getValue("w3"))
         assertEquals(listOf<WindowCommand>(WindowCommand.ShowWaitingAgent("w3")), sent, "nothing is sent to the agent")
+    }
+
+    @Test
+    fun anAgentWhoseHiddenTabIsShownOffersToGoBack() = runNow {
+        windowState.updateConfig(
+            WindowConfig(
+                tabs = listOf(
+                    TabConfig("tab-1", "one", panes = listOf(pane("leaf-main"))),
+                    TabConfig("tab-bg", "agents", panes = listOf(pane("leaf-w1")), isBackground = true, shownWhileWaiting = true),
+                ),
+                activeTabId = "tab-bg",
+            ),
+        )
+        fill(session("w1"))
+        val line = vm.state.agents.shown.single()
+        assertEquals(MemberAction.BACK, line.action)
+        assertEquals("↵ back", line.hint)
+        vm.activateMember(line)
+        assertEquals(listOf<WindowCommand>(WindowCommand.LeaveShownTab("tab-bg")), sent, "the tab hides and the person is back where they were")
     }
 
     @Test
@@ -327,14 +369,14 @@ class TaskPanelTest {
             WindowEnvelope.AgentStory(
                 "solo",
                 turns = listOf(AgentTurn(now, "stop the tunnel", 30_000, reply = "stopped it"), AgentTurn(now - 3 * 24 * 60 * minute, "try it over frp", 31 * minute)),
-                uncommitted = 3, unpushed = 1, branch = "spike/remote", folder = "tunnel-repo",
+                uncommitted = 3, added = 120, removed = 40, untracked = 2, unpushed = 1, branch = "spike/remote", folder = "tunnel-repo",
             ),
         )
         val story = vm.state.story!!
         assertEquals(listOf("stop the tunnel" to "<1m", "try it over frp" to "31m"), story.turns.shown.map { it.prompt to it.took })
         assertEquals(5, story.turns.shown.first().time.length, "a turn from today shows its clock time")
         assertFalse(':' in story.turns.shown.last().time, "an older one shows its day")
-        assertEquals(listOf("on spike/remote", "3 uncommitted changes", "1 unpushed commit"), story.work)
+        assertEquals(listOf("on spike/remote", "3 files changed, +120 −40", "2 untracked", "1 unpushed commit"), story.work)
         assertEquals("stopped it" to "", story.turns.shown.first().reply to story.turns.shown.last().reply, "each ask shows the first line of its answer")
         assertEquals("tunnel-repo", story.folder, "the folder is where the conversation worked, as the server read it")
         assertTrue(vm.state.head!!.meta.startsWith("tunnel-repo"))

@@ -40,6 +40,7 @@ data class TaskListing(
     val ownSessionId: String? = null,
     val status: String? = null,
     val questionWaits: Boolean = false,
+    val paused: Boolean = false,
 )
 
 /** Decides each session's task and carries the operations that change it. */
@@ -145,16 +146,19 @@ class TaskIndex(
     /**
      * Set or clear a task's one-line status. [questionWaits] goes with it (a later call that omits it
      * takes it back): the overview keeps a closed main conversation's row in view while it is set.
+     * [paused] is set afresh by each call too, but not cleared by an empty text: the work can be
+     * paused with nothing to say. A pause keeps the time it began while calls repeat it.
      */
-    fun setStatus(taskId: String, text: String, questionWaits: Boolean = false): String? {
+    fun setStatus(taskId: String, text: String, questionWaits: Boolean = false, paused: Boolean = false): String? {
         requireTask(taskId)
         val clean = text.replace(Regex("\\s*[\\r\\n]+\\s*"), " ").trim().take(STATUS_MAX).trim().ifEmpty { null }
         synchronized(lock) {
             val now = clock()
             ensureStarted(taskId)
-            repo.setTaskStatus(taskId, clean, now, questionWaits)
+            val pausedAt = if (paused) tasks[taskId]?.pausedAt ?: now else null
+            repo.setTaskStatus(taskId, clean, now, questionWaits, pausedAt)
             tasks = tasks + (taskId to tasks.getValue(taskId).copy(
-                status = clean, statusAt = clean?.let { now }, questionWaits = clean != null && questionWaits,
+                status = clean, statusAt = clean?.let { now }, questionWaits = clean != null && questionWaits, pausedAt = pausedAt,
             ))
         }
         recompute()
@@ -239,7 +243,7 @@ class TaskIndex(
             }
         fun listing(id: String, title: String, source: String): TaskListing {
             val row = synchronized(lock) { tasks[id] }
-            return TaskListing(id, title, source, sessionsOf(id), mainConversationOf(id), ownSessionOf(id), row?.status, row?.questionWaits == true)
+            return TaskListing(id, title, source, sessionsOf(id), mainConversationOf(id), ownSessionOf(id), row?.status, row?.questionWaits == true, row?.pausedAt != null)
         }
         val fileIds = files.value.map { it.id }.toSet()
         val agentMade = synchronized(lock) { agentMade() }.filter { it.id !in fileIds }
@@ -253,10 +257,14 @@ class TaskIndex(
         tracker.snapshot().firstOrNull { it.conversationId == conversation && it.state != ENDED }?.terminalSessionId
     }
 
-    /** The conversation that speaks for a task (see [speakerOf]), or null when none was named. */
+    /**
+     * The conversation that speaks for a task (see [speakerOf]), or null when none was named or the
+     * one named now speaks for the task it sits in (see [spokenForElsewhere]).
+     */
     fun mainConversationOf(taskId: String): String? = synchronized(lock) {
         val stored = tasks[taskId]?.mainConversation ?: return@synchronized null
-        speakerOf(taskId, stored, tracker.snapshot())
+        val records = tracker.snapshot()
+        speakerOf(taskId, stored, records).takeUnless { spokenForElsewhere(taskId, it, records, tasks) }
     }
 
     /** The `open` action a task file declares for the task whose main conversation is [record]. */
@@ -317,6 +325,29 @@ class TaskIndex(
         private const val SLUG_MAX = 40
         private const val SUFFIX_LENGTH = 4
         const val STATUS_MAX = 120
+
+        /**
+         * Whether [conversation], named by task [taskId], speaks for another task instead: it sits in
+         * that task (its latest record carries the task's id) and that task names it too. A
+         * conversation speaks for one task at a time, the one it is in. A manager that finishes one
+         * task and starts the next from the same conversation is named by both; without this the
+         * finished task kept a live speaker and stayed in NOW as a second row opening the same pane.
+         * Called by [mainConversationOf] and by [resolve] for every task's speaker.
+         *
+         * @param taskId the task asking.
+         * @param conversation the conversation [speakerOf] gave that task.
+         * @param records every session record, to find the task the conversation is in.
+         * @param tasks the stored task rows, to read the other task's own speaker.
+         * @return true when the other task holds it, so [taskId] has no speaker.
+         */
+        internal fun spokenForElsewhere(
+            taskId: String, conversation: String, records: List<AgentSessionRecord>, tasks: Map<String, TaskRow>,
+        ): Boolean {
+            val holder = records.filter { it.conversationId == conversation }.maxByOrNull { it.createdAt }?.taskId
+            if (holder == null || holder == taskId) return false
+            val named = tasks[holder]?.mainConversation ?: return false
+            return speakerOf(holder, named, records) == conversation
+        }
 
         /**
          * The conversation that speaks for task [taskId], given the [stored] name. That is the stored
@@ -385,10 +416,12 @@ class TaskIndex(
                     ?: files.firstOrNull { it.id == t.id }?.modified
                     ?: m?.createdAt
                 t.copy(
-                    mainConversation = m?.mainConversation?.let { speakerOf(t.id, it, records) },
+                    mainConversation = m?.mainConversation?.let { speakerOf(t.id, it, records) }
+                        ?.takeUnless { spokenForElsewhere(t.id, it, records, tasks) },
                     status = m?.status,
                     statusAtMillis = m?.statusAt,
                     questionWaits = m?.questionWaits == true && m.status != null,
+                    pausedAtMillis = m?.pausedAt,
                     startedAtMillis = m?.startedAt ?: firstSeen,
                 )
             }

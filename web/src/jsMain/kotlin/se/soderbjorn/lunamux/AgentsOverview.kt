@@ -4,7 +4,7 @@
  * typing two or more characters swaps both for search results.
  *
  * A live row leads with a state mark (the turning glyph while it works, ◆ when it needs the person,
- * ✓ when done) and the name of its tab, with the plan's progress, a state word and the age on the
+ * ◐ while it waits at its prompt on something it started, nothing when done) and the name of its tab, with the plan's progress, a state word and the age on the
  * right. Under them come its description and its headline: the question, what it is doing, or the
  * last thing it said. NOW is grouped by repo. What a restart cut off has a section of its own, with
  * ⇧↵ to resume all of it. A closed row is one line: its title, the last thing
@@ -32,6 +32,7 @@ import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Ask
 import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Confirm
 import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Peek
 import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Row
+import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel.Under
 import se.soderbjorn.lunula.web.hotkey.Hotkey
 import se.soderbjorn.lunula.web.hotkey.HotkeyActionSpec
 import se.soderbjorn.lunula.web.hotkey.HotkeyBindings
@@ -281,11 +282,13 @@ private fun renderList(state: AgentsOverviewBackingViewModel.State) {
     }
 }
 
-/** The counts at the end of the search line: who needs the person, who works, who is done. Zero counts are left out. */
+/** The counts at the end of the search line: who needs the person, who works, who waits on something, which tasks are paused, who is done. Zero counts are left out. */
 private fun renderTally(state: AgentsOverviewBackingViewModel.State) {
     val parts = listOfNotNull(
         ("ao-sw-need" to "◆ ${AgentsOverviewBackingViewModel.needYouText(state.needYouCount)}").takeIf { state.needYouCount > 0 },
         ("ao-sw-work" to "${state.workingCount} working").takeIf { state.workingCount > 0 },
+        ("ao-sw-wait" to "◐ ${state.onHoldCount} waiting").takeIf { state.onHoldCount > 0 },
+        ("ao-sw-paused" to "‖ ${state.pausedCount} paused").takeIf { state.pausedCount > 0 },
         ("ao-sw-done" to "${state.doneCount} done").takeIf { state.doneCount > 0 },
     )
     syncChildren(tallyElement ?: return, parts, { it.second }) { (cls, text) -> span(cls, text) }
@@ -310,7 +313,7 @@ private fun highlighted(text: String, start: Int, length: Int): org.w3c.dom.Docu
 }
 
 /**
- * One row. Its class says how bright it is: `ao-live` while it works or needs the person, `ao-done`
+ * One row. Its class says how bright it is: `ao-live` while it works, waits or needs the person, `ao-done`
  * when done in NOW, `ao-old` when closed in EARLIER. A closed row is one line ([buildClosedCells]);
  * any other has its description and headline under the first line.
  */
@@ -318,7 +321,7 @@ private fun buildRow(item: RowItem): HTMLElement {
     val row = item.row
     val brightness = when {
         row.finished -> "ao-old"
-        row.working || row.needsYou -> "ao-live"
+        row.working || row.needsYou || row.onHold -> "ao-live"
         else -> "ao-done"
     }
     val el = div("ao-row $brightness" + if (item.selected) " ao-sel" else "")
@@ -326,7 +329,8 @@ private fun buildRow(item: RowItem): HTMLElement {
     if (row.finished) buildClosedCells(el, row) else buildLiveCells(el, row, item.grouped)
     if (item.selected && row.agents.isNotEmpty()) el.appendChild(buildAgents(row))
     if (item.selected) buildFocus(row, item.ask)?.let { el.appendChild(it) }
-    item.peek?.let { el.appendChild(buildPeek(it)) }
+    // The recap the row's one line left out heads its peek.
+    item.peek?.let { el.appendChild(buildPeek(it, row.recap.takeIf { row.under != Under.RECAP })) }
     return el
 }
 
@@ -335,27 +339,57 @@ private fun fillTitle(host: HTMLElement, row: Row) {
     if (row.matchInTitle) host.appendChild(highlighted(row.title, row.matchStart, row.matchLength)) else host.textContent = row.title
 }
 
+/** The name the row leads with into [host]: its tab's name when it has one, with the search match marked in it, else its title. */
+private fun fillName(host: HTMLElement, row: Row) {
+    val tab = row.tabName ?: return fillTitle(host, row)
+    if (row.matchInTab) host.appendChild(highlighted(tab, row.matchStart, row.matchLength)) else host.textContent = tab
+}
+
 /** [row]'s headline (or search snippet) into [host]. */
 private fun fillDetail(host: HTMLElement, row: Row) {
     if (row.matchInSnippet) host.appendChild(highlighted(row.detail, row.matchStart, row.matchLength)) else host.textContent = row.detail
 }
 
-/** The mark that opens a row: the turning glyph while it works, ◆ when it needs the person, nothing otherwise (the state word says done). */
+/**
+ * The mark that opens a row: the turning glyph while it works, ◆ when it needs the person, ◐ while it
+ * waits at its prompt on something it started, ‖ while its task is paused, nothing otherwise (the
+ * state word says done).
+ */
 private fun stateMark(state: String): HTMLElement = when (state) {
     AgentFacts.WORKING -> span("ao-m").also { it.appendChild(spinner()) }
     AgentFacts.NEEDS_YOU -> span("ao-m ao-m-need", "◆")
+    AgentFacts.WAITING -> span("ao-m ao-m-wait", "◐")
+    AgentFacts.PAUSED -> span("ao-m ao-m-paused", "‖")
     else -> span("ao-m")
+}
+
+/** The state a row's mark shows. */
+private fun markOf(row: Row): String = when {
+    row.needsYou -> AgentFacts.NEEDS_YOU
+    row.working -> AgentFacts.WORKING
+    row.paused -> AgentFacts.PAUSED
+    row.onHold -> AgentFacts.WAITING
+    else -> AgentFacts.DONE
+}
+
+/** The class of a row's state word, which gives it its colour. */
+private fun wordClassOf(row: Row): String = when {
+    row.needsYou -> "ao-sw-need"
+    row.working -> "ao-sw-work"
+    row.paused -> "ao-sw-paused"
+    row.onHold -> "ao-sw-wait"
+    else -> "ao-sw-done"
 }
 
 /**
  * A live or done row: the mark, the tab's name (or the title when the tab has none), the plan's
- * progress, the state word and the age; then the title as a description when the tab's name led,
- * and the headline. A row outside a repo group shows where it runs in place of an absent progress.
+ * progress, the state word and the age; then at most one line under it ([lineUnder]). A row outside
+ * a repo group shows where it runs in place of an absent progress.
  */
 private fun buildLiveCells(el: HTMLElement, row: Row, grouped: Boolean) {
-    el.appendChild(stateMark(if (row.needsYou) AgentFacts.NEEDS_YOU else if (row.working) AgentFacts.WORKING else AgentFacts.DONE))
+    el.appendChild(stateMark(markOf(row)))
     val name = span("ao-t")
-    if (row.tabName != null) name.textContent = row.tabName else fillTitle(name, row)
+    fillName(name, row)
     el.appendChild(name)
     val progress = row.progress
     el.appendChild(
@@ -366,20 +400,50 @@ private fun buildLiveCells(el: HTMLElement, row: Row, grouped: Boolean) {
             it.appendChild(span("ao-count", progress.count))
         } else span("ao-w", if (grouped) "" else row.where ?: ""),
     )
-    el.appendChild(span("ao-sw " + if (row.needsYou) "ao-sw-need" else if (row.working) "ao-sw-work" else "ao-sw-done", row.stateWord))
+    el.appendChild(span("ao-sw " + wordClassOf(row), row.stateWord))
     el.appendChild(ageSpan("ao-age", row.sinceMillis))
-    if (row.tabName != null) el.appendChild(div("ao-about").also { fillTitle(it, row) })
-    if (row.detail.isNotEmpty()) el.appendChild(div("ao-n").also { fillDetail(it, row) })
+    lineUnder(row)?.let(el::appendChild)
+}
+
+/**
+ * The one line under a live or done row's name, the one [Row.under] picks: a search snippet, the
+ * question (the one line said in full colour), a status, the recap or the title.
+ */
+private fun lineUnder(row: Row): HTMLElement? = when (row.under) {
+    Under.SNIPPET -> div("ao-n").also { fillDetail(it, row) }
+    Under.QUESTION, Under.STATUS -> stateLine(row)
+    Under.RECAP -> div("ao-about").also { it.textContent = row.recap }
+    Under.TITLE -> div("ao-about").also { fillTitle(it, row) }
+    Under.NONE -> null
+}
+
+/**
+ * [row]'s headline as a state line: a hook in the colour of where the row stands, then the text,
+ * dim unless it is a question for the person, which is said in full amber.
+ */
+private fun stateLine(row: Row): HTMLElement {
+    val tone = when {
+        row.needsYou -> "need"
+        row.working -> "work"
+        row.onHold -> "wait"
+        row.paused -> "paused"
+        else -> "done"
+    }
+    val line = div("ao-n ao-st ao-st-$tone")
+    line.appendChild(span("ao-st-g", "↳"))
+    line.appendChild(span("ao-st-x").also { fillDetail(it, row) })
+    return line
 }
 
 /**
  * A closed row, on one line: its title with the last thing it said after it, where it ran, the state
- * word and the age. One a restart stopped in a tab that is still there leads with the tab's name.
+ * word and the age. One the restart stopped, whose tab still waits for it, leads with the tab's name
+ * and says its title after it.
  */
 private fun buildClosedCells(el: HTMLElement, row: Row) {
     el.appendChild(stateMark(AgentFacts.ENDED))
     val name = span("ao-t")
-    name.appendChild(span("ao-t-name").also { if (row.tabName != null) it.textContent = row.tabName else fillTitle(it, row) })
+    name.appendChild(span("ao-t-name").also { fillName(it, row) })
     if (row.tabName != null) name.appendChild(span("ao-said").also { fillTitle(it, row) })
     if (row.detail.isNotEmpty()) name.appendChild(span("ao-said").also { fillDetail(it, row) })
     el.appendChild(name)
@@ -388,14 +452,21 @@ private fun buildClosedCells(el: HTMLElement, row: Row) {
     el.appendChild(ageSpan("ao-age", row.sinceMillis))
 }
 
-/** The conversations of the selected task, one line each: its mark, its name with what it says after it, and its age. */
+/**
+ * The conversations of the selected task, one line each: its mark, its name with what it says after
+ * it, and its age. The ones in hidden tabs come last, dimmed and marked as such, so they are not
+ * taken for conversations the person can see in a tab. When they all say the same thing, it is left
+ * out: the marks already say it.
+ */
 private fun buildAgents(row: Row): HTMLElement {
     val box = div("ao-agents")
+    val same = row.agents.size > 1 && row.agents.all { it.doing == row.agents.first().doing }
     row.agents.forEach { agent ->
         box.appendChild(stateMark(agent.state))
-        val text = span("ao-agent")
+        val text = span("ao-agent" + if (agent.background) " ao-agent-bg" else "")
         text.appendChild(span("ao-agent-name", agent.title))
-        if (agent.doing.isNotEmpty()) text.appendChild(span("ao-said", agent.doing))
+        if (agent.doing.isNotEmpty() && !same) text.appendChild(span("ao-said", agent.doing))
+        if (agent.background) text.appendChild(span("ao-said", "· hidden tab"))
         box.appendChild(text)
         box.appendChild(ageSpan("ao-age", agent.sinceMillis))
     }
@@ -403,12 +474,21 @@ private fun buildAgents(row: Row): HTMLElement {
 }
 
 /**
- * What the selected row shows last: the question before a resume or a start, else its extra text
- * (its folder, where a search matched, a failed resume in the error colour).
+ * What the selected row shows last: the question before a resume or a start, else a done row's last
+ * reply ([Row.lastReply]) and its extra text (its folder, where a search matched, a failed resume in
+ * the error colour).
  */
 private fun buildFocus(row: Row, ask: Ask?): HTMLElement? {
     val focus = div("ao-focus")
     if (ask != null) focus.appendChild(buildAsk(ask))
+    // A done row leaves what its conversation last said off the row; the selection shows it.
+    val reply = row.lastReply
+    if (ask == null && reply != null) {
+        focus.appendChild(div("ao-xtra").also {
+            it.appendChild(span("ao-reply-lbl", "last reply"))
+            it.appendChild(span("ao-reply", reply))
+        })
+    }
     if (ask == null && row.extra.isNotEmpty()) {
         val line = div("ao-xtra")
         val error = row.error
@@ -457,10 +537,21 @@ private fun buildMoreLine(hidden: Int): HTMLElement {
     return el
 }
 
-/** The popover under the selected row (and over the task panel): a heading and the last lines of the session's screen. */
-internal fun buildPeek(peek: Peek): HTMLElement {
+/**
+ * The popover under the selected row (and over the task panel): a heading and the last lines of the
+ * session's screen.
+ *
+ * @param peek what to show.
+ * @param recap the conversation's recap, shown first when the row's own line left it out.
+ * @return the popover.
+ */
+internal fun buildPeek(peek: Peek, recap: String? = null): HTMLElement {
     val box = div("ao-peek")
     box.addEventListener("click", { e: Event -> e.stopPropagation() })
+    if (recap != null) {
+        box.appendChild(div("ao-peek-title").also { it.textContent = "RECAP" })
+        box.appendChild(div("ao-peek-section ao-peek-recap").also { it.textContent = recap })
+    }
     // What its agent wrote for the side panel comes first: for closed work this is its recap.
     peek.sections.forEach { s ->
         box.appendChild(div("ao-peek-title").also { it.textContent = s.heading.uppercase() })
@@ -473,10 +564,57 @@ internal fun buildPeek(peek: Peek): HTMLElement {
     when {
         peek.loading -> box.appendChild(div("ao-peek-line").also { it.textContent = "…" })
         peek.emptyText != null -> box.appendChild(div("ao-peek-line").also { it.textContent = peek.emptyText })
-        else -> peek.lines.forEach { line -> box.appendChild(div("ao-peek-line").also { it.textContent = line }) }
+        peek.styled.isNotEmpty() -> {
+            val palette = buildTermPalette()
+            peek.styled.forEach { row -> box.appendChild(styledLine(row, palette)) }
+        }
+        // A blank row keeps its height: on an agent's screen it is what separates one item from the next.
+        else -> peek.lines.forEach { line -> box.appendChild(div("ao-peek-line").also { it.textContent = line.ifEmpty { " " } }) }
     }
     return box
 }
+
+/**
+ * One row of a live screen in the terminal's own styles: a span per run with its colours, weight,
+ * slant, dimness and lines. Colours resolve against [palette], the terminal theme's (so a peek reads
+ * like the pane), with a bold run in one of the low eight colours drawn bright as the terminal does.
+ *
+ * @param runs the row's runs ([Peek.styled]); none for a blank row.
+ * @param palette the terminal's resolved colours ([buildTermPalette]).
+ * @return the row's element.
+ */
+private fun styledLine(runs: List<ScreenRun>, palette: TermPalette): HTMLElement {
+    val line = div("ao-peek-line ao-peek-styled")
+    line.style.color = palette.defaultFg
+    if (runs.isEmpty()) line.textContent = " "
+    runs.forEach { run ->
+        val el = span("", run.text)
+        var fg = run.fg?.let { c -> cssColorOf(if (run.bold && c in 0..7) c + 8 else c, palette) }
+        var bg = run.bg?.let { cssColorOf(it, palette) }
+        if (run.inverse) {
+            val swapped = fg ?: palette.defaultFg
+            fg = bg ?: palette.defaultBg
+            bg = swapped
+        }
+        val st = el.style
+        fg?.let { st.color = it }
+        bg?.let { st.backgroundColor = it }
+        if (run.bold) st.fontWeight = "bold"
+        if (run.italic) st.fontStyle = "italic"
+        if (run.dim) st.opacity = "0.5"
+        val lines = listOfNotNull("underline".takeIf { run.underline }, "line-through".takeIf { run.strike })
+        if (lines.isNotEmpty()) st.textDecoration = lines.joinToString(" ")
+        line.appendChild(el)
+    }
+    return line
+}
+
+/** A [ScreenRun] colour as CSS: a true colour as itself, a palette entry from [palette]. */
+private fun cssColorOf(color: Int, palette: TermPalette): String =
+    if (color and ScreenRun.RGB != 0) {
+        val rgb = color and 0xffffff
+        "#" + (rgb or 0x1000000).toString(16).substring(1)
+    } else palette.colors256.getOrElse(color) { palette.defaultFg }
 
 /** The inline "Close “title”?" bar with its warnings; the focused button shows a ring. */
 private fun buildConfirm(confirm: Confirm): HTMLElement {
