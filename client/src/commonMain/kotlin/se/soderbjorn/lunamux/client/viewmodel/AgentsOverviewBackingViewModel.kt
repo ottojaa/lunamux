@@ -1046,10 +1046,12 @@ private val DEFAULT_TAB_NAME = Regex("^Tab \\d+$")
 /**
  * The name the person gave the listed tab [s] runs in; null for a default name, a background tab,
  * one that only repeats [title], and for a closed conversation: its tab has usually moved on to
- * other work, so the name would be about something else.
+ * other work, so the name would be about something else. A conversation the restart stopped whose
+ * pane still sits at an idle shell ([AgentSessionSummary.inTab]) keeps it: that tab has not moved
+ * on, a resume goes back into it, and the row then reads as it will once resumed.
  */
 private fun Ctx.tabNameOf(s: AgentSessionSummary?, title: String): String? {
-    if (s == null || !AgentFacts.isLive(s)) return null
+    if (s == null || !(AgentFacts.isLive(s) || s.inTab && stoppedByRestart(s, now))) return null
     val name = layout.spotOf(s)?.takeIf { it.listed }?.tab?.title?.trim() ?: return null
     return name.takeIf { it.isNotEmpty() && !DEFAULT_TAB_NAME.matches(it) && !it.equals(title.trim(), ignoreCase = true) }
 }

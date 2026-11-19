@@ -142,7 +142,10 @@ open. A row with nothing to add has no extra line.
 A conversation's record says why it ended: Lunamux stopped under it (`restart`), the agent exited,
 its pane went, or another conversation took the pane. Between NOW and EARLIER, **STOPPED BY THE
 RESTART** lists the conversations Lunamux cut off in the last day that can be resumed, drawn as any
-closed row. A closed row never leads with a tab's name: the tab has usually moved on to other work.
+closed row. A closed row does not lead with a tab's name: the tab has usually moved on to other
+work. The exception is a row here whose pane still sits at an idle shell: that tab has not moved on
+and the resume goes back into it, so the row leads with the tab's name, as it will once resumed, and
+says its title after it.
 A closed conversation in which nothing was said, or whose transcript is gone, is not listed and not
 found by search. ↵ on one asks to resume it as on any closed
 row; **⇧↵** resumes all of them at once, each in its own tab when that tab still sits at an idle

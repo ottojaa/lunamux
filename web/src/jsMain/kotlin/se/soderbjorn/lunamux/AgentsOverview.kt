@@ -437,7 +437,8 @@ private fun stateLine(row: Row): HTMLElement {
 
 /**
  * A closed row, on one line: its title with the last thing it said after it, where it ran, the state
- * word and the age. One a restart stopped in a tab that is still there leads with the tab's name.
+ * word and the age. One the restart stopped, whose tab still waits for it, leads with the tab's name
+ * and says its title after it.
  */
 private fun buildClosedCells(el: HTMLElement, row: Row) {
     el.appendChild(stateMark(AgentFacts.ENDED))
