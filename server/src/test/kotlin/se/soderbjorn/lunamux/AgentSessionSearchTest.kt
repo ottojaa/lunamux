@@ -295,4 +295,36 @@ class AgentSessionSearchTest {
         tracker.onPoll(listOf(pane("s2")))
         assertEquals(listOf("prompt"), AgentSessionSearch.search(repo, tracker, "sanni's request", tabNames = tabs).map { it.field })
     }
+
+    @Test
+    fun `a conversation the restart stopped is found by its tab while that tab waits to resume it`() {
+        var now = 1_000L
+        val tracker = AgentSessionTracker(repo, gitInfo = { GitInfo(repo = "upright", branch = "main", worktreePath = null) }, clock = { now })
+            .also { it.start() }
+        tracker.onPoll(listOf(PaneSnapshot("s1", leafId = "leaf-s1", cwd = "/work", programTitle = "✳ Variant editor issue",
+            agent = "claude", state = "working", alive = true, background = false, screenText = { "" })))
+        tracker.endAll(emptyList())
+        // After the restart the pane has a new terminal session, at an idle shell in the same tab.
+        val tabs = mapOf("s9" to "Internal tools redesign")
+        fun find(resumesIn: String?) =
+            AgentSessionSearch.search(repo, tracker, "tools redesign", tabNames = tabs, resumePane = { resumesIn }, now = now).map { it.field }
+
+        assertEquals(listOf("tab"), find("s9"))
+        assertEquals(emptyList(), find(null), "not once its pane has moved on")
+        now += 25 * 60 * 60_000L
+        assertEquals(emptyList(), find("s9"), "nor after a day, when the overview no longer lists it as stopped")
+    }
+
+    @Test
+    fun `one task's many conversations take one place among the matches, so the rest still fit`() {
+        repo.insertTask("big", "Access redesign", 1)
+        (1..60).forEach {
+            repo.saveAgentSession(AgentSessionRecord(id = "r$it", agent = "claude", title = "review $it", state = "ended",
+                stateSince = 100L + it, createdAt = 100L + it, endedAt = 100L + it, taskId = "big"))
+        }
+        save("lone", text = "we talked about the internal tools redesign here", at = 50)
+        val tasks = TaskIndex(repo, AgentSessionTracker(repo), kotlinx.coroutines.flow.MutableStateFlow(emptyList()), { null })
+        val hits = AgentSessionSearch.search(repo, null, "redesign", tasks)
+        assertEquals(listOf("r60", "lone"), hits.map { it.summary.id }, "the task's newest conversation, then the transcript hit")
+    }
 }

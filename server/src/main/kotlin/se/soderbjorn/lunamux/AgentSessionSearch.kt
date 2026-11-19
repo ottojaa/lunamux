@@ -20,6 +20,12 @@ object AgentSessionSearch {
     /** The most matches returned for one query. */
     const val MAX_MATCHES = 50
 
+    /**
+     * How long after a restart a conversation it stopped is still listed as stopped, as the overview
+     * counts it (its `STOPPED_WINDOW_MS`).
+     */
+    private const val STOPPED_MS = 24L * 60 * 60_000L
+
     /** The fewest characters a query needs before it searches. */
     const val MIN_QUERY = 2
 
@@ -41,7 +47,12 @@ object AgentSessionSearch {
      * @param tasks the tasks, so a session is found by its task's title.
      * @param tabNames the name the person gave the listed tab each conversation runs in, by terminal
      *   session id ([WindowState.listedTabNames]): the overview leads a row with it, so it is found by it.
-     * @return the matches, best first, at most [MAX_MATCHES].
+     * @param resumePane the terminal session of the idle pane a closed conversation would resume in
+     *   ([paneToResumeIn]), or null: a conversation the restart stopped is named by that pane's tab.
+     * @param now the time, for whether a restart stopped a conversation recently enough to list it so.
+     * @return the matches, best first, at most [MAX_MATCHES], one per task (or per conversation of no
+     *   task) as the overview shows them: the best hit of each, so one task's many conversations do not
+     *   take the places of the rest.
      */
     fun search(
         repo: SettingsRepository,
@@ -49,7 +60,10 @@ object AgentSessionSearch {
         query: String,
         tasks: TaskIndex? = null,
         tabNames: Map<String, String> = emptyMap(),
+        resumePane: (AgentSessionRecord) -> String? = { null },
+        now: Long = System.currentTimeMillis(),
     ): List<AgentSessionMatch> {
+        fun tabOf(rec: AgentSessionRecord) = tabNameOf(rec, tabNames, resumePane, now)
         val q = query.trim()
         if (q.length < MIN_QUERY) return emptyList()
         val hits = repo.searchAgentSessions(q)
@@ -61,13 +75,13 @@ object AgentSessionSearch {
             (stored + live.filter { tasks.taskIdOf(it) in matchingTasks }).distinctBy { it.id }
                 .filter { seen.add(it.id) }.map { AgentSessionHit(it, null, null) }
         }
-        val viaTab = live.filter { tabNameOf(it, tabNames)?.contains(q, ignoreCase = true) == true && seen.add(it.id) }
+        val viaTab = live.filter { tabOf(it)?.contains(q, ignoreCase = true) == true && seen.add(it.id) }
             .map { AgentSessionHit(it, null, null) }
         return (hits + viaTask + viaTab)
             .mapNotNull { hit ->
                 val rec = (tracker?.cached(hit.record.id) ?: hit.record).takeUnless { it.background || it.nothingSaid() || it.transcriptMissing() } ?: return@mapNotNull null
                 val taskTitle = tasks?.taskIdOf(rec)?.let(tasks::titleOf)
-                val found = bestField(rec, tabNameOf(rec, tabNames), taskTitle, hit.transcriptWindow, hit.screenWindow, q) ?: return@mapNotNull null
+                val found = bestField(rec, tabOf(rec), taskTitle, hit.transcriptWindow, hit.screenWindow, q) ?: return@mapNotNull null
                 Triple(rec, found, taskTitle)
             }
             .sortedWith(
@@ -75,6 +89,7 @@ object AgentSessionSearch {
                     .thenBy { if (it.first.state == "ended") 1 else 0 }
                     .thenByDescending { it.first.endedAt ?: it.first.stateSince },
             )
+            .distinctBy { (rec, _, _) -> tasks?.taskIdOf(rec) ?: rec.conversationId }
             .take(MAX_MATCHES)
             .map { (rec, found, taskTitle) ->
                 AgentSessionMatch(
@@ -150,9 +165,18 @@ object AgentSessionSearch {
     private fun folderName(rec: AgentSessionRecord): String? =
         rec.cwd?.trimEnd('/')?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
 
-    /** The name of the listed tab an open conversation runs in; a closed one's tab has moved on to other work. */
-    private fun tabNameOf(rec: AgentSessionRecord, tabNames: Map<String, String>): String? =
-        rec.terminalSessionId?.takeIf { rec.state != "ended" }?.let(tabNames::get)
+    /**
+     * The name of the listed tab an open conversation runs in. A closed one's tab has usually moved on
+     * to other work, so it has none, unless the restart stopped it lately and its pane still sits at an
+     * idle shell ([resumePane]): the overview leads that row with the tab's name, so it is found by it.
+     */
+    private fun tabNameOf(
+        rec: AgentSessionRecord, tabNames: Map<String, String>, resumePane: (AgentSessionRecord) -> String?, now: Long,
+    ): String? = when {
+        rec.state != "ended" -> rec.terminalSessionId?.let(tabNames::get)
+        rec.endReason == "restart" && now - (rec.endedAt ?: rec.stateSince) <= STOPPED_MS -> resumePane(rec)?.let(tabNames::get)
+        else -> null
+    }
 
     /** One match inside a record: its field, the text to show and where the query sits in it. */
     private class Found(val field: String, val snippet: String?, val start: Int, val length: Int)
