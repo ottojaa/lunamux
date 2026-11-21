@@ -20,42 +20,68 @@ object AgentSessionSearch {
     /** The most matches returned for one query. */
     const val MAX_MATCHES = 50
 
+    /**
+     * How long after a restart a conversation it stopped is still listed as stopped, as the overview
+     * counts it (its `STOPPED_WINDOW_MS`).
+     */
+    private const val STOPPED_MS = 24L * 60 * 60_000L
+
     /** The fewest characters a query needs before it searches. */
     const val MIN_QUERY = 2
 
     /** Characters kept on each side of a match in a snippet. */
     private const val SNIPPET_SIDE = 40
 
-    /** The most lines of screen returned for peek. */
-    private const val PEEK_LINES = 12
-
     /** Rank of each matched field: lower is better. */
     private val TIER = mapOf(
-        "title" to 0, "task" to 1, "prompt" to 2, "branch" to 3, "links" to 3, "transcript" to 4, "screen" to 4,
+        "title" to 0, "tab" to 0, "task" to 1, "prompt" to 2, "branch" to 3, "links" to 3, "transcript" to 4, "screen" to 4,
     )
 
-    /** Find and rank the sessions that contain [query]. */
+    /**
+     * Find and rank the sessions that contain [query]. Called by `WindowRoutes` for
+     * [WindowCommand.SearchAgentSessions].
+     *
+     * @param repo the stored sessions and their search text.
+     * @param tracker the live sessions; null when only stored ones are searched.
+     * @param query what the person typed; under [MIN_QUERY] characters finds nothing.
+     * @param tasks the tasks, so a session is found by its task's title.
+     * @param tabNames the name the person gave the listed tab each conversation runs in, by terminal
+     *   session id ([WindowState.listedTabNames]): the overview leads a row with it, so it is found by it.
+     * @param resumePane the terminal session of the idle pane a closed conversation would resume in
+     *   ([paneToResumeIn]), or null: a conversation the restart stopped is named by that pane's tab.
+     * @param now the time, for whether a restart stopped a conversation recently enough to list it so.
+     * @return the matches, best first, at most [MAX_MATCHES], one per task (or per conversation of no
+     *   task) as the overview shows them: the best hit of each, so one task's many conversations do not
+     *   take the places of the rest.
+     */
     fun search(
         repo: SettingsRepository,
         tracker: AgentSessionTracker?,
         query: String,
         tasks: TaskIndex? = null,
+        tabNames: Map<String, String> = emptyMap(),
+        resumePane: (AgentSessionRecord) -> String? = { null },
+        now: Long = System.currentTimeMillis(),
     ): List<AgentSessionMatch> {
+        fun tabOf(rec: AgentSessionRecord) = tabNameOf(rec, tabNames, resumePane, now)
         val q = query.trim()
         if (q.length < MIN_QUERY) return emptyList()
         val hits = repo.searchAgentSessions(q)
         val matchingTasks = tasks?.taskIdsTitled(q).orEmpty()
         val seen = hits.mapTo(HashSet()) { it.record.id }
+        val live = tracker?.snapshot().orEmpty().filter { !it.background }
         val viaTask = if (tasks == null || matchingTasks.isEmpty()) emptyList() else {
             val stored = repo.loadAgentSessionsOfTasks(matchingTasks)
-            val live = tracker?.snapshot().orEmpty().filter { tasks.taskIdOf(it) in matchingTasks && !it.background }
-            (stored + live).distinctBy { it.id }.filter { seen.add(it.id) }.map { AgentSessionHit(it, null, null) }
+            (stored + live.filter { tasks.taskIdOf(it) in matchingTasks }).distinctBy { it.id }
+                .filter { seen.add(it.id) }.map { AgentSessionHit(it, null, null) }
         }
-        return (hits + viaTask)
+        val viaTab = live.filter { tabOf(it)?.contains(q, ignoreCase = true) == true && seen.add(it.id) }
+            .map { AgentSessionHit(it, null, null) }
+        return (hits + viaTask + viaTab)
             .mapNotNull { hit ->
                 val rec = (tracker?.cached(hit.record.id) ?: hit.record).takeUnless { it.background || it.nothingSaid() || it.transcriptMissing() } ?: return@mapNotNull null
                 val taskTitle = tasks?.taskIdOf(rec)?.let(tasks::titleOf)
-                val found = bestField(rec, taskTitle, hit.transcriptWindow, hit.screenWindow, q) ?: return@mapNotNull null
+                val found = bestField(rec, tabOf(rec), taskTitle, hit.transcriptWindow, hit.screenWindow, q) ?: return@mapNotNull null
                 Triple(rec, found, taskTitle)
             }
             .sortedWith(
@@ -63,6 +89,7 @@ object AgentSessionSearch {
                     .thenBy { if (it.first.state == "ended") 1 else 0 }
                     .thenByDescending { it.first.endedAt ?: it.first.stateSince },
             )
+            .distinctBy { (rec, _, _) -> tasks?.taskIdOf(rec) ?: rec.conversationId }
             .take(MAX_MATCHES)
             .map { (rec, found, taskTitle) ->
                 AgentSessionMatch(
@@ -82,19 +109,69 @@ object AgentSessionSearch {
         val rec = tracker?.find(recordId) ?: return null
         val open = rec.state != "ended"
         val snapshot = if (open) rec.terminalSessionId?.let { livePaneSnapshot(it) } else null
-        val screenText = if (snapshot != null) snapshot.screenText() else rec.lastScreen
-        val screen = screenText?.lines()?.filter { it.isNotBlank() }?.takeLast(PEEK_LINES).orEmpty()
+        val rows = snapshot?.screenRows?.invoke()
+        val (screen, styled) = if (rows != null) PeekScreen.styled(rows)
+        else PeekScreen.plain(if (snapshot != null) snapshot.screenText() else rec.lastScreen) to emptyList()
         val folder = rec.cwd?.takeIf { it.isNotBlank() && File(it).isDirectory }?.let { Path.of(it) }
+        val work = folder?.let(GitCatalog::uncommitted)
         return WindowEnvelope.AgentSessionInspection(
             recordId = recordId,
             live = snapshot != null,
             screen = screen,
-            uncommitted = folder?.let(GitCatalog::uncommittedCount),
+            styled = styled,
+            uncommitted = work?.changed,
+            added = work?.added,
+            removed = work?.removed,
+            untracked = work?.untracked,
             unpushed = folder?.let(GitCatalog::unpushedCount),
             branch = folder?.let { GitCatalog.runGit(it, "branch", "--show-current")?.trim()?.takeIf(String::isNotEmpty) }
                 ?: rec.branch,
             resumeNote = if (open) null else resumeNoteOf(rec, tasks?.openOfMain(rec)),
         )
+    }
+
+    /** The most worktrees one task's Changed block lists. */
+    private const val MAX_WORKTREES = 6
+
+    /**
+     * The work left in the git worktrees a task's conversations worked in, for the task panel's
+     * Changed block. Every conversation of the task counts, closed ones too while their folder is
+     * there, since a run's worktree with unpushed commits is what the person most needs to see.
+     * Conversations in the same worktree count once; a clean worktree is left out.
+     *
+     * @param taskId the task.
+     * @param repo the stored records, for the task's closed conversations.
+     * @param tracker the records in memory, for the live ones.
+     * @return the answer, the most recently worked-in worktree first, at most [MAX_WORKTREES].
+     */
+    fun taskWork(taskId: String, repo: SettingsRepository, tracker: AgentSessionTracker?): WindowEnvelope.TaskWork {
+        val records = (tracker?.snapshot().orEmpty().filter { it.taskId == taskId } + repo.loadAgentSessionsOfTasks(listOf(taskId)))
+            .distinctBy { it.id }
+        // Each folder once, with the last time anything happened in it.
+        val lastByFolder = HashMap<String, Long>()
+        for (rec in records) {
+            val dir = (rec.worktreePath ?: rec.cwd)?.takeIf { it.isNotBlank() } ?: continue
+            val at = rec.endedAt ?: rec.stateSince
+            if ((lastByFolder[dir] ?: Long.MIN_VALUE) < at) lastByFolder[dir] = at
+        }
+        val lastByRoot = HashMap<Path, Long>()
+        for ((dir, at) in lastByFolder) {
+            if (!File(dir).isDirectory) continue
+            val root = GitCatalog.getRepoRoot(Path.of(dir)) ?: continue
+            if ((lastByRoot[root] ?: Long.MIN_VALUE) < at) lastByRoot[root] = at
+        }
+        val worktrees = lastByRoot.entries.sortedByDescending { it.value }.asSequence().mapNotNull { (root, _) ->
+            val work = GitCatalog.uncommitted(root) ?: return@mapNotNull null
+            val unpushed = GitCatalog.unpushedCount(root)
+            if (work.changed == 0 && work.untracked == 0 && (unpushed ?: 0) == 0) return@mapNotNull null
+            WorktreeWork(
+                name = root.fileName?.toString() ?: root.toString(),
+                branch = GitCatalog.runGit(root, "branch", "--show-current")?.trim()?.takeIf(String::isNotEmpty),
+                changed = work.changed, added = work.added, removed = work.removed,
+                untracked = work.untracked, unpushed = unpushed,
+            )
+        }.take(MAX_WORKTREES).toList()
+        return WindowEnvelope.TaskWork(taskId, worktrees)
     }
 
     /** What the person asked in one conversation and the work left in its folder, for the panel of a session with no task. */
@@ -105,10 +182,14 @@ object AgentSessionSearch {
         val dir = listOfNotNull(read.cwd, rec.cwd).firstOrNull { it.isNotBlank() && File(it).isDirectory }
         val folder = dir?.let { Path.of(it) }
         val git = readGitInfo(dir)
+        val work = folder?.let(GitCatalog::uncommitted)
         return WindowEnvelope.AgentStory(
             recordId = recordId,
             turns = read.turns,
-            uncommitted = folder?.let(GitCatalog::uncommittedCount),
+            uncommitted = work?.changed,
+            added = work?.added,
+            removed = work?.removed,
+            untracked = work?.untracked,
             unpushed = folder?.let(GitCatalog::unpushedCount),
             branch = git.branch,
             folder = git.repo ?: dir?.trimEnd('/')?.substringAfterLast('/')?.takeIf { it.isNotBlank() },
@@ -136,15 +217,32 @@ object AgentSessionSearch {
     private fun folderName(rec: AgentSessionRecord): String? =
         rec.cwd?.trimEnd('/')?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
 
+    /**
+     * The name of the listed tab an open conversation runs in. A closed one's tab has usually moved on
+     * to other work, so it has none, unless the restart stopped it lately and its pane still sits at an
+     * idle shell ([resumePane]): the overview leads that row with the tab's name, so it is found by it.
+     */
+    private fun tabNameOf(
+        rec: AgentSessionRecord, tabNames: Map<String, String>, resumePane: (AgentSessionRecord) -> String?, now: Long,
+    ): String? = when {
+        rec.state != "ended" -> rec.terminalSessionId?.let(tabNames::get)
+        rec.endReason == "restart" && now - (rec.endedAt ?: rec.stateSince) <= STOPPED_MS -> resumePane(rec)?.let(tabNames::get)
+        else -> null
+    }
+
     /** One match inside a record: its field, the text to show and where the query sits in it. */
     private class Found(val field: String, val snippet: String?, val start: Int, val length: Int)
 
     private fun bestField(
-        rec: AgentSessionRecord, taskTitle: String?, transcript: String?, screen: String?, q: String,
+        rec: AgentSessionRecord, tabName: String?, taskTitle: String?, transcript: String?, screen: String?, q: String,
     ): Found? {
         rec.title?.takeIf { AgentSessionText.isMeaningfulTitle(it, rec.branch, rec.repo, folderName(rec)) }?.let { t ->
             val at = t.indexOf(q, ignoreCase = true)
             if (at >= 0) return Found("title", null, at, q.length)
+        }
+        tabName?.let { t ->
+            val at = t.indexOf(q, ignoreCase = true)
+            if (at >= 0) return Found("tab", null, at, q.length)
         }
         taskTitle?.let { t ->
             val at = t.indexOf(q, ignoreCase = true)

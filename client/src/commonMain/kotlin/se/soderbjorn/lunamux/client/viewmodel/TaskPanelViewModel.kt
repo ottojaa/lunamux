@@ -70,6 +70,9 @@ class TaskPanelViewModel(
 
         /** Show the hidden tab a session runs in, as a marked background tab, and switch to it. */
         SHOW,
+
+        /** Leave the hidden tab shown for the session ([SHOW]): it hides and the person is back where they were. */
+        BACK,
     }
 
     /** The lists of the panel that can open in full. */
@@ -77,8 +80,9 @@ class TaskPanelViewModel(
 
     /**
      * One row of the agents block: the session's [title], then one fixed [doing] line that is always
-     * there ("working", "needs you" or "idle" when the agent has nothing better to say), so a row's
-     * height never depends on what the agent is doing.
+     * there ("working", "needs you", what it waits for, or "idle" when the agent has nothing better
+     * to say), so a row's height never depends on what the agent is doing. [state] is the one the
+     * screens draw ([AgentFacts.shownState]) and [sinceMillis] how long it has been in it.
      */
     data class AgentLine(
         val title: String,
@@ -88,6 +92,8 @@ class TaskPanelViewModel(
         val action: MemberAction,
         val recordId: String,
         val hint: String?,
+        /** The tab the session's pane is in, for [MemberAction.BACK]; null when the pane cannot be placed. */
+        val tabId: String? = null,
     )
 
     /** One row of the links block; [kind] is the word the writer sent, [time] a clock time or empty. */
@@ -97,10 +103,15 @@ class TaskPanelViewModel(
     data class ActivityRow(val day: String, val time: String, val text: String)
 
     /**
-     * The header: [name] is the tab's name (or the title when the tab has none) and [about] the
-     * title under it; [meta] says where and since when; [state] and [stateWord] are the overview
-     * row's. The header holds facts only, but for [headline]: the status an agent set in its own
-     * words (the task's status line, or a conversation's `set_status`), empty when none did. What
+     * The header: [name] is the tab's name (or the title when the tab has none) and [about] what
+     * the work is now under it: for a task, its main conversation's title (the task's own title is
+     * where it began, and can be days stale), else the title when the tab's name led. [meta] says
+     * where and when it started, and [breakdown] how the task's live conversations stand, one count
+     * per state ("1 working · 2 waiting"), empty with fewer than two. [state] is the overview row's
+     * and [stateWord] its verdict in one word, without the row's count: the counts are [breakdown].
+     * The header holds facts only, but for [headline]: the status an agent set in its own words
+     * (the task's status line, or a conversation's `set_status`), empty when none did or when it
+     * is only counts ([AgentFacts.isCountsOnly]), which the state and [breakdown] already say. What
      * the agent last said is not shown: the terminal beside the panel shows it. A conversation
      * whose turn has ended reads "idle" here, since "done" beside a plan reads as the task being done.
      */
@@ -113,6 +124,7 @@ class TaskPanelViewModel(
         val sinceMillis: Long,
         val headline: String,
         val headlineLabel: String = "",
+        val breakdown: String = "",
     )
 
     /**
@@ -149,6 +161,19 @@ class TaskPanelViewModel(
     data class Story(val key: String, val recordId: String, val turns: Block<TurnRow>, val work: List<String>, val folder: String? = null)
 
     /**
+     * One worktree in a task's Changed block: its folder [name], its [branch] when that is not the
+     * same word, and the [work] in it ("3 files changed, +120 −40 · 2 unpushed commits").
+     */
+    data class WorktreeLine(val name: String, val branch: String?, val work: String)
+
+    /**
+     * A task's Changed block: the work left in the worktrees its conversations worked in. [key] names
+     * the task and the state of each of its conversations, so the view asks again whenever a turn
+     * ends; [worktrees] is empty until the server has answered, and when every worktree is clean.
+     */
+    data class TaskWorkView(val key: String, val taskId: String, val worktrees: List<WorktreeLine>)
+
+    /**
      * How to set the panel up, shown under the header when the panel has no block to show.
      * [compact] is for a session that simply has no task, the usual case: the view then draws
      * [lead] as one faint line and leaves [prompt] out.
@@ -165,6 +190,8 @@ class TaskPanelViewModel(
         val head: Head? = null,
         val setup: Setup? = null,
         val story: Story? = null,
+        /** A task's Changed block; null beside a session with no task, which has [story] instead. */
+        val work: TaskWorkView? = null,
         /** The sections the agents in this tab wrote (`set_panel_section`), drawn above everything else. */
         val sections: List<PanelSection> = emptyList(),
         val agents: Block<AgentLine> = EMPTY_BLOCK,
@@ -184,7 +211,8 @@ class TaskPanelViewModel(
     val stateFlow: Flow<State> = combine(
         combine(windowState.agentTasks, windowState.agentSessions, windowState.config, windowState.taskPanels, ui) { _, _, _, _, _ -> },
         windowState.agentStory,
-    ) { _, _ -> state }
+        windowState.taskWork,
+    ) { _, _, _ -> state }
 
     /** The state right now, for key handlers that must act on what is on screen. */
     val state: State
@@ -226,8 +254,14 @@ class TaskPanelViewModel(
                 Layout(windowState.config.value).jumpCommands(session).forEach { send(it) }
             }
             MemberAction.SHOW -> send(WindowCommand.ShowWaitingAgent(line.recordId))
+            MemberAction.BACK -> line.tabId?.let { send(WindowCommand.LeaveShownTab(it)) }
             MemberAction.NONE -> Unit
         }
+    }
+
+    /** Asks the server for the work left in the shown task's worktrees; the view calls it when [TaskWorkView.key] changes. */
+    suspend fun readTaskWork() {
+        state.work?.let { send(WindowCommand.ReadTaskWork(it.taskId)) }
     }
 
     /** [url] when a click may open it, else null. */
@@ -255,19 +289,35 @@ class TaskPanelViewModel(
         val rows = buildOverview(
             OverviewInputs(sessions, tasks, layout, null, null, null, panels), OverviewUi(showAllEarlier = true), now,
         ).rows
-        fun headOf(rowId: String, startedAt: Long?, status: String?, folder: String? = null): Head? = rows.firstOrNull { it.id == rowId }?.let { row ->
-            val said = status?.trim().orEmpty()
+        fun headOf(
+            rowId: String, startedAt: Long?, status: String?, folder: String? = null,
+            lead: String? = null, members: List<AgentSessionSummary> = emptyList(),
+        ): Head? = rows.firstOrNull { it.id == rowId }?.let { row ->
+            val said = status?.trim()?.takeUnless(AgentFacts::isCountsOnly).orEmpty()
+            val name = row.tabName ?: row.title
             Head(
-                name = row.tabName ?: row.title,
-                about = row.title.takeIf { row.tabName != null },
-                meta = listOfNotNull(folder ?: row.where, startedAt?.let { "since ${clockOf(it, now, zone())}" }).joinToString(" · "),
+                name = name,
+                about = (lead ?: row.title.takeIf { row.tabName != null })?.takeIf { it != name },
+                meta = listOfNotNull(folder ?: row.where, startedAt?.let { "started ${clockOf(it, now, zone())}" }).joinToString(" · "),
+                breakdown = breakdownOf(members),
                 state = when {
                     row.needsYou -> AgentFacts.NEEDS_YOU
                     row.working -> AgentFacts.WORKING
+                    row.paused -> AgentFacts.PAUSED
+                    row.onHold -> AgentFacts.WAITING
                     row.finished -> AgentFacts.ENDED
                     else -> AgentFacts.DONE
                 },
-                stateWord = if (row.stateWord == AgentsOverviewBackingViewModel.STATE_DONE) STATE_IDLE else row.stateWord,
+                // The verdict alone: the row's "2 waiting" counts only the conversations in that state,
+                // which beside the breakdown reads as the whole task.
+                stateWord = when {
+                    row.needsYou -> AgentsOverviewBackingViewModel.STATE_NEEDS_YOU
+                    row.working -> AgentsOverviewBackingViewModel.STATE_WORKING
+                    row.paused -> AgentsOverviewBackingViewModel.STATE_PAUSED
+                    row.onHold -> AgentsOverviewBackingViewModel.STATE_WAITING
+                    row.finished -> row.stateWord
+                    else -> STATE_IDLE
+                },
                 sinceMillis = row.sinceMillis,
                 headline = said,
                 headlineLabel = if (said.isEmpty()) "" else LABEL_STATUS,
@@ -291,7 +341,8 @@ class TaskPanelViewModel(
                 open = ui.open,
                 visible = visible,
                 title = session?.let(AgentFacts::titleOf) ?: NO_SESSION_TITLE,
-                head = session?.let { headOf(it.conversationId, AgentFacts.startedOf(it), it.status, story?.folder) },
+                // What it waits for at its prompt says more than the line of the turn that started it.
+                head = session?.let { headOf(it.conversationId, AgentFacts.startedOf(it), AgentFacts.waitOf(it)?.text ?: it.status, story?.folder) },
                 story = story,
                 sections = sections,
                 setup = if (session != null) Setup(SETUP_SESSION, SETUP_NEW_TASK_PROMPT, compact = true)
@@ -304,8 +355,14 @@ class TaskPanelViewModel(
         val progress = progressOf(blocks)
         val links = linkRows(blocks, now)
         val activity = activityRows(blocks, now)
-        val head = headOf("task:${task.id}", task.startedAtMillis, task.status)
-        val empty = agents.isEmpty() && progress == null && links.isEmpty() && activity.isEmpty() && sections.isEmpty()
+        val head = headOf(
+            "task:${task.id}", task.startedAtMillis, task.status,
+            lead = task.mainConversation?.let(byKey::get)?.let(AgentFacts::titleOf),
+            members = sessions.filter { it.taskId == task.id && AgentFacts.isLive(it) },
+        )
+        val work = workOf(task, sessions, windowState.taskWork.value)
+        val empty = agents.isEmpty() && progress == null && links.isEmpty() && activity.isEmpty() && sections.isEmpty() &&
+            work.worktrees.isEmpty()
         return State(
             open = ui.open,
             visible = visible,
@@ -315,11 +372,26 @@ class TaskPanelViewModel(
             head = head,
             setup = if (empty && head?.headline.isNullOrEmpty()) Setup(SETUP_TASK, SETUP_TASK_PROMPT) else null,
             sections = sections,
+            work = work,
             agents = cut(agents, task.id, Section.AGENTS, ui),
             progress = progress,
             links = cut(links, task.id, Section.LINKS, ui),
             activity = cut(activity, task.id, Section.ACTIVITY, ui),
         )
+    }
+
+    /** [task]'s Changed block from the server's [answer], when it is about this task. */
+    private fun workOf(task: AgentTask, sessions: List<AgentSessionSummary>, answer: WindowEnvelope.TaskWork?): TaskWorkView {
+        val key = task.id + sessions.filter { it.taskId == task.id }.sortedBy { it.id }
+            .joinToString("") { "/${it.id}:${it.state}:${it.stateSince}" }
+        val lines = answer?.takeIf { it.taskId == task.id }?.worktrees.orEmpty().map { w ->
+            WorktreeLine(
+                name = w.name,
+                branch = w.branch?.takeIf { it != w.name },
+                work = AgentFacts.workParts(w.changed, w.added, w.removed, w.untracked, w.unpushed).joinToString(" · "),
+            )
+        }
+        return TaskWorkView(key, task.id, lines)
     }
 
     private fun storyOf(s: AgentSessionSummary, answer: WindowEnvelope.AgentStory?, now: Long, ui: Ui): Story {
@@ -331,12 +403,7 @@ class TaskPanelViewModel(
             val took = t.tookMillis?.let { AgentFacts.ageText(0, it) }?.let { if (it == "now") "<1m" else it }
             TurnRow(if (' ' in clock) clock.substringBeforeLast(' ') else clock, t.prompt, took.orEmpty(), t.reply.orEmpty())
         }
-        val uncommitted = known?.uncommitted ?: 0
-        val unpushed = known?.unpushed ?: 0
-        val changed = listOfNotNull(
-            "$uncommitted uncommitted ${if (uncommitted == 1) "change" else "changes"}".takeIf { uncommitted > 0 },
-            "$unpushed unpushed ${if (unpushed == 1) "commit" else "commits"}".takeIf { unpushed > 0 },
-        )
+        val changed = AgentFacts.workParts(known?.uncommitted, known?.added, known?.removed, known?.untracked, known?.unpushed)
         // The branch is worth its line only when something changed on it.
         val work = if (changed.isEmpty()) emptyList() else listOfNotNull(known?.branch?.let { "on $it" }) + changed
         return Story("${s.id}/${s.state}/${s.stateSince}", s.id, cut(turns, s.id, Section.TURNS, ui), work, known?.folder)
@@ -353,8 +420,28 @@ class TaskPanelViewModel(
      * The task's live sessions, the waiting ones first, then by start, so a row keeps its place
      * as its session works, idles and works again. The main conversation is left out (the panel
      * sits beside it). A session whose pane the layout cannot place still shows, with nothing to
-     * click; one in a hidden tab offers to show that tab.
+     * click; one in a hidden tab offers to show that tab, and once it is shown, to go back.
      */
+    /**
+     * How a task's live conversations stand, one count per state, the most urgent first: "1 needs
+     * you · 1 working · 2 waiting · 1 idle". Called by the header for [Head.breakdown], under the
+     * one-word verdict, so the verdict says how the task stands and this says how it came to.
+     *
+     * @param members the task's live conversations.
+     * @return the counts, or "" for fewer than two conversations, where the verdict says it all.
+     */
+    private fun breakdownOf(members: List<AgentSessionSummary>): String {
+        if (members.size < 2) return ""
+        val counts = members.groupingBy(AgentFacts::shownState).eachCount()
+        val done = members.size - listOf(AgentFacts.NEEDS_YOU, AgentFacts.WORKING, AgentFacts.WAITING).sumOf { counts[it] ?: 0 }
+        return listOfNotNull(
+            counts[AgentFacts.NEEDS_YOU]?.let(AgentsOverviewBackingViewModel::needYouText),
+            counts[AgentFacts.WORKING]?.let { "$it ${AgentsOverviewBackingViewModel.STATE_WORKING}" },
+            counts[AgentFacts.WAITING]?.let { "$it ${AgentsOverviewBackingViewModel.STATE_WAITING}" },
+            done.takeIf { it > 0 }?.let { "$it $STATE_IDLE" },
+        ).joinToString(" · ")
+    }
+
     private fun agentLines(task: AgentTask, sessions: List<AgentSessionSummary>, layout: Layout, mainId: String?): List<AgentLine> {
         val lines = sessions.filter { it.taskId == task.id && it.conversationId != mainId && AgentFacts.isLive(it) }
             .sortedWith(compareBy({ AgentFacts.startedOf(it) }, { it.id }))
@@ -362,26 +449,32 @@ class TaskPanelViewModel(
                 val spot = layout.spotOf(s)
                 val action = when {
                     spot == null -> MemberAction.NONE
+                    // Shown for now: it is the tab in front, so a second press goes back where the person was.
+                    spot.tab.shownWhileWaiting -> MemberAction.BACK
                     spot.listed -> MemberAction.JUMP
                     else -> MemberAction.SHOW
                 }
                 val said = s.status?.trim()?.takeIf { it.isNotEmpty() && AgentFacts.isWorking(s) } ?: AgentFacts.lineOf(s)
+                val state = AgentFacts.shownState(s)
                 AgentLine(
                     title = AgentFacts.titleOf(s),
-                    doing = when {
-                        AgentFacts.isWaiting(s) -> said ?: "needs you"
-                        AgentFacts.isWorking(s) -> said ?: "working"
+                    doing = when (state) {
+                        AgentFacts.NEEDS_YOU -> said ?: "needs you"
+                        AgentFacts.WORKING -> said ?: "working"
+                        AgentFacts.WAITING -> said ?: AgentFacts.WAITING
                         else -> "idle"
                     },
-                    state = s.state,
-                    sinceMillis = s.stateSince,
+                    state = state,
+                    sinceMillis = AgentFacts.shownSince(s),
                     action = action,
                     recordId = s.id,
                     hint = when (action) {
                         MemberAction.SHOW -> "↵ show"
+                        MemberAction.BACK -> "↵ back"
                         MemberAction.JUMP -> "↵ open"
                         MemberAction.NONE -> null
                     },
+                    tabId = spot?.tab?.id,
                 )
             }
         return lines.filter { it.state == AgentFacts.NEEDS_YOU } + lines.filter { it.state != AgentFacts.NEEDS_YOU }

@@ -91,4 +91,45 @@ class AgentSessionTextTest {
         assertTrue(ok("~/.zshrc loads slowly"))
         assertTrue(ok("~5 minutes to first byte"))
     }
+
+    @Test
+    fun `a reply comes to the outcome it opens with, or the question it ends on`() {
+        fun said(reply: String?) = AgentSessionText.saidOf(reply)
+        assertEquals("Both are done.", said("## Result\n\nBoth are **done**. The tests pass.\n\nI can update the reply and show you the text before posting."))
+        assertEquals("Want me to go ahead?", said("Fixed the parser.\n\nWant me to go ahead?"))
+        assertEquals("The write-up is at notes.md.", said("The write-up is at `notes.md`. Its sections:\n\n- one\n- two"))
+        assertEquals("Merged and deployed.", said("**What changed:**\n\n- Merged and deployed.\n- Docs updated."), "a line that leads into a list is passed over")
+        assertEquals("Notes: the two worth acting on were the staff gate and the cache", said("**Notes:** the two worth acting on were the staff gate and the cache"))
+        assertEquals("4. Tell me how it went, then decide", said("**4. Tell me how it went,** then decide"), "a number before a stop does not end a sentence")
+        assertEquals("Use e.g. the cache.", said("Use e.g. the cache."))
+        assertNull(said("```"))
+        assertNull(said("  "))
+        assertNull(said(null))
+        val long = said("word ".repeat(100))!!
+        assertTrue(long.length <= AgentSessionText.SAID_CHARS + 1 && long.endsWith("word…"), long)
+        assertEquals(long, said(long), "reading a kept line again changes nothing")
+    }
+
+    @Test
+    fun `a recap keeps what the work is and where it stands, whole`() {
+        fun recap(text: String?) = AgentSessionText.recapOf(text)
+        assertEquals(
+            "Upshot's three exports are moving to Gotenberg, and run 1 is stuck because Docker Desktop is off.",
+            recap("Upshot's three exports are moving to Gotenberg, and run 1 is stuck because Docker Desktop is off. Please start Docker and tell me, and I'll restart the run."),
+        )
+        assertEquals(
+            "Making the flow robust against stalled reviews. Both fixes are pushed and live: thread watching and stopping servers.",
+            recap("Goal: making the flow robust against stalled reviews. Both fixes are pushed and live: thread watching and stopping servers. Next: watch the next run. (disable recaps in /config)"),
+            "the Goal lead, the Next sentence and the closing note go",
+        )
+        assertEquals(
+            "You asked for a fixer. It's built and pushed, with your requests landed.",
+            recap("You asked for a fixer. It's built and pushed, with your requests landed. Nothing is waiting on you, so just use it. (turn off recaps in /config)"),
+            "two sentences at most, never cut inside one",
+        )
+        assertEquals("The PR #10181 swap to oxlint is green in CI.", recap("The PR `#10181` swap to oxlint is green in CI."))
+        assertNull(recap("Next: test it on your phone."))
+        assertNull(recap("  "))
+        assertNull(recap(null))
+    }
 }

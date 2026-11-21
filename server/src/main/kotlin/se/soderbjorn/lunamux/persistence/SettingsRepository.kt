@@ -131,6 +131,7 @@ class SettingsRepository(
             "agent_sessions ADD COLUMN end_reason TEXT",
             "agent_sessions ADD COLUMN ended_from TEXT",
             "agent_sessions ADD COLUMN host TEXT",
+            "tasks ADD COLUMN paused_at INTEGER",
         ).forEach { change -> runCatching { driver.execute(null, "ALTER TABLE $change", 0) } }
         // The view names its columns, so an older file's view lacks the ones added above: make it
         // again. New columns go last, so an older build that reads this file by position still can.
@@ -497,12 +498,14 @@ class SettingsRepository(
         val startedAt: Long? = null,
         val createdAt: Long? = null,
         val updatedAt: Long? = null,
+        /** When the work was paused on purpose; null while it is not paused. */
+        val pausedAt: Long? = null,
     )
 
     /** Every stored task, oldest first. */
     fun loadTasks(): List<TaskRow> =
-        database.settingsQueries.selectTasks { id, title, conversation, status, statusAt, waits, startedAt, createdAt, updatedAt ->
-            TaskRow(id, title, conversation, status, statusAt, waits == 1L, startedAt, createdAt, updatedAt)
+        database.settingsQueries.selectTasks { id, title, conversation, status, statusAt, waits, startedAt, createdAt, updatedAt, pausedAt ->
+            TaskRow(id, title, conversation, status, statusAt, waits == 1L, startedAt, createdAt, updatedAt, pausedAt)
         }.executeAsList()
 
     /** Store a new agent-made task. */
@@ -531,12 +534,16 @@ class SettingsRepository(
         database.settingsQueries.setTaskMainConversation(conversationId, taskId)
     }
 
-    /** Store a task's status line; the task needs a row (see [stampTaskStart]). */
-    fun setTaskStatus(taskId: String, status: String?, at: Long, questionWaits: Boolean = false) {
+    /**
+     * Store a task's status line and whether its work is paused, from [pausedAt] on (null: not
+     * paused); the task needs a row (see [stampTaskStart]).
+     */
+    fun setTaskStatus(taskId: String, status: String?, at: Long, questionWaits: Boolean = false, pausedAt: Long? = null) {
         database.settingsQueries.setTaskStatus(
             status,
             if (status == null) null else at,
             if (status != null && questionWaits) 1L else 0L,
+            pausedAt,
             taskId,
         )
     }

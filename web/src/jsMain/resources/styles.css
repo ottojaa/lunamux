@@ -370,9 +370,9 @@ body.appearance-light .terminal-inner .xterm-viewport {
     padding-left: 14px;
     box-sizing: border-box;
 }
-/* Muted separator between the working and waiting halves. */
-.world-status-bar .world-status-sep {
-    opacity: 0.4;
+/* The two halves are set apart by space alone: the spinner opens the second. */
+.world-status-bar .world-status-waiting + .world-status-working {
+    margin-left: 1.5ch;
 }
 /* Working: the theme's accent (`--t-warn`'s sibling `--t-accent`), a calm slow
    breathe — an ambient "live" signal that doesn't demand action.
@@ -3536,11 +3536,15 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 
 /* ── Agents overview (AgentsOverview.kt) ──
    The ⌘⇧A overlay, drawn as a terminal table: one row per task or session on one five-column grid
-   (state mark, name, progress or folder, state word, age). A live row has its description and its
-   headline under that line; a closed row is the one line. Brightness and colour follow the state: a
-   working or needs-you row (`.ao-live`) has a bright name, a done row (`.ao-done`) a mid-grey one,
-   and a closed one (`.ao-old`) in EARLIER is dim all over. The accent is for working, amber for
-   "needs you", a muted green for done; the accent also marks the selected row, red a failed open.
+   (state mark, name, progress or folder, state word, age). A live row has at most one line under
+   that one; a closed row is the one line. Brightness follows the state: a working or needs-you row
+   (`.ao-live`) has a bright name, a done row (`.ao-done`) a mid-grey one, and a closed one (`.ao-old`)
+   in EARLIER is dim all over. Colour is spent on state only, and loud only where the person is
+   wanted: the line under a name is dim, a status line has just its hook in the state's colour, and
+   only a question is said in full amber. "Waiting" (nothing for the person) is the quietest state.
+   The accent is for working, amber for
+   "needs you", a calm blue for waiting on something the agent started (a background shell, a
+   review, CI: nothing to do for the person), a muted green for done; the accent also marks the selected row, red a failed open.
    Every other text is a shade of the theme's text colour. Lifted above the pane modals so it opens
    over whatever is on screen. The colours below follow the active theme and fall back to the dark
    teal defaults. */
@@ -3557,6 +3561,14 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
        the accent, and done then reads like working. The text colour is mixed in so it stays
        readable on a light theme. */
     --ao-done: color-mix(in srgb, #5fd08f 80%, var(--ao-text));
+    /* Waiting on something the agent started: a fixed calm blue for the same reason, so it reads
+       apart from working (the accent) and from "needs you" (amber) in every theme. */
+    --ao-wait: color-mix(in srgb, #6ea8ff 78%, var(--ao-text));
+    /* The same blue stepped back toward the surface, for the mark and word of a row that waits. */
+    --ao-wait-q: color-mix(in srgb, var(--ao-wait) 62%, var(--ao-surface));
+    /* Paused on purpose: quiet, in the theme's own muted text, so it reads as stopped rather than
+       as done (green) or waiting (blue). */
+    --ao-paused: var(--ao-muted);
     --ao-accent: var(--t-accent, #5fd4d0);
     --ao-warn: var(--t-warn, #f2c14e);
     --ao-error: var(--t-danger, #ff7b72);
@@ -3642,8 +3654,10 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     cursor: pointer;
 }
 .ao-row > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-/* The description and the headline run to two lines, then end in an ellipsis. */
-.ao-about, .ao-n {
+/* The recap or title under a name runs to two lines; a search snippet too. */
+.ao-about { grid-column: 2 / -1; min-width: 0; overflow-wrap: anywhere;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+.ao-n {
     grid-column: 2 / -1;
     min-width: 0;
     display: -webkit-box;
@@ -3654,16 +3668,19 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     overflow-wrap: anywhere;
 }
 .ao-about { color: var(--ao-dim); }
-.ao-live + .ao-live, .ao-live + .ao-done, .ao-done + .ao-live, .ao-done + .ao-done { margin-top: 4px; }
-/* The pointer's row is a faint tint; only the selected row has the strong fill and the accent bar. */
+/* Whitespace, not colour, is what sets one task apart from the next. */
+.ao-live + .ao-live, .ao-live + .ao-done, .ao-done + .ao-live, .ao-done + .ao-done { margin-top: 8px; }
+/* The pointer's row is a faint tint; only the selected row has the strong fill and the accent bar.
+   Its name keeps the text colour: the fill and the bar already mark it. */
 .ao-row:hover { background: var(--ao-hover); }
 .ao-row.ao-sel { background: var(--ao-sel); box-shadow: inset 2px 0 0 var(--ao-accent); }
 
 /* Progress on the row: a thin bar, then the count. */
 .ao-p { display: flex; align-items: center; gap: 1ch; color: var(--ao-dim); font-variant-numeric: tabular-nums; }
 .ao-bar { flex: 1; height: 4px; border-radius: 2px; overflow: hidden; background: color-mix(in srgb, var(--ao-text) 12%, transparent); }
-.ao-bar-fill { display: block; height: 100%; border-radius: 2px; background: var(--ao-accent); }
-.ao-done .ao-bar-fill { background: var(--ao-done); }
+/* The fill is grey: how far a plan has come is the least urgent thing on its row. */
+.ao-bar-fill { display: block; height: 100%; border-radius: 2px; background: color-mix(in srgb, var(--ao-text) 42%, var(--ao-surface)); }
+.ao-done .ao-bar-fill { background: color-mix(in srgb, var(--ao-done) 55%, var(--ao-surface)); }
 /* What a closed row or an agent last said, after its name. */
 .ao-said { margin-left: 1.5ch; color: var(--ao-dim); font-weight: 400; }
 .ao-old .ao-said { color: var(--ao-faint); }
@@ -3676,30 +3693,53 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     grid-template-columns: 2ch minmax(0, 1fr) 36px;
     gap: 0 12px;
     margin-top: 4px;
-    padding-top: 4px;
-    border-top: 1px dashed var(--ao-line);
 }
 .ao-agents > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .ao-agents > .ao-m { overflow: visible; }
 .ao-agent-name { color: var(--ao-text); }
+/* A conversation in a hidden tab is dimmed, so it is not taken for one the person can see in a tab. */
+.ao-agent-bg .ao-agent-name { color: var(--ao-dim); }
+.ao-agent-bg .ao-said { color: var(--ao-faint); }
 
 .ao-m { color: var(--ao-accent); user-select: none; }
 .ao-m-need { color: var(--ao-warn); }
+.ao-m-wait { color: var(--ao-wait-q); }
+.ao-m-paused { color: var(--ao-paused); }
 .ao-m-done { color: var(--ao-done); }
 .ao-row > .ao-m { overflow: visible; }
-/* Brightness by state: live rows bright, done rows mid-grey, EARLIER rows dim. */
+/* Brightness by state: live names bright, done names mid-grey, EARLIER rows dim. */
 .ao-live .ao-t { color: var(--ao-text); font-weight: 600; }
 .ao-live .ao-w, .ao-live .ao-n { color: var(--ao-muted); }
 .ao-done .ao-t { color: var(--ao-muted); }
 .ao-done .ao-w, .ao-done .ao-n { color: var(--ao-dim); }
-.ao-row.ao-sel .ao-t { color: var(--ao-accent); font-weight: 600; }
-.ao-live .ao-t, .ao-done .ao-t { font-weight: 600; }
 .ao-sw { color: var(--ao-dim); }
-.ao-sw-work { color: var(--ao-accent); font-weight: 600; }
+/* Only "needs you" is bold: it is the one state that asks for the person. */
+.ao-sw-work { color: var(--ao-accent); }
 .ao-sw-need { color: var(--ao-warn); font-weight: 600; }
+.ao-sw-wait { color: var(--ao-wait-q); }
+.ao-sw-paused { color: var(--ao-paused); }
 .ao-sw-done { color: var(--ao-done); }
 .ao-age { text-align: right; color: var(--ao-dim); }
 .ao-n-error { color: var(--ao-error); }
+
+/* The state line: where the row stands. The text is dim and only the hook in front takes the row's
+   state colour (the accent while it works, the calm blue while it waits, green for a done task's own
+   status), so it never outshouts the name. A question is the exception: it is said in full amber, the
+   one loud line in the list, and runs to two lines where a status is one. */
+.ao-panel { --ao-st-work: color-mix(in srgb, var(--ao-accent) 88%, var(--ao-surface));
+    --ao-st-done: color-mix(in srgb, var(--ao-done) 74%, var(--ao-surface)); }
+.ao-row .ao-st { display: flex; gap: 1ch; overflow: visible; color: var(--ao-dim); }
+.ao-st-g { flex: none; color: var(--ao-tone, inherit); }
+.ao-st-x { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; line-clamp: 1; overflow: hidden; }
+.ao-row .ao-st-need .ao-st-x { -webkit-line-clamp: 2; line-clamp: 2; }
+.ao-row .ao-st-work { --ao-tone: var(--ao-st-work); }
+.ao-row .ao-st-need { --ao-tone: var(--ao-warn); color: var(--ao-warn); }
+.ao-row .ao-st-wait { --ao-tone: var(--ao-wait-q); }
+.ao-row .ao-st-paused { --ao-tone: var(--ao-paused); }
+.ao-row .ao-st-done { --ao-tone: var(--ao-st-done); }
+/* A done row's last reply, which the row leaves out, in the selection. */
+.ao-reply-lbl { color: var(--ao-faint); margin-right: 1ch; }
+.ao-reply { color: var(--ao-muted); }
 
 /* The selected row's own block under its lines: its folder and any note, or the question the first enter asks. */
 .ao-focus {
@@ -3752,7 +3792,7 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 /* Earlier and finished rows recede. */
 .ao-old .ao-t { color: var(--ao-dim); }
 .ao-old .ao-w, .ao-old .ao-n, .ao-old .ao-sw { color: var(--ao-faint); }
-.ao-row.ao-sel.ao-old .ao-t { color: var(--ao-accent); }
+.ao-row.ao-sel.ao-old .ao-t { color: var(--ao-text); }
 .ao-more { cursor: pointer; }
 
 /* The working glyph (spinner() in Dom.kt): four frames stacked in one box, each fading in as the one before
@@ -3896,9 +3936,9 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-main { flex: 1 1 auto; min-width: 0; }
 /* The title wraps onto as many lines as it needs. */
 .tp-title { display: block; white-space: normal; overflow-wrap: anywhere; font-weight: 600; font-size: 13px; line-height: 20px; }
-/* The × with the shortcut under it. The column's height is what keeps a one-line header the same as a two-line one. */
-.tp-side { flex: none; display: flex; flex-direction: column; align-items: flex-end; }
-.tp-hint { padding-right: 6px; white-space: nowrap; color: var(--ao-dim); font-size: 11px; line-height: 14px; }
+/* The shortcut, faint and a size down, just before the ×, both on the title's first line. */
+.tp-side { flex: none; display: flex; align-items: center; height: 20px; }
+.tp-hint { white-space: nowrap; color: var(--ao-faint); font-size: 10px; line-height: 1; letter-spacing: 0.02em; }
 .tp-close { border: 0; border-radius: 4px; background: transparent; color: var(--ao-dim); font: inherit; font-size: 16px; line-height: 1; cursor: pointer; padding: 4px 6px; }
 .tp-close:hover, .tp-close:focus-visible { color: var(--ao-text); background: var(--ao-hover); outline: none; }
 .tp-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 0 16px; }
@@ -3907,10 +3947,17 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 /* A block's heading is its name alone, set like the sidebar's group labels. */
 .tp-block-title { margin-bottom: 8px; color: var(--ao-dim); font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
 .tp-muted { color: var(--ao-dim); }
-/* Under the name: the task's title in full, dim; where and since when, fainter; the state (mark, word,
-   age); then the headline, the one line the agents overview shows for this work too. */
+/* A worktree in a task's Changed block: its name, the branch dim after it, the work under it. */
+.tp-tree + .tp-tree { margin-top: 6px; }
+.tp-tree-name { color: var(--ao-text); overflow-wrap: anywhere; }
+.tp-tree-branch { color: var(--ao-dim); }
+/* Under the name: what the work is now, dim; the state (mark, word, age); where and when it started,
+   fainter, with the counts under it; then the headline, the one line the agents overview shows for this work too. */
 .tp-about { color: var(--ao-dim); overflow-wrap: anywhere; }
 .tp-meta { color: var(--ao-faint); font-size: 11px; font-weight: 400; min-width: 0; overflow-wrap: anywhere; }
+/* Where and when it started, then the conversations' counts a shade brighter: two short lines under the state. */
+.tp-meta-line { line-height: 16px; }
+.tp-meta-counts { color: var(--ao-dim); }
 /* A section an agent wrote (set_panel_section): its heading with the age of the writing, then the body. */
 .tp-section-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .tp-section-top .tp-agent-age { letter-spacing: 0; text-transform: none; font-weight: 400; }
@@ -3928,6 +3975,8 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-state { display: flex; align-items: center; gap: 6px; margin-top: 8px; line-height: 20px; color: var(--ao-done); }
 .tp-state.tp-state-working { color: var(--ao-accent); }
 .tp-state.tp-state-needs_you { color: var(--ao-warn); background: none; }
+.tp-state.tp-state-waiting { color: var(--ao-wait); }
+.tp-state.tp-state-paused { color: var(--ao-paused); }
 .tp-state.tp-state-ended { color: var(--ao-dim); }
 .tp-state .tp-glyph { color: inherit; }
 .tp-state-word { font-weight: 600; }
@@ -3964,6 +4013,8 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-glyph { flex: none; width: 2ch; height: 20px; display: flex; align-items: center; justify-content: center; overflow: visible; color: var(--ao-dim); }
 .tp-state-working .tp-glyph { color: var(--ao-accent); }
 .tp-state-needs_you .tp-glyph { color: var(--ao-warn); }
+.tp-state-waiting .tp-glyph { color: var(--ao-wait); }
+.tp-state-paused .tp-glyph { color: var(--ao-paused); }
 .tp-agent-text { flex: 1; min-width: 0; }
 .tp-agent-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; line-height: 20px; }
 /* A row's height never depends on what the agent is doing: the title runs to two lines and then ends in
@@ -3988,6 +4039,9 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 .tp-agent-hint { display: none; flex: none; color: var(--ao-dim); white-space: nowrap; }
 .tp-agent-hint b { color: var(--ao-text); font-weight: 600; }
 .tp-agent-active:hover .tp-agent-hint, .tp-agent-active:focus-visible .tp-agent-hint { display: block; }
+/* The agent whose hidden tab is in front for now: an accent edge, and "↵ back" always in view. */
+.tp-agent-back { box-shadow: inset 2px 0 0 var(--ao-accent); }
+.tp-agent-back .tp-agent-hint { display: block; }
 /* An agent that waits on the person: amber mark and amber title, on a faint amber tint. */
 .tp-state-needs_you { background: color-mix(in srgb, var(--ao-warn) 8%, transparent); }
 .tp-state-needs_you.tp-agent-active:hover, .tp-state-needs_you.tp-agent-active:focus-visible { background: color-mix(in srgb, var(--ao-warn) 14%, transparent); }
@@ -4012,6 +4066,8 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
    longest kind ("decision", 8 characters at 11px) and never wraps; the label runs to two lines
    and then ends in an ellipsis; the kind and the time stay level with its first line. */
 .tp-link-row { display: grid; grid-template-columns: 7.5ch minmax(0, 1fr) auto; gap: 0 10px; align-items: start; padding-top: 4px; padding-bottom: 4px; }
+/* No link in the list has a kind of its own: no kind column, the words start at the edge. */
+.tp-link-row.tp-link-row-plain { grid-template-columns: minmax(0, 1fr) auto; }
 .tp-kind { color: var(--ao-dim); font-size: 11px; line-height: 17.4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tp-link-title { color: var(--ao-accent); }
 .tp-link-row:hover .tp-link-title, .tp-link-row:focus-visible .tp-link-title { text-decoration: underline; }
@@ -4056,3 +4112,10 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
     background: var(--dt-window-bg, var(--t-surface, #0c1a1e)); color: var(--t-warn, #f2c14e);
     font: 11px/1.5 var(--dt-font-mono, ui-monospace, Menlo, monospace); white-space: nowrap;
 }
+/* The tag lets clicks through but for its button, which leaves the tab for the one the person came from. */
+.waiting-tab-back {
+    pointer-events: auto; cursor: pointer; padding: 0; border: 0; background: none;
+    color: inherit; font: inherit; font-weight: 600;
+}
+.waiting-tab-back:hover, .waiting-tab-back:focus-visible { text-decoration: underline; outline: none; }
+

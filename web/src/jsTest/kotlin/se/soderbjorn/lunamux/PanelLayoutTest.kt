@@ -2,7 +2,8 @@
  * Browser checks for layout the panel and the sidebar footer promise: laid out with the page's own
  * stylesheet, a long task title wraps beside the close button with the shortcut under it and the status line sits a small gap under the title, an agent
  * row is as tall whatever the agent is doing (and whether or not its hint shows), and the
- * footer's agent block is as tall with nothing working as with something working.
+ * footer's agent block is as tall with nothing working as with something working, and says each
+ * count once.
  */
 package se.soderbjorn.lunamux
 
@@ -26,7 +27,7 @@ class PanelLayoutTest {
     }
 
     @Test
-    fun aLongTaskTitleWrapsBesideTheCloseButtonWithTheShortcutUnderIt() {
+    fun aLongTaskTitleWrapsBesideTheCloseButtonWithTheShortcutJustBeforeIt() {
         val p = PanelParts()
         p.title.textContent = "Release"
         val host = mount(p.root, 320)
@@ -41,8 +42,9 @@ class PanelLayoutTest {
         host.remove()
         assertTrue(title.height > 2 * oneLine, "the title cut off instead of wrapping: height ${title.height} against $oneLine for one line")
         assertTrue(title.right <= close.left, "the title runs under the close button")
-        assertTrue(hint.top >= close.bottom - 1, "the shortcut is not under the close button")
-        assertTrue(hint.right <= close.right && close.right - hint.right < 8, "the shortcut is not right-aligned to the close button")
+        assertTrue(hint.right <= close.left + 1 && close.left - hint.right < 8, "the shortcut is not just before the close button")
+        assertTrue(hint.top >= title.top && hint.bottom <= title.top + oneLine + 1, "the shortcut is not on the title's first line")
+        assertTrue(title.right <= hint.left, "the title runs under the shortcut")
         assertTrue(gap in 0.0..8.0, "the headline is not a small gap under the title: $gap px")
     }
 
@@ -86,5 +88,30 @@ class PanelLayoutTest {
         host.remove()
         assertTrue(text.contains("None working"), "the quiet block says nothing: \"$text\"")
         assertEquals(busy, quiet, "the block changed height at zero")
+    }
+
+    @Test
+    fun theFooterSaysEachCountOnceAndATotalOnlyOverSeveralBusyWorlds() {
+        fun w(name: String, waiting: Int, working: Int) =
+            WorldCounts(name, AgentFacts.Counts(waiting, working).takeIf { waiting + working > 0 }) { "#123456" }
+        fun read(lines: List<StatusLine>) = lines.map { Triple(it.name, it.waiting, it.working) }
+        val total = AgentFacts.Counts(waiting = 1, working = 2)
+        assertEquals(listOf(Triple(null, 1, 2)), read(agentStatusLines(total, emptyList())), "no worlds: one unnamed line")
+        assertEquals(
+            listOf(Triple("Upright", 1, 2)),
+            read(agentStatusLines(total, listOf(w("Upright", 1, 2), w("Home", 0, 0)))),
+            "one busy world of several: its line alone, no total repeating it",
+        )
+        assertEquals(
+            listOf(Triple("All worlds", 2, 3), Triple("Upright", 1, 2), Triple("Home", 1, 1)),
+            read(agentStatusLines(AgentFacts.Counts(2, 3), listOf(w("Upright", 1, 2), w("Home", 1, 1)))),
+        )
+        assertEquals(emptyList(), agentStatusLines(AgentFacts.Counts(), listOf(w("Upright", 0, 0), w("Home", 0, 0))))
+        val bar = div("world-status-bar")
+        val host = mount(bar, 239)
+        renderAgentStatus(bar, listOf(StatusLine(null, null, 2, 1)))
+        val text = bar.textContent.orEmpty()
+        host.remove()
+        assertTrue("\u2022" !in text, "no bullet beside the spinner: \"$text\"")
     }
 }

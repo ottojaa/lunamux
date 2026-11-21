@@ -14,9 +14,11 @@
  * lists the rest by recency in two bands (three days, two weeks), five rows and a "+ N more" line.
  * Typing two or more characters switches to the server's search, one row per task.
  *
- * Every row has one headline ([AgentsOverviewBackingViewModel.Row.detail]) that says where it is:
- * the question while it needs the person, what it is doing while it works, and the last thing it
- * said once it is done or closed. The task panel shows the same line ([headlineOf]).
+ * A row has one headline ([AgentsOverviewBackingViewModel.Row.detail]) that says where it stands:
+ * the question while it needs the person and what it is doing while it works. Once it is done the
+ * headline is only what an agent set on purpose (the task's status, the plan's step); what the
+ * conversation last said goes to [AgentsOverviewBackingViewModel.Row.lastReply], shown when the row is
+ * selected. The task panel's header shows [headlineOf] as before.
  */
 package se.soderbjorn.lunamux.client.viewmodel
 
@@ -30,6 +32,7 @@ import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import se.soderbjorn.lunamux.AgentSessionMatch
 import se.soderbjorn.lunamux.PanelSection
+import se.soderbjorn.lunamux.ScreenRun
 import se.soderbjorn.lunamux.AgentSessionSummary
 import se.soderbjorn.lunamux.AgentSessionText
 import se.soderbjorn.lunamux.AgentTask
@@ -123,13 +126,29 @@ class AgentsOverviewBackingViewModel(
     /** What ↵ does on a row. */
     enum class Enter { JUMP, SHOW_WAITING, OPEN, RESUME, NONE }
 
-    enum class Kind { NEEDS_YOU, WORKING, DONE, FINISHED }
+    /**
+     * How a row reads: it needs the person, works, is paused on purpose ([PAUSED]: a task whose
+     * status says so), waits at its prompt on something it started ([WAITING]: a background shell,
+     * a review, CI), rests in NOW, or is closed.
+     */
+    enum class Kind { NEEDS_YOU, WORKING, PAUSED, WAITING, DONE, FINISHED }
 
     /** How far a task's plan is: [fraction] 0 to 1 for the bar, [count] as "13/14". */
     data class Progress(val fraction: Double, val count: String)
 
-    /** One conversation of a task, listed under its row while the row is selected. */
-    data class Agent(val recordId: String, val title: String, val doing: String, val state: String, val sinceMillis: Long)
+    /**
+     * One conversation of a task, listed under its row while the row is selected. [state] is the
+     * one the screens draw ([AgentFacts.shownState]), [sinceMillis] how long it has been in it, and
+     * [background] whether it runs in a hidden tab (the view sets those apart from the main one).
+     */
+    data class Agent(
+        val recordId: String,
+        val title: String,
+        val doing: String,
+        val state: String,
+        val sinceMillis: Long,
+        val background: Boolean = false,
+    )
 
     data class FooterKey(val key: String, val label: String)
 
@@ -138,8 +157,13 @@ class AgentsOverviewBackingViewModel(
 
     /**
      * One row of the overview. [tabName] is the name the person gave the tab it runs in (null for
-     * an unnamed or closed tab); the row leads with it and [title] follows as the description.
-     * [detail] is the headline (see [headlineOf]), or the snippet of a search hit. [extra] is what
+     * an unnamed or closed tab); the row leads with it, else with [title]. [recap] is what the work
+     * is and where it stands, from the recap Claude Code wrote into the speaking conversation's
+     * transcript; it is the row's description, and without one a row led by its tab's name has
+     * [title] as the description.
+     * [detail] is the headline (see [headlineOf]), or the snippet of a search hit. A done row's
+     * headline is only what an agent set on purpose (the task's status, the plan's step): what its
+     * conversation last said is [lastReply] instead, which the selection shows. [extra] is what
      * else matters for opening it (its folder, a search hit's place, a resume note, an error).
      * [where] is the repo or folder, which NOW groups by.
      */
@@ -168,13 +192,51 @@ class AgentsOverviewBackingViewModel(
         val snippet: String? = null,
         val matchStart: Int = 0,
         val matchLength: Int = 0,
+        /** What a done row's conversation last came to ([headlineOf]), left off the row and shown when it is selected. */
+        val lastReply: String? = null,
+        /** The speaking conversation's newest recap ([AgentSessionSummary.recap]); null while it has none or is closed. */
+        val recap: String? = null,
+        /**
+         * Whether [detail] was said on purpose: a question for the person, or a status an agent set
+         * (the task's, the plan's step, a conversation's own, a wait its writer named). False for
+         * what Lunamux reads off the screen: a tool call, background shells, a last reply.
+         */
+        val detailSet: Boolean = false,
     ) {
         val needsYou: Boolean get() = kind == Kind.NEEDS_YOU
         val working: Boolean get() = kind == Kind.WORKING
+        /** At its prompt while something it started goes on: "waiting", in a calm colour. */
+        val onHold: Boolean get() = kind == Kind.WAITING
+        /** A task whose work was stopped on purpose: "paused", quiet, until its status says otherwise. */
+        val paused: Boolean get() = kind == Kind.PAUSED
         val finished: Boolean get() = kind == Kind.FINISHED
-        val matchInTitle: Boolean get() = matchLength > 0 && snippet == null
+        /** The search hit is in the name of the tab the row leads with, [tabName]. */
+        val matchInTab: Boolean get() = matchLength > 0 && this.field == "tab" && tabName != null
+        val matchInTitle: Boolean get() = matchLength > 0 && snippet == null && !matchInTab
         val matchInSnippet: Boolean get() = matchLength > 0 && snippet != null
+
+        /**
+         * The one line a live or done row shows under its name, so a row is never more than two
+         * lines: a search hit's snippet, or the title when the hit is in it; else the question while
+         * it needs the person; else a status said on purpose ([detailSet]); else the recap; else the
+         * title when the tab's name led; else what Lunamux read off the screen. What it leaves out is
+         * a key away: the recap heads the peek.
+         */
+        val under: Under
+            get() = when {
+                snippet != null -> Under.SNIPPET
+                matchInTitle && tabName != null -> Under.TITLE
+                needsYou && detail.isNotEmpty() -> Under.QUESTION
+                detailSet && detail.isNotEmpty() -> Under.STATUS
+                recap != null -> Under.RECAP
+                tabName != null -> Under.TITLE
+                detail.isNotEmpty() -> Under.STATUS
+                else -> Under.NONE
+            }
     }
+
+    /** What [Row.under] shows: which of the row's texts, or none. */
+    enum class Under { SNIPPET, QUESTION, STATUS, RECAP, TITLE, NONE }
 
     /** The selected row's screen: live while its pane exists, else what was saved. */
     data class Peek(
@@ -186,6 +248,8 @@ class AgentsOverviewBackingViewModel(
         val emptyText: String?,
         /** What the conversation's agent wrote for the side panel, shown first: for a closed row this is where its recap is read. */
         val sections: List<PanelSection> = emptyList(),
+        /** [lines] in the styles the terminal draws them with, when the server sent them (a live pane); else empty. */
+        val styled: List<List<ScreenRun>> = emptyList(),
     )
 
     data class Confirm(val rowId: String, val title: String, val warnings: List<String>, val cancelFocused: Boolean)
@@ -205,6 +269,10 @@ class AgentsOverviewBackingViewModel(
         val earlierHidden: Int = 0,
         val needYouCount: Int = 0,
         val workingCount: Int = 0,
+        /** Conversations at their prompt while something they started goes on ([AgentFacts.isWaitingOnSomething]). */
+        val onHoldCount: Int = 0,
+        /** Tasks in NOW paused on purpose ([AgentTask.paused]). */
+        val pausedCount: Int = 0,
         val doneCount: Int = 0,
         val selectedId: String? = null,
         val peek: Peek? = null,
@@ -221,7 +289,7 @@ class AgentsOverviewBackingViewModel(
         val emptyText: String
             get() = when {
                 matchMode && searching -> "Searching…"
-                matchMode -> "Nothing matches “${query.trim()}”. Search covers titles, first prompts, branches, links and transcripts."
+                matchMode -> "Nothing matches “${query.trim()}”. Search covers titles, tab names, first prompts, branches, links and transcripts."
                 else -> "No agent sessions yet"
             }
     }
@@ -458,6 +526,8 @@ class AgentsOverviewBackingViewModel(
         const val SHOW_WAITING_HINT = "open · a tab until you leave it"
         const val STATE_NEEDS_YOU = "needs you"
         const val STATE_WORKING = "working"
+        const val STATE_WAITING = "waiting"
+        const val STATE_PAUSED = "paused"
         const val STATE_DONE = "done"
         const val STATE_FINISHED = "closed"
         const val MAIN_AGENT_TITLE = "Main conversation"
@@ -467,6 +537,9 @@ class AgentsOverviewBackingViewModel(
 
         /** The state word of a task whose main conversation waits on [n] of its agents. */
         fun agentsWorkingText(n: Int): String = if (n == 1) "1 agent working" else "$n agents working"
+
+        /** The state word of a task [n] of whose conversations wait at their prompt on something they started. */
+        fun waitingText(n: Int): String = if (n == 1) STATE_WAITING else "$n $STATE_WAITING"
     }
 }
 
@@ -491,7 +564,27 @@ private class TaskUnit(
     val target: AgentSessionSummary?,
     val mainId: String?,
     val resumeId: String?,
-)
+) {
+    /**
+     * Whether the task's status is a question waiting for the person ([AgentTask.questionWaits]) that
+     * none of its conversations already asks, while its main conversation is open and not working
+     * (at its prompt, perhaps with a shell running): its row then needs the person. A working main
+     * conversation has moved on past the question; a closed one counts once it is resumed and asks.
+     */
+    fun asks(): Boolean = inNow && task.questionWaits && !task.status.isNullOrBlank() &&
+        sessions.none(AgentFacts::isWaiting) &&
+        sessions.any { it.id == mainId && AgentFacts.isLive(it) && !AgentFacts.isWorking(it) }
+}
+
+/**
+ * Whether [s]'s headline ([headlineOf]) was said on purpose: a question, a status it set while it
+ * works, or the wait its writer named. Not a tool call, background shells or a last reply.
+ */
+private fun saidOnPurpose(s: AgentSessionSummary): Boolean = when {
+    AgentFacts.isWaiting(s) -> true
+    s.state == WORKING -> !s.status.isNullOrBlank()
+    else -> AgentFacts.waitOf(s) != null && !s.waitingFor.isNullOrBlank()
+}
 
 /** The rows, selection, peek, confirmation and footer for [inputs] and the person's choices [ui] at time [now]. */
 internal fun buildOverview(inputs: OverviewInputs, ui: OverviewUi, now: Long): State {
@@ -581,6 +674,9 @@ internal fun buildOverview(inputs: OverviewInputs, ui: OverviewUi, now: Long): S
         selectedRow?.takeIf { it.id == m.rowId && it.enter == m.enter && it.recordId == m.recordId }?.ask
     }
     val tally = AgentFacts.tally(sessions, inputs.layout).total
+    // A task asking by its status needs the person, though no conversation of it is counted as asking.
+    val asking = units.filter { it.asks() }
+    val askingOnHold = asking.count { u -> u.sessions.any { it.id == u.mainId && AgentFacts.isWaitingOnSomething(it) } }
     return State(
         open = ui.open,
         query = ui.query,
@@ -593,8 +689,10 @@ internal fun buildOverview(inputs: OverviewInputs, ui: OverviewUi, now: Long): S
         recent = if (matchMode) emptyList() else recent,
         fortnight = if (matchMode) emptyList() else fortnight,
         earlierHidden = earlierAll.size - earlierShown.size,
-        needYouCount = tally.waiting,
+        needYouCount = tally.waiting + asking.size,
         workingCount = tally.working,
+        onHoldCount = tally.onHold - askingOnHold,
+        pausedCount = nowRows.count { it.kind == Kind.PAUSED },
         doneCount = nowRows.count { it.kind == Kind.DONE },
         selectedId = selectedId,
         peek = peek,
@@ -639,7 +737,8 @@ private fun unitOf(t: AgentTask, byKey: Map<String, AgentSessionSummary>, hosted
     val sessions = hosted.sortedWith(compareBy({ AgentFacts.startedOf(it) }, { it.id })) + listOfNotNull(own)
     val mainLive = main != null && AgentFacts.isLive(main)
     val questionWaits = t.questionWaits && !mainLive && t.mainConversation != null
-    if (sessions.isEmpty() && !t.hasOpen && !questionWaits) return null
+    // Paused work is unfinished: its row stays in view like a waiting question's.
+    if (sessions.isEmpty() && !t.hasOpen && !questionWaits && !t.paused) return null
     val rank = when {
         sessions.any { it.state == NEEDS_YOU } -> 0
         sessions.any { it.state == WORKING } -> 1
@@ -655,7 +754,7 @@ private fun unitOf(t: AgentTask, byKey: Map<String, AgentSessionSummary>, hosted
     val recency = sessions.maxOfOrNull { maxOf(it.stateSince, AgentFacts.activityOf(it)) } ?: t.startedAtMillis ?: 0L
     val resumeId = t.mainConversation.takeIf { main == null }
     val (enter, target) = enterOf(t, main, mainLive, sessions, open, resumeId)
-    return TaskUnit(t, sessions, since, recency, open.isNotEmpty() || mainLive || questionWaits, started, enter, target, main?.id, resumeId)
+    return TaskUnit(t, sessions, since, recency, open.isNotEmpty() || mainLive || questionWaits || t.paused, started, enter, target, main?.id, resumeId)
 }
 
 /** Decides what ↵ does on a task's row and which of its conversations that targets. */
@@ -704,28 +803,38 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
     val id = "$TASK_PREFIX${t.id}"
     val working = u.sessions.filter(AgentFacts::isWorking)
     val waitingAll = u.sessions.filter(AgentFacts::isWaiting)
-    val waiting = waitingAll.minByOrNull { it.stateSince }
+    val waiting = waitingAll.minByOrNull(AgentFacts::shownSince)
+    // Conversations at their prompt while a shell, a review or CI they started goes on: not idle, and not asking.
+    val onHold = u.sessions.filter(AgentFacts::isWaitingOnSomething).sortedBy(AgentFacts::shownSince)
+    val asks = u.asks()
     val (kind, word) = when {
         waitingAll.size >= 2 -> Kind.NEEDS_YOU to AgentsOverviewBackingViewModel.needYouText(waitingAll.size)
-        waiting != null -> Kind.NEEDS_YOU to AgentsOverviewBackingViewModel.STATE_NEEDS_YOU
+        waiting != null || asks -> Kind.NEEDS_YOU to AgentsOverviewBackingViewModel.STATE_NEEDS_YOU
         working.any { it.id == u.mainId } || (u.mainId == null && working.size == 1) -> Kind.WORKING to AgentsOverviewBackingViewModel.STATE_WORKING
         working.isNotEmpty() -> Kind.WORKING to AgentsOverviewBackingViewModel.agentsWorkingText(working.size)
+        // What the sessions do says what is true; the pause says why nothing does.
+        t.paused -> Kind.PAUSED to AgentsOverviewBackingViewModel.STATE_PAUSED
+        onHold.isNotEmpty() && u.inNow -> Kind.WAITING to AgentsOverviewBackingViewModel.waitingText(onHold.size)
         !u.inNow -> Kind.FINISHED to endedWord(u.target ?: u.sessions.maxByOrNull(AgentFacts::activityOf))
         else -> Kind.DONE to AgentsOverviewBackingViewModel.STATE_DONE
     }
     val blocks = c.inputs.panels[t.id].orEmpty()
     val main = u.sessions.firstOrNull { it.id == u.mainId }
-    val detail = waiting?.let(::headlineOf)
-        ?: t.status?.trim()?.takeIf { it.isNotEmpty() }
-        ?: currentStepOf(blocks)
-        ?: working.sortedByDescending { it.lastActivityAt ?: it.stateSince }.firstNotNullOfOrNull(::headlineOf)
-        ?: (main ?: u.sessions.maxByOrNull(AgentFacts::activityOf))?.takeIf(AgentFacts::isLive)?.let(::headlineOf)
-        ?: ""
+    // The headline, and whether it was said on purpose (Row.detailSet).
+    val said = waiting?.let(::headlineOf)?.let { it to true }
+        // A status that only counts states says what the row's state word does: the plan's step says more.
+        ?: (t.status?.trim()?.takeIf { it.isNotEmpty() && !AgentFacts.isCountsOnly(it) } ?: currentStepOf(blocks))?.let { it to true }
+        ?: working.sortedByDescending { it.lastActivityAt ?: it.stateSince }.firstNotNullOfOrNull { s -> headlineOf(s)?.let { it to saidOnPurpose(s) } }
+        ?: onHold.firstNotNullOfOrNull { s -> headlineOf(s)?.let { it to saidOnPurpose(s) } }
+    val detail = said?.first
+    // What the conversation last said is chat, not a status: a done row leaves it to the selection.
+    val speaker = (main ?: u.sessions.maxByOrNull(AgentFacts::activityOf))?.takeIf(AgentFacts::isLive)
+    val spoken = speaker?.let(::headlineOf)
+    val headline = detail ?: spoken.takeUnless { kind == Kind.DONE }
     val target = u.target
     val single = u.sessions.singleOrNull()
-    val repo = t.repo ?: u.sessions.takeIf { s -> s.isNotEmpty() && s.none { it.repo == null } }?.map { it.repo }?.distinct()?.singleOrNull()
     val error = c.errorOf(id)
-    val where = repo ?: u.sessions.map(AgentFacts::folderOf).distinct().singleOrNull()
+    val where = whereOf(t, u.sessions, main)
     val cutOff = target?.takeIf { !u.inNow && u.enter == Enter.RESUME && stoppedByRestart(it, c.now) }
     return Row(
         id = id,
@@ -734,7 +843,10 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
         where = where,
         kind = kind,
         stateWord = word,
-        detail = detail,
+        detail = headline.orEmpty(),
+        detailSet = said?.second == true,
+        lastReply = spoken.takeIf { kind == Kind.DONE && detail == null },
+        recap = speaker?.recap,
         stopped = cutOff != null,
         extra = extraOf(
             folderNote(target, where), c.noteOf(target?.id),
@@ -743,11 +855,26 @@ private fun taskRow(u: TaskUnit, c: Ctx): Row {
         ),
         tabName = c.tabNameOf(main?.takeIf(AgentFacts::isLive) ?: target, t.title),
         progress = progressOf(blocks),
-        agents = u.sessions.filter(AgentFacts::isLive).takeIf { it.size > 1 || it.any { s -> s.id != u.mainId } }.orEmpty().sortedBy { it.id != u.mainId }.map { s ->
-            Agent(s.id, if (s.id == u.mainId) AgentsOverviewBackingViewModel.MAIN_AGENT_TITLE else AgentFacts.titleOf(s), headlineOf(s).orEmpty(), s.state, s.stateSince)
-        },
+        // The main conversation first, then the ones in tabs the person sees, then the hidden ones.
+        agents = u.sessions.filter(AgentFacts::isLive).takeIf { it.size > 1 || it.any { s -> s.id != u.mainId } }.orEmpty()
+            .sortedWith(compareBy({ it.id != u.mainId }, { it.id != u.mainId && it.background }))
+            .map { s ->
+                Agent(
+                    s.id, if (s.id == u.mainId) AgentsOverviewBackingViewModel.MAIN_AGENT_TITLE else AgentFacts.titleOf(s),
+                    headlineOf(s).orEmpty(), AgentFacts.shownState(s), AgentFacts.shownSince(s),
+                    background = s.id != u.mainId && s.background,
+                )
+            },
         ask = askOf(id, u.enter, own = if (target != null) target.id == u.mainId else u.resumeId != null, inTab = target?.inTab == true),
-        sinceMillis = if (!u.inNow) u.recency else u.since,
+        sinceMillis = when {
+            !u.inNow -> u.recency
+            // A wait is aged from when it began, which no session state change marks.
+            kind == Kind.NEEDS_YOU && waiting != null -> AgentFacts.shownSince(waiting)
+            asks -> t.statusAtMillis ?: u.since
+            kind == Kind.WAITING -> AgentFacts.shownSince(onHold.first())
+            kind == Kind.PAUSED -> t.pausedAtMillis ?: u.since
+            else -> u.since
+        },
         enter = u.enter,
         recordId = target?.id ?: u.resumeId.takeIf { u.enter == Enter.RESUME },
         isLive = target != null && AgentFacts.isLive(target),
@@ -772,6 +899,7 @@ private fun sessionRow(s: AgentSessionSummary, earlier: Boolean, c: Ctx, taskTit
     val (kind, word) = when {
         needs -> Kind.NEEDS_YOU to AgentsOverviewBackingViewModel.STATE_NEEDS_YOU
         works -> Kind.WORKING to AgentsOverviewBackingViewModel.STATE_WORKING
+        AgentFacts.isWaitingOnSomething(s) -> Kind.WAITING to AgentsOverviewBackingViewModel.STATE_WAITING
         earlier -> Kind.FINISHED to endedWord(s)
         else -> Kind.DONE to AgentsOverviewBackingViewModel.STATE_DONE
     }
@@ -782,12 +910,15 @@ private fun sessionRow(s: AgentSessionSummary, earlier: Boolean, c: Ctx, taskTit
         where = s.repo ?: AgentFacts.folderOf(s),
         kind = kind,
         stateWord = word,
-        detail = if (live) headlineOf(s).orEmpty() else "",
+        detail = if (live && kind != Kind.DONE) headlineOf(s).orEmpty() else "",
+        detailSet = saidOnPurpose(s),
+        lastReply = headlineOf(s).takeIf { live && kind == Kind.DONE },
+        recap = s.recap.takeIf { live },
         stopped = enter == Enter.RESUME && stoppedByRestart(s, c.now),
         extra = extraOf(folderNote(s, s.repo ?: AgentFacts.folderOf(s)), c.noteOf(s.id), AgentsOverviewBackingViewModel.NO_TRANSCRIPT_NOTE.takeIf { enter == Enter.NONE }, error),
         tabName = c.tabNameOf(s, title),
         ask = askOf(id, enter, own = false, inTab = s.inTab),
-        sinceMillis = sinceOf(s),
+        sinceMillis = AgentFacts.waitOf(s)?.sinceMillis ?: sinceOf(s),
         enter = enter,
         recordId = s.id,
         isLive = live,
@@ -810,6 +941,9 @@ private fun matchRow(base: Row, m: AgentSessionMatch, s: AgentSessionSummary, c:
     val inTitle = when (m.field) {
         "task" -> true
         "title" -> sessionTitle == base.title
+        // The row leads with the tab's name; without one the name repeated the title, which shows instead.
+        // A task row may lead with another conversation's tab, so the hit must be in the name shown.
+        "tab" -> (base.tabName ?: base.title).regionMatches(m.start, c.ui.query.trim(), 0, m.length, ignoreCase = true)
         else -> false
     }
     val snippet = when {
@@ -818,7 +952,7 @@ private fun matchRow(base: Row, m: AgentSessionMatch, s: AgentSessionSummary, c:
         else -> m.snippet
     }
     val highlight = titleCurrent && (inTitle || snippet != null)
-    val place = "in ${fieldLabel(m.field)}" + if (sessionTitle != base.title && m.field != "task") " of $sessionTitle" else ""
+    val place = "in ${fieldLabel(m.field)}" + if (sessionTitle != base.title && m.field != "task" && m.field != "tab") " of $sessionTitle" else ""
     return base.copy(
         detail = snippet ?: base.detail,
         extra = extraOf(
@@ -838,6 +972,7 @@ private fun matchRow(base: Row, m: AgentSessionMatch, s: AgentSessionSummary, c:
 
 private fun fieldLabel(field: String): String = when (field) {
     "task" -> "task title"
+    "tab" -> "tab name"
     "prompt" -> "first prompt"
     "screen" -> "last screen"
     else -> field
@@ -846,16 +981,37 @@ private fun fieldLabel(field: String): String = when (field) {
 /**
  * The one line that says where a conversation is, the same on every screen: the question while it
  * needs the person, what it is doing while it works (in its own words when it gave a status, else
- * its tool call), and the last thing it said once it is done or closed. Null when it has nothing to say. Called for overview rows and the task panel's header.
+ * its tool call), and what its last reply came to ([AgentSessionText.saidOf]) once it is done or closed. Null when it has nothing to say. Called for overview rows and the task panel's header.
  */
 internal fun headlineOf(s: AgentSessionSummary): String? {
     val now = s.nowLine?.trim()?.takeIf { it.isNotEmpty() }
+    // At its prompt while something it started goes on, or waiting on the person by its writer's word: what for.
+    AgentFacts.waitOf(s)?.let { return it.text }
     return when (s.state) {
         NEEDS_YOU -> (AgentSessionText.previewOf(s.question) ?: now)?.let(::quoted)
         WORKING -> s.status?.trim()?.takeIf { it.isNotEmpty() } ?: now
-        else -> s.lastSaid?.trim()?.takeIf { it.isNotEmpty() }
+        // What it came to, read again so a line an older server kept is one plain sentence too.
+        else -> AgentSessionText.saidOf(s.lastSaid)
     }
 }
+
+/**
+ * Where a task's row stands in NOW, the name its group is headed with: the task's own repo, else
+ * the repo of its main conversation, else the one repo all its conversations share, else the same
+ * for folders. The main conversation decides before a shared one is looked for, since a task's
+ * agents often run in worktrees or folders of their own while the main one sits where the work is.
+ *
+ * @param t the task.
+ * @param sessions its conversations.
+ * @param main its main conversation, when it has one.
+ * @return the repo or folder name, or null when nothing names one.
+ */
+private fun whereOf(t: AgentTask, sessions: List<AgentSessionSummary>, main: AgentSessionSummary?): String? =
+    t.repo
+        ?: main?.repo
+        ?: sessions.mapNotNull { it.repo }.distinct().singleOrNull()
+        ?: main?.let(AgentFacts::folderOf)
+        ?: sessions.mapNotNull(AgentFacts::folderOf).distinct().singleOrNull()
 
 /** [s]'s folder for the selected row, when it says more than the repo or folder name [where] the row already sits under (a worktree, a subfolder). */
 private fun folderNote(s: AgentSessionSummary?, where: String?): String? =
@@ -891,10 +1047,12 @@ private val DEFAULT_TAB_NAME = Regex("^Tab \\d+$")
 /**
  * The name the person gave the listed tab [s] runs in; null for a default name, a background tab,
  * one that only repeats [title], and for a closed conversation: its tab has usually moved on to
- * other work, so the name would be about something else.
+ * other work, so the name would be about something else. A conversation the restart stopped whose
+ * pane still sits at an idle shell ([AgentSessionSummary.inTab]) keeps it: that tab has not moved
+ * on, a resume goes back into it, and the row then reads as it will once resumed.
  */
 private fun Ctx.tabNameOf(s: AgentSessionSummary?, title: String): String? {
-    if (s == null || !AgentFacts.isLive(s)) return null
+    if (s == null || !(AgentFacts.isLive(s) || s.inTab && stoppedByRestart(s, now))) return null
     val name = layout.spotOf(s)?.takeIf { it.listed }?.tab?.title?.trim() ?: return null
     return name.takeIf { it.isNotEmpty() && !DEFAULT_TAB_NAME.matches(it) && !it.equals(title.trim(), ignoreCase = true) }
 }
@@ -918,13 +1076,8 @@ private fun closeWarnings(s: AgentSessionSummary, inspection: WindowEnvelope.Age
     if (s.state == NEEDS_YOU) {
         out += "It is waiting for you" + ((AgentSessionText.previewOf(s.question) ?: s.nowLine?.takeIf { it.isNotBlank() })?.let { ": $it" } ?: ".")
     }
-    val uncommitted = inspection?.uncommitted ?: 0
-    val unpushed = inspection?.unpushed ?: 0
-    if (uncommitted > 0 || unpushed > 0) {
-        val parts = buildList {
-            if (uncommitted > 0) add("$uncommitted uncommitted ${if (uncommitted == 1) "change" else "changes"}")
-            if (unpushed > 0) add("$unpushed unpushed ${if (unpushed == 1) "commit" else "commits"}")
-        }
+    val parts = inspection?.let { AgentFacts.workParts(it.uncommitted, it.added, it.removed, it.untracked, it.unpushed) }.orEmpty()
+    if (parts.isNotEmpty()) {
         out += parts.joinToString(" · ") + inspection?.branch?.let { " on $it" }.orEmpty() + " stay in its folder."
     }
     return out
@@ -944,6 +1097,7 @@ internal fun peekOf(
         title = title,
         closedSinceMillis = closedSinceMillis,
         lines = said?.screen.orEmpty(),
+        styled = said?.styled.orEmpty(),
         loading = said == null,
         emptyText = if (said != null && said.screen.isEmpty()) (if (live) "(the screen is empty)" else "(no saved screen)") else null,
     )

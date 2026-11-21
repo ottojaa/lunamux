@@ -420,6 +420,20 @@ class SessionGrid(cols: Int, rows: Int, initialAnswerSink: ((ByteArray) -> Unit)
     fun pendingHistoryLine(): LogicalLine? = synchronized(emulator) { history.pendingLine() }
 
     /**
+     * The visible screen (of whichever buffer is active) as styled runs, one list per row, top
+     * first; a blank row is an empty list. Read by the agents overview's peek
+     * ([se.soderbjorn.lunamux.PeekScreen]) so it can show the screen in its colours.
+     *
+     * @return the screen's rows as styled runs.
+     * @see GridSerializer.rowRuns
+     */
+    fun screenRows(): List<List<StyledRun>> = synchronized(emulator) {
+        val buffer = emulator.screen
+        val cols = emulator.mColumns
+        (0 until emulator.mRows).map { r -> GridSerializer.rowRuns(buffer.getRow(r), cols, buffer.getLineWrap(r)) }
+    }
+
+    /**
      * The full normal-buffer transcript (scrollback + visible screen) as plain
      * text, one logical line per row. Backed by the canonical grid so it stays
      * correct across resizes; used by the MCP `read_scrollback` tool.

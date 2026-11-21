@@ -247,6 +247,22 @@ class McpPanelToolsTest {
     }
 
     @Test
+    fun `set_status with keep says what a conversation waits for, also when its lead writes it, and needsYou needs keep`() {
+        val pane = PaneSnapshot("s-run", leafId = "leaf-run", cwd = "/work", programTitle = null, agent = "claude", state = "working")
+        tracker.onHook(pane, buildJsonObject { put("hook_event_name", "UserPromptSubmit"); put("session_id", "a-run"); put("prompt", "go") })
+        fun row() = tracker.summaries.value.single { it.conversationId == "a-run" }
+        // Written by another pane (the task's lead) for the run's pane.
+        call("set_status", """{"text":"in review · round 1","keep":true,"sessionId":"s-run"}""", caller = "s-lead")
+        assertEquals("in review · round 1" to false, row().waitingFor to row().waitingForYou)
+        assertNull(row().status, "the line of the turn is another line")
+        call("set_status", """{"text":"merge go","keep":true,"needsYou":true,"sessionId":"s-run"}""")
+        assertEquals("merge go" to true, row().waitingFor to row().waitingForYou)
+        assertTrue("keep" in refusal(call("set_status", """{"text":"x","needsYou":true}""", caller = "s-run")))
+        call("set_status", """{"text":"","keep":true}""", caller = "s-run")
+        assertNull(row().waitingFor)
+    }
+
+    @Test
     fun `set_panel_section keeps a conversation's sections in order, replaces by key and needs no task`() {
         val pane = PaneSnapshot("s-sec", leafId = "leaf-sec", cwd = "/work", programTitle = null, agent = "claude", state = "working")
         tracker.onHook(pane, buildJsonObject { put("hook_event_name", "UserPromptSubmit"); put("session_id", "a-sec"); put("prompt", "go") })

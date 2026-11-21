@@ -109,6 +109,87 @@ class AgentsOverviewTest {
     }
 
     @Test
+    fun aConversationAtItsPromptWithABackgroundShellReadsWaitingNotDone() {
+        layout(listed = listOf("a", "b"))
+        sessions(
+            session("a", state = "done").copy(backgroundShells = 1, backgroundSince = now - 12 * minute),
+            session("b", state = "done"),
+        )
+        vm.open()
+        val a = vm.state.now.first { it.id == "a" }
+        assertEquals(AgentsOverviewBackingViewModel.Kind.WAITING to "waiting", a.kind to a.stateWord)
+        assertEquals("1 background shell running", a.detail)
+        assertEquals(now - 12 * minute, a.sinceMillis, "aged from when the shell began")
+        assertEquals("done", vm.state.now.first { it.id == "b" }.stateWord, "nothing going on is still done")
+        assertEquals(1 to 1, vm.state.onHoldCount to vm.state.doneCount)
+        assertEquals(0, vm.state.needYouCount)
+    }
+
+    @Test
+    fun aTaskWhoseRunsWaitOnTheirReviewsReadsWaitingWithEachRunsLineAndAge() {
+        layout(listed = listOf("main"), background = listOf("r1", "r2"))
+        sessions(
+            session("main", state = "done", taskId = "g1").copy(backgroundShells = 1, backgroundSince = now - 3 * minute),
+            session("r1", state = "done", taskId = "g1", background = true)
+                .copy(waitingFor = "in review · round 1", waitingSince = now - 12 * minute),
+            session("r2", state = "done", taskId = "g1", background = true)
+                .copy(waitingFor = "in review · round 1", waitingSince = now - 5 * minute),
+        )
+        windowState.updateAgentTasks(listOf(task("main")))
+        vm.open()
+        val row = vm.state.now.single()
+        assertEquals(AgentsOverviewBackingViewModel.Kind.WAITING to "3 waiting", row.kind to row.stateWord)
+        assertEquals(now - 12 * minute, row.sinceMillis, "the longest wait")
+        assertEquals("in review · round 1", row.detail)
+        assertEquals(
+            listOf(
+                Triple("Main conversation", AgentFacts.WAITING, false),
+                Triple("session r1", AgentFacts.WAITING, true),
+                Triple("session r2", AgentFacts.WAITING, true),
+            ),
+            row.agents.map { Triple(it.title, it.state, it.background) },
+        )
+        assertEquals(listOf(now - 3 * minute, now - 12 * minute, now - 5 * minute), row.agents.map { it.sinceMillis })
+        assertEquals(listOf("1 background shell running", "in review · round 1", "in review · round 1"), row.agents.map { it.doing })
+    }
+
+    @Test
+    fun aKeptLineThatWaitsOnThePersonCountsAsNeedsYou() {
+        layout(listed = listOf("main"), background = listOf("r1"))
+        sessions(
+            session("main", state = "done", taskId = "g1"),
+            session("r1", state = "done", taskId = "g1", background = true).copy(waitingFor = "merge go", waitingForYou = true),
+        )
+        windowState.updateAgentTasks(listOf(task("main")))
+        vm.open()
+        val row = vm.state.now.single()
+        assertEquals("needs you" to "merge go", row.stateWord to row.detail)
+        assertEquals(1 to 0, vm.state.needYouCount to vm.state.onHoldCount)
+        assertEquals(AgentFacts.NEEDS_YOU, row.agents.single { it.title == "session r1" }.state)
+    }
+
+    @Test
+    fun aKeptLineGivesWayWhileItsConversationWorks() {
+        layout(listed = listOf("a"))
+        sessions(session("a", nowLine = "Fixing the findings").copy(waitingFor = "in review · round 1"))
+        vm.open()
+        val a = vm.state.now.single()
+        assertEquals("working" to "Fixing the findings", a.stateWord to a.detail)
+    }
+
+    @Test
+    fun aTaskWhoseAgentsRunElsewhereIsGroupedUnderItsMainConversationsRepo() {
+        layout(listed = listOf("main"), background = listOf("r1"))
+        sessions(
+            session("main", state = "done", taskId = "g1", repo = "upright"),
+            session("r1", state = "done", taskId = "g1", background = true).copy(repo = null, cwd = "/flow/runs/r1"),
+        )
+        windowState.updateAgentTasks(listOf(task("main").copy(repo = null)))
+        vm.open()
+        assertEquals("upright", vm.state.now.single().where)
+    }
+
+    @Test
     fun theRowThatNeedsYouIsSelectedAndShowsTheQuestion() {
         layout(listed = listOf("a", "b"))
         sessions(
@@ -375,6 +456,31 @@ class AgentsOverviewTest {
     }
 
     @Test
+    fun aPausedTaskSaysSoWithItsReasonStaysInNowAndGivesWayToWorkThatRuns() {
+        layout(listed = listOf("main"), background = listOf("r3"))
+        val pausedAt = now - 52 * minute
+        sessions(session("main", taskId = "g1", state = "done"), session("r3", taskId = "g1", state = "done", background = true))
+        windowState.updateAgentTasks(listOf(task("main", status = "Paused by the owner: laptop congested").copy(pausedAtMillis = pausedAt)))
+        vm.open()
+        val row = taskRow()
+        assertEquals(AgentsOverviewBackingViewModel.Kind.PAUSED to "paused", row.kind to row.stateWord)
+        assertEquals("Paused by the owner: laptop congested", row.detail)
+        assertEquals(pausedAt, row.sinceMillis, "aged from when the pause began")
+        assertEquals(1, vm.state.pausedCount)
+        assertEquals(0, vm.state.doneCount, "paused is not done")
+
+        // Closed, it stays among the live rows: the work is not over.
+        sessions(session("main", taskId = "g1", state = "ended", endedAt = now - minute))
+        assertTrue(vm.state.now.any { it.id == "task:g1" && it.paused })
+
+        // A conversation at work says what is true, whatever the flag says.
+        sessions(session("main", taskId = "g1", state = "working"))
+        assertEquals(AgentsOverviewBackingViewModel.Kind.WORKING, taskRow().kind)
+        sessions(session("main", taskId = "g1", state = "needs_you", question = "Resume run 3?"))
+        assertEquals(AgentsOverviewBackingViewModel.Kind.NEEDS_YOU, taskRow().kind)
+    }
+
+    @Test
     fun aTaskWhoseMainConversationIsOnlyAStoredIdResumesThatIdAndOneWithNothingStartsItsOpenCommand() = runNow {
         layout(listed = listOf("a"))
         sessions(session("a", state = "done"))
@@ -411,6 +517,33 @@ class AgentsOverviewTest {
     }
 
     @Test
+    fun aHitInTheTabsNameIsMarkedInTheNameTheRowLeadsWith() {
+        layout(listed = listOf("a"), second = listOf("b"))
+        val a = session("a", title = "Upright Slack thread")
+        val b = session("b", title = "two")
+        sessions(a, b)
+        vm.open()
+        vm.setQuery("ne")
+        windowState.updateAgentMatches(
+            WindowEnvelope.AgentSessionMatches("ne", listOf(AgentSessionMatch(summary = a, field = "tab", start = 1, length = 2))),
+        )
+        val row = vm.state.matches.single()
+        assertEquals("one", row.tabName)
+        assertTrue(row.matchInTab && !row.matchInTitle, "the mark is in the tab's name, not the title")
+        assertEquals("ne", row.tabName!!.substring(row.matchStart, row.matchStart + row.matchLength))
+        assertContains(row.extra, "in tab name")
+
+        // A tab named as the title is not led with; the title shows, and the mark is in it.
+        vm.setQuery("tw")
+        windowState.updateAgentMatches(
+            WindowEnvelope.AgentSessionMatches("tw", listOf(AgentSessionMatch(summary = b, field = "tab", start = 0, length = 2))),
+        )
+        val same = vm.state.matches.single()
+        assertNull(same.tabName)
+        assertTrue(same.matchInTitle)
+    }
+
+    @Test
     fun aRowLeadsWithItsTabsNameUnlessTheTabIsUnnamedHiddenOrSaysTheTitleAlready() {
         layout(listed = listOf("a"), second = listOf("b"), background = listOf("bg"))
         sessions(session("a"), session("b", title = "two"), session("bg", state = "needs_you", background = true))
@@ -427,6 +560,10 @@ class AgentsOverviewTest {
         assertNull(vm.state.recent.first { it.id == "a" }.tabName, "a closed conversation is not named by its tab, which has usually moved on")
         sessions(session("a", state = "ended", endedAt = now - 1).copy(inTab = true), session("b", title = "two"))
         assertNull(vm.state.recent.first { it.id == "a" }.tabName, "not even when it would resume there")
+        sessions(session("a", state = "ended", endedAt = now - 1, inTab = true).copy(endReason = "restart", leafId = "leaf-a"), session("b", title = "two"))
+        assertEquals("one", vm.state.stopped.first { it.id == "a" }.tabName, "but one the restart stopped, whose tab still waits for it, is: it resumes there")
+        sessions(session("a", state = "ended", endedAt = now - 1).copy(endReason = "restart", leafId = "leaf-a"), session("b", title = "two"))
+        assertNull(vm.state.stopped.first { it.id == "a" }.tabName, "not when its tab has moved on")
         sessions(session("a"), session("b", title = "two"), session("bg", state = "needs_you", background = true))
         assertNull(vm.state.now.first { it.id == "b" }.tabName, "a tab named as the title adds nothing")
         windowState.updateConfig(WindowConfig(tabs = listOf(TabConfig("tab-1", "Tab 3", panes = listOf(pane("leaf-a")))), activeTabId = "tab-1"))
@@ -454,9 +591,12 @@ class AgentsOverviewTest {
             session("d", state = "done", lastSaid = "All 14 tests pass."),
             session("e", state = "ended", endedAt = now - minute, lastSaid = "Pushed to the branch."),
         )
-        assertEquals("All 14 tests pass.", detail("d"), "a done row says the last thing it said")
+        assertEquals("", detail("d"), "a done row leaves its chat off the row")
+        assertEquals("All 14 tests pass.", vm.state.rows.first { it.id == "d" }.lastReply, "and its selection says the last thing it said")
         assertEquals("", detail("e"), "a closed one says its title only")
         assertEquals(1, vm.state.doneCount)
+        sessions(session("d", state = "done", lastSaid = "The write-up is at `notes.md`. Its sections:"))
+        assertEquals("The write-up is at notes.md.", vm.state.rows.first { it.id == "d" }.lastReply, "a line an older server kept reads as one plain sentence")
     }
 
     @Test
@@ -482,6 +622,79 @@ class AgentsOverviewTest {
         )
         windowState.updateAgentTasks(listOf(task("main", status = "Final build ready")))
         assertEquals("Final build ready", vm.state.now.single().detail, "the task's own status comes first")
+    }
+
+    @Test
+    fun aDoneTaskKeepsOnlyTheStatusAnAgentSetAndLeavesItsChatToTheSelection() {
+        layout(listed = listOf("main"))
+        sessions(session("main", state = "done", taskId = "g1", lastSaid = "I can update the reply and show you the text before posting."))
+        windowState.updateAgentTasks(listOf(task("main")))
+        vm.open()
+        var row = vm.state.now.single()
+        assertEquals(listOf("", "I can update the reply and show you the text before posting."), listOf(row.detail, row.lastReply), "no status: the row is its name and description")
+        windowState.updateAgentTasks(listOf(task("main", status = "Merged to master; deploying.")))
+        row = vm.state.now.single()
+        assertEquals(listOf("Merged to master; deploying.", null), listOf(row.detail, row.lastReply), "a status an agent set is the headline")
+    }
+
+    @Test
+    fun aRowIsDescribedByItsSpeakersRecapWhileItIsOpen() {
+        layout(listed = listOf("main", "solo"))
+        val recap = "Moving exports to Gotenberg. Run 1 is booting."
+        sessions(
+            session("main", taskId = "g1").copy(recap = recap),
+            session("helper", taskId = "g1").copy(recap = "A reviewer's own recap."),
+            session("solo").copy(recap = "Freeing up memory. Swap is down to 1.25 GB."),
+            session("gone", state = "ended", endedAt = now - minute).copy(recap = "Stale."),
+        )
+        windowState.updateAgentTasks(listOf(task("main")))
+        vm.open()
+        val rows = vm.state.now.associateBy { it.id }
+        assertEquals(recap, rows.getValue("task:g1").recap, "a task is described by the conversation that speaks for it")
+        assertEquals("Freeing up memory. Swap is down to 1.25 GB.", rows.getValue("solo").recap)
+        assertEquals(null, (vm.state.now + vm.state.earlier).firstOrNull { it.id == "gone" }?.recap, "a closed conversation has no description")
+    }
+
+    @Test
+    fun aRowShowsOneLineUnderItsNameTheMostTellingOneItHas() {
+        layout(listed = listOf("ask", "set", "tool", "plain"))
+        sessions(
+            session("ask", state = AgentFacts.NEEDS_YOU, question = "Deploy now?").copy(recap = "Shipping the fix. It is built."),
+            session("set").copy(status = "Running the migration", recap = "Moving the data. Half is copied."),
+            session("tool", nowLine = "Bash(ls)").copy(recap = "Moving exports. Run 1 boots."),
+            session("plain", nowLine = "Bash(ls)"),
+        )
+        vm.open()
+        val rows = vm.state.now.associateBy { it.id }
+        assertEquals(AgentsOverviewBackingViewModel.Under.QUESTION, rows.getValue("ask").under, "a question outranks everything")
+        assertEquals(AgentsOverviewBackingViewModel.Under.STATUS, rows.getValue("set").under, "a status said on purpose is fresher than the recap")
+        assertEquals(AgentsOverviewBackingViewModel.Under.RECAP, rows.getValue("tool").under, "a tool call read off the screen gives way to the recap")
+        assertFalse(rows.getValue("tool").detailSet)
+        assertEquals(AgentsOverviewBackingViewModel.Under.TITLE, rows.getValue("plain").under, "without a recap the title says what the work is, under the tab's name")
+    }
+
+    @Test
+    fun aTaskWhoseStatusAsksNeedsThePersonWhileItsConversationWaitsOnAShell() {
+        layout(listed = listOf("main"))
+        sessions(session("main", state = "done", taskId = "g1").copy(backgroundShells = 1, backgroundSince = now - 12 * minute))
+        val asking = task("main", status = "Go for the production deploys?").copy(questionWaits = true, statusAtMillis = now - 5 * minute)
+        windowState.updateAgentTasks(listOf(asking))
+        vm.open()
+        val row = vm.state.now.single()
+        assertEquals(AgentsOverviewBackingViewModel.Kind.NEEDS_YOU, row.kind)
+        assertEquals(AgentsOverviewBackingViewModel.Under.QUESTION, row.under)
+        assertEquals("Go for the production deploys?", row.detail)
+        assertEquals(now - 5 * minute, row.sinceMillis, "it has waited since the question was put")
+        assertEquals(1 to 0, vm.state.needYouCount to vm.state.onHoldCount, "counted as asking, not as waiting")
+
+        windowState.updateAgentTasks(listOf(asking.copy(questionWaits = false)))
+        val plain = vm.state.now.single()
+        assertEquals(AgentsOverviewBackingViewModel.Kind.WAITING, plain.kind, "a status that is not flagged as a question stays a status")
+        assertEquals(AgentsOverviewBackingViewModel.Under.STATUS, plain.under)
+
+        sessions(session("main", taskId = "g1"))
+        windowState.updateAgentTasks(listOf(asking))
+        assertEquals(AgentsOverviewBackingViewModel.Kind.WORKING, vm.state.now.single().kind, "once its conversation works again, the work has moved past the question")
     }
 
     @Test

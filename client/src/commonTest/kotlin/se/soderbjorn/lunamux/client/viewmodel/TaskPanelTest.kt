@@ -76,6 +76,40 @@ class TaskPanelTest {
     }
 
     @Test
+    fun aTaskShowsTheWorkLeftInEachOfItsWorktreesAndAsksAgainWhenATurnEnds() = runNow {
+        layout(listed = listOf("main"), background = listOf("w1"))
+        fill(session("w1"))
+        val before = vm.state.work!!
+        assertEquals("g1", before.taskId)
+        assertTrue(before.worktrees.isEmpty(), "nothing is shown until the server has answered")
+        vm.readTaskWork()
+        assertEquals(listOf<WindowCommand>(WindowCommand.ReadTaskWork("g1")), sent)
+
+        windowState.updateTaskWork(
+            WindowEnvelope.TaskWork(
+                "g1",
+                listOf(
+                    se.soderbjorn.lunamux.WorktreeWork("plt-1-fix", branch = "plt-1-fix", changed = 4, added = 210, removed = 95, unpushed = 2),
+                    se.soderbjorn.lunamux.WorktreeWork("upright", branch = "master", untracked = 14),
+                ),
+            ),
+        )
+        assertEquals(
+            listOf(
+                TaskPanelViewModel.WorktreeLine("plt-1-fix", null, "4 files changed, +210 −95 · 2 unpushed commits"),
+                TaskPanelViewModel.WorktreeLine("upright", "master", "14 untracked"),
+            ),
+            vm.state.work!!.worktrees,
+            "a branch named as its folder is said once",
+        )
+        windowState.updateTaskWork(WindowEnvelope.TaskWork("other", emptyList()))
+        assertTrue(vm.state.work!!.worktrees.isEmpty(), "an answer about another task is not shown")
+
+        fill(session("w1", state = "done", since = now))
+        assertTrue(vm.state.work!!.key != before.key, "a turn that ends asks again")
+    }
+
+    @Test
     fun theHeaderCarriesTheTaskTitleAndItsStatusLine() {
         layout(listed = listOf("main"), background = listOf("w1"))
         fill(session("w1"), status = "Waiting on review")
@@ -84,11 +118,64 @@ class TaskPanelTest {
         assertEquals("Release", s.title)
         val head = s.head!!
         assertEquals("Waiting on review", head.headline, "the headline is the overview row's")
-        assertEquals("one" to "Release", head.name to head.about, "the tab's name leads, the title follows")
+        assertEquals("one" to "session main", head.name to head.about, "the tab's name leads, what the main conversation does now follows")
         assertEquals(AgentFacts.WORKING to "working", head.state to head.stateWord)
         assertEquals(TaskPanelViewModel.LABEL_STATUS, head.headlineLabel, "the line is marked as the agent's own status")
-        assertTrue(head.meta.startsWith("proj"))
+        assertTrue(head.meta.startsWith("proj"), head.meta)
+        assertEquals("2 working", head.breakdown)
         assertNull(s.setup)
+    }
+
+    @Test
+    fun theHeaderGivesOneVerdictWithTheCountsUnderItAndLeavesOutAStatusThatOnlyCounts() {
+        layout(listed = listOf("main"), background = listOf("w1", "w2", "w3"))
+        val shell = { id: String -> session(id, state = "done").copy(backgroundShells = 1, backgroundSince = now - 4 * minute) }
+        windowState.updateAgentSessions(
+            listOf(main().copy(state = "done", backgroundShells = 1, backgroundSince = now - 4 * minute), shell("w1"), session("w2"), session("w3", state = "done")),
+            true,
+        )
+        windowState.updateAgentTasks(listOf(task(status = "1 working")))
+        val head = vm.state.head!!
+        assertEquals(AgentFacts.WORKING to "working", head.state to head.stateWord, "one conversation working makes the task working")
+        assertEquals("1 working · 2 waiting · 1 idle", head.breakdown, "the counts go under the verdict, the most urgent first")
+        assertEquals("", head.headline, "a status that only counts says nothing the state does not")
+
+        windowState.updateAgentSessions(listOf(main().copy(state = "done", backgroundShells = 1), shell("w1")), true)
+        assertEquals(AgentFacts.WAITING to "waiting", vm.state.head!!.let { it.state to it.stateWord }, "the verdict drops the row's count")
+        assertEquals("2 waiting", vm.state.head!!.breakdown)
+    }
+
+    @Test
+    fun aStatusIsCountsOnlyWhenEveryPartIsANumberAndAState() {
+        listOf("1 working", "2 waiting, 1 working", "1 run working · 3 idle", "2 need you and 1 done").forEach {
+            assertTrue(AgentFacts.isCountsOnly(it), it)
+        }
+        listOf("Mango deploy running", "3 PRs open", "1 working; deploy to mango next", "", "Waiting on 2 reviews").forEach {
+            assertFalse(AgentFacts.isCountsOnly(it), it)
+        }
+    }
+
+    @Test
+    fun aPausedTaskHeadsItsPanelAsPausedWithTheReason() {
+        layout(listed = listOf("main"), background = listOf("w1"))
+        windowState.updateAgentSessions(listOf(main().copy(state = "done"), session("w1", state = "done")), true)
+        windowState.updateAgentTasks(listOf(task("Paused by the owner: laptop congested").copy(pausedAtMillis = now - 52 * minute)))
+        val head = vm.state.head!!
+        assertEquals(Triple(AgentFacts.PAUSED, "paused", now - 52 * minute), Triple(head.state, head.stateWord, head.sinceMillis))
+        assertEquals("Paused by the owner: laptop congested", head.headline)
+    }
+
+    @Test
+    fun anAgentWaitingOnItsReviewSaysSoWithTheTimeSinceItBegan() {
+        layout(listed = listOf("main"), background = listOf("w1", "w2"))
+        fill(
+            session("w1", state = "done").copy(waitingFor = "in review · round 1", waitingSince = now - 12 * minute),
+            session("w2", state = "done"),
+        )
+        val agents = vm.state.agents.shown.associateBy { it.title }
+        val w1 = agents.getValue("session w1")
+        assertEquals(Triple(AgentFacts.WAITING, "in review · round 1", now - 12 * minute), Triple(w1.state, w1.doing, w1.sinceMillis))
+        assertEquals(AgentFacts.DONE to "idle", agents.getValue("session w2").let { it.state to it.doing }, "an agent with nothing going on is idle")
     }
 
     @Test
@@ -167,6 +254,25 @@ class TaskPanelTest {
         sent.clear()
         vm.activateMember(byId.getValue("w3"))
         assertEquals(listOf<WindowCommand>(WindowCommand.ShowWaitingAgent("w3")), sent, "nothing is sent to the agent")
+    }
+
+    @Test
+    fun anAgentWhoseHiddenTabIsShownOffersToGoBack() = runNow {
+        windowState.updateConfig(
+            WindowConfig(
+                tabs = listOf(
+                    TabConfig("tab-1", "one", panes = listOf(pane("leaf-main"))),
+                    TabConfig("tab-bg", "agents", panes = listOf(pane("leaf-w1")), isBackground = true, shownWhileWaiting = true),
+                ),
+                activeTabId = "tab-bg",
+            ),
+        )
+        fill(session("w1"))
+        val line = vm.state.agents.shown.single()
+        assertEquals(MemberAction.BACK, line.action)
+        assertEquals("↵ back", line.hint)
+        vm.activateMember(line)
+        assertEquals(listOf<WindowCommand>(WindowCommand.LeaveShownTab("tab-bg")), sent, "the tab hides and the person is back where they were")
     }
 
     @Test
@@ -327,14 +433,14 @@ class TaskPanelTest {
             WindowEnvelope.AgentStory(
                 "solo",
                 turns = listOf(AgentTurn(now, "stop the tunnel", 30_000, reply = "stopped it"), AgentTurn(now - 3 * 24 * 60 * minute, "try it over frp", 31 * minute)),
-                uncommitted = 3, unpushed = 1, branch = "spike/remote", folder = "tunnel-repo",
+                uncommitted = 3, added = 120, removed = 40, untracked = 2, unpushed = 1, branch = "spike/remote", folder = "tunnel-repo",
             ),
         )
         val story = vm.state.story!!
         assertEquals(listOf("stop the tunnel" to "<1m", "try it over frp" to "31m"), story.turns.shown.map { it.prompt to it.took })
         assertEquals(5, story.turns.shown.first().time.length, "a turn from today shows its clock time")
         assertFalse(':' in story.turns.shown.last().time, "an older one shows its day")
-        assertEquals(listOf("on spike/remote", "3 uncommitted changes", "1 unpushed commit"), story.work)
+        assertEquals(listOf("on spike/remote", "3 files changed, +120 −40", "2 untracked", "1 unpushed commit"), story.work)
         assertEquals("stopped it" to "", story.turns.shown.first().reply to story.turns.shown.last().reply, "each ask shows the first line of its answer")
         assertEquals("tunnel-repo", story.folder, "the folder is where the conversation worked, as the server read it")
         assertTrue(vm.state.head!!.meta.startsWith("tunnel-repo"))

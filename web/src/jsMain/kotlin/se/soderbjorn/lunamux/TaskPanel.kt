@@ -3,14 +3,14 @@
  * task's main conversation. Its header says where the work is: the tab's name, the task's title in
  * full, where and since when, then the state and the headline the agents overview shows too. Under
  * it come four blocks: Plan (the step in hand and the bar), Background agents (the task's live
- * sessions: working, waiting on the person or idle), Activity (newest first, under day headings)
+ * sessions: working, needing the person, waiting on something they started, or idle), Activity (newest first, under day headings)
  * and Links. A list shows its first five entries and a "+ N more" line that opens the rest in
  * place. With no block to show it says how to set the panel up.
  *
  * ⌘I shows and hides the column in any tab (as does its ×). Beside a main conversation the choice
  * is kept with the other UI settings; elsewhere it holds for that tab only. An agent's line can be
  * focused: ↵ or a click jumps to the session, or shows the hidden tab of a background session as a
- * marked tab.
+ * marked tab; pressed again while that tab is shown, it goes back to where the person was.
  *
  * All state and behaviour live in [TaskPanelViewModel]; this file draws its state with DOM nodes
  * and text only (an agent's words are never parsed as HTML). Each block keeps its element and
@@ -62,6 +62,7 @@ internal class PanelParts {
     val title = span("tp-title")
     val about = div("tp-about")
     val state = div("tp-state")
+    val meta = div("tp-meta tp-meta-line")
     val status = div("tp-status")
     val scroll = div("tp-scroll")
     val blocks = HashMap<String, HTMLElement>()
@@ -74,11 +75,12 @@ internal class PanelParts {
         close.title = "Hide the task panel (⌘I)"
         close.addEventListener("click", { _: Event -> toggleTaskPanel() })
         val head = div("tp-head")
+        // The shortcut sits faint just before the ×, on the title's first line.
         val side = div("tp-side")
-        side.appendChild(close)
         side.appendChild(span("tp-hint", "⌘I"))
+        side.appendChild(close)
         val main = div("tp-main")
-        listOf(title, about, state, status).forEach { main.appendChild(it) }
+        listOf(title, about, state, meta, status).forEach { main.appendChild(it) }
         head.appendChild(main)
         head.appendChild(side)
         root.appendChild(head)
@@ -154,10 +156,16 @@ private data class TpMuted(val text: String) : TpLine { override val key get() =
 private data class TpAgent(val line: AgentLine) : TpLine { override val key get() = "a:${line.recordId}" }
 private data class TpMore(val section: Section, val more: Int) : TpLine { override val key get() = "more:${more > 0}" }
 private data class TpProgress(val view: TaskPanelViewModel.ProgressView) : TpLine { override val key get() = "progress" }
-private data class TpLink(val index: Int, val link: LinkRow) : TpLine { override val key get() = "l:$index" }
+/** One link; [kinds] says whether any link in the list has a kind of its own, so the kind column is drawn. */
+private data class TpLink(val index: Int, val link: LinkRow, val kinds: Boolean) : TpLine { override val key get() = "l:$index:$kinds" }
 private data class TpActivity(val index: Int, val item: TaskPanelViewModel.ActivityRow) : TpLine { override val key get() = "t:$index" }
 private data class TpTurn(val index: Int, val turn: TaskPanelViewModel.TurnRow) : TpLine { override val key get() = "u:$index" }
 private data class TpWork(val text: String) : TpLine { override val key get() = "w:$text" }
+
+/** One worktree in a task's Changed block: its name and branch, then the work left in it. */
+private data class TpTree(val line: TaskPanelViewModel.WorktreeLine) : TpLine {
+    override val key get() = "t:${line.name}/${line.branch}/${line.work}"
+}
 private data class TpDay(val day: String) : TpLine { override val key get() = "d:$day" }
 
 /** Draws [state] into the column, or takes the column out of the page when the panel is not visible. */
@@ -174,6 +182,11 @@ private fun renderTaskPanel(state: TaskPanelViewModel.State) {
     if (story?.key != lastStoryKey) {
         lastStoryKey = story?.key
         if (story != null) GlobalScope.launch { taskPanel.readStory() }
+    }
+    val work = state.work
+    if (work?.key != lastWorkKey) {
+        lastWorkKey = work?.key
+        if (work != null) GlobalScope.launch { taskPanel.readTaskWork() }
     }
     val setup = state.setup
     if (setup != null) {
@@ -194,6 +207,7 @@ private fun renderTaskPanel(state: TaskPanelViewModel.State) {
     val wanted = listOfNotNull(
         state.progress?.let { p.block("Plan") to progressLines(it) },
         (p.block("Background agents") to agentLines(state.agents)).takeIf { state.agents.total > 0 },
+        work?.worktrees?.takeIf { it.isNotEmpty() }?.let { trees -> p.block("Changed") to (listOf<TpLine>(TpTitle("Changed")) + trees.map(::TpTree)) },
         (p.block("Activity") to activityLines(state.activity)).takeIf { state.activity.total > 0 },
         (p.block("Links") to linkLines(state.links)).takeIf { state.links.total > 0 },
     )
@@ -274,6 +288,9 @@ private fun appendInline(host: HTMLElement, text: String) {
 /** The story key the server was last asked about, so one state asks once. */
 private var lastStoryKey: String? = null
 
+/** The [TaskPanelViewModel.TaskWorkView.key] the server was last asked about, so it is asked once per change. */
+private var lastWorkKey: String? = null
+
 private fun turnLines(block: TaskPanelViewModel.Block<TaskPanelViewModel.TurnRow>): List<TpLine> = listOf<TpLine>(TpTitle("You asked")) +
     block.shown.mapIndexed { i, t -> TpTurn(i, t) } + listOfNotNull(moreLine(Section.TURNS, block))
 
@@ -284,9 +301,9 @@ private fun show(el: HTMLElement, text: String?) {
 }
 
 /**
- * The header: the name, the title under it when the tab's name led, then one line of facts (state
- * mark, word and age, where, since when) and, when an agent set one, its status. The state line is rebuilt only when its words change,
- * so a working glyph keeps turning.
+ * The header: the name, what the work is now under it, the state (mark, verdict, age), then where
+ * and when it started with the conversations' counts under that, and, when an agent set one, its
+ * status. The state line is rebuilt only when its words change, so a working glyph keeps turning.
  */
 private fun renderHead(p: PanelParts, state: TaskPanelViewModel.State) {
     val head = state.head
@@ -295,23 +312,23 @@ private fun renderHead(p: PanelParts, state: TaskPanelViewModel.State) {
     show(p.status, head?.headline)
     // That the line is the agent's own status, drawn as a small label over it (see `.tp-status` in styles.css).
     p.status.setAttribute("data-label", head?.headlineLabel.orEmpty())
-    val stateKey = head?.let { "${it.state}/${it.stateWord}/${it.sinceMillis}/${it.meta}" }.orEmpty()
+    val metaKey = head?.let { "${it.meta}/${it.breakdown}" }.orEmpty()
+    if (p.meta.getAttribute("data-key") != metaKey) {
+        p.meta.setAttribute("data-key", metaKey)
+        p.meta.textContent = ""
+        head?.meta?.takeIf { it.isNotEmpty() }?.let { p.meta.appendChild(div("tp-meta-where").also { d -> d.textContent = it }) }
+        head?.breakdown?.takeIf { it.isNotEmpty() }?.let { p.meta.appendChild(div("tp-meta-counts").also { d -> d.textContent = it }) }
+    }
+    p.meta.style.display = if (p.meta.firstChild == null) "none" else ""
+    val stateKey = head?.let { "${it.state}/${it.stateWord}/${it.sinceMillis}" }.orEmpty()
     if (p.state.getAttribute("data-key") != stateKey) {
         p.state.setAttribute("data-key", stateKey)
         p.state.textContent = ""
         p.state.className = "tp-state tp-state-${head?.state.orEmpty()}"
         if (head != null) {
-            val mark = div("tp-glyph")
-            when (head.state) {
-                AgentFacts.NEEDS_YOU -> mark.textContent = "◆"
-                AgentFacts.WORKING -> mark.appendChild(spinner())
-                else -> mark.textContent = "○"
-            }
-            p.state.appendChild(mark)
+            p.state.appendChild(stateGlyph(head.state))
             p.state.appendChild(span("tp-state-word", head.stateWord))
             p.state.appendChild(ageSpan("tp-agent-age", head.sinceMillis))
-            // Where and since when, on the same line: the header's facts read as one sentence.
-            if (head.meta.isNotEmpty()) p.state.appendChild(span("tp-meta", "· ${head.meta}"))
         }
     }
     p.state.style.display = if (head == null) "none" else ""
@@ -327,7 +344,7 @@ private fun progressLines(progress: TaskPanelViewModel.ProgressView): List<TpLin
     else listOf(TpTitle("Plan"), TpProgress(progress))
 
 private fun linkLines(block: TaskPanelViewModel.Block<LinkRow>): List<TpLine> = listOf<TpLine>(TpTitle("Links")) +
-    block.shown.mapIndexed { i, l -> TpLink(i, l) } +
+    block.shown.any { it.kind != TaskLink.DEFAULT_KIND }.let { kinds -> block.shown.mapIndexed { i, l -> TpLink(i, l, kinds) } } +
     listOfNotNull(moreLine(Section.LINKS, block))
 
 /** The activity entries, each day's under a heading of its own. */
@@ -341,9 +358,16 @@ private fun buildLine(line: TpLine): HTMLElement = when (line) {
     is TpAgent -> buildAgent(line.line)
     is TpMore -> buildMore(line)
     is TpProgress -> buildProgress(line.view)
-    is TpLink -> buildLink(line.link)
+    is TpLink -> buildLink(line.link, line.kinds)
     is TpDay -> div("tp-day").also { it.textContent = line.day }
     is TpWork -> div("tp-muted").also { it.textContent = line.text }
+    is TpTree -> div("tp-tree").also { row ->
+        row.appendChild(div("tp-tree-name").also { name ->
+            name.textContent = line.line.name
+            line.line.branch?.let { name.appendChild(span("tp-tree-branch", " on $it")) }
+        })
+        row.appendChild(div("tp-muted").also { it.textContent = line.line.work })
+    }
     is TpTurn -> div("tp-tl").also {
         it.appendChild(span("tp-tl-age", line.turn.time))
         val both = div("tp-turn")
@@ -391,20 +415,35 @@ private fun buildMore(line: TpMore): HTMLElement {
 }
 
 /**
- * One agent: the state mark (spinner while it works, ◆ while it waits, ○ while idle), its title
+ * The mark of a state, the same in the header and on every agent: the spinner while it works, ◆
+ * while it needs the person, ◐ while it waits at its prompt on something it started, ‖ while its
+ * task is paused, ○ while idle.
+ * Colour comes from the `tp-state-*` class around it; the glyph alone tells the states apart.
+ *
+ * @param state the state the screens draw ([AgentFacts.shownState]).
+ * @return the mark's element.
+ */
+private fun stateGlyph(state: String): HTMLElement {
+    val mark = div("tp-glyph")
+    when (state) {
+        AgentFacts.NEEDS_YOU -> mark.textContent = "◆"
+        AgentFacts.WORKING -> mark.appendChild(spinner())
+        AgentFacts.WAITING -> mark.textContent = "◐"
+        AgentFacts.PAUSED -> mark.textContent = "‖"
+        else -> mark.textContent = "○"
+    }
+    return mark
+}
+
+/**
+ * One agent: the state mark (see [stateGlyph]), its title
  * (two lines at most) with its age, and under it one activity line that never wraps, so the row is
  * as tall whatever the agent does.
  */
 @OptIn(DelicateCoroutinesApi::class)
 internal fun buildAgent(line: AgentLine): HTMLElement {
     val row = div("tp-agent tp-state-${line.state}")
-    val mark = div("tp-glyph")
-    when (line.state) {
-        AgentFacts.NEEDS_YOU -> mark.textContent = "◆"
-        AgentFacts.WORKING -> mark.appendChild(spinner())
-        else -> mark.textContent = "○"
-    }
-    row.appendChild(mark)
+    row.appendChild(stateGlyph(line.state))
     val text = div("tp-agent-text")
     val top = div("tp-agent-top")
     top.appendChild(span("tp-agent-title", line.title))
@@ -417,6 +456,8 @@ internal fun buildAgent(line: AgentLine): HTMLElement {
     row.appendChild(text)
     if (line.action != MemberAction.NONE) {
         row.classList.add("tp-agent-active")
+        // The agent whose tab is shown for now: marked, with "↵ back" always in view.
+        if (line.action == MemberAction.BACK) row.classList.add("tp-agent-back")
         row.setAttribute("tabindex", "0")
         row.setAttribute("role", "button")
         row.addEventListener("click", { _: Event -> GlobalScope.launch { taskPanel.activateMember(line) } })
@@ -487,11 +528,16 @@ private fun buildStep(state: String, text: String): HTMLElement {
 /**
  * A link row: its kind, its words in the accent colour with ↗ (underlined on hover) and its clock
  * time. The address passes [TaskPanelViewModel.linkTarget] when the row is pressed.
+ *
+ * @param link the link.
+ * @param kinds whether any link in the list has a kind of its own: without one the kind column is
+ *   left out, so the words start at the block's edge instead of after an empty column.
+ * @return the row.
  */
-private fun buildLink(link: LinkRow): HTMLElement {
-    val row = div("tp-link-row")
+private fun buildLink(link: LinkRow, kinds: Boolean): HTMLElement {
+    val row = div("tp-link-row" + if (kinds) "" else " tp-link-row-plain")
     // The default kind says nothing; only a kind the writer chose is worth its column.
-    row.appendChild(span("tp-kind", link.kind.takeIf { it != TaskLink.DEFAULT_KIND }.orEmpty()))
+    if (kinds) row.appendChild(span("tp-kind", link.kind.takeIf { it != TaskLink.DEFAULT_KIND }.orEmpty()))
     row.appendChild(span("tp-link-title", link.title).also { it.appendChild(span("tp-link-arrow", " ↗")) })
     row.appendChild(span("tp-link-time", link.time))
     row.setAttribute("role", "link")
@@ -512,21 +558,38 @@ private fun buildLink(link: LinkRow): HTMLElement {
 /** The words on the tag over a background agent's tab that is shown for now. */
 internal const val WAITING_TAB_TAG_TEXT = "background agent · hides when you leave"
 
+/** The button at the end of that tag, which leaves the tab ([WindowCommand.LeaveShownTab]). */
+internal const val WAITING_TAB_BACK_TEXT = "← back"
+
 private var waitingTabTag: HTMLElement? = null
+
+/** The shown tab the tag's button leaves; read on the click, so a tag kept across redraws acts on the tab in front. */
+private var waitingTabId: String? = null
 
 /**
  * Show or remove the tag that marks the active tab as a background agent's tab shown for now. The
- * tag floats over the top edge of the window body, centred, and says the tab hides when the person leaves it.
+ * tag floats over the top edge of the window body, centred, says the tab hides when the person
+ * leaves it, and ends in a "← back" button that leaves it now, for the tab they came from.
+ *
+ * @param shownTabId the active tab when it is shown for its agent, else null.
  */
-internal fun updateWaitingTabTag(shown: Boolean) {
+internal fun updateWaitingTabTag(shownTabId: String?) {
     val body = document.querySelector(".${AppFrameClassNames.BODY}") as? HTMLElement
-    if (!shown || body == null) {
+    waitingTabId = shownTabId
+    if (shownTabId == null || body == null) {
         waitingTabTag?.remove()
         waitingTabTag = null
         return
     }
     val tag = waitingTabTag?.takeIf { it.isConnected } ?: div("waiting-tab-tag").also {
-        it.textContent = WAITING_TAB_TAG_TEXT
+        it.appendChild(span("waiting-tab-tag-text", WAITING_TAB_TAG_TEXT))
+        it.appendChild(document.createTextNode(" · "))
+        val back = document.createElement("button") as HTMLElement
+        back.className = "waiting-tab-back"
+        back.textContent = WAITING_TAB_BACK_TEXT
+        back.title = "Hide this tab and go back to where you were"
+        back.addEventListener("click", { _: Event -> waitingTabId?.let { id -> launchCmd(WindowCommand.LeaveShownTab(id)) } })
+        it.appendChild(back)
         it.setAttribute("role", "status")
         document.body?.appendChild(it)
         waitingTabTag = it

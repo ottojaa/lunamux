@@ -820,7 +820,7 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
             // Off the socket's loop: the query reads SQLite and may run git for resume notes.
             runCatching {
                 val matches = withContext(Dispatchers.IO) {
-                    AgentSessionSearch.search(ctx.settingsRepo, ctx.agentTracker, cmd.query, ctx.taskIndex)
+                    AgentSessionSearch.search(ctx.settingsRepo, ctx.agentTracker, cmd.query, ctx.taskIndex, WindowState.listedTabNames(), ::paneToResumeIn)
                 }
                 ctx.send(WindowEnvelope.AgentSessionMatches(cmd.query, matches))
             }.onFailure {
@@ -835,6 +835,13 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
                     withContext(Dispatchers.IO) { AgentSessionSearch.story(cmd.recordId, ctx.agentTracker) }
                 }?.let { ctx.send(it) }
             }.onFailure { log.warn("Reading the story of agent session {} failed", cmd.recordId, it) }
+        }
+        is WindowCommand.ReadTaskWork -> ctx.scope.launch {
+            runCatching {
+                withTimeoutOrNull(INSPECT_TIMEOUT_MS) {
+                    withContext(Dispatchers.IO) { AgentSessionSearch.taskWork(cmd.taskId, ctx.settingsRepo, ctx.agentTracker) }
+                }?.let { ctx.send(it) }
+            }.onFailure { log.warn("Reading the work of task {} failed", cmd.taskId, it) }
         }
         is WindowCommand.InspectAgentSession -> ctx.scope.launch {
             // A live peek asks again every couple of seconds; while git is still busy on the
@@ -867,6 +874,7 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
             val leaf = live?.leafId
             if (leaf != null) WindowState.showWaitingAgent(leaf)
         }
+        is WindowCommand.LeaveShownTab -> WindowState.leaveShownTab(cmd.tabId)
         is WindowCommand.RenameTab -> WindowState.renameTab(cmd.tabId, cmd.title)
         is WindowCommand.MoveTab -> WindowState.moveTab(cmd.tabId, cmd.targetTabId, cmd.before)
         is WindowCommand.SetTabHidden -> WindowState.setTabHidden(cmd.tabId, cmd.hidden)

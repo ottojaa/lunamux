@@ -229,6 +229,15 @@ class WindowStateRepository {
         _agentStory.value = story
     }
 
+    /** The server's latest answer about the work left in one task's worktrees, for the task panel. */
+    private val _taskWork = MutableStateFlow<WindowEnvelope.TaskWork?>(null)
+    val taskWork: StateFlow<WindowEnvelope.TaskWork?> = _taskWork.asStateFlow()
+
+    /** Remember the work the server found in one task's worktrees. */
+    fun updateTaskWork(work: WindowEnvelope.TaskWork) {
+        _taskWork.value = work
+    }
+
     /** Remember the server's inspection of one agent session. */
     fun updateAgentInspection(inspection: WindowEnvelope.AgentSessionInspection) {
         _agentInspection.value = inspection

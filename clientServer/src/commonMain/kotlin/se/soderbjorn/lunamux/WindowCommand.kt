@@ -309,6 +309,14 @@ sealed class WindowCommand {
     data class ReadAgentStory(val recordId: String) : WindowCommand()
 
     /**
+     * Ask for the work left in the folders a task's conversations worked in, one entry per git
+     * worktree. The task panel sends it when it shows a task; the answer is [WindowEnvelope.TaskWork].
+     */
+    @Serializable
+    @SerialName("readTaskWork")
+    data class ReadTaskWork(val taskId: String) : WindowCommand()
+
+    /**
      * Add or remove Lunamux's hook entries in the user's Claude Code settings file. Sent when the
      * App Settings "Connect Claude Code" row is pressed.
      */
@@ -329,6 +337,17 @@ sealed class WindowCommand {
     @Serializable
     @SerialName("showWaitingAgent")
     data class ShowWaitingAgent(val recordId: String) : WindowCommand()
+
+    /**
+     * Leave a background tab shown for its agent ([ShowWaitingAgent]): it hides again and the person
+     * is back on the tab, and in the world, they came from. Sent by the task panel's agent row and the
+     * tag over the shown tab.
+     *
+     * @param tabId the shown tab; any other tab is left alone.
+     */
+    @Serializable
+    @SerialName("leaveShownTab")
+    data class LeaveShownTab(val tabId: String) : WindowCommand()
 
     /**
      * Change the display title of a tab in the tab bar.

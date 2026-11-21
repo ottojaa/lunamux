@@ -46,6 +46,8 @@ data class PaneSnapshot(
     val alive: Boolean = true,
     val customName: String? = null,
     val background: Boolean = false,
+    /** The screen as styled runs per row, for the overview's peek; null when the session has no styled grid. */
+    val screenRows: () -> List<List<se.soderbjorn.lunamux.pty.StyledRun>>? = { null },
     val screenText: () -> String? = { null },
 )
 
@@ -66,6 +68,7 @@ class AgentSessionTracker(
     private val onEnded: (AgentSessionRecord) -> Unit = {},
     private val isUnder: (Long, Long) -> Boolean = ::processIsUnder,
     private val isAlive: (Long) -> Boolean = { pid -> ProcessHandle.of(pid).map { it.isAlive }.orElse(false) },
+    private val shellsUnder: (Long) -> BackgroundShells = ::backgroundShellsOf,
 ) {
     private val log = LoggerFactory.getLogger(AgentSessionTracker::class.java)
     private val lock = Any()
@@ -106,6 +109,9 @@ class AgentSessionTracker(
      */
     private val tailReads = ConcurrentHashMap<String, TailRead>()
 
+    /** The newest Claude Code recap of each open conversation's transcript, the row's description. */
+    private val recaps = TranscriptRecaps()
+
     /**
      * Git facts per folder, filled by [warmGit] before the lock is taken so a slow repository never
      * holds up closing panes; [open] only reads it.
@@ -139,6 +145,19 @@ class AgentSessionTracker(
      */
     private val statuses = HashMap<String, String>()
 
+    /**
+     * What each open conversation waits for once its turn has ended (`set_status` with `keep`), by
+     * record id. Memory only. Unlike [statuses] a prompt does not clear it: only its writer does,
+     * or the conversation's end.
+     */
+    private val kept = HashMap<String, KeptStatus>()
+
+    /**
+     * The background shells each open conversation left running at its prompt, by record id, as
+     * the last poll found them. Only conversations at their prompt (done) have an entry.
+     */
+    private val shells = HashMap<String, BackgroundShells>()
+
     /** The side-panel sections agents wrote, by conversation; saved, so they survive a restart and a resume. */
     private val sections = PanelSectionStore(repo, clock)
 
@@ -164,7 +183,33 @@ class AgentSessionTracker(
             panes.filter { it.alive && it.agent != null && it.state != null && openFor(it.terminalSessionId) == null }
         }
         toOpen.forEach { warmGit(it.cwd) }
-        applyPoll(panes, interruptsOfHookFed())
+        refreshRecaps()
+        applyPoll(panes, interruptsOfHookFed(), shellsOfIdle())
+    }
+
+    /**
+     * Read the recaps the open Claude conversations' transcripts gained since the last poll, outside
+     * the lock; [applyPoll] then publishes them. A closed row is one line with no description, so
+     * closed conversations are not read.
+     */
+    private fun refreshRecaps() {
+        val paths = synchronized(lock) {
+            openRecords().filter { it.agent == CLAUDE }.mapNotNullTo(HashSet()) { it.transcriptPath }
+        }
+        recaps.keepOnly(paths)
+        paths.forEach { runCatching { recaps.refresh(it) } }
+    }
+
+    /**
+     * The background shells under the `claude` of each hook-fed conversation that sits at its
+     * prompt, read from the process tree outside the lock. A conversation whose process is not
+     * known is left out; [applyPoll] reads its screen's footer instead.
+     */
+    private fun shellsOfIdle(): Map<String, BackgroundShells> {
+        val idle = synchronized(lock) {
+            openRecords().filter { it.state == DONE }.mapNotNull { r -> pids[r.id]?.let { r.id to it } }
+        }
+        return idle.associate { (id, pid) -> id to runCatching { shellsUnder(pid) }.getOrDefault(BackgroundShells.NONE) }
     }
 
     /**
@@ -189,7 +234,11 @@ class AgentSessionTracker(
         return found
     }
 
-    private fun applyPoll(panes: List<PaneSnapshot>, interrupts: Map<String, Long>) = synchronized(lock) {
+    private fun applyPoll(
+        panes: List<PaneSnapshot>,
+        interrupts: Map<String, Long>,
+        idleShells: Map<String, BackgroundShells> = emptyMap(),
+    ) = synchronized(lock) {
         val live = panes.associateBy { it.terminalSessionId }
         endSilentHelpers()
         for (r in openRecords()) {
@@ -264,6 +313,7 @@ class AgentSessionTracker(
                     }
                 }
                 if (rec.state == WORKING && pane.state == "working") noteWork(rec.id)
+                noteShells(rec, idleShells[rec.id], pane)
                 continue
             }
             val state = when (pane.state) {
@@ -278,8 +328,34 @@ class AgentSessionTracker(
                 next = next.copy(state = state, stateSince = clock(), nowLine = null, question = null)
             }
             if (next != rec) put(next)
+            noteShells(next, null, pane)
         }
         publish()
+    }
+
+    /**
+     * Keeps what [rec] has left running in the background while it sits at its prompt: [found] when
+     * the process tree was read, else what the footer of its screen says ("1 shell"). A
+     * conversation that works or asks has no entry, so a shell of its own turn never reads as
+     * background work.
+     *
+     * Called by [applyPoll] for every open record on every poll.
+     *
+     * @param rec the record as the poll left it.
+     * @param found what the process tree showed, or null when its process is not known.
+     * @param pane the record's pane, whose screen is read when [found] is null.
+     */
+    private fun noteShells(rec: AgentSessionRecord, found: BackgroundShells?, pane: PaneSnapshot) {
+        if (rec.state != DONE) {
+            shells.remove(rec.id)
+            return
+        }
+        val seen = found ?: run {
+            val count = if (rec.agent == CLAUDE) footerShellsOf(pane.screenText()) else 0
+            // The screen does not say when a shell began: it counts from the first poll that saw it.
+            BackgroundShells(count, if (count > 0) shells[rec.id]?.since ?: clock() else null)
+        }
+        if (seen.count > 0) shells[rec.id] = seen else shells.remove(rec.id)
     }
 
     /**
@@ -324,6 +400,12 @@ class AgentSessionTracker(
         val isHelper = rec.id in helpers
         val now = clock()
         fun set(state: String, nowLine: String? = rec.nowLine, question: String? = null) {
+            // Every state a hook moves a conversation to is logged: a row in the wrong state is
+            // diagnosed from the order its events arrived in, which nothing else keeps.
+            if (state != rec.state) {
+                log.debug("Agent {} ({}): {} -> {} on {}{}", rec.id, rec.agentSessionId, rec.state, state, name,
+                    event.str("notification_type")?.let { " ($it)" } ?: event.str("tool_name")?.let { " ($it)" } ?: "")
+            }
             rec = rec.copy(
                 state = state,
                 stateSince = if (state != rec.state) now else rec.stateSince,
@@ -365,6 +447,15 @@ class AgentSessionTracker(
                 val message = event.str("message")
                 val type = event.str("notification_type")
                 if (!isPromptNotification(type, message)) return@synchronized
+                // A prompt is always about a tool call in flight: its PreToolUse comes first, and
+                // Claude Code sends the notification only once the prompt has shown for a few
+                // seconds. One that arrives after the call finished or the turn ended (a call
+                // approved in that time, an auto-mode approval) prompts for nothing, and would
+                // otherwise leave the conversation "needs you" until the next prompt.
+                if (!toolInFlight.containsKey(rec.id)) {
+                    log.debug("Agent {} ({}): {} notification with no tool call in flight ignored", rec.id, rec.agentSessionId, type ?: "untyped")
+                    return@synchronized
+                }
                 // The hook text is generic ("Claude needs your permission"). The tool call the prompt
                 // is about arrived with the PreToolUse just before, so say what is being asked instead.
                 set(NEEDS_YOU, nowLine = null, question = pendingQuestionOf(toolInFlight[rec.id], message, type)?.take(QUESTION_MAX))
@@ -471,11 +562,36 @@ class AgentSessionTracker(
      * by [conversationId] (the agent's own session id, which also reaches a helper) or, without
      * one, taken to be the conversation of pane [terminalSessionId]. Returns the text kept, cut to
      * [STATUS_MAX], or null when it was cleared; throws when no open conversation is found.
+     *
+     * With [keep] it writes what the conversation waits for once its turn has ended instead: that
+     * line is not cleared by the next prompt, only by a blank [text] with [keep] or by the
+     * conversation's end, and [needsYou] says that what it waits for is the person. The same words
+     * written again keep their time, so the row's age stays the time spent waiting.
+     *
+     * Called for the `set_status` tool, by the conversation itself or by its task's lead.
+     *
+     * @param terminalSessionId the pane, when [conversationId] is not given.
+     * @param conversationId the agent's own session id.
+     * @param text the line; blank clears it.
+     * @param keep whether the line outlives the turn.
+     * @param needsYou with [keep]: whether the conversation waits for the person.
+     * @return the text kept, or null when it was cleared.
      */
-    fun setStatus(terminalSessionId: String?, conversationId: String?, text: String): String? = synchronized(lock) {
+    fun setStatus(
+        terminalSessionId: String?,
+        conversationId: String?,
+        text: String,
+        keep: Boolean = false,
+        needsYou: Boolean = false,
+    ): String? = synchronized(lock) {
         val rec = conversationOf(terminalSessionId, conversationId)
         val clean = text.replace(Regex("\\s*[\\r\\n]+\\s*"), " ").trim().take(STATUS_MAX).trim().ifEmpty { null }
-        if (clean == null) statuses.remove(rec.id) else statuses[rec.id] = clean
+        if (keep) {
+            val since = kept[rec.id]?.takeIf { it.text == clean }?.since ?: clock()
+            if (clean == null) kept.remove(rec.id) else kept[rec.id] = KeptStatus(clean, needsYou, since)
+        } else {
+            if (clean == null) statuses.remove(rec.id) else statuses[rec.id] = clean
+        }
         publish()
         clean
     }
@@ -614,6 +730,8 @@ class AgentSessionTracker(
         lastHookAt.remove(recordId)
         pids.remove(recordId)
         statuses.remove(recordId)
+        kept.remove(recordId)
+        shells.remove(recordId)
         tailReads.remove(recordId)
         toolInFlight.remove(recordId)
         idlePolls.remove(recordId)
@@ -718,7 +836,16 @@ class AgentSessionTracker(
      * several records; its summary is the open record's, else the newest one's.
      */
     private fun publish() {
-        _summaries.value = conversationRecords().map { it.toSummary().copy(lastActivityAt = lastActivity[it.id], status = statuses[it.id], sections = sections.of(it.conversationId)) }
+        _summaries.value = conversationRecords().map {
+            val wait = kept[it.id]
+            val bg = shells[it.id]
+            it.toSummary().copy(
+                recap = recaps.known(it.transcriptPath?.takeIf { _ -> it.state != ENDED }),
+                lastActivityAt = lastActivity[it.id], status = statuses[it.id], sections = sections.of(it.conversationId),
+                waitingFor = wait?.text, waitingForYou = wait?.needsYou == true, waitingSince = wait?.since,
+                backgroundShells = bg?.count ?: 0, backgroundSince = bg?.since,
+            )
+        }
     }
 
     /** One record per conversation: the open one (the newest if several), else the newest ended. */
@@ -800,6 +927,61 @@ internal fun processIsUnder(pid: Long, ancestor: Long): Boolean {
 
 private const val MAX_PROCESS_DEPTH = 32
 
+/** What a conversation waits for once its turn has ended (`set_status` with `keep`), and since when. */
+internal data class KeptStatus(val text: String, val needsYou: Boolean, val since: Long)
+
+/**
+ * The background shells a conversation left running at its prompt: how many, and when the oldest
+ * began (null when not known). Read by [backgroundShellsOf] or from the screen's footer.
+ */
+data class BackgroundShells(val count: Int, val since: Long?) {
+    companion object {
+        /** No shell running. */
+        val NONE = BackgroundShells(0, null)
+    }
+}
+
+/**
+ * The part of the command line Claude Code gives every shell it starts for its Bash tool (it
+ * sources a snapshot of the person's shell first), which tells such a shell from anything else the
+ * `claude` process runs.
+ */
+internal const val CLAUDE_SHELL_MARK = "/shell-snapshots/snapshot-"
+
+/**
+ * The shells Claude Code started that still run directly under the `claude` process [pid].
+ * Called for a conversation that sits at its prompt, where no shell of a turn is left, so every one
+ * found was started in the background.
+ *
+ * @param pid the process id of `claude`, as its hooks report it.
+ * @return how many there are and when the oldest began; none when the process is gone.
+ */
+internal fun backgroundShellsOf(pid: Long): BackgroundShells {
+    val found = ProcessHandle.of(pid).map { claude ->
+        claude.children().filter { it.info().commandLine().orElse("").contains(CLAUDE_SHELL_MARK) }.toList()
+    }.orElse(emptyList())
+    if (found.isEmpty()) return BackgroundShells.NONE
+    return BackgroundShells(found.size, found.mapNotNull { it.info().startInstant().orElse(null)?.toEpochMilli() }.minOrNull())
+}
+
+/** Claude Code's footer count of background shells: "· 1 shell ·", "2 shells", "1 background shell". */
+private val FOOTER_SHELLS = Regex("""(?<![\w-])(\d+) (?:background )?shells?\b""")
+
+/** How many of the screen's last non-blank lines count as its footer. */
+private const val FOOTER_LINES = 2
+
+/**
+ * How many background shells Claude Code's footer counts, read from the last lines of [screen].
+ * Used for a conversation whose process is not known.
+ *
+ * @param screen the pane's screen text, or null.
+ * @return the count, 0 when the footer names none.
+ */
+internal fun footerShellsOf(screen: String?): Int {
+    val footer = screen?.lines()?.map { it.trimEnd() }?.filter { it.isNotEmpty() }?.takeLast(FOOTER_LINES) ?: return 0
+    return footer.firstNotNullOfOrNull { line -> FOOTER_SHELLS.find(line)?.groupValues?.get(1)?.toIntOrNull() } ?: 0
+}
+
 /** One read of a hook-fed record's transcript tail, kept so the file is read again only when it changes. */
 internal data class TailRead(val size: Long, val written: Long, val interruptedAt: Long?)
 
@@ -843,22 +1025,11 @@ private const val FIRST_PROMPT_MAX = 160
 /** The first line of what the user first asked a session, cut for a status cell. */
 internal fun firstPromptLine(prompt: String): String? =
     prompt.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }?.take(FIRST_PROMPT_MAX)
-private const val LAST_SAID_MAX = 240
-
 /**
- * The part of an assistant reply worth showing as "what it last said": the first line of the last
- * paragraph, cut to [LAST_SAID_MAX] characters at the end of a word, with "…" when it was cut.
+ * What a finished reply comes to, kept as the session's "last said": [AgentSessionText.saidOf] of the
+ * whole reply, empty when nothing in it is worth showing. Called when a turn ends (the Stop hook).
  */
-internal fun lastSaidOf(message: String): String {
-    val paragraphs = message.trim().split("\n\n").asReversed()
-    val line = paragraphs.firstNotNullOfOrNull { p ->
-        p.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() && !AgentSessionText.isFenceLine(it) }
-    }
-    val text = line ?: ""
-    if (text.length <= LAST_SAID_MAX) return text
-    val head = text.take(LAST_SAID_MAX)
-    return head.substring(0, head.lastIndexOf(' ').takeIf { it > LAST_SAID_MAX / 2 } ?: head.length).trimEnd() + "…"
-}
+internal fun lastSaidOf(message: String): String = AgentSessionText.saidOf(message).orEmpty()
 
 private const val SCREEN_LINES = 200
 private val TICKET_KEY = Regex("""\b[A-Z][A-Z0-9]+-\d+\b""")
@@ -1026,6 +1197,7 @@ internal fun livePaneSnapshot(id: String, states: Map<String, String?> = emptyMa
         state = states[id],
         alive = session.isProcessAlive(),
         screenText = { session.screenText() },
+        screenRows = { session.screenRows() },
         background = WindowState.isBackgroundSession(id),
     )
 }
