@@ -120,6 +120,11 @@ SELECT * FROM agent_sessions WHERE id = ?;
 selectAgentSessionsByIds:
 SELECT * FROM agent_sessions WHERE id IN :ids;
 
+-- Every pane id a record remembers, closed rows included: a restart must not mint one of them
+-- again for a new pane, or the old row would read as that pane's history.
+selectAllAgentSessionLeafIds:
+SELECT DISTINCT leaf_id FROM agent_sessions WHERE leaf_id IS NOT NULL;
+
 selectOpenAgentSessions:
 SELECT * FROM agent_sessions WHERE state != 'ended';
 

@@ -83,7 +83,7 @@ internal fun Route.adminRoutes(
         // hook flushes again on exit (idempotent), but waiting for it
         // would mean returning 200 before the data is durable.
         runCatching {
-            settingsRepo.saveWindowConfig(WindowState.config.value.withBlankSessionIds())
+            settingsRepo.saveWindowConfig(WindowState.forSaving(WindowState.config.value))
             scrollbackSaver.saveAll(force = true)
         }.onFailure {
             LOG.error("Final flush failed during /admin/shutdown", it)

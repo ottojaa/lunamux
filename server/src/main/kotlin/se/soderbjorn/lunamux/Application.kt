@@ -101,8 +101,14 @@ fun main() {
         ?: SERVER_TLS_PORT
     AgentEvents.port = port
     val searchIndexer = AgentSearchIndexer(repo)
-    val agentTracker = AgentSessionTracker(repo, onEnded = searchIndexer::indexEnded).also { it.start() }
+    val agentTracker = AgentSessionTracker(repo, onEnded = searchIndexer::indexEnded, inTab = { WindowState.paneInVisibleTab() }).also { it.start() }
     searchIndexer.runningIn = agentTracker::hasUnidentifiedClaudeIn
+    // A shown background tab closes when the last agent in it ends.
+    CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
+        agentTracker.summaries.collect { rows ->
+            WindowState.onLiveLeaves(rows.filter { it.ended == null }.mapNotNullTo(HashSet()) { it.leafId })
+        }
+    }
     val claudeHooks = ClaudeHooks().also { it.upgrade() }
     // Conversations from the last month that have no search text yet get theirs now.
     searchIndexer.backfill()
@@ -152,7 +158,7 @@ fun main() {
         // changes that landed inside the debounce window.
         runCatching {
             runBlocking {
-                repo.saveWindowConfig(WindowState.config.value.withBlankSessionIds())
+                repo.saveWindowConfig(WindowState.forSaving(WindowState.config.value))
                 scrollbackSaver.saveAll(force = true)
             }
         }

@@ -223,6 +223,49 @@ private fun WindowConfig.withoutWebBrowserPanes(): WindowConfig {
 }
 
 /**
+ * Return a copy of this config without the background tabs nobody has opened, for clients that
+ * have no agents overview to open them from (a phone). The tab the person was sent to with
+ * [WindowConfig.shownTabId] stays. The legacy `tabs` mirror is filtered too.
+ *
+ * @return the config unchanged when no unshown background tab exists.
+ * @see configForClient
+ */
+internal fun WindowConfig.withoutUnshownBackground(): WindowConfig {
+    fun strip(tabs: List<TabConfig>): List<TabConfig> = tabs.filter { !it.isBackground || it.id == shownTabId }
+    if (tabs.all { it.isVisibleIn(this) } && worlds.all { w -> w.tabs.all { it.isVisibleIn(this) } }) return this
+    return copy(tabs = strip(tabs), worlds = worlds.map { it.copy(tabs = strip(it.tabs)) })
+}
+
+private fun TabConfig.isVisibleIn(cfg: WindowConfig): Boolean = cfg.isVisible(this)
+
+/** Client types that list background tabs in their own screens; every other client never receives an unshown one. */
+private val CLIENT_TYPES_WITH_OVERVIEW = setOf("Web", "Computer")
+
+/**
+ * The config as one client is sent it: what its app version can decode, and, unless its type has
+ * the agents overview, without unshown background tabs. The one place the per-client strips are
+ * chained, so a later push goes through the same strips as the first.
+ *
+ * @param cfg the live layout.
+ * @param clientType what the client calls itself (`Web`, `iOS`, `Android`, ...).
+ * @param supportsWorlds whether the client reads the `worlds` container.
+ * @param supportsAgentPanes whether the client can decode agent panes.
+ * @param supportsWebBrowser whether the client can decode web-browser panes.
+ * @return the config to send.
+ */
+internal fun configForClient(
+    cfg: WindowConfig,
+    clientType: String,
+    supportsWorlds: Boolean,
+    supportsAgentPanes: Boolean,
+    supportsWebBrowser: Boolean,
+): WindowConfig = cfg
+    .let { if (supportsWorlds) it else it.flattenToFirstWorld() }
+    .let { if (supportsAgentPanes) it else it.withoutAgentPanes() }
+    .let { if (supportsWebBrowser) it else it.withoutWebBrowserPanes() }
+    .let { if (clientType in CLIENT_TYPES_WITH_OVERVIEW) it else it.withoutUnshownBackground() }
+
+/**
  * Lowest client app version that understands the `worlds` container. Clients
  * at or above this read [WindowConfig.worlds]; older clients never see the
  * field name and would drop the whole frame on the unknown structure, so
@@ -400,10 +443,7 @@ internal fun Route.windowRoutes(
 
         val pushJob = launch {
             WindowState.config.collect { cfg ->
-                val outbound = cfg
-                    .let { if (supportsWorlds) it else it.flattenToFirstWorld() }
-                    .let { if (supportsAgentPanes) it else it.withoutAgentPanes() }
-                    .let { if (supportsWebBrowser) it else it.withoutWebBrowserPanes() }
+                val outbound = configForClient(cfg, info.type, supportsWorlds, supportsAgentPanes, supportsWebBrowser)
                 val payload = windowJson.encodeToString<WindowEnvelope>(WindowEnvelope.Config(outbound))
                 send(Frame.Text(payload))
             }

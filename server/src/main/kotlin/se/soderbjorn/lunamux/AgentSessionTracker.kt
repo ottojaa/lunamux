@@ -85,7 +85,7 @@ data class PaneSnapshot(
  * @param onEnded called with each record as it closes, for the search indexer.
  * @param isUnder whether one process runs underneath another; how a helper `claude` is told from a replacement.
  * @param shellsUnder reads the background shells under a `claude` process.
- * @param inTab whether a tab already shows a conversation's record.
+ * @param inTab makes, once per publish, the test for whether a tab already shows a conversation's record.
  */
 class AgentSessionTracker(
     private val repo: SettingsRepository,
@@ -95,7 +95,7 @@ class AgentSessionTracker(
     private val onEnded: (AgentSessionRecord) -> Unit = {},
     private val isUnder: (Long, Long) -> Boolean = ::processIsUnder,
     private val shellsUnder: (Long) -> BackgroundShells = ::backgroundShellsOf,
-    private val inTab: (AgentSessionRecord) -> Boolean = { false },
+    private val inTab: () -> (AgentSessionRecord) -> Boolean = { { false } },
 ) {
     private val log = LoggerFactory.getLogger(AgentSessionTracker::class.java)
     private val lock = Any()
@@ -384,7 +384,8 @@ class AgentSessionTracker(
 
     private fun publish() {
         val now = clock()
-        _summaries.value = conversationRecords().map { summaryOf(it, turns[it.id], now, inTab(it)) }
+        val shownInTab = inTab()
+        _summaries.value = conversationRecords().map { summaryOf(it, turns[it.id], now, shownInTab(it)) }
     }
 
     /** One record per conversation: its open one (the newest), else its latest closed one. */
@@ -443,7 +444,7 @@ class AgentSessionTracker(
      * @return the row.
      */
     fun summaryFor(rec: AgentSessionRecord): AgentSessionSummary =
-        synchronized(lock) { summaryOf(rec, turns[rec.id], clock(), inTab(rec)) }
+        synchronized(lock) { summaryOf(rec, turns[rec.id], clock(), inTab()(rec)) }
 
     /** The in-memory record with [id], or null. */
     fun cached(id: String): AgentSessionRecord? = synchronized(lock) { records[id] }
@@ -540,6 +541,7 @@ internal fun livePaneSnapshot(id: String, states: Map<String, String?> = emptyMa
         cwd = session.cwd.value,
         programTitle = session.programTitle.value,
         customName = WindowState.customNameOfSession(id),
+        background = WindowState.isBackgroundSession(id),
         agent = TerminalSessions.agentOf(id),
         state = states[id],
         alive = session.isProcessAlive(),

@@ -401,6 +401,16 @@ class SettingsRepository(
         database.settingsQueries.selectAllScrollbackLeafIds().executeAsList().toSet()
 
     /**
+     * Every pane id an agent record remembers, closed records included. Called by
+     * [se.soderbjorn.lunamux.WindowState.initialize] so the id counters start above them: a closed
+     * record's pane id must not be handed to a new pane after a restart.
+     *
+     * @return the leaf ids of all stored agent records
+     */
+    fun allAgentSessionLeafIds(): Set<String> =
+        database.settingsQueries.selectAllAgentSessionLeafIds().executeAsList().filterNotNull().toSet()
+
+    /**
      * Read a raw string value from the settings key/value store.
      *
      * @param key the settings key
