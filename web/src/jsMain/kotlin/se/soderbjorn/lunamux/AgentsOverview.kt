@@ -81,6 +81,8 @@ internal fun registerAgentsOverviewHotkey() {
 internal fun startAgentsOverview() {
     startAgeClock()
     GlobalScope.launch { agentsOverview.stateFlow.collect { renderAgentsOverview(it) } }
+    // The sidebar footer reads the board, and an Agents frame can arrive with no layout or state push.
+    GlobalScope.launch { lunamuxClient.windowState.agentBoard.collect { updateWorldStatusFooter() } }
 }
 
 private fun renderAgentsOverview(state: AgentsOverviewBackingViewModel.State) {

@@ -155,7 +155,17 @@ class AgentsOverviewBackingViewModel(
     /** The question under a row before a resume or a start. */
     data class Ask(val rowId: String, val tag: String, val question: String, val keys: List<FooterKey>)
 
-    /** The selected row's screen: live while its pane exists, else what was saved. */
+    /**
+     * The selected row's screen: live while its pane exists, else what was saved.
+     *
+     * @property live whether the pane still exists, so [lines] are its screen right now.
+     * @property title the conversation's name, for the peek's heading.
+     * @property closedSinceMillis when a closed conversation ended; null while live.
+     * @property lines the screen as plain text; empty until the answer arrives.
+     * @property styled the same rows with colours; empty when the screen has no styles.
+     * @property loading whether the server has not answered yet.
+     * @property emptyText what to say when the answer holds no screen; null otherwise.
+     */
     data class Peek(
         val live: Boolean,
         val title: String,
@@ -166,15 +176,38 @@ class AgentsOverviewBackingViewModel(
         val emptyText: String?,
     )
 
-    /** The close question: what closing [title]'s session loses. */
+    /**
+     * The close question: what closing [title]'s session loses.
+     *
+     * @property rowId the row being closed.
+     * @property title the conversation's name.
+     * @property warnings what would be lost, one line each; empty when nothing is.
+     * @property cancelFocused whether Cancel, not Close, has the focus.
+     */
     data class Confirm(val rowId: String, val title: String, val warnings: List<String>, val cancelFocused: Boolean)
 
     /**
      * Everything the screen draws.
      *
-     * @property tally the counts at the end of the search line.
+     * @property open whether the overlay is showing.
+     * @property query the text in the search box.
+     * @property matchMode whether a search is on, so [matches] replace the groups.
+     * @property matches the search hits, best first.
+     * @property searching whether a search answer is still awaited.
+     * @property now the NOW group.
+     * @property stopped the rows stopped by the last restart.
      * @property stoppedAtMillis when the restart that stopped [stopped] happened.
+     * @property recent the rows closed in the last few days.
+     * @property fortnight the rows closed in the last month.
      * @property earlierHidden how many EARLIER rows "+ N more" would reveal.
+     * @property tally the counts at the end of the search line.
+     * @property selectedId the selected row's id; null when no row is.
+     * @property peek the open peek, if any.
+     * @property confirm the open close question, if any.
+     * @property ask the open resume question, if any.
+     * @property extra the extra text on the selected row.
+     * @property error the error to show on the selected row, if any.
+     * @property footer the key hints at the bottom.
      */
     data class State(
         val open: Boolean = false,
@@ -239,6 +272,7 @@ class AgentsOverviewBackingViewModel(
             combine(
                 listOf<Flow<Any?>>(
                     windowState.agentBoard, windowState.agentMatches, windowState.agentDetails, windowState.agentErrors,
+                    windowState.config,
                 ),
             ) { }.collect { rebuild() }
         }
@@ -319,7 +353,7 @@ class AgentsOverviewBackingViewModel(
         change { browsing(); this.query = query; selectedId = null; selectedHint = 0 }
     }
 
-    /** Asks the server to search for the current query; the answer arrives as the board's next push. */
+    /** Asks the server to search for the current query; the answer arrives as an `AgentMatches` envelope in [WindowStateRepository.agentMatches]. */
     suspend fun search() {
         val text = query.trim()
         if (text.length >= MIN_QUERY) send(WindowCommand.SearchAgents(text))

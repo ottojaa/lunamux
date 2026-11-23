@@ -10,11 +10,28 @@ import kotlinx.browser.window
 import org.w3c.dom.HTMLElement
 import se.soderbjorn.lunamux.client.viewmodel.ageText
 
-/** A `div` with [className]. */
+/**
+ * A `div` with [className].
+ *
+ * Called by the agents overview renderer wherever it builds a box.
+ *
+ * @param className the CSS class of the new element.
+ * @return the new, detached element.
+ * @see span
+ */
 internal fun div(className: String): HTMLElement =
     (document.createElement("div") as HTMLElement).also { it.className = className }
 
-/** A `span` with [className] and [text]. */
+/**
+ * A `span` with [className] and [text].
+ *
+ * Called by the agents overview renderer for inline pieces of a row.
+ *
+ * @param className the CSS class of the new element.
+ * @param text the text inside it; empty by default.
+ * @return the new, detached element.
+ * @see div
+ */
 internal fun span(className: String, text: String = ""): HTMLElement =
     (document.createElement("span") as HTMLElement).also { it.className = className; it.textContent = text }
 
@@ -25,6 +42,14 @@ private const val ITEM_PROPERTY = "__item"
  * Makes the children of [parent] match [items], one child per item in the same order. A child whose
  * item is equal to the one it was built from stays untouched, and rows that went away are removed
  * first so the kept ones are never moved (moving an element restarts its CSS animation).
+ *
+ * Called by the agents overview renderer for every list it draws.
+ *
+ * @param parent the element whose children are made to match.
+ * @param items what the children should show, in order.
+ * @param key a stable id per item, stored on the child so it can be found again.
+ * @param build makes the child for an item that has none yet or whose item changed.
+ * @see div
  */
 internal fun <T : Any> syncChildren(parent: HTMLElement, items: List<T>, key: (T) -> String, build: (T) -> HTMLElement) {
     val wanted = items.mapTo(HashSet(), key)

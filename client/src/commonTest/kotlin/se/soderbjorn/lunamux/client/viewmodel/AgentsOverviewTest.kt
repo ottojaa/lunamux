@@ -311,6 +311,19 @@ class AgentsOverviewTest {
     }
 
     @Test
+    fun aResumeClosesTheOverviewWhenOnlyTheLayoutMovesToANewTab() = runNow {
+        layout(emptyList())
+        frame(s("m", Shown.CLOSED, "g1", ended = "exit", placed = false, resumable = true))
+        vm.open()
+        vm.activateSelected()
+        vm.activateSelected()
+        assertTrue(vm.state.open)
+        // Only a layout arrives: the resumed pane's tab is now the active one.
+        windowState.updateConfig(WindowConfig(tabs = tabs + TabConfig("tab-new", "new", panes = emptyList()), activeTabId = "tab-new"))
+        assertFalse(vm.state.open)
+    }
+
+    @Test
     fun aPausedTaskSaysSoAndStaysInNow() {
         layout(listOf("m"))
         frame(s("m", Shown.PAUSED, "g1"), tasks = listOf(task("m", paused = true)))
