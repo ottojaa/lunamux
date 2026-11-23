@@ -3894,3 +3894,19 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 }
 .ao-btn-danger { border-color: var(--ao-error); color: var(--ao-error); }
 .ao-btn-focus { border-color: var(--ao-accent); box-shadow: inset 0 0 0 1px var(--ao-accent); }
+
+/* The tag over a background agent's tab that is shown for now. */
+.shown-tab-tag {
+    position: fixed; z-index: 40; transform: translateX(-50%); pointer-events: none;
+    padding: 2px 10px; border: 1px solid var(--t-warn, #f2c14e); border-radius: 10px;
+    background: var(--dt-window-bg, var(--t-surface, #0c1a1e)); color: var(--t-warn, #f2c14e);
+    font: 11px/1.5 var(--dt-font-mono, ui-monospace, Menlo, monospace); white-space: nowrap;
+}
+/* The tag lets clicks through but for its button, which leaves the tab for the one the person came from. */
+.shown-tab-back {
+    pointer-events: auto; cursor: pointer; padding: 0; border: 0; background: none;
+    color: inherit; font: inherit; font-weight: 600;
+}
+.shown-tab-back:hover, .shown-tab-back:focus-visible { text-decoration: underline; outline: none; }
+
+.lunamux-app-settings-claude-error { color: #ff7b72; font-size: 12px; }

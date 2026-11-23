@@ -183,6 +183,8 @@ private fun isOnlyFocusChange(prev: dynamic, next: dynamic): Boolean {
     val nextTabs = next.tabs as? Array<dynamic> ?: return false
     if (prevTabs.size != nextTabs.size) return false
     if ((prev.activeTabId as? String) != (next.activeTabId as? String)) return false
+    // Opening or leaving a background tab changes which tabs the strip shows.
+    if ((prev.shownTabId as? String) != (next.shownTabId as? String)) return false
     val stringify = js("JSON.stringify") as (dynamic) -> String
     for (i in prevTabs.indices) {
         val pt = prevTabs[i]; val nt = nextTabs[i]
@@ -194,6 +196,8 @@ private fun isOnlyFocusChange(prev: dynamic, next: dynamic): Boolean {
         // renders, so toggling it must trigger a full rebuild.
         if ((pt.isHidden as? Boolean ?: false) != (nt.isHidden as? Boolean ?: false)) return false
         if ((pt.isHiddenFromSidebar as? Boolean ?: false) != (nt.isHiddenFromSidebar as? Boolean ?: false)) return false
+        // A tab moving into or out of the background is likewise not a focus-only change.
+        if ((pt.isBackground as? Boolean ?: false) != (nt.isBackground as? Boolean ?: false)) return false
         if (stringify(pt.panes) != stringify(nt.panes)) return false
     }
     return true
@@ -365,12 +369,14 @@ private fun structuralConfigSignature(config: dynamic): String {
     // would skip the refocus / scroll repair on every world round-trip.
     sb.append(config.activeWorldId as? String ?: "")
     sb.append("#").append(activeWorldActiveTabIdDyn(config) ?: "")
+    sb.append("#").append(config.shownTabId as? String ?: "")
     val tabs = activeWorldTabsDyn(config)
     for (tab in tabs) {
         sb.append("|t:").append(tab.id as? String ?: "")
         sb.append(",ti:").append(tab.title as? String ?: "")
         sb.append(",h:").append((tab.isHidden as? Boolean ?: false).toString())
         sb.append(",hs:").append((tab.isHiddenFromSidebar as? Boolean ?: false).toString())
+        sb.append(",bg:").append((tab.isBackground as? Boolean ?: false).toString())
         sb.append(",f:").append(tab.focusedPaneId as? String ?: "")
         val panes = tab.panes as? Array<dynamic> ?: continue
         for (p in panes) sb.append(",p:").append(p.leaf.id as? String ?: "")
@@ -546,8 +552,9 @@ fun connectWindow() {
                 is WindowEnvelope.AgentNotify -> {
                     showAgentToast(envelope.message, envelope.level)
                 }
-                // The agents overview's frames are not drawn by this build yet; skip them
-                // rather than re-encode each one for the pane-content handler below.
+                // The agents overview reads these frames from the repository (see
+                // startAgentsOverview); skip them here rather than re-encode each one for the
+                // pane-content handler below.
                 is WindowEnvelope.Agents,
                 is WindowEnvelope.AgentDetails,
                 is WindowEnvelope.AgentMatches,

@@ -26,6 +26,7 @@ import se.soderbjorn.lunula.web.shell.TabSource
 import se.soderbjorn.lunamux.client.WindowSocket
 import se.soderbjorn.lunamux.client.WindowStateRepository
 import se.soderbjorn.lunamux.WindowCommand
+import se.soderbjorn.lunamux.isVisible
 
 /**
  * Inline SVGs used by the "New pane" hover dropdown. Same glyphs that
@@ -125,8 +126,11 @@ fun lunamuxTabSource(
                 // truth for ≥1.9 clients); fall back to the legacy flat tabs
                 // when the config carries no worlds.
                 val world = config.activeWorldOrNull()
-                val worldTabs = world?.tabs ?: config.tabs
+                // Background tabs are not passed to the toolkit, so its strip, sidebar and overflow
+                // menu never hold one; the one the person opened from the overview is visible.
+                val worldTabs = (world?.tabs ?: config.tabs).filter { config.isVisible(it) }
                 val worldActiveTab = world?.activeTabId ?: config.activeTabId
+                updateShownTabTag(config.shownTabId?.takeIf { it == worldActiveTab })
                 // Repaint to the active world's theme pair when it changes
                 // (no-op otherwise). Runs before the tab push so the chrome
                 // rebuild below already carries the new theme.
