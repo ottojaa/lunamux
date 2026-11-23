@@ -71,6 +71,7 @@
  */
 package se.soderbjorn.lunamux
 
+import se.soderbjorn.lunamux.visibleTabs
 import kotlinx.browser.document
 import kotlinx.browser.window
 import org.khronos.webgl.ArrayBuffer
@@ -377,7 +378,7 @@ internal fun openOverview3d() {
     // [effectiveTabs], never the flat `cfg.tabs`: that field is a legacy mirror the server pins to
     // `worlds.first()` for pre-1.9 clients and does NOT track the active world, so the switcher
     // showed the DEFAULT world's tabs whichever world you were actually in. @see effectiveTabs
-    val tabs = cfg.effectiveTabs.filter { !it.isHidden }
+    val tabs = cfg.visibleTabs.filter { !it.isHidden }
 
     ovOpen = true
     ovDiveStart = Double.NaN

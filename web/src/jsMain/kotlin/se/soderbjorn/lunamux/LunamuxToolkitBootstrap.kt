@@ -32,6 +32,8 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.w3c.dom.HTMLElement
+import se.soderbjorn.lunamux.client.Tally
+import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel
 import se.soderbjorn.lunula.core.argbToCss
 import se.soderbjorn.lunula.web.confirmClosePane
 import se.soderbjorn.lunula.web.hotkey.Hotkey
@@ -955,7 +957,7 @@ private fun buildSidebarFooter(): HTMLElement {
     // from the 3D world's warp-core status boxes, but restyled to the pane's
     // idiom (a titled block of accent-dot rows) — see `.world-status-bar`.
     val worlds = document.createElement("div") as HTMLElement
-    worlds.className = "world-status-bar world-status-empty"
+    worlds.className = "world-status-bar"
     worldStatusEl = worlds
     footer.appendChild(worlds)
     updateWorldStatusFooter()
@@ -965,163 +967,117 @@ private fun buildSidebarFooter(): HTMLElement {
 }
 
 /**
- * A single active world's agent tally, for the sidebar's world-status block.
+ * One line of the footer's agent block: its label ("All worlds" for the total of several worlds,
+ * else the world's name; null for the total of a single world, which sits under the heading with
+ * no label), the world's accent colour for the dot (null for a total), and the two counts.
  *
- * @property name    the world's display name (the row's label).
- * @property accent  the world's resolved theme accent as a CSS colour string
- *   (the row's status dot), from [resolvedThemeForWorld] via [argbToCss].
- * @property working how many of the world's panes have a running agent.
- * @property waiting how many of the world's panes have an agent awaiting input.
- * @see computeWorldStatusRows
+ * @property name the label, or null for an unlabelled total.
+ * @property accent the dot's CSS colour, or null for a total.
+ * @property working how many conversations are working.
+ * @property waiting how many need the person.
  */
-private class WorldStatusRow(
-    val name: String,
-    val accent: String,
-    val working: Int,
-    val waiting: Int,
-)
+internal data class StatusLine(val name: String?, val accent: String?, val working: Int, val waiting: Int)
 
 /**
- * Tallies every world's working/waiting panes from the resident
- * [latestWindowConfig] and the authoritative session-state map
- * ([lunamuxClient]`.windowState.states`, keyed by `sessionId` across all
- * worlds). Returns one [WorldStatusRow] per world that has any activity, in the
- * config's world order; quiet worlds are omitted so the block stays empty when
- * nothing is running.
+ * The footer's lines, from the counts of the agents board (the ones the overview and the 3D boxes
+ * count with). Called by [updateWorldStatusFooter] on every push.
  *
- * This is the 2D counterpart of the 3D warp-core's `computeWorldStatuses`: it
- * reads the same shared session-state model AND honours the same manual
- * [spikeWaitingOverride] / [spikeWorkingOverride] test maps (keyed by pane id,
- * toggled by the 3D `w` key), so the sidebar footer and the 3D warp-core boxes
- * agree on the numbers even while an override is in effect.
- *
- * @return the active worlds' tallies, in world order.
- * @see updateWorldStatusFooter
+ * @return the lines of [agentStatusLines] for the board and layout now.
  */
-private fun computeWorldStatusRows(): List<WorldStatusRow> {
-    val cfg = latestWindowConfig ?: return emptyList()
-    val states = runCatching { lunamuxClient.windowState.states.value }.getOrNull()
-    val out = mutableListOf<WorldStatusRow>()
-    for (world in cfg.worlds) {
-        var working = 0
-        var waiting = 0
-        for (tab in world.tabs) {
-            for (pane in tab.panes) {
-                // A manual override (3D `w` key) wins over the live session state,
-                // exactly as the 3D warp-core's computeWorldStatuses does; absent an
-                // override the pane follows its real state.
-                val paneId = pane.leaf.id
-                val sessionId = pane.leaf.sessionId
-                val isWaiting = spikeWaitingOverride[paneId] ?: (states?.get(sessionId) == "waiting")
-                val isWorking = spikeWorkingOverride[paneId] ?: (states?.get(sessionId) == "working")
-                if (isWaiting) waiting++ else if (isWorking) working++
-            }
-        }
-        if (working > 0 || waiting > 0) {
-            val accent = runCatching { argbToCss(resolvedThemeForWorld(world.themeSelection).accent) }
-                .getOrNull() ?: "#4f8cf7"
-            out.add(WorldStatusRow(world.name, accent, working, waiting))
+private fun computeAgentStatusRows(): List<StatusLine> {
+    val board = lunamuxClient.windowState.agentBoard.value
+    val worlds = latestWindowConfig?.worlds.orEmpty().map { world ->
+        WorldCounts(world.name, board.tallyByWorld[world.id]) {
+            runCatching { argbToCss(resolvedThemeForWorld(world.themeSelection).accent) }.getOrNull() ?: "#4f8cf7"
         }
     }
-    return out
+    return agentStatusLines(board.tally, worlds)
 }
 
 /**
- * Fills a row's count element with colour-coded, gently-pulsing segments — "N
- * working" in reactor blue and "M waiting" in attention amber (the 3D warp
- * core's semantic working/waiting colours), joined by a muted separator, and
- * omitting a half that is zero (so a purely-waiting world reads just "M
- * waiting"). The colour + slow breathe draw the eye to live / blocked agents
- * without the heavier chrome of the sidebar's per-pane dots.
- *
- * The breathe opacity is driven by the shared global pulse loop
- * ([startPulse] / `pulseTick` in `WebStateActions`), NOT a CSS `@keyframes`
- * animation: [updateWorldStatusFooter] rebuilds this block with `innerHTML = ""`
- * on every state push, and a CSS animation on the fresh span would restart from
- * `opacity: 1` each time, making the breathe look erratic. Seeding each segment
- * off the shared clock keeps every world's breathe steady and in sync — the same
- * fix the per-pane `.tt-status-dot` beads use.
- *
- * @param host    the row's count container to populate (assumed empty).
- * @param working the world's working-pane count.
- * @param waiting its waiting-pane count.
- * @see startPulse
+ * One world's counts for [agentStatusLines]: its [name], its [counts] (null when nothing of it
+ * works or needs the person) and its accent colour, read only when its line is drawn.
  */
-private fun appendWorldStatusCounts(host: HTMLElement, working: Int, waiting: Int) {
-    var needSep = false
-    if (working > 0) {
-        val w = document.createElement("span") as HTMLElement
-        w.className = "world-status-working"
-        w.textContent = "$working working"
-        host.appendChild(w)
-        startPulse(w, WORLD_WORKING_PULSE_PERIOD_MS, WORLD_WORKING_PULSE_FLOOR)
-        needSep = true
+internal class WorldCounts(val name: String, val counts: Tally?, val accent: () -> String)
+
+/**
+ * The footer's lines, saying each thing once. Nothing works or needs the person: no line. With one
+ * world, or when only one of several worlds has anything going on, one line: unnamed for a lone
+ * world, else that world's name and dot, so the person still sees where. Only when two or more
+ * worlds have something going on does an "All worlds" total come first, then one line per world
+ * that has any.
+ *
+ * @param total the counts across every world.
+ * @param worlds the layout's worlds in order; empty without worlds.
+ * @return the lines to draw.
+ */
+internal fun agentStatusLines(total: Tally, worlds: List<WorldCounts>): List<StatusLine> {
+    if (total.needsYou == 0 && total.working == 0) return emptyList()
+    val busy = worlds.filter { it.counts != null && (it.counts.needsYou > 0 || it.counts.working > 0) }
+    val lines = busy.map { StatusLine(it.name, it.accent(), it.counts!!.working, it.counts.needsYou) }
+    return when {
+        worlds.size < 2 -> listOf(StatusLine(null, null, total.working, total.needsYou))
+        lines.size == 1 -> lines
+        else -> listOf(StatusLine("All worlds", null, total.working, total.needsYou)) + lines
     }
+}
+
+/** Fills a line's count element: "▲ M need you" in the attention colour, then the spinner and "N working". */
+private fun appendWorldStatusCounts(host: HTMLElement, working: Int, waiting: Int) {
     if (waiting > 0) {
-        if (needSep) {
-            val sep = document.createElement("span") as HTMLElement
-            sep.className = "world-status-sep"
-            sep.textContent = " • "
-            host.appendChild(sep)
-        }
-        val a = document.createElement("span") as HTMLElement
-        a.className = "world-status-waiting"
-        a.textContent = "$waiting waiting"
+        val a = span("world-status-waiting", "▲ ${AgentsOverviewBackingViewModel.needYouText(waiting)}")
         host.appendChild(a)
         startPulse(a, WORLD_WAITING_PULSE_PERIOD_MS, WORLD_WAITING_PULSE_FLOOR)
     }
+    if (working > 0) {
+        // No bullet between the halves: the spinner already opens the second, and a bullet beside it read as two dots.
+        val w = span("world-status-working")
+        w.appendChild(spinner())
+        w.appendChild(document.createTextNode(" $working working"))
+        host.appendChild(w)
+    }
 }
 
 /**
- * Repaints the sidebar's world-status block from the current worlds + session
- * states. Called from [updateStateIndicators] — the shared hub every config /
- * state push already routes through — so the rows track agent activity live,
- * exactly like the per-pane sidebar dots beside them.
- *
- * When no world has any working/waiting pane, the block collapses to nothing
- * (via `world-status-empty`, which zeroes its padding) so an idle footer shows
- * only the usage bar. Otherwise it renders a "Worlds" title over one accent-dot
- * row per active world. The whole block is rebuilt each call (a handful of
- * worlds, pushed at most every few seconds) rather than diffed.
- *
- * @see computeWorldStatusRows
+ * Repaints the sidebar's agent block from the agents board. Called from [updateStateIndicators] on
+ * every config and state push. A line whose numbers did not change is left alone, so its spinner
+ * keeps turning. With nothing working and nothing waiting the block stays, as the heading and
+ * "None working", so the sidebar below it does not move.
  */
 internal fun updateWorldStatusFooter() {
-    val host = worldStatusEl ?: return
-    val rows = computeWorldStatusRows()
-    if (rows.isEmpty()) {
-        host.classList.add("world-status-empty")
-        host.innerHTML = ""
-        return
+    renderAgentStatus(worldStatusEl ?: return, computeAgentStatusRows())
+}
+
+/** Draws the agent block into [host]: the heading, then [rows] or, with none, "None working". */
+internal fun renderAgentStatus(host: HTMLElement, rows: List<StatusLine>) {
+    val items = listOf<Any>("Agents") + rows.ifEmpty { listOf(NO_AGENTS_WORKING) }
+    syncChildren(host, items, { if (it is StatusLine) "line:${it.name}" else it.toString() }) { item ->
+        when (item) {
+            is StatusLine -> buildStatusLine(item)
+            NO_AGENTS_WORKING -> div("world-status-none").also { it.textContent = NO_AGENTS_WORKING }
+            else -> div("world-status-title").also { it.textContent = "Agents" }
+        }
     }
-    host.classList.remove("world-status-empty")
-    host.innerHTML = ""
+}
 
-    val title = document.createElement("div") as HTMLElement
-    title.className = "world-status-title"
-    title.textContent = "Workspace agent status"
-    host.appendChild(title)
+/** What the footer's agent block says when nothing is working or waiting. */
+private const val NO_AGENTS_WORKING = "None working"
 
-    for (row in rows) {
-        val rowEl = document.createElement("div") as HTMLElement
-        rowEl.className = "world-status-row"
-
-        val dot = document.createElement("span") as HTMLElement
-        dot.className = "world-status-dot"
-        dot.style.background = row.accent
-
-        val name = document.createElement("span") as HTMLElement
-        name.className = "world-status-name"
-        name.textContent = row.name
-
-        val count = document.createElement("span") as HTMLElement
-        count.className = "world-status-count"
-        appendWorldStatusCounts(count, row.working, row.waiting)
-
-        rowEl.appendChild(dot)
-        rowEl.appendChild(name)
-        rowEl.appendChild(count)
-        host.appendChild(rowEl)
+/** One line of the block: the dot and name of a world (none for a lone total), then its counts. */
+private fun buildStatusLine(line: StatusLine): HTMLElement {
+    if (line.name == null) {
+        return div("world-status-row").also { row ->
+            row.appendChild(span("world-status-count").also { appendWorldStatusCounts(it, line.working, line.waiting) })
+        }
+    }
+    val dot = span("world-status-dot")
+    if (line.accent != null) dot.style.background = line.accent else dot.style.visibility = "hidden"
+    val count = span("world-status-count" + if (line.working > 0 && line.waiting > 0) " world-status-both" else "")
+    appendWorldStatusCounts(count, line.working, line.waiting)
+    return div("world-status-row").also {
+        it.appendChild(dot)
+        it.appendChild(span("world-status-name", line.name))
+        it.appendChild(count)
     }
 }
 

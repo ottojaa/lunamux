@@ -326,11 +326,12 @@ body.appearance-light .terminal-inner .xterm-viewport {
        extra margin here (that would double the spacing). */
     border-top: 1px solid var(--t-chrome-border, color-mix(in srgb, currentColor 12%, transparent));
 }
-/* No active world → collapse to nothing (padding + divider) so an idle footer
-   shows only the usage bar with no stray hairline. */
-.world-status-bar.world-status-empty {
-    padding: 0;
-    border-top: none;
+/* Nothing working or waiting: the block keeps its place and says so quietly. */
+.world-status-bar .world-status-none {
+    opacity: 0.6;
+    /* Same height as a count row (its spinner is 1.3em tall), so the block never changes height at zero. */
+    min-height: 1.3em;
+    line-height: 1.3em;
 }
 .world-status-bar .world-status-title {
     text-transform: uppercase;
@@ -342,8 +343,9 @@ body.appearance-light .terminal-inner .xterm-viewport {
 }
 .world-status-bar .world-status-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 7px;
+    gap: 0 7px;
 }
 /* The world's theme accent, as a small status bead (background set inline). */
 .world-status-bar .world-status-dot {
@@ -353,7 +355,8 @@ body.appearance-light .terminal-inner .xterm-viewport {
     border-radius: 50%;
 }
 .world-status-bar .world-status-name {
-    flex: 1 1 auto;
+    flex: 1 1 0;
+    min-width: 8ch;
     overflow: hidden;
     text-overflow: ellipsis;
 }
@@ -361,9 +364,15 @@ body.appearance-light .terminal-inner .xterm-viewport {
     flex: 0 0 auto;
     font-variant-numeric: tabular-nums;
 }
-/* Muted separator between the working and waiting halves. */
-.world-status-bar .world-status-sep {
-    opacity: 0.4;
+/* Both halves are too wide to share the line with a name: the count drops to its own line under it. */
+.world-status-bar .world-status-both {
+    flex-basis: 100%;
+    padding-left: 14px;
+    box-sizing: border-box;
+}
+/* The two halves are set apart by space alone: the spinner opens the second. */
+.world-status-bar .world-status-waiting + .world-status-working {
+    margin-left: 1.5ch;
 }
 /* Working: the theme's accent (`--t-warn`'s sibling `--t-accent`), a calm slow
    breathe — an ambient "live" signal that doesn't demand action.
@@ -3523,9 +3532,6 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 }
 :root[data-dt-chrome="blended"] .world-status-bar {
     border-top-color: var(--t-border, rgba(255, 255, 255, 0.1));
-}
-:root[data-dt-chrome="blended"] .world-status-bar.world-status-empty {
-    border-top: none;
 }
 
 :root[data-dt-chrome="blended"] .world-status-bar {

@@ -21,8 +21,8 @@
  *
  * A collective **reactor load** (summed ring charge) faintly warms the sky (gated on the
  * toggle). A top-left **status column** — shown *independently* of the toggle — carries one
- * small box **per world** that has any waiting/working panes: the world's name in small text
- * atop a single "N working • M waiting" line (only the non-zero halves shown), the box chrome
+ * small box **per world** that has any working conversation or one that needs you: the world's name in small text
+ * atop a single "▲ M need you • N working" line (only the non-zero halves shown), the box chrome
  * (border + name) themed with that world's own accent ([resolvedThemeForWorld]). A world's box
  * disappears when it has no active panes. Counts span *all* worlds (not just the one on
  * screen), read from the global session-state map keyed by `sessionId`.
@@ -58,6 +58,7 @@ import kotlinx.browser.document
 import kotlinx.browser.window
 import org.w3c.dom.HTMLCanvasElement
 import org.w3c.dom.HTMLElement
+import se.soderbjorn.lunamux.client.viewmodel.AgentsOverviewBackingViewModel
 import se.soderbjorn.lunula.core.argbToCss
 import se.soderbjorn.lunamux.three.PerspectiveCamera
 
@@ -101,13 +102,13 @@ internal var spikeWarpBannerCol: HTMLElement? = null
 
 /**
  * One live per-world status box in [spikeWarpBannerCol] — the world's name atop a
- * "N working • M waiting" line. Keyed by world id in [spikeWarpWorldBoxes], created on demand
+ * "▲ M need you • N working" line. Keyed by world id in [spikeWarpWorldBoxes], created on demand
  * and torn down when its world's activity drops to zero. Caches the last-applied accent + count
  * text so the per-frame [updateWarpWorldBoxes] pass only touches the DOM when something changed.
  *
  * @property root the box element (appended to [spikeWarpBannerCol]).
  * @property nameEl the small world-name line at the top.
- * @property countEl the "N working • M waiting" line below it.
+ * @property countEl the "▲ M need you • N working" line below it.
  * @property lastAccent the accent last written to the box chrome, or `null` if never set.
  * @property lastText the plain-text count line last rendered, for change detection.
  * @see updateWarpWorldBoxes
@@ -437,45 +438,28 @@ private class WorldStatus(
 )
 
 /**
- * Tallies every world's waiting/working panes from the resident [latestWindowConfig] and the
- * global session-state map ([lunamuxClient]`.windowState.states`, keyed by `sessionId` across all
- * worlds), honouring the manual [spikeWaitingOverride] / [spikeWorkingOverride] test maps (keyed
- * by pane id) exactly as the render loop does. Returns one [WorldStatus] per world that has any
- * activity, in the config's world order; worlds with no waiting/working panes are omitted (so
- * they get no box).
+ * Tallies every world's working conversations and those that need the person from the agents
+ * board, the same counts the footer and the agents overview use, so the boxes agree with both.
+ * Returns one [WorldStatus] per world that has any activity, in the config's world order; worlds
+ * with nothing to show are omitted (so they get no box).
  *
- * Called every frame by [tickWarpCoreOverlay]. Uses config panes rather than [spikePanes] because
- * only the on-screen world's panes are mounted as [RingPane]s — a per-world *count* needs the
- * full tab→pane tree of every world, which the config carries.
+ * Called every frame by [tickWarpCoreOverlay]. Reads the board's per-world tally, which holds the
+ * counts of every world (not only the one on screen).
  *
  * @return the active worlds' tallies, in world order.
  * @see updateWarpWorldBoxes
  */
 private fun computeWorldStatuses(): List<WorldStatus> {
     val cfg = latestWindowConfig ?: return emptyList()
-    val states = runCatching { lunamuxClient.windowState.states.value }.getOrNull()
-    val out = mutableListOf<WorldStatus>()
-    for (world in cfg.worlds) {
-        var working = 0
-        var waiting = 0
-        for (tab in world.tabs) {
-            for (pane in tab.panes) {
-                val paneId = pane.leaf.id
-                val sessionId = pane.leaf.sessionId
-                val isWaiting = spikeWaitingOverride[paneId] ?: (states?.get(sessionId) == "waiting")
-                val isWorking = spikeWorkingOverride[paneId] ?: (states?.get(sessionId) == "working")
-                if (isWaiting) waiting++ else if (isWorking) working++
-            }
-        }
-        if (working > 0 || waiting > 0) {
-            out.add(WorldStatus(world.id, world.name, world.themeSelection, working, waiting))
-        }
+    val counts = lunamuxClient.windowState.agentBoard.value.tallyByWorld
+    return cfg.worlds.mapNotNull { world ->
+        val c = counts[world.id]?.takeIf { it.needsYou > 0 || it.working > 0 } ?: return@mapNotNull null
+        WorldStatus(world.id, world.name, world.themeSelection, c.working, c.needsYou)
     }
-    return out
 }
 
 /**
- * The count line for a world's box — "N working • M waiting", omitting a half that is zero (so a
+ * The count line for a world's box — "▲ M need you • N working", omitting a half that is zero (so a
  * purely-waiting world reads just "M waiting"). All one colour (the world accent, applied to the
  * element by [updateWarpWorldBoxes]); no per-state tinting. Doubles as the change-detection key
  * ([WorldStatusBox.lastText]).
@@ -485,8 +469,8 @@ private fun computeWorldStatuses(): List<WorldStatus> {
  */
 private fun countLineText(working: Int, waiting: Int): String {
     val parts = mutableListOf<String>()
+    if (waiting > 0) parts.add("\u25B2 ${AgentsOverviewBackingViewModel.needYouText(waiting)}")
     if (working > 0) parts.add("$working working")
-    if (waiting > 0) parts.add("$waiting waiting")
     return parts.joinToString(" • ")
 }
 
@@ -521,7 +505,7 @@ private fun buildWorldStatusBox(): WorldStatusBox {
  * frame), called every frame by [tickWarpCoreOverlay] regardless of [spikeStatusIndication]:
  *  - drops boxes for worlds that no longer have any activity,
  *  - creates a box for each newly-active world,
- *  - updates each box's name, its "N working • M waiting" line, and its accent-themed chrome
+ *  - updates each box's name, its "▲ M need you • N working" line, and its accent-themed chrome
  *    (border + name colour from that world's own theme, [resolvedThemeForWorld]) — but only
  *    writes the DOM when a value actually changed (via the [WorldStatusBox] caches), so the
  *    per-frame call is cheap while nothing moves, and

@@ -5,6 +5,7 @@
  */
 package se.soderbjorn.lunamux
 
+import se.soderbjorn.lunamux.visibleTabs
 import kotlin.js.json
 import kotlin.math.PI
 import kotlin.math.abs
@@ -138,7 +139,7 @@ internal fun collectPaneSpecs(): List<PaneSpec> {
     // `worlds.first()` for pre-1.9 clients and it does NOT track the active world, so reading it
     // built the ring from the DEFAULT world's panes no matter which world you were in — while the
     // 2D tab strip ([LunamuxTabSource]) showed the active one. @see effectiveTabs
-    cfg.effectiveTabs.filter { !it.isHidden }.forEachIndexed { tabOrd, tab ->
+    cfg.visibleTabs.filter { !it.isHidden }.forEachIndexed { tabOrd, tab ->
         // Sort this tab's panes into the sidebar's display order (stable → unknown
         // panes keep config order at the tail), so the ring matches what the user sees.
         val orderRank = orderByTab?.paneOrderFor(tab.id).orEmpty()
@@ -195,7 +196,7 @@ internal fun collectTabs(): List<Pair<String, String>> {
     val cfg = latestWindowConfig ?: return listOf("" to "")
     // [effectiveTabs], for the same reason as [collectPaneSpecs] — and it must stay in step with it,
     // since `tabOrd` is an index into this list.
-    return cfg.effectiveTabs.filter { !it.isHidden }.map { it.id to it.title }
+    return cfg.visibleTabs.filter { !it.isHidden }.map { it.id to it.title }
 }
 
 /**

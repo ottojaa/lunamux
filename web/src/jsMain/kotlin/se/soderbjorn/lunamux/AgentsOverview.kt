@@ -295,7 +295,7 @@ private fun renderList(state: AgentsOverviewBackingViewModel.State) {
 private fun renderTally(state: AgentsOverviewBackingViewModel.State) {
     val t = state.tally
     val parts = listOfNotNull(
-        ("ao-sw-need" to "◆ " + if (t.needsYou == 1) "1 needs you" else "${t.needsYou} need you").takeIf { t.needsYou > 0 },
+        ("ao-sw-need" to "◆ " + AgentsOverviewBackingViewModel.needYouText(t.needsYou)).takeIf { t.needsYou > 0 },
         ("ao-sw-work" to "${t.working} working").takeIf { t.working > 0 },
         ("ao-sw-wait" to "◐ ${t.waiting} waiting").takeIf { t.waiting > 0 },
         ("ao-sw-paused" to "‖ ${t.paused} paused").takeIf { t.paused > 0 },

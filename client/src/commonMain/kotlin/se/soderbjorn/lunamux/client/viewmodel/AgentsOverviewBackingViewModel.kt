@@ -618,5 +618,14 @@ class AgentsOverviewBackingViewModel(
 
         /** What ↵ says on a row whose tab is hidden. */
         const val SHOW_HINT = "open · a tab until you leave it"
+
+        /**
+         * What every screen says of the conversations that need the person: "1 needs you", "3 need you".
+         * Called by the overview's tally, the sidebar footer and the 3D world boxes, so they read alike.
+         *
+         * @param n how many conversations need the person.
+         * @return the count with its verb.
+         */
+        fun needYouText(n: Int): String = if (n == 1) "1 needs you" else "$n need you"
     }
 }
