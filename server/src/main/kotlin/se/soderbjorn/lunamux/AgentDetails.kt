@@ -96,7 +96,7 @@ object AgentDetailsReader {
         val dir = listOfNotNull(story.cwd, rec.cwd).firstOrNull { it.isNotBlank() && File(it).isDirectory }
         val work = GitCatalog.folderWork(dir)?.let(::worktreeOf)
         return WindowEnvelope.AgentDetails(
-            recordId = rec.id,
+            recordId = rec.conversationId,
             live = snapshot != null,
             screen = screen,
             styled = styled,

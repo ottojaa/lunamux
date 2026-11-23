@@ -156,7 +156,7 @@ class AgentCommandsTest {
         awaitSent(sent, 2)
         sent.sortBy { it is WindowEnvelope.AgentError }
         val details = assertIs<WindowEnvelope.AgentDetails>(sent[0])
-        assertEquals("r1", details.recordId)
+        assertEquals("conv-r1", details.recordId)
         assertEquals(WindowEnvelope.AgentError("zzz", "That conversation no longer exists."), sent[1])
     }
 

@@ -252,7 +252,7 @@ sealed class WindowEnvelope {
      * What the person asked to look at, for one conversation or one task; sent only to the
      * connection that asked ([WindowCommand.ReadAgentDetails]).
      *
-     * @param recordId the conversation the answer is about; null in the answer for a task.
+     * @param recordId the conversation the answer is about, by the same id the frame lists it under; null in the answer for a task.
      * @param taskId the task the answer is about; null in the answer for a conversation.
      * @param live whether [screen] is the pane's screen right now (false: the last one saved).
      * @param screen the last rows of the pane's screen, as plain text.

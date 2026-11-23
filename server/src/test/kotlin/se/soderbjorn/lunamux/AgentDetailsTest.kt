@@ -73,7 +73,7 @@ class AgentDetailsTest {
             reply("done, fixed it", "2026-11-17T14:51:00.000Z"),
         )
         val d = AgentDetailsReader.ofRecord(closed("r1", dir.path, transcript = t.path), null)
-        assertEquals("r1", d.recordId)
+        assertEquals("conv-r1", d.recordId)
         assertFalse(d.live)
         assertEquals(listOf("line one", "", "line two"), d.screen.map { it.trimEnd() }.dropLastWhile { it.isEmpty() }.let { if (it.size == 3) it else d.screen })
         assertEquals("fix the bug", d.turns.single().prompt)
