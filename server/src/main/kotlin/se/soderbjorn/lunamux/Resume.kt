@@ -113,7 +113,7 @@ internal fun planResume(
  * record's layout leaf, which survives a restart; the terminal session id a record stored does
  * not (ids are handed out again at every start), so a record with no leaf has no pane.
  */
-private fun reusablePane(rec: Record, layout: WindowConfig, probe: ResumeProbe): String? {
+internal fun reusablePane(rec: Record, layout: WindowConfig, probe: ResumeProbe): String? {
     val leafId = rec.leafId ?: return null
     val tab = layout.worlds.asSequence().flatMap { it.tabs }.firstOrNull { t -> t.panes.any { it.leaf.id == leafId } }
         ?: return null

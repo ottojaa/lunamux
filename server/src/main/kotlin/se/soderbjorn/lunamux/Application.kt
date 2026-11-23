@@ -101,7 +101,7 @@ fun main() {
         ?: SERVER_TLS_PORT
     AgentEvents.port = port
     val searchIndexer = AgentSearchIndexer(repo)
-    val agentTracker = AgentSessionTracker(repo, onEnded = searchIndexer::indexEnded, inTab = { WindowState.paneInVisibleTab() }).also { it.start() }
+    val agentTracker = AgentSessionTracker(repo, onEnded = searchIndexer::indexEnded, inTab = { WindowState.paneToResumeIn() }).also { it.start() }
     searchIndexer.runningIn = agentTracker::hasUnidentifiedClaudeIn
     // A shown background tab closes when the last agent in it ends.
     CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
@@ -124,7 +124,7 @@ fun main() {
     claudeHooks.refresh()
     val agentOverview = AgentOverview(
         repo, agentTracker, taskIndex, claudeHooks,
-        AgentsFeed(persistenceScope, agentTracker.summaries, taskIndex.state, claudeHooks.connected),
+        AgentsFeed(persistenceScope, taskIndex.state, claudeHooks.connected),
     )
 
     // Opt-in program-set terminal titles (OSC 0/2). Mirror the toggle into

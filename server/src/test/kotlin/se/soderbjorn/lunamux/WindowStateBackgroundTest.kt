@@ -137,18 +137,41 @@ class WindowStateBackgroundTest {
         assertTrue(saved.worlds.flatMap { it.tabs }.flatMap { it.panes }.all { it.leaf.sessionId.isEmpty() })
     }
 
-    /** The tracker's "is this pane in a tab the person sees" follows the shown tab. */
+    /** Focus follows the shown tab: a background pane takes focus only while its tab is shown. */
     @Test
-    fun `a pane in a background tab is seen only while its tab is shown`() = withTabs {
+    fun `a pane in a background tab can take focus only while its tab is shown`() = withTabs {
         ordinary()
         val bg = background()
-        val rec = AgentSessionRecord(id = "r", agent = "claude", leafId = leafOf(bg))
-        assertFalse(WindowState.paneInVisibleTab()(rec))
         assertTrue(WindowState.isBackgroundLeaf(leafOf(bg)))
         assertFalse(WindowState.focusPane(leafOf(bg)), "focus never opens a background tab")
         WindowState.show(bg)
-        assertTrue(WindowState.paneInVisibleTab()(rec))
         assertTrue(WindowState.focusPane(leafOf(bg)))
+    }
+
+    /**
+     * `inTab` is the Resume rule: a closed conversation's pane is in a visible tab and at an idle shell.
+     * A pane that now runs a program (after `/clear` it runs the next conversation) reads false, an
+     * idle shell reads true, an open record is never `inTab`, and a pane in an unshown background tab
+     * reads false until the tab is shown.
+     */
+    @Test
+    fun `inTab means a closed record's pane sits at an idle shell in a visible tab`() = withTabs {
+        val mine = ordinary()
+        val bg = background()
+        fun closed(tab: String) = AgentSessionRecord(
+            id = "r", agent = "claude", leafId = leafOf(tab), state = AgentSessionState.ENDED,
+        )
+        val idle = ResumeProbe(isIdleShell = { true })
+        val busy = ResumeProbe(isIdleShell = { false })
+        assertTrue(WindowState.paneToResumeIn(idle)(closed(mine)), "idle shell in a visible tab")
+        assertFalse(WindowState.paneToResumeIn(busy)(closed(mine)), "the pane runs a program")
+        assertFalse(
+            WindowState.paneToResumeIn(idle)(closed(mine).copy(state = AgentSessionState.DONE)),
+            "an open record is not resumed anywhere",
+        )
+        assertFalse(WindowState.paneToResumeIn(idle)(closed(bg)), "its tab is not shown")
+        WindowState.show(bg)
+        assertTrue(WindowState.paneToResumeIn(idle)(closed(bg)))
     }
 
     /**

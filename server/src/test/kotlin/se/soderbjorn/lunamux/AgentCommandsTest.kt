@@ -37,7 +37,7 @@ class AgentCommandsTest {
     private val hooks = ClaudeHooks(File(dir, "settings.json"))
     private val overview = AgentOverview(
         repo, tracker, index, hooks,
-        AgentsFeed(CoroutineScope(Dispatchers.Unconfined), tracker.summaries, index.state, hooks.connected),
+        AgentsFeed(CoroutineScope(Dispatchers.Unconfined), index.state, hooks.connected),
     )
     private val opened = mutableListOf<Opened>()
     private val opener = TabOpener { f, t, c -> opened += Opened(f, t, c) }

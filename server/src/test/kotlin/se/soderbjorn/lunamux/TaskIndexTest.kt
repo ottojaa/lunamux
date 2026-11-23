@@ -457,7 +457,7 @@ class TaskIndexTest {
         val rows = index.listing()
         assertEquals(listOf("aa" to "file", "zz" to "file", made to "agents"), rows.map { it.id to it.source })
         assertEquals("s1", rows.last().sessions.single().sessionId)
-        assertEquals("claude session", rows.last().sessions.single().title)
+        assertEquals("Claude session", rows.last().sessions.single().title)
         assertEquals(published().single { it.id == made }.startedAt, rows.last().startedAt)
     }
 

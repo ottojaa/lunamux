@@ -276,16 +276,20 @@ object WindowState {
     }
 
     /**
-     * The test for "a tab the person can see shows this conversation's pane", built from one
-     * snapshot of the layout. The tracker asks for it once per publish, so every row of a publish
-     * is judged against the same layout.
+     * The test for "a closed conversation can be resumed in the pane it ran in": the record has
+     * ended, its pane still exists in a tab the person can see, and nothing runs under that
+     * pane's shell. This is the same rule [planResume] uses to pick the pane, so the overview's
+     * `inTab` and the Resume command always agree. Built from one snapshot of the layout; the tracker
+     * asks for it once per publish. Only a row whose pane sits in a visible tab costs a look at
+     * the terminal.
      *
+     * @param probe the facts about the terminals; the default asks the live sessions.
      * @return a predicate over agent records.
+     * @see reusablePane
      */
-    fun paneInVisibleTab(): (AgentSessionRecord) -> Boolean {
+    internal fun paneToResumeIn(probe: ResumeProbe = ResumeProbe()): (AgentSessionRecord) -> Boolean {
         val cfg = _config.value
-        val leaves = allTabs(cfg).filter { cfg.isVisible(it) }.flatMapTo(HashSet()) { t -> t.panes.map { it.leaf.id } }
-        return { rec -> rec.leafId?.let { it in leaves } == true }
+        return { rec -> rec.isEnded && reusablePane(rec, cfg, probe) != null }
     }
 
     /**
@@ -337,23 +341,23 @@ object WindowState {
      * [title] and type [command] into its shell. The one way resume, the task open action and
      * MCP start something in a tab.
      *
-     * @param folder where the shell starts.
-     * @param title the tab's name.
+     * @param folder where the shell starts, or `null` for the default folder.
+     * @param title the tab's name, or `null` to keep the default.
      * @param command the line to run, or `null` to leave the shell at its prompt.
      * @param background true to open the tab out of sight.
      * @param worldId the world to open in, or `null` for the active one.
      * @return the new tab's id, or an empty string when there was no world to open it in.
      */
     fun openTabRunning(
-        folder: String,
-        title: String,
+        folder: String?,
+        title: String?,
         command: String?,
         background: Boolean = false,
         worldId: String? = null,
     ): String = synchronized(this) {
         val tabId = addTab(worldId, background = background, initialCwd = folder)
         if (tabId.isEmpty()) return@synchronized tabId
-        renameTab(tabId, title)
+        if (title != null) renameTab(tabId, title)
         val sessionId = allTabs(_config.value).firstOrNull { it.id == tabId }?.panes?.firstOrNull()?.leaf?.sessionId
         if (command != null && sessionId != null) {
             TerminalSessions.get(sessionId)?.write((command + "\r").toByteArray(Charsets.UTF_8))

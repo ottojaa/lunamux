@@ -26,9 +26,9 @@ class AgentSearchIndexerTest {
         return f.path
     }
 
-    private fun ended(id: String, agent: String = "claude", transcriptPath: String?) = AgentSessionRecord(
+    private fun ended(id: String, agent: String = "claude", transcriptPath: String?, at: Long = 1) = AgentSessionRecord(
         id = id, agent = agent, transcriptPath = transcriptPath, state = "ended",
-        stateSince = 1, createdAt = 1, endedAt = 1,
+        stateSince = at, createdAt = at, endedAt = at,
     ).also(repo::saveAgentSession)
 
     private fun hits(word: String) = repo.searchAgentSessions(word, 0L).map { it.record.id }
@@ -61,5 +61,21 @@ class AgentSearchIndexerTest {
         assertEquals(listOf("old"), hits("narwhal"))
         // The unreadable one is stored as empty text, so the next start does not try again.
         assertTrue(repo.loadAgentSessionsMissingText(0L).isEmpty())
+    }
+
+    @Test
+    fun `an ended record also drops search text older than the search window`() {
+        val old = ended("old", transcriptPath = transcript("o", "ancientmollusc"))
+        indexer.indexEnded(old)
+        indexer.awaitIdle()
+        assertEquals(listOf("old"), hits("ancientmollusc"))
+
+        // A clock a month and a bit later: the next ended record clears the old text, no restart needed.
+        val later = AgentSearchIndexer(repo, projects = { File(root, "no-projects") },
+            clock = { 1_000L + AgentSessionSearch.SEARCH_WINDOW_MS + 5_000L })
+        later.indexEnded(ended("fresh", transcriptPath = transcript("f", "freshotter"), at = AgentSessionSearch.SEARCH_WINDOW_MS))
+        later.awaitIdle()
+        assertTrue(hits("ancientmollusc").isEmpty())
+        assertEquals(listOf("fresh"), hits("freshotter"))
     }
 }

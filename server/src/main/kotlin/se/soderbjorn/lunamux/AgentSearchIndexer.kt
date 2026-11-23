@@ -49,7 +49,11 @@ class AgentSearchIndexer(
     fun indexEnded(record: AgentSessionRecord) {
         val path = record.transcriptPath ?: return
         if (record.agent != AgentWords.CLAUDE) return
-        submit("index ${record.id}") { storeText(record.id, path) }
+        submit("index ${record.id}") {
+            storeText(record.id, path)
+            // A server that stays up for weeks would otherwise keep text past the month search looks back.
+            repo.dropOldSearchText(clock() - AgentSessionSearch.SEARCH_WINDOW_MS)
+        }
     }
 
     /** Queue a pass that reads the month's conversations without text and drops the text of older ones. */

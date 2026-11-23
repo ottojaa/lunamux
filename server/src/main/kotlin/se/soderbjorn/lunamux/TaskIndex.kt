@@ -35,17 +35,20 @@ import java.util.UUID
 /**
  * Everything the overview needs to know about tasks, published as one value.
  *
+ * @property sessions the conversation rows the tasks were derived from, one snapshot of the tracker's
+ *   summaries. A row whose task does not exist has its [AgentSessionSummary.taskId] cleared, so every
+ *   `taskId` here is the id of a task in [tasks] and every [AgentTask.main] is a row in here.
  * @property tasks the tasks to show, sorted by id.
  * @property known the id of every task that exists, shown or not. A conversation whose
  *   [AgentSessionSummary.taskId] is not in here belongs to no task.
  */
-data class TaskState(val tasks: List<AgentTask>, val known: Set<String>)
+data class TaskState(val sessions: List<AgentSessionSummary>, val tasks: List<AgentTask>, val known: Set<String>)
 
 /**
  * One line of a task listing: a conversation that carries the task's id.
  *
  * @property sessionId the terminal session it runs in; null once it has ended.
- * @property title the conversation's title, else the first line of its first prompt, else "<agent> session".
+ * @property title the conversation's title by the one naming rule the overview uses ([AgentSessionSummary.title]).
  * @property state the conversation's state word.
  */
 data class TaskListSession(val sessionId: String?, val title: String, val state: String)
@@ -103,9 +106,9 @@ class TaskIndex(
     private var tasks: Map<String, TaskRow> =
         runCatching { repo.loadTasks() }.getOrDefault(emptyList()).associateBy { it.id }
 
-    private val _state = MutableStateFlow(TaskState(emptyList(), emptySet()))
+    private val _state = MutableStateFlow(TaskState(emptyList(), emptyList(), emptySet()))
 
-    /** The tasks to show and the ids of all that exist. Read by the window routes. */
+    /** The tasks to show, the ids of all that exist, and the conversation rows they came from. Read by [AgentsFeed]. */
     val state: StateFlow<TaskState> = _state.asStateFlow()
 
     init {
@@ -216,7 +219,9 @@ class TaskIndex(
                     canOpen = file?.open != null,
                 )
             }
-            _state.value = TaskState(published, known)
+            val publishedIds = published.mapTo(HashSet()) { it.id }
+            val sessions = summaries.map { if (it.taskId != null && it.taskId !in publishedIds) it.copy(taskId = null) else it }
+            _state.value = TaskState(sessions, published, known)
         }
     }
 
@@ -418,8 +423,7 @@ class TaskIndex(
             byTask[taskId].orEmpty().map { r ->
                 TaskListSession(
                     sessionId = r.terminalSessionId.takeIf { r.state != AgentSessionState.ENDED },
-                    title = r.title ?: r.firstPrompt?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim()?.take(80)
-                        ?: "${r.agent} session",
+                    title = tracker.summaryFor(r).title,
                     state = r.state,
                 )
             }

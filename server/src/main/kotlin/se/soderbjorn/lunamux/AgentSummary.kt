@@ -30,7 +30,7 @@ import se.soderbjorn.lunamux.persistence.AgentSessionState.WORKING
  * @param rec the record.
  * @param turn what the tracker remembers of its running turn; null for a record not in memory.
  * @param now the time, for the stopped window.
- * @param inTab whether a tab already shows the conversation (the window state's answer).
+ * @param inTab whether a closed conversation's pane is still in a visible tab at an idle shell, so Resume can reuse it (the window state's answer).
  * @return the row.
  * @see AgentSessionTracker.summaries
  */

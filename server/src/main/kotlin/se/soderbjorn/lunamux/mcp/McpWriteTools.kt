@@ -230,8 +230,7 @@ private fun openWindow(args: JsonObject, taskIndex: TaskIndex?): NewWindow {
     if (background && explicitTab == null) {
         // A new background tab, named by the title, with its seeded pane as the window.
         val worldId = args.optString("worldId")?.let(::requireWorld)
-        tabId = WindowState.addTab(worldId, background = true, initialCwd = args.optString("cwd"))
-        args.optString("title")?.let { WindowState.renameTab(tabId, it) }
+        tabId = WindowState.openTabRunning(args.optString("cwd"), args.optString("title"), command = null, background = true, worldId = worldId)
         leaf = WindowState.config.value.worlds.flatMap { it.tabs }.first { it.id == tabId }.panes.first().leaf
     } else {
         tabId = explicitTab
@@ -619,9 +618,7 @@ fun registerMcpWriteTools(settingsRepo: SettingsRepository, taskIndex: TaskIndex
         if (WindowState.isBackgroundTab(tabId)) {
             throw McpArgumentException("Window $windowId is in a background tab: only the person can open it, from the agents overview")
         }
-        if (WindowState.config.value.activeTabId != tabId) WindowState.setActiveTab(tabId)
-        WindowState.raisePane(windowId)
-        WindowState.setFocusedPane(tabId, windowId)
+        WindowState.focusPane(windowId)
         McpToolResult.text("Activated window $windowId (tab $tabId)")
     }
 
@@ -693,8 +690,7 @@ fun registerMcpWriteTools(settingsRepo: SettingsRepository, taskIndex: TaskIndex
     ) { _, args ->
         val worldId = args.optString("worldId")?.let { requireWorld(it) }
         val background = args.optBool("background") == true
-        val tabId = WindowState.addTab(worldId, background = background)
-        args.optString("title")?.let { WindowState.renameTab(tabId, it) }
+        val tabId = WindowState.openTabRunning(null, args.optString("title"), command = null, background = background, worldId = worldId)
         // The tab may live in a non-default world, so search every world's
         // tabs rather than only the legacy default-world mirror (config.tabs).
         val tab = WindowState.config.value.worlds.flatMap { it.tabs }.first { it.id == tabId }
