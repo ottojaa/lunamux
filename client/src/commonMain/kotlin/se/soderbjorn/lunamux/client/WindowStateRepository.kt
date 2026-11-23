@@ -25,6 +25,7 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import se.soderbjorn.lunula.core.PersistKeys
 import se.soderbjorn.lunamux.WindowConfig
+import se.soderbjorn.lunamux.WindowEnvelope
 
 /**
  * The toolkit-owned geometry of a single pane, parsed from the `LAYOUT_STATE`
@@ -63,7 +64,7 @@ data class ToolkitPaneGeometry(
  * returning to the tree view never shows a "Connecting…" flash or empty dots
  * as long as the server has pushed at least one config envelope this session.
  */
-class WindowStateRepository {
+class WindowStateRepository(private val clock: () -> Long = { kotlinx.datetime.Clock.System.now().toEpochMilliseconds() }) {
     /** The latest window layout, or `null` before the first server push. */
     private val _config = MutableStateFlow<WindowConfig?>(null)
     /** Observable latest [WindowConfig]. Emits `null` until the server sends
@@ -136,6 +137,69 @@ class WindowStateRepository {
     fun updateConfig(config: WindowConfig) {
         _pendingApproval.value = false
         _config.value = config
+        rebuildBoard()
+    }
+
+    /** The last `Agents` frame, or null before the first one. Kept across a reconnect. */
+    private var lastAgents: WindowEnvelope.Agents? = null
+
+    private val _agentBoard = MutableStateFlow(AgentBoard())
+    /**
+     * Everything the screens read about agents, rebuilt in one function from the last `Agents` frame
+     * and the last layout. It is kept across a reconnect until the first new frame, and a repeated
+     * frame leaves it equal, so it does not emit.
+     *
+     * @see buildBoard
+     */
+    val agentBoard: StateFlow<AgentBoard> = _agentBoard.asStateFlow()
+
+    private val _claudeConnected = MutableStateFlow(false)
+    /** Whether Claude Code's hooks are installed, from the last `Agents` frame. */
+    val claudeConnected: StateFlow<Boolean> = _claudeConnected.asStateFlow()
+
+    private val _agentMatches = MutableStateFlow<WindowEnvelope.AgentMatches?>(null)
+    /** The last search answer; the overview uses it only when its query is the one typed now. */
+    val agentMatches: StateFlow<WindowEnvelope.AgentMatches?> = _agentMatches.asStateFlow()
+
+    private val _agentDetails = MutableStateFlow<WindowEnvelope.AgentDetails?>(null)
+    /** The last peek or close-check answer. */
+    val agentDetails: StateFlow<WindowEnvelope.AgentDetails?> = _agentDetails.asStateFlow()
+
+    private val _agentErrors = MutableStateFlow<Map<String?, String>>(emptyMap())
+    /** The last error per subject: a conversation, task or tab id; the key null is the Claude hooks. */
+    val agentErrors: StateFlow<Map<String?, String>> = _agentErrors.asStateFlow()
+
+    /**
+     * Store the server's latest `Agents` frame and rebuild the board.
+     *
+     * Called by [WindowSocket] when an `Agents` envelope arrives.
+     *
+     * @param frame the frame.
+     */
+    fun updateAgents(frame: WindowEnvelope.Agents) {
+        lastAgents = frame
+        _claudeConnected.value = frame.claudeConnected
+        rebuildBoard()
+    }
+
+    /** Store a search answer. @param answer the `AgentMatches` envelope. */
+    fun updateAgentMatches(answer: WindowEnvelope.AgentMatches) { _agentMatches.value = answer }
+
+    /** Store a peek answer. @param answer the `AgentDetails` envelope. */
+    fun updateAgentDetails(answer: WindowEnvelope.AgentDetails) { _agentDetails.value = answer }
+
+    /** Store an error under its subject. @param error the `AgentError` envelope. */
+    fun updateAgentError(error: WindowEnvelope.AgentError) { _agentErrors.value = _agentErrors.value + (error.about to error.message) }
+
+    /**
+     * Forget the error of one subject, before the person tries again.
+     *
+     * @param about the conversation, task or tab id, or null for the Claude hooks.
+     */
+    fun clearAgentError(about: String?) { _agentErrors.value = _agentErrors.value - about }
+
+    private fun rebuildBoard() {
+        _agentBoard.value = buildBoard(lastAgents, _config.value, clock(), _agentBoard.value)
     }
 
     /**
