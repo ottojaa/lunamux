@@ -1507,6 +1507,8 @@ fun bootViaToolkitShell(root: HTMLElement) {
     // feature is actually enabled. See [registerOverview3dHotkey],
     // [applyOverview3dChromeVisibility], and [prewarmOverview3d].
     registerOverview3dHotkey()
+    registerAgentsOverviewHotkey() // ⌘⇧A opens the agents overview
+    startAgentsOverview() // the overview overlay: follows its view model from here on
     registerWorld3dSpikeHotkey() // ⌥⌘← opens the world spike (mirror of ⌥⌘→)
     registerWorldSwitchHotkey() // ⌥⌘O cycles to the next world in flat 2D mode
     applyOverview3dChromeVisibility()

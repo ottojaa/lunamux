@@ -3527,3 +3527,364 @@ body[data-tt-news-pulse="1"] .tt-news-topbar {
 :root[data-dt-chrome="blended"] .world-status-bar.world-status-empty {
     border-top: none;
 }
+
+:root[data-dt-chrome="blended"] .world-status-bar {
+    border-top-color: var(--t-border, rgba(255, 255, 255, 0.1));
+}
+
+/* ── Agents overview (AgentsOverview.kt) ──
+   The ⌘⇧A overlay, drawn as a terminal table: one row per task or session on one five-column grid
+   (state mark, name, folder, state word, age). A live row has at most one line under
+   that one; a closed row is the one line. Brightness follows the state: a working or needs-you row
+   (`.ao-live`) has a bright name, a done row (`.ao-done`) a mid-grey one, and a closed one (`.ao-old`)
+   in EARLIER is dim all over. Colour is spent on state only, and loud only where the person is
+   wanted: the line under a name is dim, a status line has just its hook in the state's colour, and
+   only a question is said in full amber. "Waiting" (nothing for the person) is the quietest state.
+   The accent is for working, amber for
+   "needs you", a calm blue for waiting on something the agent started (a background shell, a
+   review, CI: nothing to do for the person), a muted green for done; the accent also marks the selected row, red a failed open.
+   Every other text is a shade of the theme's text colour. Lifted above the pane modals so it opens
+   over whatever is on screen. The colours below follow the active theme and fall back to the dark
+   teal defaults. */
+.ao-panel {
+    --ao-surface: var(--dt-window-bg, var(--t-surface, #0c1a1e));
+    --ao-text: var(--t-text, #cfe3e2);
+    --ao-muted: color-mix(in srgb, var(--ao-text) 72%, var(--ao-surface));
+    --ao-dim: var(--t-text-dim, #6f8f92);
+    --ao-faint: color-mix(in srgb, var(--ao-dim) 52%, var(--ao-surface));
+    --ao-line: var(--t-border, #1b3136);
+    --ao-sel: color-mix(in srgb, var(--t-accent, #5fd4d0) 14%, var(--ao-surface));
+    --ao-hover: color-mix(in srgb, var(--t-accent, #5fd4d0) 5%, var(--ao-surface));
+    /* A fixed green, not the theme's "added" colour: a one-hue theme makes that the same hue as
+       the accent, and done then reads like working. The text colour is mixed in so it stays
+       readable on a light theme. */
+    --ao-done: color-mix(in srgb, #5fd08f 80%, var(--ao-text));
+    /* Waiting on something the agent started: a fixed calm blue for the same reason, so it reads
+       apart from working (the accent) and from "needs you" (amber) in every theme. */
+    --ao-wait: color-mix(in srgb, #6ea8ff 78%, var(--ao-text));
+    /* The same blue stepped back toward the surface, for the mark and word of a row that waits. */
+    --ao-wait-q: color-mix(in srgb, var(--ao-wait) 62%, var(--ao-surface));
+    /* Paused on purpose: quiet, in the theme's own muted text, so it reads as stopped rather than
+       as done (green) or waiting (blue). */
+    --ao-paused: var(--ao-muted);
+    --ao-accent: var(--t-accent, #5fd4d0);
+    --ao-warn: var(--t-warn, #f2c14e);
+    --ao-error: var(--t-danger, #ff7b72);
+    --ao-mono: var(--dt-font-mono, 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.ao-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 100001;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 56px;
+    background: rgba(0, 0, 0, 0.45);
+}
+.ao-panel {
+    container: ao / inline-size;
+    width: min(1180px, calc(100vw - 48px));
+    max-height: calc(100vh - 112px);
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--ao-line);
+    border-radius: 8px;
+    background: var(--ao-surface);
+    color: var(--ao-text);
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+    font: 13px/1.6 var(--ao-mono);
+    overflow: hidden;
+}
+
+.ao-search-line {
+    display: flex;
+    align-items: center;
+    gap: 1ch;
+    flex: none;
+    height: 44px;
+    padding: 0 2ch;
+}
+/* The counts at the end of the search line. */
+.ao-tally { flex: none; display: flex; gap: 2ch; font-size: 12px; white-space: nowrap; }
+.ao-prompt { color: var(--ao-accent); font-weight: 700; }
+.ao-search {
+    flex: 1;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    outline: none;
+}
+.ao-search::placeholder { color: var(--ao-dim); }
+
+.ao-list { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 0 10px; }
+.ao-sec {
+    display: flex;
+    align-items: center;
+    gap: 1.5ch;
+    height: 30px;
+    padding: 0 14px;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    color: var(--ao-dim);
+}
+.ao-sec::after { content: ""; flex: 1; height: 1px; background: var(--ao-line); }
+.ao-empty { padding: 24px 14px; color: var(--ao-dim); }
+
+.ao-grp { padding: 4px 14px 0; font-size: 11px; letter-spacing: 0.06em; color: var(--ao-dim); }
+
+/* The one grid every row uses: state mark, name, progress (or folder), state word, age. The name
+   takes the width the fixed columns leave; the third column has room for a bar and "13/14" or for
+   "lunamux-fork", the fourth for "2 agents working". What a row shows under that line (the
+   description, the headline, a task's agents, the question, the peek) spans from the name on. */
+.ao-row {
+    display: grid;
+    grid-template-columns: 2ch minmax(0, 1fr) 22ch 17ch 36px;
+    gap: 0 12px;
+    align-items: start;
+    padding: 3px 14px;
+    line-height: 20px;
+    position: relative;
+    cursor: pointer;
+}
+.ao-row > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* The recap or title under a name runs to two lines; a search snippet too. */
+.ao-about { grid-column: 2 / -1; min-width: 0; overflow-wrap: anywhere;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+.ao-n {
+    grid-column: 2 / -1;
+    min-width: 0;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+}
+.ao-about { color: var(--ao-dim); }
+/* Whitespace, not colour, is what sets one task apart from the next. */
+.ao-live + .ao-live, .ao-live + .ao-done, .ao-done + .ao-live, .ao-done + .ao-done { margin-top: 8px; }
+/* The pointer's row is a faint tint; only the selected row has the strong fill and the accent bar.
+   Its name keeps the text colour: the fill and the bar already mark it. */
+.ao-row:hover { background: var(--ao-hover); }
+.ao-row.ao-sel { background: var(--ao-sel); box-shadow: inset 2px 0 0 var(--ao-accent); }
+
+/* What a closed row or an agent last said, after its name. */
+.ao-said { margin-left: 1.5ch; color: var(--ao-dim); font-weight: 400; }
+.ao-old .ao-said { color: var(--ao-faint); }
+/* A row's tab name, title and line are three things, so the second and third are set apart. */
+.ao-said + .ao-said::before { content: "· "; }
+/* The selected task's conversations: mark, name and words, age. */
+.ao-agents {
+    grid-column: 2 / -1;
+    display: grid;
+    grid-template-columns: 2ch minmax(0, 1fr) 36px;
+    gap: 0 12px;
+    margin-top: 4px;
+}
+.ao-agents > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ao-agents > .ao-m { overflow: visible; }
+.ao-agent-name { color: var(--ao-text); }
+/* A conversation in a hidden tab is dimmed, so it is not taken for one the person can see in a tab. */
+.ao-agent-bg .ao-agent-name { color: var(--ao-dim); }
+.ao-agent-bg .ao-said { color: var(--ao-faint); }
+
+.ao-m { color: var(--ao-accent); user-select: none; }
+.ao-m-need { color: var(--ao-warn); }
+.ao-m-wait { color: var(--ao-wait-q); }
+.ao-m-paused { color: var(--ao-paused); }
+.ao-row > .ao-m { overflow: visible; }
+/* Brightness by state: live names bright, done names mid-grey, EARLIER rows dim. */
+.ao-live .ao-t { color: var(--ao-text); font-weight: 600; }
+.ao-live .ao-w, .ao-live .ao-n { color: var(--ao-muted); }
+.ao-done .ao-t { color: var(--ao-muted); }
+.ao-done .ao-w, .ao-done .ao-n { color: var(--ao-dim); }
+.ao-sw { color: var(--ao-dim); }
+/* Only "needs you" is bold: it is the one state that asks for the person. */
+.ao-sw-work { color: var(--ao-accent); }
+.ao-sw-need { color: var(--ao-warn); font-weight: 600; }
+.ao-sw-wait { color: var(--ao-wait-q); }
+.ao-sw-paused { color: var(--ao-paused); }
+.ao-sw-done { color: var(--ao-done); }
+.ao-age { text-align: right; color: var(--ao-dim); }
+.ao-n-error { color: var(--ao-error); }
+
+/* The state line: where the row stands. The text is dim and only the hook in front takes the row's
+   state colour (the accent while it works, the calm blue while it waits, green for a done task's own
+   status), so it never outshouts the name. A question is the exception: it is said in full amber, the
+   one loud line in the list, and runs to two lines where a status is one. */
+.ao-panel { --ao-st-work: color-mix(in srgb, var(--ao-accent) 88%, var(--ao-surface));
+    --ao-st-done: color-mix(in srgb, var(--ao-done) 74%, var(--ao-surface)); }
+.ao-row .ao-st { display: flex; gap: 1ch; overflow: visible; color: var(--ao-dim); }
+.ao-st-g { flex: none; color: var(--ao-tone, inherit); }
+.ao-st-x { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; line-clamp: 1; overflow: hidden; }
+.ao-row .ao-st-need .ao-st-x { -webkit-line-clamp: 2; line-clamp: 2; }
+.ao-row .ao-st-work { --ao-tone: var(--ao-st-work); }
+.ao-row .ao-st-need { --ao-tone: var(--ao-warn); color: var(--ao-warn); }
+.ao-row .ao-st-wait { --ao-tone: var(--ao-wait-q); }
+.ao-row .ao-st-paused { --ao-tone: var(--ao-paused); }
+.ao-row .ao-st-done { --ao-tone: var(--ao-st-done); }
+/* A done row's last reply, which the row leaves out, in the selection. */
+.ao-reply-lbl { color: var(--ao-faint); margin-right: 1ch; }
+.ao-reply { color: var(--ao-muted); }
+
+/* The selected row's own block under its lines: its folder and any note, or the question the first enter asks. */
+.ao-focus {
+    grid-column: 2 / -1;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+    gap: 7px;
+    white-space: normal;
+    font-size: 12px;
+    color: var(--ao-dim);
+    padding: 3px 0 6px;
+}
+.ao-xtra { line-height: 1.5; }
+
+/* The question the first enter asks before it resumes or starts anything. */
+.ao-ask {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 6px 16px;
+    padding: 7px 10px;
+    border: 1px solid color-mix(in srgb, var(--ao-accent) 55%, transparent);
+    border-radius: 5px;
+    background: color-mix(in srgb, var(--ao-accent) 7%, var(--ao-surface));
+    cursor: default;
+}
+.ao-ask-q { color: var(--ao-text); }
+.ao-ask-tag {
+    display: inline-block;
+    margin-right: 10px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--ao-line);
+    color: var(--ao-dim);
+    font-size: 11px;
+}
+.ao-ask-keys { color: var(--ao-dim); white-space: nowrap; }
+.ao-ask-key { cursor: pointer; margin-left: 8px; }
+.ao-kbd {
+    font: 600 11px/1 var(--ao-mono);
+    color: var(--ao-text);
+    border: 1px solid var(--ao-line);
+    border-radius: 3px;
+    padding: 2px 5px;
+    margin-right: 3px;
+}
+
+/* Earlier and finished rows recede. */
+.ao-old .ao-t { color: var(--ao-dim); }
+.ao-old .ao-w, .ao-old .ao-n, .ao-old .ao-sw { color: var(--ao-faint); }
+.ao-row.ao-sel.ao-old .ao-t { color: var(--ao-text); }
+.ao-more { cursor: pointer; }
+
+/* The working glyph (spinner() in Dom.kt): four frames stacked in one box, each fading in as the one before
+   fades out, in the accent with a soft glow. The box is the one the glyph was first drawn in: 26px high, its
+   line 26px, centred on the row. A row is 26px (a 20px line and 3px of padding each side), so the 3px
+   margins above and below hand that padding back and the box does not grow its row. The cell it sits
+   in lets the glow spill past its edge. Its weight is its own and always regular,
+   never the word's beside it: the monospace face has no braille, so the system falls back to Apple
+   Braille, and a bold weight there picks its outlined six-dot face, which draws a ring at every dot
+   position the pair does not light. */
+.ao-work {
+    position: relative;
+    display: inline-block;
+    width: 2ch;
+    height: 26px;
+    margin: -3px 0;
+    font-size: 19px;
+    font-weight: 400;
+    line-height: 26px;
+    vertical-align: top;
+    text-align: center;
+    color: var(--ao-accent);
+    text-shadow: 0 0 8px color-mix(in srgb, var(--ao-accent) 55%, transparent);
+}
+/* One 1,200 ms cycle, a frame starting every 300 ms. Each frame's negative animation-delay (set where the glyph
+   is built) puts the turn where the wall clock says, so a glyph built again in a redrawn row is in step. The
+   curve is the one the first panel spinner drew: a 400 ms ease-in-out fade in that the next step reverses at
+   300 ms (it peaks near 0.92), then a fade out that the step after that cuts off at about 0.1. The frame
+   then drops to nothing as its box is reused for a later frame, and stays dark for the other half. */
+.ao-work-f { position: absolute; inset: 0; opacity: 0; animation: ao-frame 1200ms linear infinite; }
+@keyframes ao-frame {
+    0% { opacity: 0.08; } 5.21% { opacity: 0.11; } 9.38% { opacity: 0.22; } 21.88% { opacity: 0.8; }
+    25% { opacity: 0.91; } 27.08% { opacity: 0.92; } 34.38% { opacity: 0.78; } 45.83% { opacity: 0.24; }
+    50% { opacity: 0.1; } 50.01% { opacity: 0; } 100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) { .ao-work-f { animation: none; } .ao-work-f:first-child { opacity: 1; } }
+/* In the sidebar footer the glyph is one text line tall and takes the footer's own size, not the overview row's. */
+.world-status-bar .ao-work { height: 1.3em; margin: 0; font-size: inherit; line-height: 1.3em; vertical-align: text-bottom; text-shadow: none; }
+.ao-more .ao-t { color: var(--ao-dim); }
+
+/* Footer: the keys the view model names for the selection or the question; keys in the accent, words dim. */
+.ao-foot {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex: none;
+    height: 30px;
+    padding: 0 14px;
+    border-top: 1px solid var(--ao-line);
+    font-size: 11.5px;
+    color: var(--ao-dim);
+    white-space: nowrap;
+    overflow: hidden;
+}
+.ao-seg { cursor: pointer; }
+.ao-k { color: var(--ao-accent); margin-right: 0.8ch; }
+
+/* Narrow panels: the folder gives way. */
+@container ao (max-width: 700px) {
+    .ao-row { grid-template-columns: 2ch minmax(0, 1fr) 17ch 36px; }
+    .ao-row > .ao-w { display: none; }
+}
+
+/* A search match is underlined in the accent colour, never filled: amber is reserved for needs-you. */
+.ao-mark { background: none; color: var(--ao-text); text-decoration: underline; text-decoration-color: var(--ao-accent); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+/* Under the selected row, across the columns after the marker: the peek. */
+.ao-peek {
+    grid-column: 2 / -1;
+    min-width: 0;
+    margin: 2px 0 8px;
+    padding: 8px 2ch 10px;
+    border-left: 1px solid var(--ao-faint);
+    background: var(--ao-surface);
+    cursor: default;
+    line-height: 1.55;
+}
+.ao-peek-title { padding-bottom: 6px; font-size: 11px; letter-spacing: 0.12em; color: var(--ao-dim); }
+.ao-peek-line { overflow: hidden; text-overflow: ellipsis; white-space: pre; font-size: 12px; color: var(--ao-muted); }
+
+/* Closing a live session asks first. */
+.ao-confirm {
+    display: flex;
+    align-items: center;
+    gap: 2ch;
+    margin: 2px 1ch 8px;
+    padding: 8px 2ch;
+    border-left: 2px solid var(--ao-error);
+    background: var(--ao-sel);
+    line-height: 1.5;
+}
+.ao-confirm-text { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.ao-confirm-warn { font-size: 12px; color: var(--ao-warn); }
+.ao-btn {
+    height: 28px;
+    padding: 0 12px;
+    border: 1px solid var(--ao-line);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+.ao-btn-danger { border-color: var(--ao-error); color: var(--ao-error); }
+.ao-btn-focus { border-color: var(--ao-accent); box-shadow: inset 0 0 0 1px var(--ao-accent); }

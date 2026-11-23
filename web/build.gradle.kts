@@ -44,6 +44,12 @@ val generateVersionConstant by tasks.registering {
     }
 }
 
+// The browser tests lay real elements out with the page's own stylesheet; the Karma fragment in
+// `karma.config.d/styles.js` loads it from the path given here.
+tasks.withType<org.jetbrains.kotlin.gradle.targets.js.testing.KotlinJsTest>().configureEach {
+    environment("LUNAMUX_STYLES_CSS", layout.projectDirectory.file("src/jsMain/resources/styles.css").asFile.absolutePath)
+}
+
 kotlin {
     js {
         browser {
@@ -60,6 +66,9 @@ kotlin {
     sourceSets {
         jsMain {
             kotlin.srcDir(generateVersionConstant)
+        }
+        jsTest.dependencies {
+            implementation(kotlin("test"))
         }
         jsMain.dependencies {
             implementation(projects.clientServer)

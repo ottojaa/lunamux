@@ -122,6 +122,9 @@ private fun hotkeyGroups(): List<HotkeyGroupModel> = listOf(
             // to fit its pane. Default ⌃⌥R; configurable + registered in
             // `registerReformatHotkey`. See [REFORMAT_HOTKEY_ACTION_ID].
             actionRow("Reformat terminal", REFORMAT_HOTKEY_ACTION_ID),
+            // Opens the agents overview (every Claude Code / Codex / Gemini
+            // session). Default ⌘⇧A; see [AGENTS_OVERVIEW_HOTKEY_ACTION_ID].
+            actionRow("Agents overview", AGENTS_OVERVIEW_HOTKEY_ACTION_ID),
         ),
     ),
     HotkeyGroupModel(

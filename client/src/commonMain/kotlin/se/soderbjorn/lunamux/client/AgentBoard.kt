@@ -106,6 +106,7 @@ enum class Enter { JUMP, SHOW, OPEN, RESUME, NONE }
  * @property tabId the tab holding its pane, or null.
  * @property worldId the world of that tab, or null when the layout has no worlds.
  * @property tabName the tab's own name when it is a real one (not "Tab 3"), else null.
+ * @property paneSessionId the terminal session of its pane, which closing the pane needs, or null.
  */
 data class Conversation(
     val summary: AgentSessionSummary,
@@ -113,6 +114,7 @@ data class Conversation(
     val tabId: String?,
     val worldId: String?,
     val tabName: String?,
+    val paneSessionId: String? = null,
 ) {
     /** Whether the conversation is open. */
     val live: Boolean get() = summary.ended == null
@@ -321,7 +323,7 @@ fun buildBoard(frame: WindowEnvelope.Agents?, config: WindowConfig?, now: Long, 
             else -> Place.VISIBLE
         }
         val name = spot?.tab?.title?.trim()?.takeIf { place != Place.HIDDEN && it.isNotEmpty() && !DEFAULT_TAB_NAME.matches(it) }
-        s.id to Conversation(s, place, spot?.tab?.id, spot?.worldId, name)
+        s.id to Conversation(s, place, spot?.tab?.id, spot?.worldId, name, spot?.sessionId)
     }
     val byTask = frame.sessions.filter { it.taskId != null }.groupBy { it.taskId!! }
     val taskRows = frame.tasks.mapNotNull { taskWork(it, byTask[it.id].orEmpty(), conversations, now) }
@@ -339,12 +341,12 @@ fun buildBoard(frame: WindowEnvelope.Agents?, config: WindowConfig?, now: Long, 
     return AgentBoard(works, conversations, tally, byWorld, config?.activeWorldId, subjects, focus)
 }
 
-private class Spot(val worldId: String?, val tab: TabConfig)
+private class Spot(val worldId: String?, val tab: TabConfig, val sessionId: String)
 
 private fun spotsOf(config: WindowConfig?): Map<String, Spot> {
     val out = HashMap<String, Spot>()
     if (config == null) return out
-    fun add(worldId: String?, tabs: List<TabConfig>) = tabs.forEach { t -> t.panes.forEach { out[it.leaf.id] = Spot(worldId, t) } }
+    fun add(worldId: String?, tabs: List<TabConfig>) = tabs.forEach { t -> t.panes.forEach { out[it.leaf.id] = Spot(worldId, t, it.leaf.sessionId) } }
     if (config.worlds.isEmpty()) add(null, config.tabs) else config.worlds.forEach { add(it.id, it.tabs) }
     return out
 }
