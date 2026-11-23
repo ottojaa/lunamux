@@ -51,6 +51,19 @@ object AppPaths {
     }
 
     /**
+     * The folder the agents overview reads task files from: `-Dlunamux.tasksDir` (a blank value is
+     * ignored), else `~/.lunamux/tasks`. Lunamux only reads it; it need not exist.
+     *
+     * @return the task-file folder.
+     * @see se.soderbjorn.lunamux.TaskFilesWatcher
+     */
+    fun taskDir(): File {
+        val tasks = System.getProperty("lunamux.tasksDir")?.takeIf { it.isNotBlank() }
+        if (tasks != null) return File(tasks)
+        return File(System.getProperty("user.home"), ".lunamux/tasks")
+    }
+
+    /**
      * Directory for auxiliary on-disk state (shell init bootstrap files, etc.).
      * Tracks the database file's parent so a `-Dlunamux.dbPath` override
      * keeps everything together for tests and packaged installs.

@@ -4,9 +4,10 @@
  *
  * This file contains [Shown] (the one state a row is drawn in), [AgentSessionSummary] (one row),
  * [AgentTurn] (one thing the person asked), [WorktreeWork] (the git work left in a folder),
- * [ScreenRun] (a styled run of a pane's screen, for the peek) and [AgentWindows] (how far back the
- * overview looks). The server's `AgentSessionTracker` builds the summaries and the protocol
- * envelopes carry them; the screens only read them.
+ * [ScreenRun] (a styled run of a pane's screen, for the peek), [AgentTask] (one task: the name and
+ * facts of a group of conversations) and [AgentWindows] (how far back the overview looks). The
+ * server's `AgentSessionTracker` builds the summaries and `TaskIndex` the tasks; the protocol
+ * envelopes carry them and the screens only read them.
  */
 package se.soderbjorn.lunamux
 
@@ -175,6 +176,38 @@ data class ScreenRun(
         const val RGB = 1 shl 24
     }
 }
+
+/**
+ * One task of the agents overview: a named piece of work that conversations belong to (the ones
+ * whose [AgentSessionSummary.taskId] is its [id]). Built by the server's `TaskIndex`; a screen draws
+ * it as it is.
+ *
+ * @property id the task's id.
+ * @property title the task's name, never blank.
+ * @property repo the git repository the task is about, from its task file; null for a task an agent made.
+ * @property main the id of the conversation that speaks for the task (the one the person is taken
+ *   to), or null when none was named or the one named speaks for another task.
+ * @property status the task's one-line status as an agent set it, with a status that only counts
+ *   states ("2 working, 1 waiting") already left out; null when there is none.
+ * @property statusAt when [status] was set, epoch millis; null with no status.
+ * @property questionWaits whether the status says a question waits for the person.
+ * @property pausedAt when the work was paused on purpose; null while it is not.
+ * @property startedAt when the task was first published, epoch millis; never moves.
+ * @property canOpen whether its task file declares an `open` action that starts a session for it.
+ */
+@Serializable
+data class AgentTask(
+    val id: String,
+    val title: String,
+    val repo: String? = null,
+    val main: String? = null,
+    val status: String? = null,
+    val statusAt: Long? = null,
+    val questionWaits: Boolean = false,
+    val pausedAt: Long? = null,
+    val startedAt: Long? = null,
+    val canOpen: Boolean = false,
+)
 
 /** How far back the overview looks, shared so the server's history and the clients' lists agree. */
 object AgentWindows {

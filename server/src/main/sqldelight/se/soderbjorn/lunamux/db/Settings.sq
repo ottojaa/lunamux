@@ -51,6 +51,30 @@ CREATE TABLE IF NOT EXISTS agent_session_text (
     text TEXT NOT NULL
 );
 
+-- Every task the server keeps something about, whether an agent made it or a task file declares
+-- it. `title` is set only for a task an agent made; that is what tells the two apart (a task file
+-- carries its own title). A task has no member list: a conversation belongs to it through
+-- agent_sessions.task_id. main_conversation is the agent's own conversation id of the conversation
+-- that speaks for the task, never a pane id (pane ids are handed out again on every start).
+-- status / status_at are the one-line status and when it was set; question_waits is 1 while the
+-- status says a question waits for the person; paused_at is when the work was stopped on purpose
+-- (empty while it is not). started_at is when the task was first published: the first stamp wins,
+-- so a task's place in the overview never moves. created_at / updated_at are when an agent made and
+-- last renamed it. Every column but id may be empty: a task file's task has no creation time, and a
+-- row made only to hold a status has no title.
+CREATE TABLE IF NOT EXISTS tasks (
+    id                TEXT NOT NULL PRIMARY KEY,
+    title             TEXT,
+    main_conversation TEXT,
+    status            TEXT,
+    status_at         INTEGER,
+    question_waits    INTEGER,
+    started_at        INTEGER,
+    created_at        INTEGER,
+    updated_at        INTEGER,
+    paused_at         INTEGER
+);
+
 selectByKey:
 SELECT value FROM settings WHERE key = ?;
 
@@ -148,3 +172,29 @@ ORDER BY
     r.state = 'ended',
     COALESCE(r.ended_at, r.state_since) DESC
 LIMIT 200;
+
+selectTasks:
+SELECT id, title, main_conversation, status, status_at, question_waits, started_at, created_at, updated_at, paused_at
+FROM tasks ORDER BY COALESCE(created_at, started_at), id;
+
+-- A task an agent makes; its id is new. A row that exists is left as it is, never replaced.
+insertTask:
+INSERT OR IGNORE INTO tasks(id, title, created_at, updated_at) VALUES (?, ?, ?, ?);
+
+renameTask:
+UPDATE tasks SET title = ?, updated_at = ? WHERE id = ?;
+
+-- A row for a task that has none yet, so something can be stored about it; changes nothing when
+-- the task has one.
+ensureTask:
+INSERT OR IGNORE INTO tasks(id) VALUES (?);
+
+-- The first stamp wins: a task's place in the overview must not move once it has one.
+stampTaskStart:
+UPDATE tasks SET started_at = ? WHERE id = ? AND started_at IS NULL;
+
+setTaskMainConversation:
+UPDATE tasks SET main_conversation = ? WHERE id = ?;
+
+setTaskStatus:
+UPDATE tasks SET status = ?, status_at = ?, question_waits = ?, paused_at = ? WHERE id = ?;

@@ -110,6 +110,12 @@ fun main() {
 
     val persistenceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    // Tasks: the folder of task files is polled, and the index publishes the tasks from the files,
+    // the stored rows and the conversation summaries.
+    val taskFiles = TaskFilesWatcher(AppPaths.taskDir()).also { it.start(persistenceScope) }
+    val taskIndex = TaskIndex(repo, agentTracker, taskFiles.files, leafOfSession = { WindowState.leafIdOfSession(it) })
+        .also { it.start(persistenceScope) }
+
     // Opt-in program-set terminal titles (OSC 0/2). Mirror the toggle into
     // TerminalSessions' stable flag flow: per-session watchers re-collect on
     // enable (so the current title applies immediately, no restart), and an
@@ -190,7 +196,7 @@ fun main() {
                 this.port = port
             }
         },
-        module = { module(repo, sessionStates, usageMonitor, scrollbackSaver, agentTracker) }
+        module = { module(repo, sessionStates, usageMonitor, scrollbackSaver, agentTracker, taskIndex) }
     )
 
     if (java.awt.GraphicsEnvironment.isHeadless()) {
@@ -224,6 +230,7 @@ fun main() {
  *                        so a graceful stop produces the same on-disk result as the
  *                        JVM shutdown hook
  * @param agentTracker    the agent conversation records, fed by hook events and the pane poll
+ * @param taskIndex       the tasks, behind the MCP task tools
  */
 fun Application.module(
     settingsRepo: SettingsRepository,
@@ -231,6 +238,7 @@ fun Application.module(
     usageMonitor: ClaudeUsageMonitor,
     scrollbackSaver: ScrollbackSaver,
     agentTracker: AgentSessionTracker,
+    taskIndex: TaskIndex? = null,
 ) {
     install(ContentNegotiation) { json() }
     install(WebSockets) {
@@ -267,6 +275,6 @@ fun Application.module(
         agentEventRoutes(agentTracker)
         adminRoutes(settingsRepo, scrollbackSaver)
         // MCP endpoint (localhost-only, MCP-token gated) — see mcp/McpRoutes.kt.
-        mcpRoutes(settingsRepo, usageMonitor)
+        mcpRoutes(settingsRepo, usageMonitor, taskIndex, agentTracker)
     }
 }

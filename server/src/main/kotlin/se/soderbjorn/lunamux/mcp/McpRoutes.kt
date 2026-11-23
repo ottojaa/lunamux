@@ -46,7 +46,10 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
+import se.soderbjorn.lunamux.AgentSessionTracker
 import se.soderbjorn.lunamux.ClaudeUsageMonitor
+import se.soderbjorn.lunamux.EVENTS_SESSION_HEADER
+import se.soderbjorn.lunamux.TaskIndex
 import se.soderbjorn.lunamux.auth.DeviceAuth
 import se.soderbjorn.lunamux.persistence.SettingsRepository
 import se.soderbjorn.lunamux.readAuthToken
@@ -108,19 +111,26 @@ private suspend fun ApplicationCall.mcpAuthorize(repo: SettingsRepository): McpS
  *
  * @param settingsRepo the SQLite-backed settings store (auth, kill switch).
  * @param usageMonitor the Claude usage monitor backing `get_claude_usage`.
+ * @param taskIndex the task index behind the task tools and the `taskId` argument of `create_window`
+ *   and `run_command`; when null (examples) the task tools are not registered and a `taskId` is refused.
+ * @param tracker the conversation records, behind `set_status`; the task tools register only with both it and [taskIndex].
  */
 fun Route.mcpRoutes(
     settingsRepo: SettingsRepository,
     usageMonitor: ClaudeUsageMonitor,
+    taskIndex: TaskIndex? = null,
+    tracker: AgentSessionTracker? = null,
 ) {
     registerMcpReadTools(settingsRepo, usageMonitor)
-    registerMcpWriteTools(settingsRepo)
+    registerMcpWriteTools(settingsRepo, taskIndex)
+    if (taskIndex != null && tracker != null) registerMcpTaskTools(taskIndex, tracker)
     registerMcpConsoleTools()
 
     post("/mcp") {
         val scope = call.mcpAuthorize(settingsRepo) ?: return@post
         val session = McpSessions.touch(call.request.header(SESSION_HEADER))
         val body = call.receiveText()
+        val callerSessionId = call.request.header(EVENTS_SESSION_HEADER)?.trim()?.takeIf { it.isNotEmpty() }
         val acceptsSse = call.request.header(HttpHeaders.Accept)
             ?.contains("text/event-stream", ignoreCase = true) == true
 
@@ -132,7 +142,7 @@ fun Route.mcpRoutes(
         if (acceptsSse && isToolCall) {
             call.respondTextWriter(ContentType.Text.EventStream) {
                 coroutineScope {
-                    val pending = async { McpServer.handleMessage(body, scope, session) }
+                    val pending = async { McpServer.handleMessage(body, scope, session, callerSessionId) }
                     // Flush one keepalive up front so the response headers and
                     // a first byte reach the client immediately. Without this
                     // the whole SSE_KEEPALIVE_MS window elapses before anything
@@ -156,7 +166,7 @@ fun Route.mcpRoutes(
                 }
             }
         } else {
-            val handled = McpServer.handleMessage(body, scope, session)
+            val handled = McpServer.handleMessage(body, scope, session, callerSessionId)
             handled.newSessionId?.let { call.response.header(SESSION_HEADER, it) }
             if (handled.body == null) {
                 call.respond(HttpStatusCode.Accepted)

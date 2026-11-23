@@ -544,6 +544,109 @@ class SettingsRepository(
         return hits.mapNotNull { h -> byId[h.id]?.let { AgentSearchRow(it, h.transcript_window, h.screen_window) } }
     }
 
+    /**
+     * One row of the `tasks` table: what the server stores about a task, an agent-made one or a
+     * task file's. Read once at start by `TaskIndex`, which then writes through.
+     *
+     * @property id the task's id.
+     * @property title the name of an agent-made task; null for a row that only holds a status or a
+     *   main conversation (a task file's task).
+     * @property mainConversation the conversation id that speaks for the task, or null.
+     * @property status the one-line status, or null.
+     * @property statusAt when [status] was set, epoch millis.
+     * @property questionWaits whether the status says a question waits for the person.
+     * @property startedAt when the task was first published, epoch millis; never moves once set.
+     * @property createdAt when an agent made the task.
+     * @property updatedAt when an agent last renamed it.
+     * @property pausedAt when the work was paused on purpose; null while it is not.
+     */
+    data class TaskRow(
+        val id: String,
+        val title: String? = null,
+        val mainConversation: String? = null,
+        val status: String? = null,
+        val statusAt: Long? = null,
+        val questionWaits: Boolean = false,
+        val startedAt: Long? = null,
+        val createdAt: Long? = null,
+        val updatedAt: Long? = null,
+        val pausedAt: Long? = null,
+    )
+
+    /**
+     * Every stored task, oldest first. Called once when `TaskIndex` is built.
+     *
+     * @return the rows of the `tasks` table.
+     */
+    fun loadTasks(): List<TaskRow> =
+        database.settingsQueries.selectTasks { id, title, conversation, status, statusAt, waits, startedAt, createdAt, updatedAt, pausedAt ->
+            TaskRow(id, title, conversation, status, statusAt, waits == 1L, startedAt, createdAt, updatedAt, pausedAt)
+        }.executeAsList()
+
+    /**
+     * Store a new agent-made task.
+     *
+     * @param id the new task's id.
+     * @param title its cleaned title.
+     * @param at when it was made, epoch millis.
+     */
+    fun insertTask(id: String, title: String, at: Long) {
+        database.settingsQueries.insertTask(id, title, at, at)
+    }
+
+    /**
+     * Change the name of an agent-made task; nothing else about it changes.
+     *
+     * @param id the task.
+     * @param title the new cleaned title.
+     * @param at when, epoch millis.
+     */
+    fun renameTask(id: String, title: String, at: Long) {
+        database.settingsQueries.renameTask(title, at, id)
+    }
+
+    /**
+     * Record when a task started, making its row when it has none and leaving an earlier stamp alone.
+     *
+     * @param taskId the task.
+     * @param startedAt epoch millis.
+     */
+    fun stampTaskStart(taskId: String, startedAt: Long) {
+        database.settingsQueries.transaction {
+            database.settingsQueries.ensureTask(taskId)
+            database.settingsQueries.stampTaskStart(startedAt, taskId)
+        }
+    }
+
+    /**
+     * Name the conversation that speaks for a task; the task needs a row (see [stampTaskStart]).
+     *
+     * @param taskId the task.
+     * @param conversationId the conversation id, or null to clear.
+     */
+    fun setTaskMainConversation(taskId: String, conversationId: String?) {
+        database.settingsQueries.setTaskMainConversation(conversationId, taskId)
+    }
+
+    /**
+     * Store a task's status line and pause; the task needs a row (see [stampTaskStart]).
+     *
+     * @param taskId the task.
+     * @param status the cleaned status, or null to clear it.
+     * @param at when it was set, epoch millis.
+     * @param questionWaits whether a question waits; stored only with a status.
+     * @param pausedAt when the work was paused, or null while it is not.
+     */
+    fun setTaskStatus(taskId: String, status: String?, at: Long, questionWaits: Boolean = false, pausedAt: Long? = null) {
+        database.settingsQueries.setTaskStatus(
+            status,
+            if (status == null) null else at,
+            if (status != null && questionWaits) 1L else 0L,
+            pausedAt,
+            taskId,
+        )
+    }
+
     private fun se.soderbjorn.lunamux.db.Agent_sessions.toRecord() = AgentSessionRecord(
         id = id, agent = agent, agentSessionId = agent_session_id, source = source, leafId = leaf_id,
         terminalSessionId = terminal_session_id, cwd = cwd, repo = repo, branch = branch, title = title,
