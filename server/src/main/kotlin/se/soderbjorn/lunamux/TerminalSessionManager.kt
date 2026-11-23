@@ -149,6 +149,9 @@ interface TermSession {
     /** Deliver user input bytes into the session. */
     fun write(bytes: ByteArray)
 
+    /** Whether the shell in this session is waiting at its prompt, with no program running under it. */
+    fun isIdleShell(): Boolean = false
+
     /**
      * Record that [clientId] just delivered user input; drives the
      * latest-active-client size arbitration (typing on a client makes it the
@@ -241,6 +244,12 @@ interface TermSession {
     /** The currently rendered viewport as plain text. */
     fun screenText(): String
 
+    /**
+     * The currently rendered viewport as styled runs, one list per row, for the agents overview's
+     * peek; null for a session with no styled grid, whose peek then shows [screenText].
+     */
+    fun screenRows(): List<List<se.soderbjorn.lunamux.pty.StyledRun>>? = null
+
     /** Whether the backing process (or virtual session) is still live. */
     fun isProcessAlive(): Boolean
 }
@@ -294,6 +303,17 @@ object TerminalSessions {
 
     private val lastNonNullState = ConcurrentHashMap<String, String>()
     private val nullStreak = ConcurrentHashMap<String, Int>()
+    private val lastCli = ConcurrentHashMap<String, String>()
+
+    /**
+     * `main()` points this at [AgentSessionTracker.onSessionDestroyed] so a closed pane's agent
+     * record is ended while the screen can still be read.
+     */
+    @Volatile
+    var onDestroy: ((sessionId: String, screen: String?) -> Unit)? = null
+
+    /** Which agent CLI the screen detector last saw in a session. */
+    fun agentOf(sessionId: String): String? = lastCli[sessionId]
     private const val STATE_GRACE_POLLS = 3  // 3 polls × 3 s = 9 s grace
 
     /**
@@ -330,7 +350,7 @@ object TerminalSessions {
     ): String {
         val n = idCounter.incrementAndGet()
         val id = if (idNonce.isEmpty()) "s$n" else "s$n-$idNonce"
-        val session = TerminalSession.create(initialCwd, initialScrollback, initialCols, initialRows)
+        val session = TerminalSession.create(initialCwd, initialScrollback, initialCols, initialRows, id)
         sessions[id] = session
         watchJobs[id] = watchScope.launch {
             launch {
@@ -414,7 +434,9 @@ object TerminalSessions {
                 result[id] = stateOverrides[id]
                 continue
             }
-            val detected = session.detectState()?.state
+            val detection = session.detectState()
+            val detected = detection?.state
+            if (detection != null) lastCli[id] = detection.cli
             if (detected != null) {
                 lastNonNullState[id] = detected
                 nullStreak.remove(id)
@@ -429,6 +451,7 @@ object TerminalSessions {
                     } else {
                         lastNonNullState.remove(id)
                         nullStreak.remove(id)
+                        lastCli.remove(id)
                         result[id] = null
                     }
                 } else {
@@ -447,7 +470,9 @@ object TerminalSessions {
         stateOverrides.remove(id)
         lastNonNullState.remove(id)
         nullStreak.remove(id)
+        lastCli.remove(id)
         watchJobs.remove(id)?.cancel()
+        sessions[id]?.let { s -> runCatching { onDestroy?.invoke(id, s.screenText()) } }
         sessions.remove(id)?.shutdown()
     }
 }
@@ -683,6 +708,10 @@ class TerminalSession private constructor(
         }
     }
 
+    override fun isIdleShell(): Boolean = try {
+        ProcessHandle.of(pty.pid()).map { it.children().findAny().isEmpty }.orElse(false)
+    } catch (_: Throwable) { false }
+
     /** Write raw bytes to the PTY's stdin. */
     override fun write(bytes: ByteArray) {
         try {
@@ -874,6 +903,9 @@ class TerminalSession private constructor(
      */
     override fun screenText(): String = screen.snapshotVisibleText()
 
+    /** The canonical grid's visible rows, in their styles; see [SessionGrid.screenRows]. */
+    override fun screenRows(): List<List<se.soderbjorn.lunamux.pty.StyledRun>> = grid.screenRows()
+
     /**
      * Whether the underlying PTY process is still running. Used by the MCP
      * `wait_for_exit` tool (polled) and echoed in `get_session` results. A
@@ -987,6 +1019,9 @@ class TerminalSession private constructor(
          * @param initialScrollback persisted scrollback to seed the ring, or null.
          * @param initialCols initial grid columns; null → [DEFAULT_COLS].
          * @param initialRows initial grid rows; null → [DEFAULT_ROWS].
+         * @param sessionId the id [TerminalSessions] minted for this session. Exported to the
+         *   shell as `LUNAMUX_SESSION_ID` (with the events URL and token) so agent hooks can say
+         *   which pane they run in; null leaves those variables unset.
          * @return the running session.
          */
         fun create(
@@ -994,6 +1029,7 @@ class TerminalSession private constructor(
             initialScrollback: ByteArray? = null,
             initialCols: Int? = null,
             initialRows: Int? = null,
+            sessionId: String? = null,
         ): TerminalSession {
             val cols = initialCols?.takeIf { it > 0 } ?: DEFAULT_COLS
             val rows = initialRows?.takeIf { it > 0 } ?: DEFAULT_ROWS
@@ -1008,6 +1044,7 @@ class TerminalSession private constructor(
             val env = HashMap(System.getenv()).apply {
                 put("TERM", "xterm-256color")
                 put("PROMPT_EOL_MARK", "")
+                if (sessionId != null) putAll(AgentEvents.env(sessionId))
             }
             ShellInitFiles.configureEnv(shell, env)
             val pty = PtyProcessBuilder(arrayOf(shell, "-l"))

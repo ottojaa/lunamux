@@ -1,0 +1,175 @@
+/**
+ * Plain-text rules the agents overview applies to what a session says about itself, shared by the
+ * server and every client so they agree.
+ *
+ * This file contains [AgentSessionText]: it turns a line of markdown into the text a reader sees,
+ * skips lines that are only a code fence, derives a title from the first words of a prompt, and
+ * says whether a stored title actually names the work. The server uses it to title rows and to word
+ * a finished reply or a recap; clients use the same rules to clean previews.
+ */
+package se.soderbjorn.lunamux
+
+/** Pure text helpers for agent session rows: no state, no clock, no I/O. */
+object AgentSessionText {
+    /** The most words a title taken from a prompt keeps. */
+    private const val TITLE_WORDS = 8
+
+    /** The most characters a title taken from a prompt keeps, before the ellipsis. */
+    private const val TITLE_CHARS = 56
+
+    private val FENCE = Regex("""^\s*(`{3,}|~{3,})[\w+#.-]*\s*$""")
+    private val RULE = Regex("""^\s*([-*_]\s*){3,}$""")
+    private val HEADING = Regex("""^\s{0,3}#{1,6}\s+""")
+    private val QUOTE = Regex("""^\s{0,3}>\s?""")
+    private val LIST_MARKER = Regex("""^\s*([-*+•]|\d{1,3}[.)])\s+""")
+    private val IMAGE = Regex("""!\[([^\]]*)\]\([^)]*\)""")
+    private val LINK = Regex("""\[([^\]]+)\]\([^)]*\)""")
+    private val CODE = Regex("""`+([^`]+)`+""")
+    private val BOLD_STAR = Regex("""\*\*(\S(?:.*?\S)?)\*\*""")
+    private val BOLD_UNDERSCORE = Regex("""(^|[\s(])__(\S(?:.*?\S)?)__(?=$|[\s).,;:!?])""")
+    private val STAR_ITALIC = Regex("""(^|[\s(])\*(\S(?:[^*]*?\S)?)\*(?=$|[\s).,;:!?])""")
+    private val UNDERSCORE_ITALIC = Regex("""(^|[\s(])_(\S(?:[^_]*?\S)?)_(?=$|[\s).,;:!?])""")
+    private val STRIKE = Regex("""~~(\S(?:.*?\S)?)~~""")
+    private val SPACES = Regex("""\s+""")
+    /** A feature-run folder name: `<ticket>-<number>-impl` or `-plan`, optionally with a `-r<round>` suffix. */
+    private val RUN_ID = Regex("""^[a-z][a-z0-9]*-\d+-(impl|plan)(-r\d+)?$""")
+
+    /**
+     * Whether [line] is only a code fence (``` or ~~~, with or without a language), which says
+     * nothing and so is never shown as a preview.
+     */
+    fun isFenceLine(line: String): Boolean = FENCE.matches(line)
+
+    /** Turn one line of markdown into the text it reads as. */
+    fun plain(line: String): String {
+        var t = line.replace(HEADING, "").replace(QUOTE, "").replace(LIST_MARKER, "")
+        t = t.replace(IMAGE) { it.groupValues[1] }.replace(LINK) { it.groupValues[1] }
+        t = t.replace(CODE) { it.groupValues[1] }
+        t = t.replace(BOLD_STAR) { it.groupValues[1] }.replace(STRIKE) { it.groupValues[1] }
+        t = t.replace(BOLD_UNDERSCORE) { it.groupValues[1] + it.groupValues[2] }
+        t = t.replace(STAR_ITALIC) { it.groupValues[1] + it.groupValues[2] }
+        t = t.replace(UNDERSCORE_ITALIC) { it.groupValues[1] + it.groupValues[2] }
+        return t.replace(SPACES, " ").trim()
+    }
+
+    /** The first line of [text] worth showing as a preview, as plain text. */
+    fun previewOf(text: String?): String? =
+        text?.lineSequence()
+            ?.filterNot { isFenceLine(it) || RULE.matches(it) }
+            ?.map(::plain)
+            ?.firstOrNull { it.isNotEmpty() }
+
+    /**
+     * What a finished reply comes to, as one plain sentence for a row's headline. A reply that ends on
+     * a question gives that question, since the agent waits on the answer; any other gives the first
+     * sentence it opens with, where an agent states the outcome (its closing lines are mostly an offer
+     * or a caveat). Headings, fences, rules and a line that only leads into a list (it ends in ":") are
+     * passed over, markdown is read as text, and a long sentence is cut at a word with "…".
+     *
+     * Called by the server when a turn ends, on the whole reply. A second pass over its own output
+     * changes nothing.
+     *
+     * @param reply the agent's reply, or a line kept from one; null or blank says nothing.
+     * @return the sentence, at most [SAID_CHARS] characters and the ellipsis; null when nothing is worth showing.
+     * @see previewOf
+     */
+    fun saidOf(reply: String?): String? {
+        val lines = reply?.lines()?.map { it.trim() }.orEmpty()
+        val shown = lines.filterNot { it.isEmpty() || isFenceLine(it) || RULE.matches(it) || HEADING.containsMatchIn(it) }
+            .map(::plain).filter { it.isNotEmpty() }
+        val last = shown.lastOrNull() ?: return null
+        val said = if (last.endsWith("?")) last else shown.map(::firstSentence).firstOrNull { !it.endsWith(":") } ?: firstSentence(last)
+        if (said.length <= SAID_CHARS) return said
+        val head = said.take(SAID_CHARS)
+        return head.substring(0, head.lastIndexOf(' ').takeIf { it > SAID_CHARS / 2 } ?: head.length).trimEnd(' ', ',', ';', ':') + "…"
+    }
+
+    /** The most characters [saidOf] keeps, before the ellipsis: about one line of an overview row. */
+    const val SAID_CHARS = 160
+
+    /** Where a sentence ends: its stop, then space and the capital or digit the next one starts with. */
+    private val SENTENCE_END = Regex("""[.!?](?=\s+["'(\[]?[A-Z0-9])""")
+
+    /** The fewest characters a first sentence has, so "e.g. A" or a numbered "4. Tell" is not taken for one. */
+    private const val SENTENCE_MIN = 10
+
+    /** The first sentence of [line], with its stop; the whole line when it is one sentence. */
+    private fun firstSentence(line: String): String =
+        SENTENCE_END.findAll(line).firstOrNull { it.range.first >= SENTENCE_MIN }?.let { line.substring(0, it.range.last + 1) } ?: line
+
+    /**
+     * What a Claude Code recap says the conversation is and where it stands, as a row's description.
+     * Claude Code writes a recap into the transcript when the person comes back to a conversation
+     * ("Goal: … Next: …"). The row keeps what and where: the "Next" and "Please" sentences go, since
+     * the row's state line already says what it waits on, and so do a "Goal:" lead and the "(turn off
+     * recaps in /config)" note. At most [RECAP_SENTENCES] sentences stay, whole: a description is
+     * never cut mid-sentence.
+     *
+     * Called by the server's transcript follower on each recap line it finds.
+     *
+     * @param recap the recap's text as Claude Code wrote it; null or blank says nothing.
+     * @return the description, or null when nothing is left.
+     */
+    fun recapOf(recap: String?): String? {
+        val text = plain(RECAP_NOTE.replace(recap?.trim().orEmpty(), "")).replace(SPACES, " ").trim()
+        val body = GOAL_LEAD.find(text)?.let { text.substring(it.range.last + 1).replaceFirstChar(Char::uppercaseChar) } ?: text
+        val kept = sentencesOf(body).filterNot { NOT_RECAP.containsMatchIn(it) }.take(RECAP_SENTENCES)
+        return kept.joinToString(" ").takeIf { it.isNotBlank() }
+    }
+
+    /** The most sentences [recapOf] keeps: what the work is, and where it stands. */
+    const val RECAP_SENTENCES = 2
+
+    /** The note Claude Code ends a recap with, on how to turn recaps off. */
+    private val RECAP_NOTE = Regex("""\s*\((?:turn off|disable) recaps in /config\)\s*$""", RegexOption.IGNORE_CASE)
+
+    /** A recap's "Goal:" lead, which the description reads without. */
+    private val GOAL_LEAD = Regex("""^goal:\s*""", RegexOption.IGNORE_CASE)
+
+    /** The sentences of a recap that say what comes next or ask for something, not where it stands. */
+    private val NOT_RECAP = Regex("""^(next\b|please\b)""", RegexOption.IGNORE_CASE)
+
+    /** [text] split into sentences, each with its stop; see [SENTENCE_END] and [SENTENCE_MIN]. */
+    private fun sentencesOf(text: String): List<String> {
+        val out = ArrayList<String>()
+        var start = 0
+        for (end in SENTENCE_END.findAll(text)) {
+            if (end.range.first - start < SENTENCE_MIN) continue
+            out += text.substring(start, end.range.last + 1).trim()
+            start = end.range.last + 1
+        }
+        text.substring(start).trim().takeIf { it.isNotEmpty() }?.let { out += it }
+        return out
+    }
+
+    /** A title made from the first words of a prompt. */
+    fun titleFromPrompt(prompt: String?): String? {
+        val line = previewOf(prompt) ?: return null
+        val words = line.split(' ').filter { it.isNotEmpty() }
+        // Only the words the prompt starts with are dropped (a slash command, a path): they say how it
+        // was started, not what it asks. The same words later on are code the person typed and stay.
+        val prose = words.dropWhile { it.startsWith("/") || isPathWord(it) }
+        if (prose.isEmpty()) return null
+        var kept = prose.take(TITLE_WORDS).joinToString(" ")
+        var cut = prose.size > TITLE_WORDS
+        if (kept.length > TITLE_CHARS) {
+            kept = kept.take(TITLE_CHARS).substringBeforeLast(' ', kept.take(TITLE_CHARS)).trimEnd(',', ';', ':', '.', '-')
+            cut = true
+        }
+        return if (cut) "$kept…" else kept
+    }
+
+    /** Whether a stored title says what the work is, as opposed to where it ran. */
+    fun isMeaningfulTitle(title: String?, branch: String?, repo: String?, folder: String?): Boolean {
+        val t = title?.trim().orEmpty()
+        if (t.isEmpty()) return false
+        if (t == "~" || t.equals("HEAD", ignoreCase = true) || (t.none { it.isWhitespace() } && isPathWord(t))) return false
+        if (listOf(branch, repo, folder).any { it != null && it.isNotBlank() && it.trim().equals(t, ignoreCase = true) }) return false
+        return !RUN_ID.matches(t)
+    }
+
+    /** Whether [word] reads as a file path or the home folder. */
+    private fun isPathWord(word: String): Boolean =
+        word == "~" || word.startsWith("~/") || word.startsWith("./") || word.startsWith("../") ||
+            (word.startsWith("/") && word.length > 1 && word.drop(1).contains('/'))
+}

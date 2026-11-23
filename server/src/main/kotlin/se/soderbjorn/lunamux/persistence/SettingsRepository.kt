@@ -37,8 +37,6 @@
  */
 package se.soderbjorn.lunamux.persistence
 
-import app.cash.sqldelight.db.QueryResult
-import app.cash.sqldelight.db.SqlCursor
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -115,35 +113,11 @@ class SettingsRepository(
         dbFile.parentFile?.mkdirs()
         driver = JdbcSqliteDriver("jdbc:sqlite:${dbFile.absolutePath}")
 
-        val schema = LunamuxDatabase.Schema
-        val current = currentUserVersion()
-        if (current == 0L) {
-            schema.create(driver).value
-            setUserVersion(schema.version)
-        } else if (current < schema.version) {
-            schema.migrate(driver, current, schema.version).value
-            setUserVersion(schema.version)
-        }
-
+        // Every table in Settings.sq is CREATE ... IF NOT EXISTS, so creating the schema on every
+        // start brings an older database up to date without a version number to keep in step.
+        LunamuxDatabase.Schema.create(driver).value
         database = LunamuxDatabase(driver)
 
-        // Belt-and-suspenders: the SQLDelight-generated schema version doesn't
-        // bump automatically when we add tables to Settings.sq (no .sqm
-        // migrations yet), so pre-existing DBs at user_version=1 would never
-        // pick up the new pane_scrollback table otherwise.
-        driver.execute(
-            identifier = null,
-            sql = """
-                CREATE TABLE IF NOT EXISTS pane_scrollback (
-                    leaf_id    TEXT NOT NULL PRIMARY KEY,
-                    bytes      BLOB NOT NULL,
-                    updated_at INTEGER NOT NULL,
-                    cols       INTEGER,
-                    rows       INTEGER
-                )
-            """.trimIndent(),
-            parameters = 0,
-        )
         // Same no-.sqm story for columns added to an existing table: bring
         // pre-existing DBs up to the current shape. SQLite has no
         // ADD COLUMN IF NOT EXISTS, so the "duplicate column name" error on
@@ -453,21 +427,130 @@ class SettingsRepository(
         driver.close()
     }
 
-    private fun currentUserVersion(): Long {
-        return driver.executeQuery(
-            identifier = null,
-            sql = "PRAGMA user_version",
-            mapper = { cursor: SqlCursor ->
-                val v = if (cursor.next().value) cursor.getLong(0) ?: 0L else 0L
-                QueryResult.Value(v)
-            },
-            parameters = 0
-        ).value
+    // ---- Agent sessions -------------------------------------------------------------------
+
+    /**
+     * Write [r] to `agent_sessions`, replacing the row with its id (and the one holding the same
+     * Claude conversation, if any: the unique index keeps one record per conversation).
+     *
+     * @param r the record to store.
+     * @see se.soderbjorn.lunamux.AgentSessionTracker
+     */
+    fun saveAgentSession(r: AgentSessionRecord) {
+        database.settingsQueries.upsertAgentSession(
+            r.id, r.agent, r.agentSessionId, r.source, r.leafId, r.terminalSessionId, r.cwd, r.repo,
+            r.branch, r.title, r.firstPrompt, r.transcriptPath, r.state, r.stateSince, r.lastScreen,
+            r.createdAt, r.endedAt, r.lastSaid, r.taskId, if (r.background) 1L else 0L, r.endReason, r.host,
+        )
     }
 
-    private fun setUserVersion(version: Long) {
-        driver.execute(null, "PRAGMA user_version = $version", 0)
+    /**
+     * Delete the record [id] and its search text.
+     *
+     * @param id the record's id.
+     */
+    fun deleteAgentSession(id: String) {
+        database.settingsQueries.deleteAgentSession(id)
+        database.settingsQueries.deleteAgentSessionText(id)
     }
+
+    /**
+     * The closed conversations that ended since [since], newest first, up to [limit]; imported
+     * history is left out (search finds it).
+     *
+     * @param since earliest end time, epoch millis.
+     * @param limit most rows to return.
+     * @return the records.
+     */
+    fun loadRecentEndedAgentSessions(since: Long, limit: Long): List<AgentSessionRecord> =
+        database.settingsQueries.selectRecentEndedAgentSessions(since, limit).executeAsList().map { it.toRecord() }
+
+    /** The record with [id], or null. */
+    fun findAgentSession(id: String): AgentSessionRecord? =
+        database.settingsQueries.selectAgentSessionById(id).executeAsOneOrNull()?.toRecord()
+
+    /** The record of the [agent] conversation [conversationId], or null. */
+    fun findAgentSessionByConversation(agent: String, conversationId: String): AgentSessionRecord? =
+        database.settingsQueries.selectAgentSessionByConversation(agent, conversationId).executeAsOneOrNull()?.toRecord()
+
+    /** The newest record of any agent whose own conversation id is [conversationId], or null. */
+    fun findAgentSessionByConversationId(conversationId: String): AgentSessionRecord? =
+        database.settingsQueries.selectAgentSessionByConversationId(conversationId).executeAsOneOrNull()?.toRecord()
+
+    /** The records with the given [ids] (none for an empty list). */
+    fun loadAgentSessionsByIds(ids: Collection<String>): List<AgentSessionRecord> =
+        if (ids.isEmpty()) emptyList()
+        else database.settingsQueries.selectAgentSessionsByIds(ids).executeAsList().map { it.toRecord() }
+
+    /**
+     * Close every record the last server run left open with end reason `restart`, each at the last
+     * time it was known to be alive: the later of its last state change and [lastSeen], never after
+     * [now].
+     *
+     * @param now the current time, epoch millis.
+     * @param lastSeen when a record was last seen alive (a transcript's last write, say), or null.
+     */
+    fun endOpenAgentSessions(now: Long, lastSeen: (AgentSessionRecord) -> Long? = { null }) {
+        val open = database.settingsQueries.selectOpenAgentSessions().executeAsList().map { it.toRecord() }
+        for (r in open) {
+            database.settingsQueries.endAgentSessionAt(minOf(now, maxOf(r.stateSince, lastSeen(r) ?: 0L)), r.id)
+        }
+    }
+
+    /**
+     * Store the searchable text of the record [id], replacing what was there.
+     *
+     * @param id the record's id.
+     * @param text its prompts and replies.
+     */
+    fun setAgentSessionSearchText(id: String, text: String) {
+        database.settingsQueries.upsertAgentSessionText(id, text)
+    }
+
+    /**
+     * Closed conversations that ended since [since], have a transcript file and no stored text:
+     * what the indexer reads next.
+     *
+     * @param since earliest end time, epoch millis.
+     * @return pairs of record id and transcript path.
+     */
+    fun loadAgentSessionsMissingText(since: Long): List<Pair<String, String>> =
+        database.settingsQueries.selectAgentSessionsMissingText(since).executeAsList().map { it.id to it.transcript_path!! }
+
+    /**
+     * Drop the search text of conversations that ended before [before]; their rows stay.
+     *
+     * @param before cut-off, epoch millis.
+     */
+    fun dropOldSearchText(before: Long) {
+        database.settingsQueries.deleteOldAgentSessionText(before)
+    }
+
+    /** What [searchAgentSessions] returns for one match: the record and short windows of the long fields. */
+    class AgentSearchRow(val record: AgentSessionRecord, val transcriptWindow: String?, val screenWindow: String?)
+
+    /**
+     * The records matching [query] as a case-insensitive substring, best field first, then open before
+     * closed, then newest; closed ones that ended before [since] are not searched. At most 200 rows.
+     *
+     * @param query the text to find (not empty).
+     * @param since earliest end time of a closed record that may match, epoch millis.
+     * @return the rows, in order.
+     */
+    fun searchAgentSessions(query: String, since: Long): List<AgentSearchRow> {
+        val pattern = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        val hits = database.settingsQueries.searchAgentSessions(pattern, query, since).executeAsList()
+        val byId = loadAgentSessionsByIds(hits.map { it.id }).associateBy { it.id }
+        return hits.mapNotNull { h -> byId[h.id]?.let { AgentSearchRow(it, h.transcript_window, h.screen_window) } }
+    }
+
+    private fun se.soderbjorn.lunamux.db.Agent_sessions.toRecord() = AgentSessionRecord(
+        id = id, agent = agent, agentSessionId = agent_session_id, source = source, leafId = leaf_id,
+        terminalSessionId = terminal_session_id, cwd = cwd, repo = repo, branch = branch, title = title,
+        firstPrompt = first_prompt, transcriptPath = transcript_path, state = state, stateSince = state_since,
+        lastScreen = last_screen, createdAt = created_at, endedAt = ended_at, lastSaid = last_said,
+        taskId = task_id, background = background != 0L, endReason = end_reason, host = host,
+    )
 
     /**
      * Monitor guarding every read-modify-write of [_uiSettings].

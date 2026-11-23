@@ -11,6 +11,46 @@ CREATE TABLE IF NOT EXISTS pane_scrollback (
     rows       INTEGER
 );
 
+-- One row per run of an agentic CLI in a pane; a Claude conversation has exactly one row, however
+-- many panes it ran in (the unique index below), so resuming reopens the row it ended. now_line and
+-- question are not stored: only an open conversation has them, and every open row is closed when
+-- the server starts. Closed rows are kept for ever; only their search text is dropped (see
+-- agent_session_text).
+CREATE TABLE IF NOT EXISTS agent_sessions (
+    id                  TEXT NOT NULL PRIMARY KEY,
+    agent               TEXT NOT NULL,
+    agent_session_id    TEXT,
+    source              TEXT NOT NULL,
+    leaf_id             TEXT,
+    terminal_session_id TEXT,
+    cwd                 TEXT,
+    repo                TEXT,
+    branch              TEXT,
+    title               TEXT,
+    first_prompt        TEXT,
+    transcript_path     TEXT,
+    state               TEXT NOT NULL,
+    state_since         INTEGER NOT NULL,
+    last_screen         TEXT,
+    created_at          INTEGER NOT NULL,
+    ended_at            INTEGER,
+    last_said           TEXT,
+    task_id             TEXT,
+    background          INTEGER NOT NULL DEFAULT 0,
+    end_reason          TEXT,
+    host                TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS agent_sessions_conversation
+ON agent_sessions(agent, agent_session_id) WHERE agent_session_id IS NOT NULL;
+
+-- The searchable text of a conversation (its prompts and replies), apart from the row so the hot
+-- reads never carry it. Dropped a month after the conversation ended.
+CREATE TABLE IF NOT EXISTS agent_session_text (
+    id   TEXT NOT NULL PRIMARY KEY,
+    text TEXT NOT NULL
+);
+
 selectByKey:
 SELECT value FROM settings WHERE key = ?;
 
@@ -31,3 +71,80 @@ DELETE FROM pane_scrollback WHERE leaf_id = ?;
 
 selectAllScrollbackLeafIds:
 SELECT leaf_id FROM pane_scrollback;
+
+upsertAgentSession:
+INSERT OR REPLACE INTO agent_sessions(
+    id, agent, agent_session_id, source, leaf_id, terminal_session_id, cwd, repo, branch, title,
+    first_prompt, transcript_path, state, state_since, last_screen, created_at, ended_at, last_said,
+    task_id, background, end_reason, host
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- Imported history (source = 'import') is only ever found by search.
+selectRecentEndedAgentSessions:
+SELECT * FROM agent_sessions WHERE state = 'ended' AND source != 'import' AND ended_at >= ?
+ORDER BY ended_at DESC LIMIT ?;
+
+selectAgentSessionByConversation:
+SELECT * FROM agent_sessions WHERE agent = ? AND agent_session_id = ?;
+
+selectAgentSessionByConversationId:
+SELECT * FROM agent_sessions WHERE agent_session_id = ? ORDER BY created_at DESC LIMIT 1;
+
+selectAgentSessionById:
+SELECT * FROM agent_sessions WHERE id = ?;
+
+selectAgentSessionsByIds:
+SELECT * FROM agent_sessions WHERE id IN :ids;
+
+selectOpenAgentSessions:
+SELECT * FROM agent_sessions WHERE state != 'ended';
+
+-- Close a record a server run left open, at the time it was last known to be alive: it was cut off
+-- by the restart.
+endAgentSessionAt:
+UPDATE agent_sessions SET end_reason = 'restart', state = 'ended', ended_at = :endedAt, state_since = :endedAt WHERE id = :id;
+
+deleteAgentSession:
+DELETE FROM agent_sessions WHERE id = ?;
+
+upsertAgentSessionText:
+INSERT OR REPLACE INTO agent_session_text(id, text) VALUES (?, ?);
+
+deleteAgentSessionText:
+DELETE FROM agent_session_text WHERE id = ?;
+
+-- A month after a conversation ended its text goes; the row stays.
+deleteOldAgentSessionText:
+DELETE FROM agent_session_text WHERE id IN (
+    SELECT id FROM agent_sessions WHERE state = 'ended' AND ended_at < ?);
+
+-- Closed conversations within the month that have a transcript but no stored text yet.
+selectAgentSessionsMissingText:
+SELECT r.id, r.transcript_path FROM agent_sessions r LEFT JOIN agent_session_text t ON t.id = r.id
+WHERE r.state = 'ended' AND r.transcript_path IS NOT NULL AND t.id IS NULL AND r.ended_at >= ?;
+
+-- The records matching :raw (:pattern is its LIKE form), best field first, then open before closed,
+-- then newest. Closed ones older than :since are not searched, so the cap applies only to what is
+-- left. The two long columns come back as a short window around the first match. Background
+-- sessions are never found.
+searchAgentSessions:
+SELECT r.id,
+    CASE WHEN t.text LIKE :pattern ESCAPE '\'
+        THEN substr(t.text, max(1, instr(lower(t.text), lower(:raw)) - 80), 240) END AS transcript_window,
+    CASE WHEN r.last_screen LIKE :pattern ESCAPE '\'
+        THEN substr(r.last_screen, max(1, instr(lower(r.last_screen), lower(:raw)) - 80), 240) END AS screen_window
+FROM agent_sessions r LEFT JOIN agent_session_text t ON t.id = r.id
+WHERE r.background = 0
+    AND (r.state != 'ended' OR r.ended_at >= :since)
+    AND (r.title LIKE :pattern ESCAPE '\'
+        OR r.first_prompt LIKE :pattern ESCAPE '\'
+        OR r.branch LIKE :pattern ESCAPE '\'
+        OR t.text LIKE :pattern ESCAPE '\'
+        OR r.last_screen LIKE :pattern ESCAPE '\')
+ORDER BY
+    CASE WHEN r.title LIKE :pattern ESCAPE '\' THEN 0
+        WHEN r.first_prompt LIKE :pattern ESCAPE '\' THEN 2
+        WHEN r.branch LIKE :pattern ESCAPE '\' THEN 3 ELSE 4 END,
+    r.state = 'ended',
+    COALESCE(r.ended_at, r.state_since) DESC
+LIMIT 200;

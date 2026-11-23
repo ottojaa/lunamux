@@ -699,6 +699,28 @@ object WindowState {
         null
     }
 
+    /**
+     * The id of the pane showing terminal session [sessionId]. Called by the agent tracker's poll
+     * to tie a record to its place in the layout.
+     *
+     * @param sessionId the terminal session.
+     * @return the layout leaf id, or null when no pane shows it.
+     */
+    fun leafIdOfSession(sessionId: String): String? = synchronized(this) {
+        findLeafBySession(_config.value, sessionId)?.id
+    }
+
+    /**
+     * The name the person gave (F2) the pane showing terminal session [sessionId]. Called by the
+     * agent tracker's poll to title a record.
+     *
+     * @param sessionId the terminal session.
+     * @return the custom name, or null.
+     */
+    fun customNameOfSession(sessionId: String): String? = synchronized(this) {
+        findLeafBySession(_config.value, sessionId)?.customName
+    }
+
     private fun findLeafBySession(cfg: WindowConfig, sessionId: String): LeafNode? {
         for (tab in allTabs(cfg)) {
             tab.panes.firstOrNull { it.leaf.sessionId == sessionId }?.let { return it.leaf }
