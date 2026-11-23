@@ -149,10 +149,22 @@ class AgentsOverviewBackingViewModel(
         }
     }
 
-    /** One key of the footer or of a question bar. */
+    /**
+     * One key of the footer or of a question bar.
+     *
+     * @property key the key as drawn, such as "esc".
+     * @property label what the key does.
+     */
     data class FooterKey(val key: String, val label: String)
 
-    /** The question under a row before a resume or a start. */
+    /**
+     * The question under a row before a resume or a start.
+     *
+     * @property rowId the row the question is about.
+     * @property tag the short word before the question, such as the resume mode.
+     * @property question the question text.
+     * @property keys the answers offered, shown in place of the footer.
+     */
     data class Ask(val rowId: String, val tag: String, val question: String, val keys: List<FooterKey>)
 
     /**
