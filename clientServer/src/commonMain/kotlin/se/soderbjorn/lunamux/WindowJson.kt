@@ -14,9 +14,13 @@ import kotlinx.serialization.json.Json
  *
  * Polymorphic discriminator is `"kind"` so it doesn't collide with the
  * envelope's `"type"` field at the message level.
+ *
+ * `coerceInputValues` makes a value this build does not know (a [Shown] state a newer server
+ * invented) read as the field's default (for [Shown], `UNKNOWN`) instead of failing the whole frame.
  */
 val windowJson: Json = Json {
     classDiscriminator = "kind"
     ignoreUnknownKeys = true
     encodeDefaults = true
+    coerceInputValues = true
 }

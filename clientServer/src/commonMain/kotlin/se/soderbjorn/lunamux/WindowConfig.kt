@@ -62,7 +62,41 @@ data class WindowConfig(
      * [flattenToFirstWorld]).
      */
     val activeWorldId: String? = null,
+    /**
+     * The one background tab the person is looking at right now, or `null`.
+     * A background tab ([TabConfig.isBackground]) is out of sight (it has no
+     * strip button and no sidebar entry) except while this names it; the
+     * server sets it when the person opens that tab from the agents overview
+     * and clears it when they leave. Defaulted so older blobs and clients
+     * decode. The server never persists it (see `WindowState.forSaving`).
+     *
+     * @see isVisible
+     */
+    val shownTabId: String? = null,
 )
+
+/**
+ * Whether [tab] belongs on the tab strip and in the sidebar right now: every
+ * ordinary tab, and a background tab only while [WindowConfig.shownTabId]
+ * names it.
+ *
+ * Caller context: clients that draw the strip, and the server's tab rules
+ * (successor choice on close, numbering) through [visibleTabs].
+ *
+ * @param tab the tab to test.
+ * @return `true` when the tab is not background, or is the shown one.
+ * @see visibleTabs
+ */
+fun WindowConfig.isVisible(tab: TabConfig): Boolean = !tab.isBackground || tab.id == shownTabId
+
+/**
+ * The tabs of [effectiveTabs] that [isVisible] lets through, in order.
+ *
+ * @return the visible subset of the active world's tabs.
+ * @see isVisible
+ */
+val WindowConfig.visibleTabs: List<TabConfig>
+    get() = effectiveTabs.filter { isVisible(it) }
 
 /**
  * The active world for world-aware (≥1.9) clients — resolved by
@@ -219,6 +253,18 @@ data class TabConfig(
      * dropdown. Drives `WindowState.activeLayoutByTab`.
      */
     val layoutPreset: String? = null,
+    /**
+     * Whether this tab is a **background tab**: opened by an agent over MCP
+     * with `background: true`, kept out of sight (no strip button, no sidebar
+     * entry, never the active tab) until the person opens it from the agents
+     * overview. Defaulted so existing blobs decode as ordinary tabs. Clients
+     * that are not the web page or desktop shell never receive an unshown
+     * background tab.
+     *
+     * @see WindowConfig.shownTabId
+     * @see WindowConfig.isVisible
+     */
+    val isBackground: Boolean = false,
 )
 
 /**

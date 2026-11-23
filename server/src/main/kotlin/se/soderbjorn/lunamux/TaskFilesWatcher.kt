@@ -1,0 +1,201 @@
+/**
+ * Reads the task files other tools leave in a folder and turns them into [TaskFile]s for the
+ * [TaskIndex].
+ *
+ * This file contains [TaskFilesWatcher], which polls the folder and parses each `<id>.json`, the
+ * parsed model ([TaskFile], [TaskOpen]) and the private model of the JSON itself ([TaskFileJson]
+ * and [OpenJson]). The format is described in `docs/tasks.md`. A file only declares a task: its id,
+ * its title, its repository and how to start a session for it. Who is in the task is not written in
+ * the file; it is the sessions that carry the task's id. Lunamux only ever reads these files.
+ */
+package se.soderbjorn.lunamux
+
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import org.slf4j.LoggerFactory
+import java.io.File
+
+/**
+ * One task file as written by the tool that owns it. Every field is optional here so that a file
+ * with a field missing parses and is then rejected with a precise warning rather than a decode error.
+ *
+ * @property id the task's id, which sessions carry in their record.
+ * @property title the task's name.
+ * @property repo the git repository the task is about; blank counts as none.
+ * @property open how to start a session for the task, or null.
+ */
+@Serializable
+internal data class TaskFileJson(
+    val id: String? = null,
+    val title: String? = null,
+    val repo: String? = null,
+    val open: OpenJson? = null,
+)
+
+/**
+ * The `open` action of a task file, as written.
+ *
+ * @property command the command typed into a new terminal.
+ * @property folder the folder it starts in; `~` is expanded and it must end up absolute.
+ */
+@Serializable
+internal data class OpenJson(val command: String? = null, val folder: String? = null)
+
+/**
+ * The `open` action of a parsed task: the command the server types and where.
+ *
+ * @property command the command to type.
+ * @property folder the canonical absolute folder to start in.
+ */
+data class TaskOpen(val command: String, val folder: String)
+
+/**
+ * A parsed, validated task file: what [TaskFilesWatcher] keeps per file between polls and the
+ * [TaskIndex] reads.
+ *
+ * @property id the task's id.
+ * @property title the task's name; the file owns it.
+ * @property repo the git repository the task is about, or null.
+ * @property open how to start a session for the task, or null.
+ * @property modified the file's modified time, epoch millis: the task's start when no session
+ *   carries it yet, and the tie-break between two files with one id.
+ */
+data class TaskFile(
+    val id: String,
+    val title: String,
+    val repo: String?,
+    val open: TaskOpen?,
+    val modified: Long,
+)
+
+/** What the watcher remembers about one file: enough to see that it changed, and what it parsed to. */
+private class Seen(val modified: Long, val length: Long, val parsed: TaskFile?)
+
+/**
+ * Watches the folder of task files and publishes the tasks they declare. Built in `main` over
+ * `AppPaths.taskDir()` and started on the persistence scope; the [TaskIndex] collects [files].
+ * Lunamux only reads the folder, never writes to it.
+ *
+ * @param dir the folder to poll.
+ * @param warn where a skipped file or a repeated id is reported (a log warning by default).
+ */
+class TaskFilesWatcher(
+    private val dir: File,
+    private val warn: (String) -> Unit = { LoggerFactory.getLogger(TaskFilesWatcher::class.java).warn(it) },
+) {
+    private val lock = Any()
+    private val seen = HashMap<String, Seen>()
+    private val _files = MutableStateFlow<List<TaskFile>>(emptyList())
+
+    /** The parsed task files, sorted by id. Collected by the [TaskIndex]. */
+    val files: StateFlow<List<TaskFile>> = _files.asStateFlow()
+
+    /**
+     * Start watching: poll the folder every 3 seconds until [scope] ends. A folder that cannot be read
+     * is reported once per poll and yields no files.
+     *
+     * @param scope the scope the polling loop runs in.
+     */
+    fun start(scope: CoroutineScope) {
+        scope.launch {
+            while (isActive) {
+                runCatching { reload() }.onFailure { warn("Task folder ${dir.path} could not be read: ${it.message}") }
+                delay(POLL_MS)
+            }
+        }
+    }
+
+    /**
+     * Re-read the folder: parse files that are new or changed (by modified time or length), forget
+     * removed ones, then publish. Called by [start]'s loop, and by tests directly.
+     */
+    fun reload() {
+        val found = dir.listFiles { f -> f.isFile && f.name.endsWith(".json") && !f.name.startsWith(".") }
+            ?.sortedBy { it.name }.orEmpty()
+        synchronized(lock) {
+            // A duplicate id is reported only when the set of parsed files changed in this
+            // reload; otherwise the same warning would repeat on every poll.
+            var changed = seen.keys.retainAll(found.map { it.path }.toSet())
+            for (f in found) {
+                val modified = f.lastModified()
+                val length = f.length()
+                val before = seen[f.path]
+                if (before != null && before.modified == modified && before.length == length) continue
+                seen[f.path] = Seen(modified, length, parseFile(f, modified))
+                changed = true
+            }
+            val byId = LinkedHashMap<String, Pair<String, TaskFile>>()
+            // Oldest file first so that, for a repeated id, the newest file replaces it.
+            for ((path, s) in seen.entries.sortedBy { it.value.modified }) {
+                val p = s.parsed ?: continue
+                val earlier = byId[p.id]
+                if (earlier != null && changed) {
+                    warn("Task file ${File(path).name} repeats the id of ${File(earlier.first).name}; using ${File(path).name}")
+                }
+                byId[p.id] = path to p
+            }
+            _files.value = byId.values.map { it.second }.sortedBy { it.id }
+        }
+    }
+
+    /**
+     * Parse and validate one file.
+     *
+     * @param f the file.
+     * @param modified its modified time.
+     * @return the task it declares, or null (after one warning) when the file is not a valid task file.
+     */
+    private fun parseFile(f: File, modified: Long): TaskFile? {
+        val file = try {
+            fileJson.decodeFromString(TaskFileJson.serializer(), f.readText())
+        } catch (e: Exception) {
+            warn("Skipping task file ${f.name}: not a readable task file (${e.message?.lineSequence()?.firstOrNull()})")
+            return null
+        }
+        fun bad(why: String): TaskFile? {
+            warn("Skipping task file ${f.name}: $why")
+            return null
+        }
+        val id = file.id?.takeIf { it.isNotBlank() } ?: return bad("missing id")
+        val title = file.title?.takeIf { it.isNotBlank() } ?: return bad("missing title")
+        val open = file.open?.let {
+            val command = it.command?.takeIf { c -> c.isNotBlank() } ?: return bad("missing open.command")
+            val folder = absolute(it.folder) ?: return bad("open.folder must be an absolute path")
+            TaskOpen(command, folder)
+        }
+        return TaskFile(id, title, file.repo?.takeIf { it.isNotBlank() }, open, modified)
+    }
+
+    /**
+     * Turn an `open.folder` into a canonical absolute path.
+     *
+     * @param path the folder as written; `~` and `~/` are expanded first.
+     * @return the canonical path, or null when [path] is blank or not absolute.
+     */
+    private fun absolute(path: String?): String? {
+        val raw = path?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val expanded = if (raw == "~" || raw.startsWith("~/")) System.getProperty("user.home") + raw.drop(1) else raw
+        return if (expanded.startsWith("/")) canonical(expanded) else null
+    }
+
+    private companion object {
+        const val POLL_MS = 3_000L
+        val fileJson = Json { ignoreUnknownKeys = true; isLenient = true }
+    }
+}
+
+/**
+ * The canonical form of a path, or its absolute form when the file system cannot resolve it.
+ *
+ * @param path the path to resolve.
+ * @return the path with symlinks resolved.
+ */
+internal fun canonical(path: String): String =
+    try { File(path).canonicalPath } catch (_: Exception) { File(path).absolutePath }

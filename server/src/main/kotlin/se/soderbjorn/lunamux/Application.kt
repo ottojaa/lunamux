@@ -95,7 +95,37 @@ fun main() {
     val repo = SettingsRepository(AppPaths.databaseFile())
     WindowState.initialize(repo)
 
+    // Agent conversations: the port is fixed before the first session is created because every
+    // pane's environment carries the events URL, and records the last run left open are closed.
+    val port = System.getProperty("lunamux.port")?.toIntOrNull()
+        ?: SERVER_TLS_PORT
+    AgentEvents.port = port
+    val searchIndexer = AgentSearchIndexer(repo)
+    val agentTracker = AgentSessionTracker(repo, onEnded = searchIndexer::indexEnded, inTab = { WindowState.paneToResumeIn() }).also { it.start() }
+    searchIndexer.runningIn = agentTracker::hasUnidentifiedClaudeIn
+    // A shown background tab closes when the last agent in it ends.
+    CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
+        agentTracker.summaries.collect { rows ->
+            WindowState.onLiveLeaves(rows.filter { it.ended == null }.mapNotNullTo(HashSet()) { it.leafId })
+        }
+    }
+    val claudeHooks = ClaudeHooks().also { it.upgrade() }
+    // Conversations from the last month that have no search text yet get theirs now.
+    searchIndexer.backfill()
+    TerminalSessions.onDestroy = agentTracker::onSessionDestroyed
+
     val persistenceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    // Tasks: the folder of task files is polled, and the index publishes the tasks from the files,
+    // the stored rows and the conversation summaries.
+    val taskFiles = TaskFilesWatcher(AppPaths.taskDir()).also { it.start(persistenceScope) }
+    val taskIndex = TaskIndex(repo, agentTracker, taskFiles.files, leafOfSession = { WindowState.leafIdOfSession(it) })
+        .also { it.start(persistenceScope) }
+    claudeHooks.refresh()
+    val agentOverview = AgentOverview(
+        repo, agentTracker, taskIndex, claudeHooks,
+        AgentsFeed(persistenceScope, taskIndex.state, claudeHooks.connected),
+    )
 
     // Opt-in program-set terminal titles (OSC 0/2). Mirror the toggle into
     // TerminalSessions' stable flag flow: per-session watchers re-collect on
@@ -118,7 +148,10 @@ fun main() {
     // inside the 2 s config-persist window (issue #127 follow-up).
     installWorldThemePersister(persistenceScope, repo)
     val scrollbackSaver = installScrollbackSaver(persistenceScope, repo)
-    val sessionStates = installSessionStatePoller(persistenceScope)
+    val sessionStates = installSessionStatePoller(persistenceScope, agentTracker)
+    // Claude Code's own transcript history is imported (for search only) whenever Claude Code is
+    // connected: at start if it already is, and when the person connects it.
+    persistenceScope.launch { claudeHooks.connected.collect { if (it) searchIndexer.importHistory() } }
     val sharedThemesWatch = installSharedThemesWatcher(repo)
 
     val usageMonitor = ClaudeUsageMonitor()
@@ -130,9 +163,13 @@ fun main() {
         // changes that landed inside the debounce window.
         runCatching {
             runBlocking {
-                repo.saveWindowConfig(WindowState.config.value.withBlankSessionIds())
+                repo.saveWindowConfig(WindowState.forSaving(WindowState.config.value))
                 scrollbackSaver.saveAll(force = true)
             }
+        }
+        runCatching {
+            val states = TerminalSessions.resolveStates()
+            agentTracker.endAll(TerminalSessions.list().mapNotNull { (id, _) -> livePaneSnapshot(id, states) })
         }
         usageMonitor.stop()
         runCatching { sharedThemesWatch.close() }
@@ -140,8 +177,6 @@ fun main() {
         repo.close()
     })
 
-    val port = System.getProperty("lunamux.port")?.toIntOrNull()
-        ?: SERVER_TLS_PORT
     SettingsDialog.setListeningPort(port)
 
     // Generate-or-load the self-signed TLS keystore before binding the
@@ -172,7 +207,7 @@ fun main() {
                 this.port = port
             }
         },
-        module = { module(repo, sessionStates, usageMonitor, scrollbackSaver) }
+        module = { module(repo, sessionStates, usageMonitor, scrollbackSaver, agentTracker, taskIndex, agentOverview) }
     )
 
     if (java.awt.GraphicsEnvironment.isHeadless()) {
@@ -205,12 +240,18 @@ fun main() {
  * @param scrollbackSaver the periodic scrollback flusher; reused by `/admin/shutdown`
  *                        so a graceful stop produces the same on-disk result as the
  *                        JVM shutdown hook
+ * @param agentTracker    the agent conversation records, fed by hook events and the pane poll
+ * @param taskIndex       the tasks, behind the MCP task tools
+ * @param agents          the agents overview's parts (frame feed, hooks, search); null where it is not wired
  */
 fun Application.module(
     settingsRepo: SettingsRepository,
     sessionStates: MutableSharedFlow<Map<String, String?>>,
     usageMonitor: ClaudeUsageMonitor,
     scrollbackSaver: ScrollbackSaver,
+    agentTracker: AgentSessionTracker,
+    taskIndex: TaskIndex? = null,
+    agents: AgentOverview? = null,
 ) {
     install(ContentNegotiation) { json() }
     install(WebSockets) {
@@ -243,9 +284,10 @@ fun Application.module(
         uiSettingsRoutes(settingsRepo)
         ptyRoutes(settingsRepo)
         agentRoutes(settingsRepo)
-        windowRoutes(settingsRepo, sessionStates, usageMonitor)
+        windowRoutes(settingsRepo, sessionStates, usageMonitor, agents)
+        agentEventRoutes(agentTracker)
         adminRoutes(settingsRepo, scrollbackSaver)
         // MCP endpoint (localhost-only, MCP-token gated) — see mcp/McpRoutes.kt.
-        mcpRoutes(settingsRepo, usageMonitor)
+        mcpRoutes(settingsRepo, usageMonitor, taskIndex, agentTracker)
     }
 }

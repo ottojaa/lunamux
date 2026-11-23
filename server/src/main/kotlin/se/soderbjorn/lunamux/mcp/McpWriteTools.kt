@@ -44,6 +44,7 @@ import se.soderbjorn.lunula.core.allThemes
 import se.soderbjorn.lunamux.FileBrowserContent
 import se.soderbjorn.lunamux.GitContent
 import se.soderbjorn.lunamux.LeafNode
+import se.soderbjorn.lunamux.TaskIndex
 import se.soderbjorn.lunamux.TerminalContent
 import se.soderbjorn.lunamux.WindowEnvelope
 import se.soderbjorn.lunamux.WindowState
@@ -159,8 +160,87 @@ private fun resolveTargetTab(args: JsonObject): String {
     val cfg = WindowState.config.value
     val worldId = args.optString("worldId")?.let { requireWorld(it) } ?: WindowState.activeWorldId()
     val world = cfg.worlds.firstOrNull { it.id == worldId } ?: cfg.worlds.firstOrNull()
-    return world?.activeTabId ?: world?.tabs?.firstOrNull()?.id
+    // The active tab is a background tab while the person has one open from the overview: never a default.
+    val ordinary = world?.tabs?.filterNot { it.isBackground }.orEmpty()
+    return ordinary.firstOrNull { it.id == world?.activeTabId }?.id ?: ordinary.firstOrNull()?.id
         ?: throw McpArgumentException("No tabs exist")
+}
+
+/**
+ * The tab that holds the most of a task's panes. Ties go to the tab that comes first in [tabOrder].
+ *
+ * @param tabOfPane the tab of each of the task's panes, one entry per pane (a pane in no tab left out by the caller).
+ * @param tabOrder the tabs a new window may go in, in tab order; panes in any other tab are ignored.
+ * @return the busiest tab's id, or null when none of the panes is in [tabOrder].
+ */
+internal fun busiestTab(tabOfPane: List<String>, tabOrder: List<String>): String? =
+    tabOfPane.filter { it in tabOrder }.groupingBy { it }.eachCount().entries
+        .maxWithOrNull(compareBy({ it.value }, { -tabOrder.indexOf(it.key) }))?.key
+
+/**
+ * The tab a task's sessions are already in, for a new window of the task to open next to them.
+ *
+ * @param index the task index, which knows the task's open and promised panes.
+ * @param taskId the task.
+ * @param worldId restrict the search to this world's tabs; null looks in every world.
+ * @return the busiest tab, or null when the task has no pane in a tab yet.
+ */
+private fun taskTab(index: TaskIndex, taskId: String, worldId: String?): String? {
+    val cfg = WindowState.config.value
+    val tabs = cfg.worlds.filter { worldId == null || it.id == worldId }.flatMap { it.tabs }
+        .ifEmpty { if (worldId == null) cfg.tabs else emptyList() }
+        .filterNot { it.isBackground }
+        .map { it.id }
+    return busiestTab(index.openLeavesOf(taskId).mapNotNull(WindowState::tabIdOfPane), tabs)
+}
+
+/** A window [openWindow] created and the tab it is in. */
+private class NewWindow(val leaf: LeafNode, val tabId: String)
+
+/**
+ * Open a new window for `create_window` and `run_command`, and put its session in the task when the
+ * call names one. A task is checked before anything opens, so a refusal leaves no pane behind. The
+ * tab is the explicit `tabId`, else the tab the task's sessions are mostly in, else the default
+ * target ([resolveTargetTab]).
+ *
+ * @param args the tool arguments (`taskId`, `tabId`, `worldId`, `cwd`, `title`, `background`).
+ * @param taskIndex the task index; null where tasks are not wired up, which refuses a `taskId`.
+ * @return the new window and its tab.
+ * @throws McpArgumentException for an unknown task, tab or world.
+ */
+private fun openWindow(args: JsonObject, taskIndex: TaskIndex?): NewWindow {
+    val taskId = args.optString("taskId")
+    if (taskId != null) {
+        val index = taskIndex ?: throw McpArgumentException("Tasks are not available on this server")
+        taskCall { index.requireTask(taskId) }
+    }
+    val background = args.optBool("background") == true
+    val explicitTab = args.optString("tabId")?.let(::requireTab)
+    if (explicitTab != null) {
+        val tabIsBackground = WindowState.isBackgroundTab(explicitTab)
+        if (background && !tabIsBackground) {
+            throw McpArgumentException("Tab $explicitTab is not a background tab: background windows go in a background tab")
+        }
+        if (!background && tabIsBackground) {
+            throw McpArgumentException("Tab $explicitTab is a background tab: pass background: true to add a window to it")
+        }
+    }
+    val leaf: LeafNode
+    val tabId: String
+    if (background && explicitTab == null) {
+        // A new background tab, named by the title, with its seeded pane as the window.
+        val worldId = args.optString("worldId")?.let(::requireWorld)
+        tabId = WindowState.openTabRunning(args.optString("cwd"), args.optString("title"), command = null, background = true, worldId = worldId)
+        leaf = WindowState.config.value.worlds.flatMap { it.tabs }.first { it.id == tabId }.panes.first().leaf
+    } else {
+        tabId = explicitTab
+            ?: taskId?.let { taskTab(taskIndex!!, it, args.optString("worldId")?.let(::requireWorld)) }
+            ?: resolveTargetTab(args)
+        leaf = WindowState.addPaneToTab(tabId, initialCwd = args.optString("cwd"))
+            ?: throw McpArgumentException("Unknown tabId: $tabId")
+    }
+    if (taskId != null) taskCall { taskIndex!!.addToTask(taskId, listOf(leaf.sessionId)) }
+    return NewWindow(leaf, tabId)
 }
 
 /**
@@ -198,7 +278,7 @@ private fun summarizeArgs(args: JsonObject): String =
  * Register a write tool: wraps the handler so every successful call is
  * recorded in [McpActivityLog] with redacted arguments.
  */
-private fun writeTool(
+internal fun writeTool(
     name: String,
     description: String,
     inputSchema: JsonObject,
@@ -277,8 +357,10 @@ private object RunDone : Exception() {
  *
  * @param settingsRepo backing store for workspace templates and the
  *   theme-selection blob used by `set_theme`.
+ * @param taskIndex the task index `create_window` and `run_command` file a new window's session in
+ *   when given a `taskId`; null where tasks are not wired up, which refuses that argument.
  */
-fun registerMcpWriteTools(settingsRepo: SettingsRepository) {
+fun registerMcpWriteTools(settingsRepo: SettingsRepository, taskIndex: TaskIndex? = null) {
 
     // ── Group C — input & execution ──────────────────────────────────────
 
@@ -352,9 +434,23 @@ fun registerMcpWriteTools(settingsRepo: SettingsRepository) {
         inputSchema = schemaObject(
             "command" to schemaString("The command line to run."),
             "sessionId" to schemaString("Run in this existing session. Omit to create a new window."),
-            "tabId" to schemaString("When creating a window: the tab to create it in (default: active tab)."),
+            "tabId" to schemaString(
+                "When creating a window: the tab to create it in. Default: the tab the taskId's " +
+                    "sessions are already in, else the active tab.",
+            ),
             "worldId" to schemaString("When creating a window and no tabId is given: the world whose active tab to use (default: active world)."),
             "cwd" to schemaString("When creating a window: the starting directory for its shell."),
+            "taskId" to schemaString(
+                "When creating a window: the task the agent session that starts in it belongs to " +
+                    "(an id from create_task or list_tasks). The window opens in the tab that " +
+                    "task's sessions are in. Optional.",
+            ),
+            "background" to schemaBool(
+                "Run the window out of sight, in a background tab (see create_tab). Without a tabId a " +
+                    "new background tab opens for it, never switched to; with the tabId of a background " +
+                    "tab it is added to that tab. The window still belongs to its task and still " +
+                    "counts when it needs the person. Default false.",
+            ),
             "waitForExit" to schemaBool("Wait for completion and capture output. Default true."),
             "timeoutMs" to schemaInt("Max wait in ms (default $DEFAULT_RUN_TIMEOUT_MS, max $MAX_RUN_TIMEOUT_MS)."),
             required = listOf("command"),
@@ -363,11 +459,9 @@ fun registerMcpWriteTools(settingsRepo: SettingsRepository) {
         val command = args.requireString("command")
         var createdWindowId: String? = null
         val sessionId = args.optString("sessionId") ?: run {
-            val tabId = resolveTargetTab(args)
-            val leaf = WindowState.addPaneToTab(tabId, initialCwd = args.optString("cwd"))
-                ?: throw McpArgumentException("Unknown tabId: $tabId")
-            createdWindowId = leaf.id
-            leaf.sessionId
+            val window = openWindow(args, taskIndex)
+            createdWindowId = window.leaf.id
+            window.leaf.sessionId
         }
         val session = requireSession(sessionId)
         markAgentTouchedBySession(sessionId)
@@ -435,23 +529,43 @@ fun registerMcpWriteTools(settingsRepo: SettingsRepository) {
 
     writeTool(
         name = "create_window",
-        description = "Create a new terminal window (pane). Returns the new windowId and sessionId.",
+        description = "Create a new terminal window (pane). Returns the new windowId, sessionId and " +
+            "tabId. A tab is a task's workspace: when this window will run another agent session " +
+            "for work you are already doing (for example a second session you start to split the " +
+            "work), pass taskId, the id create_task returned. The window then opens in the tab that " +
+            "task's sessions are already in, so the task stays together, and the sessions show as " +
+            "one task in the agents overview. Without a taskId, or when the task has no tab yet, " +
+            "it opens in the active tab; an explicit tabId always wins. Pass background: true for " +
+            "an agent that should work out of sight: it runs in a background tab the person does " +
+            "not see in the tab strip, is still counted and still asks for them when it needs " +
+            "them, and they can open it from the agents overview.",
         inputSchema = schemaObject(
-            "tabId" to schemaString("Tab to create the window in (default: active tab)."),
+            "tabId" to schemaString(
+                "Tab to create the window in. Default: the tab the taskId's sessions are already " +
+                    "in, else the active tab.",
+            ),
             "worldId" to schemaString("When no tabId is given: the world whose active tab to use (default: active world)."),
             "cwd" to schemaString("Starting directory for the new shell."),
-            "title" to schemaString("Optional custom window name."),
+            "title" to schemaString("Optional custom window name (and the name of the background tab it opens)."),
+            "taskId" to schemaString(
+                "Task the agent session that starts in this window belongs to (an id from " +
+                    "create_task or list_tasks). Optional.",
+            ),
+            "background" to schemaBool(
+                "Run the window out of sight, in a background tab (see create_tab). Without a tabId a " +
+                    "new background tab opens for it, never switched to; with the tabId of a background " +
+                    "tab it is added to that tab. The window still belongs to its task and still " +
+                    "counts when it needs the person. Default false.",
+            ),
         ),
     ) { _, args ->
-        val tabId = resolveTargetTab(args)
-        val leaf = WindowState.addPaneToTab(tabId, initialCwd = args.optString("cwd"))
-            ?: throw McpArgumentException("Unknown tabId: $tabId")
-        args.optString("title")?.let { WindowState.renamePane(leaf.id, it) }
-        markAgentTouched(leaf.id)
+        val window = openWindow(args, taskIndex)
+        args.optString("title")?.let { WindowState.renamePane(window.leaf.id, it) }
+        markAgentTouched(window.leaf.id)
         McpToolResult.json(buildJsonObject {
-            put("windowId", leaf.id)
-            put("sessionId", leaf.sessionId)
-            put("tabId", tabId)
+            put("windowId", window.leaf.id)
+            put("sessionId", window.leaf.sessionId)
+            put("tabId", window.tabId)
         })
     }
 
@@ -501,9 +615,10 @@ fun registerMcpWriteTools(settingsRepo: SettingsRepository) {
         requireWindow(windowId)
         val tabId = WindowState.tabIdOfPane(windowId)
             ?: throw McpArgumentException("Window $windowId is not in any tab")
-        if (WindowState.config.value.activeTabId != tabId) WindowState.setActiveTab(tabId)
-        WindowState.raisePane(windowId)
-        WindowState.setFocusedPane(tabId, windowId)
+        if (WindowState.isBackgroundTab(tabId)) {
+            throw McpArgumentException("Window $windowId is in a background tab: only the person can open it, from the agents overview")
+        }
+        WindowState.focusPane(windowId)
         McpToolResult.text("Activated window $windowId (tab $tabId)")
     }
 
@@ -562,15 +677,20 @@ fun registerMcpWriteTools(settingsRepo: SettingsRepository) {
     writeTool(
         name = "create_tab",
         description = "Create a new tab (seeded with one terminal window) in a world and switch to " +
-            "it. Targets the active world unless a worldId is given.",
+            "it. Targets the active world unless a worldId is given. With background: true the " +
+            "tab is a background tab instead: it is never switched to, never shown in the tab " +
+            "strip or the layout the person sees, and never takes focus; it is meant for an " +
+            "agent working out of sight. Close it with close_tab when done (a server restart " +
+            "closes background tabs too); the person can open it from the agents overview.",
         inputSchema = schemaObject(
             "title" to schemaString("Optional tab title."),
             "worldId" to schemaString("World to create the tab in (default: active world)."),
+            "background" to schemaBool("Open the tab out of sight, without switching to it. Default false."),
         ),
     ) { _, args ->
         val worldId = args.optString("worldId")?.let { requireWorld(it) }
-        val tabId = WindowState.addTab(worldId)
-        args.optString("title")?.let { WindowState.renameTab(tabId, it) }
+        val background = args.optBool("background") == true
+        val tabId = WindowState.openTabRunning(null, args.optString("title"), command = null, background = background, worldId = worldId)
         // The tab may live in a non-default world, so search every world's
         // tabs rather than only the legacy default-world mirror (config.tabs).
         val tab = WindowState.config.value.worlds.flatMap { it.tabs }.first { it.id == tabId }
@@ -578,6 +698,7 @@ fun registerMcpWriteTools(settingsRepo: SettingsRepository) {
         McpToolResult.json(buildJsonObject {
             put("tabId", tabId)
             put("worldId", worldId ?: WindowState.activeWorldId())
+            put("background", background)
             put("windowId", seeded?.id)
             put("sessionId", seeded?.sessionId)
         })
@@ -599,7 +720,8 @@ fun registerMcpWriteTools(settingsRepo: SettingsRepository) {
 
     writeTool(
         name = "close_tab",
-        description = "Close a tab and every window in it (their PTY sessions are killed).",
+        description = "Close a tab and every window in it (their PTY sessions are killed). " +
+            "Never asks the person; close a background tab you opened with this when its work is done.",
         inputSchema = schemaObject(
             "tabId" to schemaString("The tab to close."),
             required = listOf("tabId"),
@@ -612,13 +734,16 @@ fun registerMcpWriteTools(settingsRepo: SettingsRepository) {
 
     writeTool(
         name = "activate_tab",
-        description = "Switch the active (visible) tab.",
+        description = "Switch the active (visible) tab. A background tab cannot be activated.",
         inputSchema = schemaObject(
             "tabId" to schemaString("The tab to activate."),
             required = listOf("tabId"),
         ),
     ) { _, args ->
         val tabId = requireTab(args.requireString("tabId"))
+        if (WindowState.isBackgroundTab(tabId)) {
+            throw McpArgumentException("Tab $tabId is a background tab: only the person can open it, from the agents overview")
+        }
         WindowState.setActiveTab(tabId)
         McpToolResult.text("Activated tab $tabId")
     }

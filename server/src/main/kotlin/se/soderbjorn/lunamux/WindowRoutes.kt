@@ -223,6 +223,49 @@ private fun WindowConfig.withoutWebBrowserPanes(): WindowConfig {
 }
 
 /**
+ * Return a copy of this config without the background tabs nobody has opened, for clients that
+ * have no agents overview to open them from (a phone). The tab the person was sent to with
+ * [WindowConfig.shownTabId] stays. The legacy `tabs` mirror is filtered too.
+ *
+ * @return the config unchanged when no unshown background tab exists.
+ * @see configForClient
+ */
+internal fun WindowConfig.withoutUnshownBackground(): WindowConfig {
+    fun strip(tabs: List<TabConfig>): List<TabConfig> = tabs.filter { !it.isBackground || it.id == shownTabId }
+    if (tabs.all { it.isVisibleIn(this) } && worlds.all { w -> w.tabs.all { it.isVisibleIn(this) } }) return this
+    return copy(tabs = strip(tabs), worlds = worlds.map { it.copy(tabs = strip(it.tabs)) })
+}
+
+private fun TabConfig.isVisibleIn(cfg: WindowConfig): Boolean = cfg.isVisible(this)
+
+/** Client types that list background tabs in their own screens; every other client never receives an unshown one. */
+private val CLIENT_TYPES_WITH_OVERVIEW = setOf("Web", "Computer")
+
+/**
+ * The config as one client is sent it: what its app version can decode, and, unless its type has
+ * the agents overview, without unshown background tabs. The one place the per-client strips are
+ * chained, so a later push goes through the same strips as the first.
+ *
+ * @param cfg the live layout.
+ * @param clientType what the client calls itself (`Web`, `iOS`, `Android`, ...).
+ * @param supportsWorlds whether the client reads the `worlds` container.
+ * @param supportsAgentPanes whether the client can decode agent panes.
+ * @param supportsWebBrowser whether the client can decode web-browser panes.
+ * @return the config to send.
+ */
+internal fun configForClient(
+    cfg: WindowConfig,
+    clientType: String,
+    supportsWorlds: Boolean,
+    supportsAgentPanes: Boolean,
+    supportsWebBrowser: Boolean,
+): WindowConfig = cfg
+    .let { if (supportsWorlds) it else it.flattenToFirstWorld() }
+    .let { if (supportsAgentPanes) it else it.withoutAgentPanes() }
+    .let { if (supportsWebBrowser) it else it.withoutWebBrowserPanes() }
+    .let { if (clientType in CLIENT_TYPES_WITH_OVERVIEW) it else it.withoutUnshownBackground() }
+
+/**
  * Lowest client app version that understands the `worlds` container. Clients
  * at or above this read [WindowConfig.worlds]; older clients never see the
  * field name and would drop the whole frame on the unknown structure, so
@@ -290,6 +333,8 @@ internal class WindowConnectionContext(
      * active world; old clients always add to the default (first) world.
      */
     val supportsWorlds: Boolean = false,
+    /** The agents overview's parts; null where the overview is not wired (some tests). */
+    val agents: AgentOverview? = null,
 ) {
     private val gitWatchers = ConcurrentHashMap<String, GitWatchHandle>()
 
@@ -356,6 +401,7 @@ internal fun Route.windowRoutes(
     settingsRepo: SettingsRepository,
     sessionStates: MutableSharedFlow<Map<String, String?>>,
     usageMonitor: ClaudeUsageMonitor,
+    agents: AgentOverview? = null,
 ) {
     webSocket("/window") {
         val token = call.readAuthToken()
@@ -400,10 +446,7 @@ internal fun Route.windowRoutes(
 
         val pushJob = launch {
             WindowState.config.collect { cfg ->
-                val outbound = cfg
-                    .let { if (supportsWorlds) it else it.flattenToFirstWorld() }
-                    .let { if (supportsAgentPanes) it else it.withoutAgentPanes() }
-                    .let { if (supportsWebBrowser) it else it.withoutWebBrowserPanes() }
+                val outbound = configForClient(cfg, info.type, supportsWorlds, supportsAgentPanes, supportsWebBrowser)
                 val payload = windowJson.encodeToString<WindowEnvelope>(WindowEnvelope.Config(outbound))
                 send(Frame.Text(payload))
             }
@@ -433,6 +476,9 @@ internal fun Route.windowRoutes(
             }
         } else null
 
+        // The agents frame: one encoded value, the same bytes for every connection.
+        val agentsPushJob = agents?.let { a -> launch { a.feed.frame.collect { send(Frame.Text(it)) } } }
+
         val uiSettingsPushJob = launch {
             settingsRepo.uiSettings.collect { s ->
                 // Publish the v2 settings MERGED with the synthesized legacy
@@ -450,6 +496,7 @@ internal fun Route.windowRoutes(
             settingsRepo = settingsRepo,
             usageMonitor = usageMonitor,
             supportsWorlds = supportsWorlds,
+            agents = agents,
         )
 
         try {
@@ -462,6 +509,7 @@ internal fun Route.windowRoutes(
             statePushJob.cancel()
             usagePushJob.cancel()
             agentNoticePushJob?.cancel()
+            agentsPushJob?.cancel()
             uiSettingsPushJob.cancel()
         }
     }
@@ -728,7 +776,8 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
             val worldId = if (ctx.supportsWorlds) WindowState.activeWorldId() else WindowState.defaultWorldId()
             WindowState.addTab(worldId = worldId)
         }
-        is WindowCommand.CloseTab -> WindowState.closeTab(cmd.tabId)
+        // A window never closes a background tab: those belong to the agents in them.
+        is WindowCommand.CloseTab -> if (!WindowState.isBackgroundTab(cmd.tabId)) WindowState.closeTab(cmd.tabId)
         is WindowCommand.RenameTab -> WindowState.renameTab(cmd.tabId, cmd.title)
         is WindowCommand.MoveTab -> WindowState.moveTab(cmd.tabId, cmd.targetTabId, cmd.before)
         is WindowCommand.SetTabHidden -> WindowState.setTabHidden(cmd.tabId, cmd.hidden)
@@ -790,7 +839,19 @@ internal suspend fun handleWindowCommand(text: String, ctx: WindowConnectionCont
         is WindowCommand.MovePaneToTab -> WindowState.movePaneToTab(cmd.paneId, cmd.targetTabId)
         is WindowCommand.SwapPanes -> WindowState.swapPanes(cmd.paneAId, cmd.paneBId)
         is WindowCommand.MovePaneWithinTab -> WindowState.movePaneWithinTab(cmd.paneId, cmd.targetPaneId, cmd.before, cmd.retile)
-        is WindowCommand.SetActiveTab -> WindowState.setActiveTab(cmd.tabId)
+        is WindowCommand.SetActiveTab -> {
+            if (WindowState.isBackgroundTab(cmd.tabId)) {
+                val live = ctx.agents?.tracker?.summaries?.value.orEmpty()
+                    .filter { it.ended == null }.mapNotNullTo(HashSet()) { it.leafId }
+                val shown = WindowState.show(cmd.tabId, live)
+                if (shown is WindowState.ShowResult.Refused) ctx.send(WindowEnvelope.AgentError(cmd.tabId, shown.reason))
+            } else {
+                WindowState.setActiveTab(cmd.tabId)
+            }
+        }
+        is WindowCommand.ResumeAgent, is WindowCommand.ReadAgentDetails, is WindowCommand.SearchAgents,
+        is WindowCommand.SetClaudeHooks, is WindowCommand.LeaveShownTab, is WindowCommand.OpenTask ->
+            handleAgentCommand(cmd, ctx, ctx.agents)
         is WindowCommand.SetFocusedPane -> WindowState.setFocusedPane(cmd.tabId, cmd.paneId)
         is WindowCommand.SetStateOverride -> TerminalSessions.setStateOverride(cmd.sessionId, cmd.mode)
         is WindowCommand.OpenSettings -> SettingsDialog.show(ctx.settingsRepo)

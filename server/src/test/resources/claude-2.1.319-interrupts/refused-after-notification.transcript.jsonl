@@ -1,0 +1,7 @@
+{"type": "user", "timestamp": "2026-11-06T09:35:52.551Z", "message": {"role": "user", "content": "Run exactly this shell command with the Bash tool and nothin"}}
+{"type": "assistant", "timestamp": "2026-11-06T09:35:55.600Z", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_01BmbVxpe5kuHNzjQVQr1PXw", "name": "Bash", "input": {"command": "touch /tmp/x/marker.txt"}}]}}
+{"type": "user", "timestamp": "2026-11-06T09:36:18.872Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_01BmbVxpe5kuHNzjQVQr1PXw", "is_error": true, "content": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_strin"}]}}
+{"type": "user", "timestamp": "2026-11-06T09:36:18.875Z", "message": {"role": "user", "content": [{"type": "text", "text": "[Request interrupted by user for tool use]"}]}}
+{"type": "system", "subtype": "turn_duration", "timestamp": "2026-11-06T09:36:18.880Z"}
+{"type": "last-prompt"}
+{"type": "cost-state"}

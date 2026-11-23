@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.slf4j.LoggerFactory
+import se.soderbjorn.lunamux.persistence.AgentSessionRecord
 import se.soderbjorn.lunamux.persistence.SettingsRepository
 import java.util.concurrent.atomic.AtomicLong
 
@@ -118,6 +119,258 @@ object WindowState {
         val cfg = _config.value
         return cfg.activeWorldId?.takeIf { id -> cfg.worlds.any { it.id == id } }
             ?: cfg.worlds.firstOrNull()?.id
+    }
+
+    // ── Shown background tab ─────────────────────────────────────────
+    // A background tab is out of sight until the person opens it from the
+    // agents overview. At most one is open at a time (the "shown" tab); it
+    // is the active tab of the active world. Leaving it, by any route,
+    // goes through [unshow], which puts the person's own tab back.
+
+    /**
+     * The one open background tab, and where the person came from.
+     *
+     * @property tabId the shown background tab.
+     * @property returnTabId the tab that was active in the return world, if any.
+     * @property returnWorldId the world the person was in, if any.
+     */
+    private data class ShownTab(val tabId: String, val returnTabId: String?, val returnWorldId: String?)
+
+    /** The open background tab, or `null`. Guarded by `synchronized(this)`; never persisted. */
+    private var shown: ShownTab? = null
+
+    /** What [show] answers. */
+    sealed interface ShowResult {
+        /** The tab is open (or already was). */
+        data object Done : ShowResult
+
+        /** The tab was not opened; [reason] says why in plain words. */
+        data class Refused(val reason: String) : ShowResult
+    }
+
+    /** The id of the world that is active in [cfg] (the first world when none is named). */
+    private fun activeWorldIdOf(cfg: WindowConfig): String? =
+        cfg.activeWorldId?.takeIf { id -> cfg.worlds.any { it.id == id } } ?: cfg.worlds.firstOrNull()?.id
+
+    /**
+     * [cfg] with [open] closed: no tab is shown any more, the world that held it has an ordinary
+     * active tab again (the one the person left, when it is still there), and, with [backToWorld],
+     * the active world is the one the person came from.
+     *
+     * @param cfg the layout to change.
+     * @param open the shown tab to close.
+     * @param backToWorld true to also switch the active world back.
+     * @return the changed layout; the legacy mirror is in step.
+     */
+    private fun withoutShown(cfg: WindowConfig, open: ShownTab, backToWorld: Boolean): WindowConfig {
+        var out = cfg.copy(shownTabId = null)
+        val world = worldOfTab(out, open.tabId)
+        if (world != null && world.activeTabId == open.tabId) {
+            val back = open.returnTabId?.takeIf { id ->
+                open.returnWorldId == world.id && world.tabs.any { it.id == id && !it.isBackground }
+            }
+            val fallback = world.tabs.firstOrNull { !it.isBackground && !it.isHidden }?.id
+                ?: world.tabs.firstOrNull { !it.isBackground }?.id
+            out = out.copy(worlds = out.worlds.map { w ->
+                if (w.id == world.id) w.copy(activeTabId = back ?: fallback) else w
+            })
+        }
+        if (backToWorld && open.returnWorldId != null && out.worlds.any { it.id == open.returnWorldId }) {
+            out = out.copy(activeWorldId = open.returnWorldId)
+        }
+        return syncLegacyMirror(out)
+    }
+
+    /**
+     * Close the shown background tab, if there is one. Called by every route that moves the person
+     * to another tab or world, by [leaveShownTab], and by [onLiveLeaves] when its agents are gone.
+     *
+     * @param backToWorld true to also return to the world the person came from (leave, agent ended);
+     *   false when the caller is about to pick the next tab or world itself.
+     */
+    private fun unshow(backToWorld: Boolean) {
+        val open = shown ?: return
+        shown = null
+        _config.value = withoutShown(_config.value, open, backToWorld)
+    }
+
+    /**
+     * Open background tab [tabId] for the person: switch to its world, make it the active tab and
+     * remember where they came from. Showing another tab while one is open keeps the first return point.
+     *
+     * @param tabId the background tab to open.
+     * @param liveLeafIds the pane ids of the agents the tracker knows are open, or `null` to skip the
+     *   check; with it, a tab none of whose panes is in the set is refused.
+     * @return [ShowResult.Done], or [ShowResult.Refused] with the reason.
+     * @see leaveShownTab
+     */
+    fun show(tabId: String, liveLeafIds: Set<String>? = null): ShowResult = synchronized(this) {
+        val cfg0 = _config.value
+        val world = worldOfTab(cfg0, tabId) ?: return@synchronized ShowResult.Refused("That tab no longer exists.")
+        val tab = world.tabs.first { it.id == tabId }
+        if (!tab.isBackground) return@synchronized ShowResult.Refused("That tab is not a background tab.")
+        if (liveLeafIds != null && tab.panes.none { it.leaf.id in liveLeafIds }) {
+            return@synchronized ShowResult.Refused("No agent is running in that tab any more.")
+        }
+        val previous = shown
+        if (previous?.tabId == tabId) return@synchronized ShowResult.Done
+        val activeWorld = activeWorldIdOf(cfg0)
+        val back = previous?.let { it.returnTabId to it.returnWorldId }
+            ?: (cfg0.worlds.firstOrNull { it.id == activeWorld }?.activeTabId to activeWorld)
+        val cfg = if (previous != null) withoutShown(cfg0, previous, backToWorld = false) else cfg0
+        shown = ShownTab(tabId, back.first, back.second)
+        val worlds = cfg.worlds.map { w -> if (w.id == world.id) w.copy(activeTabId = tabId) else w }
+        _config.value = syncLegacyMirror(cfg.copy(worlds = worlds, activeWorldId = world.id, shownTabId = tabId))
+        ShowResult.Done
+    }
+
+    /**
+     * Open the background tab that holds pane [leafId]. The tab is found in the layout itself, not
+     * in anything polled, so an agent that was started a moment ago can be opened at once; an
+     * unknown pane is answered with a refusal instead of being ignored.
+     *
+     * Called by the command handler that opens an agent from the overview.
+     *
+     * @param leafId the pane id a record remembers.
+     * @param liveLeafIds the pane ids of the agents the tracker has open, or `null` to skip that check.
+     * @return [ShowResult.Done], or [ShowResult.Refused] with the reason.
+     * @see show
+     */
+    fun showLeaf(leafId: String, liveLeafIds: Set<String>? = null): ShowResult = synchronized(this) {
+        val tab = allTabs(_config.value).firstOrNull { t -> t.panes.any { it.leaf.id == leafId } }
+            ?: return@synchronized ShowResult.Refused("That agent's window no longer exists.")
+        show(tab.id, liveLeafIds)
+    }
+
+    /** Close the shown background tab and return the person to where they were. No-op when none is open. */
+    fun leaveShownTab() = synchronized(this) { unshow(backToWorld = true) }
+
+    /**
+     * The agents the tracker has open changed. When the shown tab no longer holds one, the person
+     * is sent back, as if they had left it. Called from the collector of the tracker's summaries.
+     *
+     * @param liveLeafIds the pane ids of every open agent record.
+     */
+    fun onLiveLeaves(liveLeafIds: Set<String>) = synchronized(this) {
+        val open = shown ?: return@synchronized
+        val tab = allTabs(_config.value).firstOrNull { it.id == open.tabId }
+        if (tab == null || tab.panes.none { it.leaf.id in liveLeafIds }) unshow(backToWorld = true)
+    }
+
+    /**
+     * [cfg] as it is written to disk: no open background tab (the person's own tab is the active
+     * one again), no background tabs at all, and no terminal session ids.
+     *
+     * @param cfg the layout to save.
+     * @return the layout to persist.
+     * @see rehydrate
+     */
+    fun forSaving(cfg: WindowConfig): WindowConfig = synchronized(this) {
+        val open = shown
+        val base = if (open != null) withoutShown(cfg, open, backToWorld = true) else cfg.copy(shownTabId = null)
+        val worlds = base.worlds.map { w ->
+            val tabs = w.tabs.filterNot { it.isBackground }
+            w.copy(tabs = tabs, activeTabId = w.activeTabId?.takeIf { id -> tabs.any { it.id == id } } ?: tabs.firstOrNull()?.id)
+        }
+        syncLegacyMirror(base.copy(worlds = worlds)).withBlankSessionIds()
+    }
+
+    /**
+     * The test for "a closed conversation can be resumed in the pane it ran in": the record has
+     * ended, its pane still exists in a tab the person can see, and nothing runs under that
+     * pane's shell. This is the same rule [planResume] uses to pick the pane, so the overview's
+     * `inTab` and the Resume command always agree. Built from one snapshot of the layout; the tracker
+     * asks for it once per publish. Only a row whose pane sits in a visible tab costs a look at
+     * the terminal.
+     *
+     * @param probe the facts about the terminals; the default asks the live sessions.
+     * @return a predicate over agent records.
+     * @see reusablePane
+     */
+    internal fun paneToResumeIn(probe: ResumeProbe = ResumeProbe()): (AgentSessionRecord) -> Boolean {
+        val cfg = _config.value
+        // Several closed records often share one pane (each /clear leaves one), and the terminal
+        // look walks the process table, so each pane is asked about at most once per predicate.
+        val idle = HashMap<String, Boolean>()
+        val once = ResumeProbe(
+            folderIsDirectory = probe.folderIsDirectory,
+            isIdleShell = { id -> idle.getOrPut(id) { probe.isIdleShell(id) } },
+            sessionCwd = probe.sessionCwd,
+        )
+        return { rec -> rec.isEnded && reusablePane(rec, cfg, once) != null }
+    }
+
+    /**
+     * The name of the tab that holds pane [leafId]. Called by search, which matches a conversation
+     * by the name of the tab it runs in.
+     *
+     * @param leafId the pane id a record remembers.
+     * @return the tab's title, or null when no tab holds the pane.
+     */
+    fun tabTitleOfLeaf(leafId: String): String? =
+        allTabs(_config.value).firstOrNull { t -> t.panes.any { it.leaf.id == leafId } }?.title
+
+    /** Whether [tabId] is a background tab (shown or not). */
+    fun isBackgroundTab(tabId: String): Boolean = allTabs(_config.value).any { it.id == tabId && it.isBackground }
+
+    /** Whether the pane [leafId] sits in a background tab. The layout is the one source of this fact. */
+    fun isBackgroundLeaf(leafId: String): Boolean =
+        allTabs(_config.value).any { t -> t.isBackground && t.panes.any { it.leaf.id == leafId } }
+
+    /** Whether a pane backed by terminal session [sessionId] sits in a background tab. */
+    fun isBackgroundSession(sessionId: String): Boolean =
+        allTabs(_config.value).any { t -> t.isBackground && t.panes.any { it.leaf.sessionId == sessionId } }
+
+    /** The terminal session id behind pane [leafId], or `null` when no such pane exists. */
+    fun sessionIdOfLeaf(leafId: String): String? =
+        allTabs(_config.value).firstNotNullOfOrNull { t -> t.panes.firstOrNull { it.leaf.id == leafId }?.leaf?.sessionId }
+
+    /**
+     * Bring pane [leafId] to the person: switch to its world and tab, focus it and raise it.
+     * Refused for a pane in a background tab (only [show] opens one).
+     *
+     * @param leafId the pane to bring forward.
+     * @return true when the pane was found in a tab the person can see.
+     */
+    fun focusPane(leafId: String): Boolean = synchronized(this) {
+        val cfg = _config.value
+        val world = worldOfPane(cfg, leafId) ?: return@synchronized false
+        val tab = world.tabs.first { t -> t.panes.any { it.leaf.id == leafId } }
+        if (!cfg.isVisible(tab)) return@synchronized false
+        setActiveWorld(world.id)
+        setActiveTab(tab.id)
+        setFocusedPane(tab.id, leafId)
+        raisePane(leafId)
+        true
+    }
+
+    /**
+     * Open a new tab in [worldId] (the active world by default) starting in [folder], name it
+     * [title] and type [command] into its shell. The one way resume, the task open action and
+     * MCP start something in a tab.
+     *
+     * @param folder where the shell starts, or `null` for the default folder.
+     * @param title the tab's name, or `null` to keep the default.
+     * @param command the line to run, or `null` to leave the shell at its prompt.
+     * @param background true to open the tab out of sight.
+     * @param worldId the world to open in, or `null` for the active one.
+     * @return the new tab's id, or an empty string when there was no world to open it in.
+     */
+    fun openTabRunning(
+        folder: String?,
+        title: String?,
+        command: String?,
+        background: Boolean = false,
+        worldId: String? = null,
+    ): String = synchronized(this) {
+        val tabId = addTab(worldId, background = background, initialCwd = folder)
+        if (tabId.isEmpty()) return@synchronized tabId
+        if (title != null) renameTab(tabId, title)
+        val sessionId = allTabs(_config.value).firstOrNull { it.id == tabId }?.panes?.firstOrNull()?.leaf?.sessionId
+        if (command != null && sessionId != null) {
+            TerminalSessions.get(sessionId)?.write((command + "\r").toByteArray(Charsets.UTF_8))
+        }
+        tabId
     }
 
     /** A single world exposed as a flat [WindowConfig] the stateless
@@ -315,7 +568,23 @@ object WindowState {
         }.onFailure { log.warn("Scrollback GC failed", it) }
     }
 
-    private fun rehydrate(loaded: WindowConfig, repo: SettingsRepository): WindowConfig {
+    /**
+     * Turn the persisted layout [loaded] into a live one: every terminal pane gets a fresh
+     * session replaying its saved scrollback, panes that cannot survive a restart are dropped, and
+     * the id counters are seeded above every id the server must never mint again.
+     *
+     * A background tab is dropped (the saved layout normally has none, see [forSaving], but an
+     * older one may), yet its tab and pane ids are still reserved. So are the pane ids of every
+     * agent record in [repo], closed ones included: a record remembers its pane id as history, and
+     * a new pane that reused it would inherit that history.
+     *
+     * Called by [initialize] at startup, and by tests.
+     *
+     * @param loaded the persisted layout.
+     * @param repo the settings database, for scrollback and the record pane ids.
+     * @return the live layout.
+     */
+    internal fun rehydrate(loaded: WindowConfig, repo: SettingsRepository): WindowConfig {
         var maxNodeId = 0L
         var maxTabId = 0L
         var maxWorldId = 0L
@@ -376,13 +645,23 @@ object WindowState {
         val rebuiltWorlds = loaded.worlds.map { world ->
             world.id.removePrefix("w").substringBefore('-').toLongOrNull()
                 ?.let { if (it > maxWorldId) maxWorldId = it }
-            val rebuiltTabs = world.tabs.map { rebuildTab(it) }
+            val (background, ordinary) = world.tabs.partition { it.isBackground }
+            for (tab in background) {
+                // Dropped, but its ids stay taken.
+                tab.id.removePrefix("t").substringBefore('-').toLongOrNull()
+                    ?.let { if (it > maxTabId) maxTabId = it }
+                tab.panes.forEach { trackNodeId(it.leaf.id) }
+            }
+            val rebuiltTabs = ordinary.map { rebuildTab(it) }
             val tabIdSet = rebuiltTabs.mapTo(HashSet()) { it.id }
             world.copy(
                 tabs = rebuiltTabs,
                 activeTabId = world.activeTabId?.takeIf { it in tabIdSet },
             )
         }
+
+        runCatching { repo.allAgentSessionLeafIds().forEach(::trackNodeId) }
+            .onFailure { log.warn("Could not read the agent records' pane ids", it) }
 
         nodeIdCounter.set(maxNodeId)
         tabIdCounter.set(maxTabId)
@@ -391,6 +670,7 @@ object WindowState {
         val worldIdSet = rebuiltWorlds.mapTo(HashSet()) { it.id }
         val validatedActiveWorld = loaded.activeWorldId?.takeIf { it in worldIdSet }
             ?: rebuiltWorlds.firstOrNull()?.id
+        shown = null
         return syncLegacyMirror(
             WindowConfig(worlds = rebuiltWorlds, activeWorldId = validatedActiveWorld),
         )
@@ -452,10 +732,17 @@ object WindowState {
     /** Create a new tab with a single terminal pane, switch to it, and
      *  default it to auto-tiling.
      *
+     *  A [background] tab is added out of sight and the person's tab and any
+     *  shown background tab stay as they are; an ordinary tab hides a shown
+     *  background tab (the person is moving on).
+     *
+     *  @param worldId the world to add to, or `null` for the active world.
+     *  @param background true to open the tab as a background tab.
+     *  @param initialCwd the folder the tab's first shell starts in, or `null` for the default.
      *  @return the newly minted tab id (used by the MCP `create_tab` tool
      *    to report the created tab; the `/window` command path ignores it).
      */
-    fun addTab(worldId: String? = null): String = synchronized(this) {
+    fun addTab(worldId: String? = null, background: Boolean = false, initialCwd: String? = null): String = synchronized(this) {
         // Bootstrap a default world if the config is world-less (the
         // pre-[initialize] path some unit tests exercise). Production always
         // has at least the cold-start "Home" world from [buildDefault].
@@ -464,8 +751,12 @@ object WindowState {
         // the first world. Callers (WindowRoutes) pass the first world's id
         // for old-client commands so those always land in the default world.
         val wid = worldId ?: cfg.activeWorldId ?: cfg.worlds.firstOrNull()?.id ?: return@synchronized ""
-        val world = cfg.worlds.firstOrNull { it.id == wid } ?: return@synchronized ""
-        val sessionId = TerminalSessions.create()
+        if (cfg.worlds.none { it.id == wid }) return@synchronized ""
+        if (!background) unshow(backToWorld = false)
+        val live = _config.value
+        val world = live.worlds.first { it.id == wid }
+        val cwd = sanitizeIncomingCwd(initialCwd)
+        val sessionId = TerminalSessions.create(initialCwd = cwd)
         val tabId = newTabId()
         val nodeId = newNodeId()
         val newView = TabManager.addTab(
@@ -473,8 +764,10 @@ object WindowState {
             newTabId = tabId,
             newNodeId = nodeId,
             sessionId = sessionId,
+            background = background,
+            initialCwd = cwd,
         )
-        _config.value = writeBackWorld(cfg, wid, newView)
+        _config.value = writeBackWorld(live, wid, newView)
         // Register the auto preset in the live map so pane add/remove/focus
         // events on this tab re-tile via maybeReapplyLayout without waiting
         // for a server restart to re-engage the persisted layoutPreset.
@@ -490,16 +783,36 @@ object WindowState {
         tabId
     }
 
-    /** Close [tabId], destroying any PTY sessions no longer referenced. */
+    /**
+     * Close [tabId], destroying any PTY sessions no longer referenced. Refused (no change) when
+     * only background tabs would be left in its world. Closing the shown background tab sends the
+     * person back to where they came from first.
+     *
+     * @param tabId the tab to close.
+     */
     fun closeTab(tabId: String) = synchronized(this) {
+        val first = _config.value
+        val firstWorld = worldOfTab(first, tabId) ?: return@synchronized
+        if (TabManager.closeTab(viewOf(firstWorld), tabId) == null) return@synchronized
+        if (shown?.tabId == tabId) unshow(backToWorld = true)
         val cfg = _config.value
         val world = worldOfTab(cfg, tabId) ?: return@synchronized
         val newView = TabManager.closeTab(viewOf(world), tabId) ?: return@synchronized
         commitWithSessionGc(cfg, writeBackWorld(cfg, world.id, newView))
     }
 
-    /** Mark [tabId] as the currently-selected tab (within its own world). */
+    /**
+     * Mark [tabId] as the currently-selected tab (within its own world). A background tab is left
+     * alone (only [show] opens one); an ordinary tab chosen in the active world hides a shown
+     * background tab.
+     *
+     * @param tabId the tab to select.
+     */
     fun setActiveTab(tabId: String) = synchronized(this) {
+        val first = _config.value
+        val firstWorld = worldOfTab(first, tabId) ?: return@synchronized
+        if (TabManager.setActiveTab(viewOf(firstWorld), tabId) == null) return@synchronized
+        if (firstWorld.id == activeWorldIdOf(first)) unshow(backToWorld = false)
         val cfg = _config.value
         val world = worldOfTab(cfg, tabId) ?: return@synchronized
         val newView = TabManager.setActiveTab(viewOf(world), tabId) ?: return@synchronized
@@ -570,6 +883,7 @@ object WindowState {
      * @return the newly minted world id.
      */
     fun addWorld(name: String, seedTheme: WorldThemeSelection? = null): String = synchronized(this) {
+        unshow(backToWorld = false)
         val cfg = _config.value
         val worldId = newWorldId()
         val tab = buildDefaultTab()
@@ -604,9 +918,10 @@ object WindowState {
      * legacy default-world mirror old clients follow.
      */
     fun setActiveWorld(worldId: String) = synchronized(this) {
+        if (_config.value.activeWorldId == worldId) return@synchronized
+        if (_config.value.worlds.none { it.id == worldId }) return@synchronized
+        unshow(backToWorld = false)
         val cfg = _config.value
-        if (cfg.activeWorldId == worldId) return@synchronized
-        if (cfg.worlds.none { it.id == worldId }) return@synchronized
         _config.value = syncLegacyMirror(cfg.copy(activeWorldId = worldId))
     }
 
@@ -626,11 +941,18 @@ object WindowState {
      * Refuses to close the last remaining world. When the closed world was
      * active, the neighbour (or first) world becomes active.
      */
-    fun closeWorld(worldId: String) = synchronized(this) {
+    fun closeWorld(worldId: String): Unit = synchronized(this) {
         val cfg = _config.value
         if (cfg.worlds.size <= 1) return@synchronized
         val idx = cfg.worlds.indexOfFirst { it.id == worldId }
         if (idx < 0) return@synchronized
+        // A shown tab in this world goes with it: send the person back first.
+        if (cfg.worlds[idx].tabs.any { it.id == shown?.tabId }) {
+            unshow(backToWorld = true)
+            return@synchronized closeWorld(worldId)
+        }
+        shown = shown?.takeIf { it.returnWorldId != worldId }
+            ?: shown?.copy(returnTabId = null, returnWorldId = null)
         val remaining = cfg.worlds.filterNot { it.id == worldId }
         val newActive = if (cfg.activeWorldId == worldId) {
             remaining.getOrNull(idx.coerceAtMost(remaining.size - 1))?.id ?: remaining.first().id
@@ -660,15 +982,21 @@ object WindowState {
      * @param tabId       the id of the tab to move.
      * @param destWorldId the id of the destination world.
      */
-    fun moveTabToWorld(tabId: String, destWorldId: String) = synchronized(this) {
+    fun moveTabToWorld(tabId: String, destWorldId: String): Unit = synchronized(this) {
         val cfg = _config.value
         val src = worldOfTab(cfg, tabId) ?: return@synchronized
         if (src.id == destWorldId) return@synchronized
         if (cfg.worlds.none { it.id == destWorldId }) return@synchronized
         if (src.tabs.size <= 1) return@synchronized // don't strand the source world empty
+        // Nor leave it with nothing but background tabs.
+        if (src.tabs.filterNot { it.id == tabId }.all { it.isBackground }) return@synchronized
+        if (shown?.tabId == tabId) {
+            unshow(backToWorld = true)
+            return@synchronized moveTabToWorld(tabId, destWorldId)
+        }
         val moving = src.tabs.first { it.id == tabId }
         val srcRemaining = src.tabs.filterNot { it.id == tabId }
-        val srcActive = if (src.activeTabId == tabId) srcRemaining.first().id else src.activeTabId
+        val srcActive = if (src.activeTabId == tabId) srcRemaining.first { !it.isBackground }.id else src.activeTabId
         val newWorlds = cfg.worlds.map { w ->
             when (w.id) {
                 src.id -> w.copy(tabs = srcRemaining, activeTabId = srcActive)
@@ -697,6 +1025,28 @@ object WindowState {
             if (tab.panes.any { it.leaf.id == paneId }) return@synchronized tab.id
         }
         null
+    }
+
+    /**
+     * The id of the pane showing terminal session [sessionId]. Called by the agent tracker's poll
+     * to tie a record to its place in the layout.
+     *
+     * @param sessionId the terminal session.
+     * @return the layout leaf id, or null when no pane shows it.
+     */
+    fun leafIdOfSession(sessionId: String): String? = synchronized(this) {
+        findLeafBySession(_config.value, sessionId)?.id
+    }
+
+    /**
+     * The name the person gave (F2) the pane showing terminal session [sessionId]. Called by the
+     * agent tracker's poll to title a record.
+     *
+     * @param sessionId the terminal session.
+     * @return the custom name, or null.
+     */
+    fun customNameOfSession(sessionId: String): String? = synchronized(this) {
+        findLeafBySession(_config.value, sessionId)?.customName
     }
 
     private fun findLeafBySession(cfg: WindowConfig, sessionId: String): LeafNode? {

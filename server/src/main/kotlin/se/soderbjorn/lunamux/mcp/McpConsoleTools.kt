@@ -182,7 +182,8 @@ fun registerMcpConsoleTools() {
         val title = args.optString("title") ?: "Agent console"
         val cfg = WindowState.config.value
         val tabId = args.optString("tabId")
-            ?: cfg.activeTabId ?: cfg.tabs.firstOrNull()?.id
+            ?: cfg.activeTabId?.takeIf { id -> cfg.tabs.any { it.id == id && !it.isBackground } }
+            ?: cfg.tabs.firstOrNull { !it.isBackground }?.id
             ?: throw McpArgumentException("No tabs exist")
 
         val session = AgentSession(

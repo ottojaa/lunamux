@@ -261,6 +261,85 @@ object GitCatalog {
     }
 
     /**
+     * What git says about a folder: where it is and what is left undone in it. One shape for every
+     * reader (the tracker when a record opens, the overview's peek, a conversation's story, a task's
+     * work).
+     *
+     * @property repo the repository's name (the main checkout's folder, also for a linked worktree).
+     * @property root the top of the working tree the folder is in.
+     * @property branch the branch checked out; null when detached.
+     * @property changed tracked files changed, staged or not.
+     * @property added lines added against the last commit; null when git cannot say (no commit yet).
+     * @property removed lines removed against the last commit; null likewise.
+     * @property untracked new paths git does not track; a new folder counts once.
+     * @property unpushed commits on no remote; null when the repository has no remote.
+     */
+    data class FolderWork(
+        val repo: String,
+        val root: String,
+        val branch: String? = null,
+        val changed: Int = 0,
+        val added: Int? = 0,
+        val removed: Int? = 0,
+        val untracked: Int = 0,
+        val unpushed: Int? = null,
+    )
+
+    /** How long a [folderWork] answer is reused when the caller does not say. */
+    const val FOLDER_WORK_TTL_MS = 5_000L
+
+    private val folderWorkCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, FolderWork?>>()
+
+    /**
+     * The repository facts and uncommitted work of the folder [dir], read with `git` and kept for
+     * [maxAgeMs] so several readers asking within a moment cost one read.
+     *
+     * Called when a tracker record opens (with a long [maxAgeMs]: only the repository and branch are
+     * wanted), by the overview's peek and by a conversation's or task's work block.
+     *
+     * @param dir a folder, or null.
+     * @param maxAgeMs the oldest an answer may be and still be reused.
+     * @return the facts, or null when [dir] is not a folder inside a git working tree.
+     */
+    fun folderWork(dir: String?, maxAgeMs: Long = FOLDER_WORK_TTL_MS): FolderWork? {
+        if (dir.isNullOrBlank() || !java.io.File(dir).isDirectory) return null
+        val now = System.currentTimeMillis()
+        folderWorkCache[dir]?.takeIf { now - it.first < maxAgeMs }?.let { return it.second }
+        val read = readFolderWork(Path.of(dir))
+        if (folderWorkCache.size > 256) folderWorkCache.clear()
+        folderWorkCache[dir] = now to read
+        return read
+    }
+
+    private fun readFolderWork(cwd: Path): FolderWork? {
+        val status = runGit(cwd, "status", "--porcelain=v1")?.lines()?.filter { it.isNotBlank() } ?: return null
+        val top = runGit(cwd, "rev-parse", "--show-toplevel")?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val common = runGit(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")?.trim()
+        val repoDir = common?.let { java.io.File(it).parentFile } ?: java.io.File(top)
+        val untracked = status.count { it.startsWith("??") }
+        val changed = status.size - untracked
+        var added: Int? = 0
+        var removed: Int? = 0
+        if (changed > 0) {
+            val numstat = runGit(cwd, "diff", "HEAD", "--numstat")
+            if (numstat == null) { added = null; removed = null }
+            // A binary file says "-" for both; it has no lines to count.
+            else numstat.lines().map { it.split('\t') }.forEach { cols ->
+                cols.getOrNull(0)?.toIntOrNull()?.let { added = added!! + it }
+                cols.getOrNull(1)?.toIntOrNull()?.let { removed = removed!! + it }
+            }
+        }
+        val unpushed = if (runGit(cwd, "remote").isNullOrBlank()) null
+        else runGit(cwd, "rev-list", "--count", "HEAD", "--not", "--remotes")?.trim()?.toIntOrNull()
+        return FolderWork(
+            repo = repoDir.name,
+            root = top,
+            branch = runGit(cwd, "branch", "--show-current")?.trim()?.takeIf { it.isNotEmpty() },
+            changed = changed, added = added, removed = removed, untracked = untracked, unpushed = unpushed,
+        )
+    }
+
+    /**
      * Stash all uncommitted changes (including untracked files) with a message.
      *
      * @param cwd the working directory to stash changes from

@@ -37,17 +37,37 @@ internal object TabManager {
      * the case at tab-creation time — so a cascading random origin here
      * showed the first pane as a small floating window instead of the
      * full-screen tile the Auto preset promises (issue #86, follow-up).
+     *
+     * A [background] tab is created with [TabConfig.isBackground] set and
+     * leaves the active tab alone, so an agent can open work the person is
+     * not looking at without moving them. It takes no number: the default
+     * title counts only the tabs that are not background, so the strip never
+     * skips one.
+     *
+     * Caller context: [WindowState.addTab] (the "+" button and the MCP
+     * `create_tab`/`create_window`/`run_command` tools).
+     *
+     * @param cfg the world view to add to.
+     * @param newTabId id of the new tab.
+     * @param newNodeId id of its lone pane.
+     * @param sessionId terminal session id the pane shows.
+     * @param background true to open the tab as a background tab that is never activated.
+     * @param initialCwd the folder the first pane starts in, or `null` for none.
+     * @return the updated config.
      */
     fun addTab(
         cfg: WindowConfig,
         newTabId: String,
         newNodeId: String,
         sessionId: String,
+        background: Boolean = false,
+        initialCwd: String? = null,
     ): WindowConfig {
-        val nextNumber = cfg.tabs.size + 1
+        val nextNumber = cfg.tabs.count { !it.isBackground } + 1
         val leaf = LeafNode(
             id = newNodeId,
             sessionId = sessionId,
+            cwd = initialCwd,
             // displayNumber strips the per-database id-nonce suffix so the
             // default title stays "Session 7", not "Session 7-x4k9".
             title = "Session ${TerminalSessions.displayNumber(sessionId)}",
@@ -75,50 +95,72 @@ internal object TabManager {
             focusedPaneId = newNodeId,
             // Default every new tab to auto-tiling (issue #86).
             layoutPreset = LayoutPreset.Auto.key,
+            isBackground = background,
         )
-        return cfg.copy(tabs = cfg.tabs + newTab, activeTabId = newTabId)
+        return cfg.copy(
+            tabs = cfg.tabs + newTab,
+            activeTabId = if (background) cfg.activeTabId else newTabId,
+        )
     }
 
     /**
      * Close [tabId]. Returns `null` when the tab is unknown or it would
-     * leave the user with zero tabs.
+     * leave the user with zero tabs, or with only background tabs (a person
+     * must always keep a tab they can see).
      *
      * When the closed tab was the active one, the replacement is chosen
-     * among the surviving tabs with a preference for **listed** tabs, i.e.
-     * those not hidden from the tab strip ([TabConfig.isHidden] `false`) —
-     * activating an unlisted tab would leave the user staring at content
-     * whose tab has no visible strip entry (issue #88). The search starts
-     * at the slot the closed tab occupied and scans forward, then backward,
-     * so the positional "activate the neighbour" feel is preserved. Only
-     * when *every* surviving tab is unlisted does the old positional pick
-     * (which may be unlisted) apply as a fallback.
+     * among the surviving tabs with a preference for those not hidden from
+     * the tab strip ([TabConfig.isHidden] `false`) — activating a hidden tab
+     * would leave the user staring at content whose tab has no visible strip
+     * entry (issue #88) — and never a background tab, which is never the
+     * active tab. The search starts at the slot the closed tab occupied and
+     * scans forward, then backward, so the positional "activate the
+     * neighbour" feel is preserved. Only when *every* surviving ordinary tab
+     * is hidden does the positional pick (which may be hidden) apply.
+     *
+     * @param cfg the world view to close in.
+     * @param tabId the tab to close.
+     * @return the updated config, or `null` when nothing changes.
      */
     fun closeTab(cfg: WindowConfig, tabId: String): WindowConfig? {
         if (cfg.tabs.size <= 1) return null
         if (cfg.tabs.none { it.id == tabId }) return null
         val newTabs = cfg.tabs.filterNot { it.id == tabId }
+        if (newTabs.all { it.isBackground }) return null
         val newActive = if (cfg.activeTabId == tabId) {
             val oldIdx = cfg.tabs.indexOfFirst { it.id == tabId }
             // Index in `newTabs` of the tab that slid into the closed tab's
             // slot (or the new last tab when the closed one was last).
             val slotIdx = oldIdx.coerceAtMost(newTabs.size - 1)
-            // Prefer a listed tab: nearest at/after the slot first, then
-            // nearest before it, mirroring how browsers pick a close
-            // successor. Fall back to the positional pick (possibly an
-            // unlisted tab) only when no listed tab survives.
-            val listed = newTabs.drop(slotIdx).firstOrNull { !it.isHidden }
-                ?: newTabs.take(slotIdx).lastOrNull { !it.isHidden }
-            (listed ?: newTabs.getOrNull(slotIdx))?.id
+            // Prefer a strip-visible tab: nearest at/after the slot first,
+            // then nearest before it, mirroring how browsers pick a close
+            // successor. Fall back to the positional pick (possibly a hidden
+            // tab) only when no such tab survives. A background tab is never
+            // picked.
+            val shown = newTabs.drop(slotIdx).firstOrNull { !it.isBackground && !it.isHidden }
+                ?: newTabs.take(slotIdx).lastOrNull { !it.isBackground && !it.isHidden }
+            val positional = newTabs.drop(slotIdx).firstOrNull { !it.isBackground }
+                ?: newTabs.take(slotIdx).lastOrNull { !it.isBackground }
+            (shown ?: positional)?.id
         } else {
             cfg.activeTabId
         }
         return cfg.copy(tabs = newTabs, activeTabId = newActive)
     }
 
-    /** Mark [tabId] as the currently-selected tab. */
+    /**
+     * Mark [tabId] as the currently-selected tab. A background tab is refused
+     * (`null`): only [WindowState.show] activates one, because it also
+     * remembers where to return to.
+     *
+     * @param cfg the world view.
+     * @param tabId the tab to activate.
+     * @return the updated config, or `null` when unchanged or refused.
+     */
     fun setActiveTab(cfg: WindowConfig, tabId: String): WindowConfig? {
         if (cfg.activeTabId == tabId) return null
-        if (cfg.tabs.none { it.id == tabId }) return null
+        val tab = cfg.tabs.firstOrNull { it.id == tabId } ?: return null
+        if (tab.isBackground) return null
         return cfg.copy(activeTabId = tabId)
     }
 

@@ -546,6 +546,12 @@ fun connectWindow() {
                 is WindowEnvelope.AgentNotify -> {
                     showAgentToast(envelope.message, envelope.level)
                 }
+                // The agents overview's frames are not drawn by this build yet; skip them
+                // rather than re-encode each one for the pane-content handler below.
+                is WindowEnvelope.Agents,
+                is WindowEnvelope.AgentDetails,
+                is WindowEnvelope.AgentMatches,
+                is WindowEnvelope.AgentError -> Unit
                 is WindowEnvelope.UiSettings -> {
                     // Handled reactively: the AppBackingViewModel updates its
                     // state from this envelope, and the stateFlow collector in

@@ -961,6 +961,14 @@ class DemoServer internal constructor(
                     message = "Creating worktrees isn't available in the demo.",
                 ),
             )
+
+            // --- agents overview: the demo has no agents, so these do nothing ---
+            is WindowCommand.ResumeAgent,
+            is WindowCommand.ReadAgentDetails,
+            is WindowCommand.SearchAgents,
+            is WindowCommand.SetClaudeHooks,
+            is WindowCommand.LeaveShownTab,
+            is WindowCommand.OpenTask -> Unit
         }
     }
 
