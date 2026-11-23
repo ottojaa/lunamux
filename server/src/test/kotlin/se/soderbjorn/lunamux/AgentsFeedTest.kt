@@ -16,6 +16,8 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import se.soderbjorn.lunamux.persistence.AgentSessionRecord
+import se.soderbjorn.lunamux.persistence.AgentSessionState
 import se.soderbjorn.lunamux.persistence.SettingsRepository
 import java.io.File
 import kotlin.test.Test
@@ -79,6 +81,29 @@ class AgentsFeedTest {
         val last = published.last()
         assertEquals(setOf(first, second), last.tasks.map { it.id }.toSet())
         assertEquals(2, last.sessions.count { it.taskId != null })
+    }
+
+    /**
+     * A task's main may be a conversation that ended long ago and is no longer among the rows of a
+     * frame (only the database holds it). The frame must stay self-contained, so the task goes out
+     * with no main there; `list_tasks` still reports the stored one.
+     */
+    @Test
+    fun `a main that is not a row of the frame is not published`() {
+        startSession("s1")
+        val id = index.createTask("Old main", listOf("s1"))
+        repo.saveAgentSession(
+            AgentSessionRecord(
+                id = "old", agent = "claude", state = AgentSessionState.ENDED, createdAt = 1, endedAt = 2,
+            ),
+        )
+        assertNull(tracker.summaries.value.firstOrNull { it.id == "old" }, "the old record is not in memory")
+        index.setMainConversation(id, "old")
+
+        val state = index.state.value
+        assertNull(state.tasks.single { it.id == id }.main, "main names a row the frame does not carry")
+        published.forEach(::assertSelfContained)
+        assertEquals("old", index.listing().single { it.id == id }.mainConversation, "list_tasks keeps the stored id")
     }
 
     /** A row whose task no longer exists belongs to no task, in the same snapshot that drops the task. */

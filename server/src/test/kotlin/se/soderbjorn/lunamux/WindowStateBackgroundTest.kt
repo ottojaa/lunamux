@@ -174,6 +174,22 @@ class WindowStateBackgroundTest {
         assertTrue(WindowState.paneToResumeIn(idle)(closed(bg)))
     }
 
+    /** Closed records that share one pane (each /clear leaves one) cost one look at the terminal per publish. */
+    @Test
+    fun `a pane is probed once however many closed records share it`() = withTabs {
+        val mine = ordinary()
+        var probes = 0
+        val probe = ResumeProbe(isIdleShell = { probes++; true })
+        val resumable = WindowState.paneToResumeIn(probe)
+        repeat(5) { n ->
+            val rec = AgentSessionRecord(
+                id = "r$n", agent = "claude", leafId = leafOf(mine), state = AgentSessionState.ENDED,
+            )
+            assertTrue(resumable(rec))
+        }
+        assertEquals(1, probes, "one probe per pane per predicate")
+    }
+
     /**
      * Decided fix: a show for an agent started a moment ago finds its tab in the layout and opens
      * it at once, and an unknown pane is answered, not ignored.

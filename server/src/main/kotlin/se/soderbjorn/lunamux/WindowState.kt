@@ -289,7 +289,15 @@ object WindowState {
      */
     internal fun paneToResumeIn(probe: ResumeProbe = ResumeProbe()): (AgentSessionRecord) -> Boolean {
         val cfg = _config.value
-        return { rec -> rec.isEnded && reusablePane(rec, cfg, probe) != null }
+        // Several closed records often share one pane (each /clear leaves one), and the terminal
+        // look walks the process table, so each pane is asked about at most once per predicate.
+        val idle = HashMap<String, Boolean>()
+        val once = ResumeProbe(
+            folderIsDirectory = probe.folderIsDirectory,
+            isIdleShell = { id -> idle.getOrPut(id) { probe.isIdleShell(id) } },
+            sessionCwd = probe.sessionCwd,
+        )
+        return { rec -> rec.isEnded && reusablePane(rec, cfg, once) != null }
     }
 
     /**

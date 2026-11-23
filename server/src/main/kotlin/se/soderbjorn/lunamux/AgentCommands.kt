@@ -106,7 +106,7 @@ internal fun resumeAgentError(
 ): String? {
     val rec = when {
         cmd.recordId != null -> recordOf(o.tracker, cmd.recordId!!)
-        cmd.taskId != null -> o.tasks.state.value.tasks.firstOrNull { it.id == cmd.taskId }?.main
+        cmd.taskId != null -> o.tasks.storedMain(cmd.taskId!!)
             ?.let { recordOf(o.tracker, it) }
             ?: return "That task has no conversation to resume."
         else -> null

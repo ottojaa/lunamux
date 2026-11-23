@@ -153,8 +153,11 @@ class TaskIndex(
      */
     fun openOfMain(record: AgentSessionRecord): TaskOpen? = synchronized(lock) {
         val conversation = record.conversationId
+        val summaries = tracker.summaries.value
+        // The stored main, not the published one: a main that ended long ago is not in the frame
+        // but its task's open action still applies when it is resumed.
         _state.value.tasks.sortedBy { it.id }
-            .firstOrNull { it.main == conversation && fileTask(it.id)?.open != null }
+            .firstOrNull { mainOf(it.id, summaries) == conversation && fileTask(it.id)?.open != null }
             ?.let { fileTask(it.id)?.open }
     }
 
@@ -192,6 +195,7 @@ class TaskIndex(
             val fileIds = fileList.map { it.id }.toSet()
             val known = knownIds()
             val carried = summaries.filter { it.taskId in known }.groupBy { it.taskId }
+            val summaryIds = summaries.mapTo(HashSet()) { it.id }
 
             val shown = fileList.map { it.id } +
                 tasks.values.filter { it.title != null && it.id !in fileIds && it.id in carried }.map { it.id }
@@ -210,7 +214,9 @@ class TaskIndex(
                     id = id,
                     title = file?.title ?: row?.title.orEmpty(),
                     repo = file?.repo,
-                    main = mainOf(id, summaries),
+                    // The frame must carry the row a task's main points at, so a main that ended long ago
+                    // (no longer among the summaries) is not published; list_tasks still reports it.
+                    main = mainOf(id, summaries)?.takeIf { it in summaryIds },
                     status = status,
                     statusAt = status?.let { row?.statusAt },
                     questionWaits = row?.questionWaits == true && row.status != null,
@@ -233,6 +239,16 @@ class TaskIndex(
         val stored = tasks[taskId]?.mainConversation ?: return null
         return stored.takeUnless { spokenForElsewhere(taskId, it, summaries, tasks) }
     }
+
+    /**
+     * The conversation that speaks for a task, as stored: unlike [AgentTask.main] it is not limited to
+     * the rows of the current frame, so it can name a conversation that ended long ago. Called by
+     * Resume, which finds the record in the database when it is not in memory.
+     *
+     * @param taskId the task.
+     * @return the conversation id, or null when the task has none or another task speaks through it.
+     */
+    fun storedMain(taskId: String): String? = synchronized(lock) { mainOf(taskId, tracker.summaries.value) }
 
     /**
      * Make a task.
@@ -423,7 +439,7 @@ class TaskIndex(
             byTask[taskId].orEmpty().map { r ->
                 TaskListSession(
                     sessionId = r.terminalSessionId.takeIf { r.state != AgentSessionState.ENDED },
-                    title = tracker.summaryFor(r).title,
+                    title = summaries.firstOrNull { it.id == r.conversationId }?.title ?: tracker.summaryFor(r).title,
                     state = r.state,
                 )
             }
