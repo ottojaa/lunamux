@@ -127,3 +127,29 @@ A window made for a task opens where the task already is. The tab is the first t
 promised the task and have no agent yet), the first in tab order on a tie; else the usual default tab.
 
 Resuming a conversation keeps its task, also in another pane.
+
+## What the overview receives
+
+One frame, `WindowEnvelope.Agents(sessions, tasks, claudeConnected)`, built from a single snapshot of
+the tracker's summaries and the `TaskIndex` state, and sent as the same bytes to every connection.
+It is sent again only when a fact in it changes. A client therefore never sees a conversation whose
+`taskId` is missing from `tasks`, or a task whose `main` is missing from `sessions`: a reference that
+would dangle is cleared before the frame is built.
+
+Answers go only to the connection that asked:
+
+| Command | Answer |
+|---|---|
+| `ReadAgentDetails(recordId or taskId)` | `AgentDetails`: the live or saved screen (plain and styled), the turns, the git work left in the folder(s) and a note on why it cannot be resumed. A repeat while one is being read is dropped; a read that takes over 8 seconds answers an error. |
+| `SearchAgents(query)` | `AgentMatches(query, matches)`; a match also names the task title it was found through. |
+| `ResumeAgent(recordId or taskId, inTab)` | Nothing when it worked (the row changes). An open conversation is shown or focused; a closed one is resumed in a new tab, or in its own idle pane when `inTab` is set and the pane is still there. A task resumes its main conversation. Otherwise `AgentError`. |
+| `OpenTask(taskId)` | Nothing when it worked; otherwise `AgentError` saying the task is gone, has no open action, or its folder is gone. |
+| `SetClaudeHooks(connected)` | Nothing when it worked (the frame's `claudeConnected` changes); otherwise `AgentError` with no `about`. |
+| `LeaveShownTab(tabId)` | Nothing: the person returns to the tab they came from. |
+
+`AgentError(about, message)` names the conversation, task or tab the failure is about.
+`SetActiveTab` on a background tab shows it (a background tab is one a task opened out of sight; it stays hidden until shown) and answers `AgentError(tabId, …)`
+when no live agent is in it.
+
+A client is built to read a newer server: new fields have defaults, a `Shown` value it does not
+know decodes as `UNKNOWN`, and unknown keys are ignored.

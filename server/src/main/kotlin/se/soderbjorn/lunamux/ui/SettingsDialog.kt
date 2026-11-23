@@ -645,7 +645,9 @@ object SettingsDialog {
 
     /**
      * Build the ready-to-paste `.mcp.json` snippet embedding [rawToken] and
-     * the server's live port.
+     * the server's live port. The `X-Lunamux-Session` header is left for Claude
+     * Code to expand from the pane's environment, so a call names the pane it
+     * comes from (task tools use it to find the caller's own conversation).
      */
     private fun mcpJsonSnippet(rawToken: String): String {
         val port = listeningPort ?: 8443
@@ -655,7 +657,10 @@ object SettingsDialog {
                 "lunamux": {
                   "type": "http",
                   "url": "https://localhost:$port/mcp",
-                  "headers": { "X-Termtastic-Auth": "$rawToken" }
+                  "headers": {
+                    "X-Termtastic-Auth": "$rawToken",
+                    "X-Lunamux-Session": "${'$'}{LUNAMUX_SESSION_ID}"
+                  }
                 }
               }
             }

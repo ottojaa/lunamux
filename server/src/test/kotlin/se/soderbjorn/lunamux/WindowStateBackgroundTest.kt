@@ -28,7 +28,8 @@ class WindowStateBackgroundTest {
 
     private fun tabs() = WindowState.config.value.worlds.flatMap { it.tabs }
 
-    private fun leafOf(tabId: String) = tabs().first { it.id == tabId }.panes.first().leaf.id
+    /** The newest tab with this id: `rehydrate` resets the id counters, so an older tab another test left behind can share the id. */
+    private fun leafOf(tabId: String) = tabs().last { it.id == tabId }.panes.first().leaf.id
 
     private fun ordinary(): String = WindowState.addTab().also { opened += it }
 
@@ -41,7 +42,16 @@ class WindowStateBackgroundTest {
         opened.clear()
     }
 
-    private fun withTabs(body: () -> Unit) = try { body() } finally { clean() }
+    /**
+     * Runs [body] from a state no other test class left behind: [WindowState] is one shared object, and
+     * a background tab or a shown tab another class forgot would make this class's ids and refusals depend
+     * on the order the classes run in.
+     */
+    private fun withTabs(body: () -> Unit) {
+        WindowState.leaveShownTab()
+        tabs().filter { it.isBackground }.map { it.id }.forEach { WindowState.closeTab(it) }
+        try { body() } finally { clean() }
+    }
 
     private fun repo() = SettingsRepository(File(File.createTempFile("lunamux-ws", "").apply { delete(); mkdirs(); deleteOnExit() }, "test.db"))
 

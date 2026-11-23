@@ -192,7 +192,13 @@ class RealWindowSocket internal constructor(
                             // Agent notifications only need the passthrough
                             // emit below; platform UIs collect [envelopes]
                             // and render their own toast/banner.
-                            is WindowEnvelope.AgentNotify -> Unit
+                            is WindowEnvelope.AgentNotify,
+                            // The agents overview's frames are not stored by this
+                            // socket yet; they only pass through to [envelopes].
+                            is WindowEnvelope.Agents,
+                            is WindowEnvelope.AgentDetails,
+                            is WindowEnvelope.AgentMatches,
+                            is WindowEnvelope.AgentError -> Unit
                         }
                         _envelopes.emit(envelope)
                     }

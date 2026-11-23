@@ -783,6 +783,79 @@ sealed class WindowCommand {
         val worktreePath: String,
         val migrateChanges: Boolean,
     ) : WindowCommand()
+
+    /**
+     * Pick a closed conversation up again: in the pane it ran in when that sits at an idle shell
+     * ([inTab]), else in a new tab started in its folder. The server decides everything else (the
+     * folder, the line typed) from the record; nothing typed comes from the client.
+     *
+     * @param recordId the conversation's record id or its own session id; null when [taskId] is given.
+     * @param taskId resume the conversation that speaks for this task; null when [recordId] is given.
+     * @param inTab true to reuse the conversation's own pane when that is safe.
+     * @see WindowEnvelope.AgentError
+     */
+    @Serializable
+    @SerialName("resumeAgent")
+    data class ResumeAgent(
+        val recordId: String? = null,
+        val taskId: String? = null,
+        val inTab: Boolean = false,
+    ) : WindowCommand()
+
+    /**
+     * Ask for the details of one conversation or one task: its screen, what it was asked and the
+     * git work left. Answered with [WindowEnvelope.AgentDetails]; a repeat for the same target
+     * while the first is still being read is dropped.
+     *
+     * @param recordId the conversation; null when [taskId] is given.
+     * @param taskId the task; null when [recordId] is given.
+     */
+    @Serializable
+    @SerialName("readAgentDetails")
+    data class ReadAgentDetails(
+        val recordId: String? = null,
+        val taskId: String? = null,
+    ) : WindowCommand()
+
+    /**
+     * Search the agent conversations. Answered with [WindowEnvelope.AgentMatches].
+     *
+     * @param query the text to find.
+     */
+    @Serializable
+    @SerialName("searchAgents")
+    data class SearchAgents(val query: String) : WindowCommand()
+
+    /**
+     * Connect or disconnect Lunamux's hook entries in Claude Code's settings. A failure is
+     * answered with [WindowEnvelope.AgentError] with a null `about`.
+     *
+     * @param connected true to connect, false to disconnect.
+     */
+    @Serializable
+    @SerialName("setClaudeHooks")
+    data class SetClaudeHooks(val connected: Boolean) : WindowCommand()
+
+    /**
+     * Hide the background tab that was shown for its agent and go back to where the person was.
+     * A tab that is not the shown one is left alone.
+     *
+     * @param tabId the shown background tab.
+     */
+    @Serializable
+    @SerialName("leaveShownTab")
+    data class LeaveShownTab(val tabId: String) : WindowCommand()
+
+    /**
+     * Start a task's own session by the `open` action its task file declares: a new tab in the
+     * folder the file names, with the file's command typed in. The command never comes from the client.
+     *
+     * @param taskId the task to open.
+     * @see WindowEnvelope.AgentError
+     */
+    @Serializable
+    @SerialName("openTask")
+    data class OpenTask(val taskId: String) : WindowCommand()
 }
 
 /**

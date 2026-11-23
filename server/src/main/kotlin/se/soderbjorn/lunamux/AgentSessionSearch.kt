@@ -41,6 +41,7 @@ object AgentSessionSearch {
      * @param query what the person typed; under [MIN_QUERY] characters finds nothing.
      * @param tabNameOf the name of the tab a record runs in, for matching by it.
      * @param taskTitleOf the title of the task a record belongs to.
+     * @param resumeNoteOf what resuming a closed record would do, when that needs saying.
      * @param now the time, for the month window.
      * @return the matches, best first, at most [MAX_MATCHES], one per conversation.
      * @see AgentSessionMatch
@@ -51,6 +52,7 @@ object AgentSessionSearch {
         query: String,
         tabNameOf: (AgentSessionRecord) -> String? = { null },
         taskTitleOf: (AgentSessionRecord) -> String? = { null },
+        resumeNoteOf: (AgentSessionRecord) -> String? = { null },
         now: Long = System.currentTimeMillis(),
     ): List<AgentSessionMatch> {
         val q = query.trim()
@@ -60,7 +62,11 @@ object AgentSessionSearch {
         val viaTab = tracker?.snapshot().orEmpty()
             .filter { tabNameOf(it)?.contains(q, ignoreCase = true) == true && seen.add(it.id) }
             .map { SettingsRepository.AgentSearchRow(it, null, null) }
-        val found = (rows + viaTab).mapNotNull { row ->
+        // A task's title finds its conversations too, so a task can be looked up by its name.
+        val viaTask = tracker?.snapshot().orEmpty()
+            .filter { taskTitleOf(it)?.contains(q, ignoreCase = true) == true && seen.add(it.id) }
+            .map { SettingsRepository.AgentSearchRow(it, null, null) }
+        val found = (rows + viaTab + viaTask).mapNotNull { row ->
             val rec = tracker?.cached(row.record.id) ?: row.record
             val summary = tracker?.summaryFor(rec) ?: summaryOf(rec, null, now)
             if (!summary.listed) return@mapNotNull null
@@ -80,7 +86,7 @@ object AgentSessionSearch {
                 val (summary, at, taskTitle) = hit
                 AgentSessionMatch(
                     summary = summary, field = at.field, snippet = at.snippet, start = at.start, length = at.length,
-                    resumeNote = null, taskTitle = taskTitle,
+                    resumeNote = if (rec.isEnded) resumeNoteOf(rec) else null, taskTitle = taskTitle,
                 )
             }
     }

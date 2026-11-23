@@ -511,4 +511,22 @@ class TaskIndexTest {
         assertNotEquals(0L, row.createdAt)
         assertNotNull(row.startedAt, "the status call stamped the task's start")
     }
+    /** A closed conversation resumes with its task's `open` action only when it is the task's published main. */
+    @Test
+    fun `openOfMain gives the open action of the task a conversation speaks for`() {
+        val open = TaskOpen("claude --model opus", "/work/app")
+        files.value = listOf(
+            TaskFile("a", "Has open", repo = null, open = open, modified = 99),
+            TaskFile("b", "No open", repo = null, open = null, modified = 99),
+        )
+        session("s1"); session("s2"); session("s3")
+        index.addToTask("a", listOf("s1", "s3"))
+        index.addToTask("b", listOf("s2"))
+        index.setMainConversation("a", "a-s1")
+        index.setMainConversation("b", "a-s2")
+        index.recompute()
+        assertEquals(open, index.openOfMain(tracker.openRecordOf("s1")!!), "the main of a task that has an action")
+        assertNull(index.openOfMain(tracker.openRecordOf("s2")!!), "the main of a task with no action")
+        assertNull(index.openOfMain(tracker.openRecordOf("s3")!!), "in the task, but not its main")
+    }
 }

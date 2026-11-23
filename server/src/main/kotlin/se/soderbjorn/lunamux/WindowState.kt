@@ -288,6 +288,16 @@ object WindowState {
         return { rec -> rec.leafId?.let { it in leaves } == true }
     }
 
+    /**
+     * The name of the tab that holds pane [leafId]. Called by search, which matches a conversation
+     * by the name of the tab it runs in.
+     *
+     * @param leafId the pane id a record remembers.
+     * @return the tab's title, or null when no tab holds the pane.
+     */
+    fun tabTitleOfLeaf(leafId: String): String? =
+        allTabs(_config.value).firstOrNull { t -> t.panes.any { it.leaf.id == leafId } }?.title
+
     /** Whether [tabId] is a background tab (shown or not). */
     fun isBackgroundTab(tabId: String): Boolean = allTabs(_config.value).any { it.id == tabId && it.isBackground }
 

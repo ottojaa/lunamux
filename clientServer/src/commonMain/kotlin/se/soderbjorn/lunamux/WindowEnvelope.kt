@@ -229,6 +229,79 @@ sealed class WindowEnvelope {
         val message: String,
         val level: String = "info",
     ) : WindowEnvelope()
+
+    /**
+     * The whole agents overview in one frame: every conversation row, every task and whether
+     * Claude Code is connected. Built by the server from one snapshot and sent, byte for byte the
+     * same, to every connection whenever any part changes. Every [AgentSessionSummary.taskId]
+     * and every [AgentTask.main] in the frame names something that is in the frame.
+     *
+     * @param sessions the conversation rows, in the order the server decided.
+     * @param tasks the tasks the rows' task ids refer to.
+     * @param claudeConnected whether Lunamux's hook entries are in Claude Code's settings.
+     */
+    @Serializable
+    @SerialName("agents")
+    data class Agents(
+        val sessions: List<AgentSessionSummary> = emptyList(),
+        val tasks: List<AgentTask> = emptyList(),
+        val claudeConnected: Boolean = false,
+    ) : WindowEnvelope()
+
+    /**
+     * What the person asked to look at, for one conversation or one task; sent only to the
+     * connection that asked ([WindowCommand.ReadAgentDetails]).
+     *
+     * @param recordId the conversation the answer is about; null in the answer for a task.
+     * @param taskId the task the answer is about; null in the answer for a conversation.
+     * @param live whether [screen] is the pane's screen right now (false: the last one saved).
+     * @param screen the last rows of the pane's screen, as plain text.
+     * @param styled the same rows with their colours; empty when the screen has no styles.
+     * @param turns what the person asked the conversation, newest first.
+     * @param work the work left in the folders involved: one entry for a conversation, one per
+     *   worktree for a task.
+     * @param note what resuming a closed conversation would do, when that needs saying.
+     */
+    @Serializable
+    @SerialName("agentDetails")
+    data class AgentDetails(
+        val recordId: String? = null,
+        val taskId: String? = null,
+        val live: Boolean = false,
+        val screen: List<String> = emptyList(),
+        val styled: List<List<ScreenRun>> = emptyList(),
+        val turns: List<AgentTurn> = emptyList(),
+        val work: List<WorktreeWork> = emptyList(),
+        val note: String? = null,
+    ) : WindowEnvelope()
+
+    /**
+     * The answer to [WindowCommand.SearchAgents]; sent only to the connection that asked.
+     *
+     * @param query the query this answers, as it was sent, so a late answer can be told from a current one.
+     * @param matches the hits, best first; empty when nothing matched or the search failed.
+     */
+    @Serializable
+    @SerialName("agentMatches")
+    data class AgentMatches(
+        val query: String,
+        val matches: List<AgentSessionMatch> = emptyList(),
+    ) : WindowEnvelope()
+
+    /**
+     * Why something the person asked for in the overview did not happen; sent only to the
+     * connection that asked.
+     *
+     * @param about the conversation, task or tab the request named; null for an error that is
+     *   about no row (connecting Claude Code's hooks failed).
+     * @param message the reason, in words the person reads.
+     */
+    @Serializable
+    @SerialName("agentError")
+    data class AgentError(
+        val about: String? = null,
+        val message: String,
+    ) : WindowEnvelope()
 }
 
 /**

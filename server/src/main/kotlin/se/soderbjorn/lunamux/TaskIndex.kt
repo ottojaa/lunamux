@@ -140,6 +140,22 @@ class TaskIndex(
     }
 
     /**
+     * The `open` action a resume of [record] may use: the one of the first task (by id) whose
+     * published main conversation is this one and whose file declares an action. Called by resume
+     * and by the closed row's note, so both agree on the folder.
+     *
+     * @param record a conversation record.
+     * @return the action, or null when the record speaks for no task that has one.
+     * @see planResume
+     */
+    fun openOfMain(record: AgentSessionRecord): TaskOpen? = synchronized(lock) {
+        val conversation = record.conversationId
+        _state.value.tasks.sortedBy { it.id }
+            .firstOrNull { it.main == conversation && fileTask(it.id)?.open != null }
+            ?.let { fileTask(it.id)?.open }
+    }
+
+    /**
      * The ids of the tasks whose title contains [text], ignoring case. Called by search.
      *
      * @param text the words to look for.

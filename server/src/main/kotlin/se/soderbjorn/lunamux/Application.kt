@@ -121,6 +121,11 @@ fun main() {
     val taskFiles = TaskFilesWatcher(AppPaths.taskDir()).also { it.start(persistenceScope) }
     val taskIndex = TaskIndex(repo, agentTracker, taskFiles.files, leafOfSession = { WindowState.leafIdOfSession(it) })
         .also { it.start(persistenceScope) }
+    claudeHooks.refresh()
+    val agentOverview = AgentOverview(
+        repo, agentTracker, taskIndex, claudeHooks,
+        AgentsFeed(persistenceScope, agentTracker.summaries, taskIndex.state, claudeHooks.connected),
+    )
 
     // Opt-in program-set terminal titles (OSC 0/2). Mirror the toggle into
     // TerminalSessions' stable flag flow: per-session watchers re-collect on
@@ -202,7 +207,7 @@ fun main() {
                 this.port = port
             }
         },
-        module = { module(repo, sessionStates, usageMonitor, scrollbackSaver, agentTracker, taskIndex) }
+        module = { module(repo, sessionStates, usageMonitor, scrollbackSaver, agentTracker, taskIndex, agentOverview) }
     )
 
     if (java.awt.GraphicsEnvironment.isHeadless()) {
@@ -237,6 +242,7 @@ fun main() {
  *                        JVM shutdown hook
  * @param agentTracker    the agent conversation records, fed by hook events and the pane poll
  * @param taskIndex       the tasks, behind the MCP task tools
+ * @param agents          the agents overview's parts (frame feed, hooks, search); null where it is not wired
  */
 fun Application.module(
     settingsRepo: SettingsRepository,
@@ -245,6 +251,7 @@ fun Application.module(
     scrollbackSaver: ScrollbackSaver,
     agentTracker: AgentSessionTracker,
     taskIndex: TaskIndex? = null,
+    agents: AgentOverview? = null,
 ) {
     install(ContentNegotiation) { json() }
     install(WebSockets) {
@@ -277,7 +284,7 @@ fun Application.module(
         uiSettingsRoutes(settingsRepo)
         ptyRoutes(settingsRepo)
         agentRoutes(settingsRepo)
-        windowRoutes(settingsRepo, sessionStates, usageMonitor)
+        windowRoutes(settingsRepo, sessionStates, usageMonitor, agents)
         agentEventRoutes(agentTracker)
         adminRoutes(settingsRepo, scrollbackSaver)
         // MCP endpoint (localhost-only, MCP-token gated) — see mcp/McpRoutes.kt.

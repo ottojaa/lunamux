@@ -85,6 +85,7 @@ data class PaneSnapshot(
  * @param onEnded called with each record as it closes, for the search indexer.
  * @param isUnder whether one process runs underneath another; how a helper `claude` is told from a replacement.
  * @param shellsUnder reads the background shells under a `claude` process.
+ * @param isRunning whether a process id still belongs to a running process; a helper whose `claude` is gone ends.
  * @param inTab makes, once per publish, the test for whether a tab already shows a conversation's record.
  */
 class AgentSessionTracker(
@@ -95,6 +96,7 @@ class AgentSessionTracker(
     private val onEnded: (AgentSessionRecord) -> Unit = {},
     private val isUnder: (Long, Long) -> Boolean = ::processIsUnder,
     private val shellsUnder: (Long) -> BackgroundShells = ::backgroundShellsOf,
+    private val isRunning: (Long) -> Boolean = { ProcessHandle.of(it).map(ProcessHandle::isAlive).orElse(false) },
     private val inTab: () -> (AgentSessionRecord) -> Boolean = { { false } },
 ) {
     private val log = LoggerFactory.getLogger(AgentSessionTracker::class.java)
@@ -166,6 +168,11 @@ class AgentSessionTracker(
         for (r in openRecords()) {
             val pane = live[r.terminalSessionId]
             if (pane == null || !pane.alive) end(r, pane?.screenText?.invoke(), AgentWords.END_CLOSED)
+        }
+        // A helper's own pid is known from its hooks; once that process is gone the helper is over.
+        for (r in openRecords()) {
+            val t = turns[r.id] ?: continue
+            if (t.hostId != null && t.pid != null && !isRunning(t.pid)) end(r, null, AgentWords.END_EXIT)
         }
         val now = clock()
         for (pane in panes) {
